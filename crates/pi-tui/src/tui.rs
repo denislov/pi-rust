@@ -67,6 +67,10 @@ impl<T: Terminal> Tui<T> {
         self.children.push(child);
     }
 
+    pub fn clear_children(&mut self) {
+        self.children.clear();
+    }
+
     pub fn full_redraws(&self) -> usize {
         self.full_redraws
     }

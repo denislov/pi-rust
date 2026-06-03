@@ -61,3 +61,73 @@ fn line_too_wide_errors_before_writing() {
     }
     assert!(tui.terminal().ops().is_empty());
 }
+
+#[test]
+fn second_render_updates_from_first_changed_line_without_full_clear() {
+    let terminal = VirtualTerminal::new(20, 5);
+    let mut tui = Tui::new(terminal);
+    tui.add_child(Box::new(RawComponent::new(&["header", "working", "footer"])));
+    tui.render_once().unwrap();
+    tui.terminal_mut().clear_ops();
+
+    tui.clear_children();
+    tui.add_child(Box::new(RawComponent::new(&["header", "done", "footer"])));
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(
+        outcome.strategy,
+        RenderStrategy::Differential {
+            first_changed_line: 1
+        }
+    );
+    assert!(!tui.terminal().ops().contains(&TerminalOp::ClearScreen));
+    assert!(tui.terminal().ops().contains(&TerminalOp::MoveBy(-1)));
+    assert!(tui.terminal().ops().contains(&TerminalOp::ClearFromCursor));
+    assert!(tui.terminal().written_output().contains("done"));
+}
+
+#[test]
+fn width_change_triggers_full_redraw() {
+    let terminal = VirtualTerminal::new(20, 5);
+    let mut tui = Tui::new(terminal);
+    tui.add_child(Box::new(Text::new("hello")));
+    tui.render_once().unwrap();
+    tui.terminal_mut().clear_ops();
+    tui.terminal_mut().resize(30, 5);
+
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(outcome.strategy, RenderStrategy::FullRedraw);
+    assert!(tui.terminal().ops().contains(&TerminalOp::ClearScreen));
+}
+
+#[test]
+fn shrink_with_clear_on_shrink_triggers_full_redraw() {
+    let terminal = VirtualTerminal::new(20, 5);
+    let mut tui = Tui::new(terminal);
+    tui.set_clear_on_shrink(true);
+    tui.add_child(Box::new(RawComponent::new(&["one", "two", "three"])));
+    tui.render_once().unwrap();
+    tui.terminal_mut().clear_ops();
+
+    tui.clear_children();
+    tui.add_child(Box::new(RawComponent::new(&["one"])));
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(outcome.strategy, RenderStrategy::FullRedraw);
+    assert!(tui.terminal().ops().contains(&TerminalOp::ClearScreen));
+}
+
+#[test]
+fn unchanged_render_reports_no_change() {
+    let terminal = VirtualTerminal::new(20, 5);
+    let mut tui = Tui::new(terminal);
+    tui.add_child(Box::new(Text::new("hello")));
+    tui.render_once().unwrap();
+    tui.terminal_mut().clear_ops();
+
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(outcome.strategy, RenderStrategy::NoChange);
+    assert!(tui.terminal().ops().is_empty());
+}
