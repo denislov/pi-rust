@@ -25,8 +25,26 @@ impl VirtualTerminal {
         }
     }
 
+    pub fn resize(&mut self, columns: usize, rows: usize) {
+        self.size = TerminalSize { columns, rows };
+    }
+
     pub fn ops(&self) -> &[TerminalOp] {
         &self.ops
+    }
+
+    pub fn clear_ops(&mut self) {
+        self.ops.clear();
+    }
+
+    pub fn written_output(&self) -> String {
+        self.ops
+            .iter()
+            .filter_map(|op| match op {
+                TerminalOp::Write(data) => Some(data.as_str()),
+                _ => None,
+            })
+            .collect()
     }
 }
 
