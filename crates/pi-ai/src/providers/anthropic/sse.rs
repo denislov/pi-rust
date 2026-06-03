@@ -41,6 +41,8 @@ pub fn process_chunk(chunk: &[u8], buf: &mut Vec<u8>) -> Vec<ServerSentEvent> {
                     data: data_parts.join(""),
                 });
                 data_parts.clear();
+            } else {
+                event_type = None; // clear stale event type on data-less dispatch
             }
         } else if let Some(rest) = trimmed.strip_prefix(':') {
             // comment line, ignore
@@ -82,6 +84,12 @@ where
         if !buf.is_empty() {
             for event in process_chunk(&[], &mut buf) {
                 yield Ok(event);
+            }
+            // if incomplete line remains without trailing newline, emit as data
+            if !buf.is_empty() {
+                let data = String::from_utf8_lossy(&buf).into_owned();
+                buf.clear();
+                yield Ok(ServerSentEvent { event: None, data });
             }
         }
     }
