@@ -66,13 +66,22 @@ pub enum StreamEvent {
     #[serde(rename = "message_start")]
     MessageStart { message: MessageInfo },
     #[serde(rename = "content_block_start")]
-    ContentBlockStart { index: u32, content_block: ContentBlockStart },
+    ContentBlockStart {
+        index: u32,
+        content_block: ContentBlockStart,
+    },
     #[serde(rename = "content_block_delta")]
-    ContentBlockDelta { index: u32, delta: ContentBlockDelta },
+    ContentBlockDelta {
+        index: u32,
+        delta: ContentBlockDelta,
+    },
     #[serde(rename = "content_block_stop")]
     ContentBlockStop { index: u32 },
     #[serde(rename = "message_delta")]
-    MessageDelta { delta: MessageDelta, usage: MessageUsage },
+    MessageDelta {
+        delta: MessageDelta,
+        usage: MessageUsage,
+    },
     #[serde(rename = "message_stop")]
     MessageStop,
     #[serde(rename = "ping")]

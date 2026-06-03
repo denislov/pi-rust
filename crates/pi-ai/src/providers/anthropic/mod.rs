@@ -7,8 +7,10 @@ use async_stream::stream;
 use futures::StreamExt;
 
 use crate::registry::ApiProvider;
-use crate::types::{AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions};
 use crate::stream::EventStream;
+use crate::types::{
+    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
+};
 use crate::util::env_keys::env_api_key;
 use convert::build_request;
 
@@ -31,13 +33,9 @@ impl AnthropicProvider {
 }
 
 impl ApiProvider for AnthropicProvider {
-    fn stream(
-        &self,
-        model: &Model,
-        ctx: Context,
-        opts: Option<StreamOptions>,
-    ) -> EventStream {
-        let key = opts.as_ref()
+    fn stream(&self, model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+        let key = opts
+            .as_ref()
             .and_then(|o| o.api_key.clone())
             .or_else(|| self.resolve_key());
         let cancel = opts.as_ref().and_then(|o| o.cancel.clone());
@@ -59,7 +57,8 @@ impl ApiProvider for AnthropicProvider {
         let base_url = model.base_url.trim_end_matches('/');
         let url = format!("{}/v1/messages", base_url);
 
-        let mut request = self.client
+        let mut request = self
+            .client
             .post(&url)
             .header("x-api-key", &api_key)
             .header("anthropic-version", "2023-06-01")

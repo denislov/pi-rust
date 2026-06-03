@@ -1,8 +1,8 @@
-pub mod faux;
 pub mod anthropic;
+pub mod faux;
 
-use std::sync::Arc;
 use crate::registry;
+use std::sync::Arc;
 
 /// Register all built-in providers in the global registry.
 /// Call this once at startup.

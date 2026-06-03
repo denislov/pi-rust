@@ -8,8 +8,14 @@ pub fn repair_json(input: &str) -> String {
             '\\' => {
                 out.push('\\');
                 if let Some(&next) = chars.peek() {
-                    if next == '\\' || next == '"' || next == '/' || next == 'b'
-                        || next == 'f' || next == 'n' || next == 'r' || next == 't'
+                    if next == '\\'
+                        || next == '"'
+                        || next == '/'
+                        || next == 'b'
+                        || next == 'f'
+                        || next == 'n'
+                        || next == 'r'
+                        || next == 't'
                         || next == 'u'
                     {
                         // valid escape, keep it
@@ -56,18 +62,30 @@ fn close_incomplete(s: &str) -> String {
     let mut escaped = false;
 
     for c in s.chars() {
-        if escaped { escaped = false; continue; }
-        if c == '\\' && in_string { escaped = true; continue; }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' && in_string {
+            escaped = true;
+            continue;
+        }
         match c {
             '"' => in_string = !in_string,
             '{' if !in_string => stack.push('}'),
             '[' if !in_string => stack.push(']'),
-            '}' | ']' if !in_string => { stack.pop(); }
+            '}' | ']' if !in_string => {
+                stack.pop();
+            }
             _ => {}
         }
     }
-    if in_string { out.push('"'); }
-    while let Some(bracket) = stack.pop() { out.push(bracket); }
+    if in_string {
+        out.push('"');
+    }
+    while let Some(bracket) = stack.pop() {
+        out.push(bracket);
+    }
     out
 }
 

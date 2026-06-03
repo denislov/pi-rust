@@ -1,12 +1,14 @@
-use crate::types::{ContentBlock, Context, Message, Model, StreamOptions};
 use super::wire;
+use crate::types::{ContentBlock, Context, Message, Model, StreamOptions};
 
 /// Normalize a tool-call id to match Anthropic's `^[a-zA-Z0-9_-]{1,64}$`.
 /// If the id is already valid, return as-is. Otherwise sanitize and truncate.
 pub fn normalize_tool_call_id(id: &str) -> String {
     let is_valid = !id.is_empty()
         && id.len() <= 64
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
     if is_valid {
         return id.to_string();
     }
@@ -34,11 +36,7 @@ pub fn map_stop_reason(s: &str) -> crate::types::StopReason {
 }
 
 /// Convert a Context to an Anthropic Request.
-pub fn build_request(
-    model: &Model,
-    ctx: &Context,
-    opts: &Option<StreamOptions>,
-) -> wire::Request {
+pub fn build_request(model: &Model, ctx: &Context, opts: &Option<StreamOptions>) -> wire::Request {
     let max_tokens = opts
         .as_ref()
         .and_then(|o| o.max_tokens)
@@ -49,29 +47,39 @@ pub fn build_request(
         vec![wire::SystemBlock {
             block_type: "text".into(),
             text: sp.clone(),
-            cache_control: Some(wire::CacheControl { cache_type: "ephemeral".into() }),
+            cache_control: Some(wire::CacheControl {
+                cache_type: "ephemeral".into(),
+            }),
         }]
     });
 
     let messages = convert_messages(&ctx.messages);
 
     let tools = ctx.tools.as_ref().map(|tools| {
-        tools.iter().map(|t| wire::ToolDef {
-            name: t.name.clone(),
-            description: t.description.clone(),
-            input_schema: t.parameters.clone(),
-        }).collect()
+        tools
+            .iter()
+            .map(|t| wire::ToolDef {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                input_schema: t.parameters.clone(),
+            })
+            .collect()
     });
 
     let temperature = opts.as_ref().and_then(|o| o.temperature);
 
     let thinking = opts.as_ref().and_then(|o| {
-        o.thinking.as_ref().filter(|t| t.enabled).map(|t| {
-            wire::ThinkingConfig {
-                think_type: if t.budget_tokens.is_some() { "enabled".into() } else { "auto".into() },
+        o.thinking
+            .as_ref()
+            .filter(|t| t.enabled)
+            .map(|t| wire::ThinkingConfig {
+                think_type: if t.budget_tokens.is_some() {
+                    "enabled".into()
+                } else {
+                    "auto".into()
+                },
                 budget_tokens: t.budget_tokens,
-            }
-        })
+            })
     });
 
     let tool_choice = opts.as_ref().and_then(|o| o.tool_choice.clone());
@@ -108,7 +116,11 @@ fn convert_messages(messages: &[Message]) -> Vec<wire::RequestMessage> {
                     content: convert_content(content),
                 });
             }
-            Message::ToolResult { tool_call_id, content, .. } => {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } => {
                 let tool_content = serde_json::json!({
                     "type": "tool_result",
                     "tool_use_id": normalize_tool_call_id(tool_call_id),
@@ -138,32 +150,40 @@ fn convert_messages(messages: &[Message]) -> Vec<wire::RequestMessage> {
 
 /// Convert pi ContentBlocks to Anthropic-compatible JSON array.
 fn convert_content(blocks: &[ContentBlock]) -> serde_json::Value {
-    let items: Vec<serde_json::Value> = blocks.iter().map(|b| match b {
-        ContentBlock::Text { text, .. } => {
-            serde_json::json!({ "type": "text", "text": text })
-        }
-        ContentBlock::Thinking { thinking, .. } => {
-            serde_json::json!({ "type": "thinking", "thinking": thinking })
-        }
-        ContentBlock::Image { data, mime_type } => {
-            serde_json::json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": mime_type,
-                    "data": data,
-                }
-            })
-        }
-        ContentBlock::ToolCall { id, name, arguments, .. } => {
-            serde_json::json!({
-                "type": "tool_use",
-                "id": normalize_tool_call_id(id),
-                "name": name,
-                "input": arguments,
-            })
-        }
-    }).collect();
+    let items: Vec<serde_json::Value> = blocks
+        .iter()
+        .map(|b| match b {
+            ContentBlock::Text { text, .. } => {
+                serde_json::json!({ "type": "text", "text": text })
+            }
+            ContentBlock::Thinking { thinking, .. } => {
+                serde_json::json!({ "type": "thinking", "thinking": thinking })
+            }
+            ContentBlock::Image { data, mime_type } => {
+                serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": data,
+                    }
+                })
+            }
+            ContentBlock::ToolCall {
+                id,
+                name,
+                arguments,
+                ..
+            } => {
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": normalize_tool_call_id(id),
+                    "name": name,
+                    "input": arguments,
+                })
+            }
+        })
+        .collect();
     serde_json::Value::Array(items)
 }
 
@@ -191,32 +211,52 @@ mod tests {
 
     #[test]
     fn map_stop_reason_tool_use() {
-        assert_eq!(map_stop_reason("tool_use"), crate::types::StopReason::ToolUse);
+        assert_eq!(
+            map_stop_reason("tool_use"),
+            crate::types::StopReason::ToolUse
+        );
     }
 
     #[test]
     fn map_stop_reason_max_tokens() {
-        assert_eq!(map_stop_reason("max_tokens"), crate::types::StopReason::Length);
+        assert_eq!(
+            map_stop_reason("max_tokens"),
+            crate::types::StopReason::Length
+        );
     }
 
     #[test]
     fn map_stop_reason_unknown() {
-        assert_eq!(map_stop_reason("weird_reason"), crate::types::StopReason::Error);
+        assert_eq!(
+            map_stop_reason("weird_reason"),
+            crate::types::StopReason::Error
+        );
     }
 
     #[test]
     fn build_basic_request() {
         let model = Model {
-            id: "claude-haiku-4-5".into(), name: "Haiku".into(),
-            api: "anthropic-messages".into(), provider: "anthropic".into(),
-            base_url: "https://api.anthropic.com".into(), reasoning: false,
-            input: 1.0, output: 5.0, cache_read: None, cache_write: None,
-            context_window: 200000, max_tokens: Some(8192), headers: None,
+            id: "claude-haiku-4-5".into(),
+            name: "Haiku".into(),
+            api: "anthropic-messages".into(),
+            provider: "anthropic".into(),
+            base_url: "https://api.anthropic.com".into(),
+            reasoning: false,
+            input: 1.0,
+            output: 5.0,
+            cache_read: None,
+            cache_write: None,
+            context_window: 200000,
+            max_tokens: Some(8192),
+            headers: None,
         };
         let ctx = Context {
             system_prompt: Some("Be helpful.".into()),
             messages: vec![Message::User {
-                content: vec![ContentBlock::Text { text: "Hello".into(), text_signature: None }],
+                content: vec![ContentBlock::Text {
+                    text: "Hello".into(),
+                    text_signature: None,
+                }],
             }],
             tools: None,
         };
@@ -236,13 +276,19 @@ mod tests {
                 tool_call_id: "call_1".into(),
                 tool_name: None,
                 is_error: None,
-                content: vec![ContentBlock::Text { text: "result1".into(), text_signature: None }],
+                content: vec![ContentBlock::Text {
+                    text: "result1".into(),
+                    text_signature: None,
+                }],
             },
             Message::ToolResult {
                 tool_call_id: "call_2".into(),
                 tool_name: None,
                 is_error: None,
-                content: vec![ContentBlock::Text { text: "result2".into(), text_signature: None }],
+                content: vec![ContentBlock::Text {
+                    text: "result2".into(),
+                    text_signature: None,
+                }],
             },
         ];
         let converted = convert_messages(&messages);

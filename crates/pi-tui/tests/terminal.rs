@@ -10,7 +10,13 @@ fn virtual_terminal_records_operations() {
     terminal.clear_from_cursor().unwrap();
     terminal.flush().unwrap();
 
-    assert_eq!(terminal.size(), TerminalSize { columns: 12, rows: 4 });
+    assert_eq!(
+        terminal.size(),
+        TerminalSize {
+            columns: 12,
+            rows: 4
+        }
+    );
     assert_eq!(
         terminal.ops(),
         &[
@@ -30,6 +36,12 @@ fn virtual_terminal_can_resize_and_clear_ops() {
     terminal.resize(20, 8);
     terminal.clear_ops();
 
-    assert_eq!(terminal.size(), TerminalSize { columns: 20, rows: 8 });
+    assert_eq!(
+        terminal.size(),
+        TerminalSize {
+            columns: 20,
+            rows: 8
+        }
+    );
     assert!(terminal.ops().is_empty());
 }

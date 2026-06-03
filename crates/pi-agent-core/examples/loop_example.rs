@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use futures::StreamExt;
-use pi_ai::registry;
-use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{ContentBlock, Model, StopReason};
 use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentTool};
+use pi_ai::providers::faux::FauxProvider;
+use pi_ai::registry;
+use pi_ai::types::{ContentBlock, Model, StopReason};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -20,9 +20,13 @@ async fn main() {
         provider: "faux".into(),
         base_url: String::new(),
         reasoning: false,
-        input: 0.0, output: 0.0,
-        cache_read: None, cache_write: None,
-        context_window: 0, max_tokens: None, headers: None,
+        input: 0.0,
+        output: 0.0,
+        cache_read: None,
+        cache_write: None,
+        context_window: 0,
+        max_tokens: None,
+        headers: None,
     };
 
     let agent = Agent::new(AgentConfig {
@@ -62,12 +66,10 @@ async fn main() {
             AgentEvent::ToolCallStart { tool_name, .. } => {
                 println!("\n[tool call: {}]", tool_name);
             }
-            AgentEvent::ToolCallEnd { result, .. } => {
-                match result {
-                    Ok(blocks) => println!("[tool result: {:?}]", blocks),
-                    Err(e) => println!("[tool error: {}]", e),
-                }
-            }
+            AgentEvent::ToolCallEnd { result, .. } => match result {
+                Ok(blocks) => println!("[tool result: {:?}]", blocks),
+                Err(e) => println!("[tool error: {}]", e),
+            },
             AgentEvent::AgentDone { message } => {
                 println!("\n\nDone — stop reason: {:?}", message.stop_reason);
             }
@@ -82,8 +84,12 @@ async fn main() {
         match msg {
             pi_agent_core::AgentMessage::UserText { text, .. } => println!("  User: {}", text),
             pi_agent_core::AgentMessage::Assistant { .. } => println!("  Assistant (response)"),
-            pi_agent_core::AgentMessage::ToolResult { tool_call_id, .. } => println!("  ToolResult: {}", tool_call_id),
-            pi_agent_core::AgentMessage::SystemPrompt { text, .. } => println!("  System: {}", text),
+            pi_agent_core::AgentMessage::ToolResult { tool_call_id, .. } => {
+                println!("  ToolResult: {}", tool_call_id)
+            }
+            pi_agent_core::AgentMessage::SystemPrompt { text, .. } => {
+                println!("  System: {}", text)
+            }
         }
     }
 }

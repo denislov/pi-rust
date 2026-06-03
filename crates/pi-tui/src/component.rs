@@ -10,7 +10,9 @@ pub struct Container {
 
 impl Container {
     pub fn new() -> Self {
-        Self { children: Vec::new() }
+        Self {
+            children: Vec::new(),
+        }
     }
 
     pub fn add_child(&mut self, child: Box<dyn Component>) {

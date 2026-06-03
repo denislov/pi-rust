@@ -1,9 +1,7 @@
-pub mod types;
 pub mod agent;
-pub mod convert;
 pub mod agent_loop;
+pub mod convert;
+pub mod types;
 
 pub use agent::Agent;
-pub use types::{
-    AgentMessage, AgentTool, AgentConfig, AgentEvent, AgentStream, ToolFn,
-};
+pub use types::{AgentConfig, AgentEvent, AgentMessage, AgentStream, AgentTool, ToolFn};

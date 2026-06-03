@@ -1,5 +1,5 @@
-use pi_ai::types::{ContentBlock, Context, Message, Tool};
 use crate::types::{AgentMessage, AgentTool};
+use pi_ai::types::{ContentBlock, Context, Message, Tool};
 
 pub fn convert_to_context(
     system_prompt: &Option<String>,
@@ -18,7 +18,13 @@ pub fn convert_to_context(
             AgentMessage::Assistant { message, .. } => Some(Message::Assistant {
                 content: message.content.clone(),
             }),
-            AgentMessage::ToolResult { tool_call_id, content, tool_name, is_error, .. } => Some(Message::ToolResult {
+            AgentMessage::ToolResult {
+                tool_call_id,
+                content,
+                tool_name,
+                is_error,
+                ..
+            } => Some(Message::ToolResult {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: Some(tool_name.clone()),
                 is_error: Some(*is_error),
@@ -76,12 +82,10 @@ mod tests {
         let ctx = convert_to_context(&None, &msgs, &[]);
         assert_eq!(ctx.messages.len(), 1);
         match &ctx.messages[0] {
-            Message::User { content } => {
-                match &content[0] {
-                    ContentBlock::Text { text, .. } => assert_eq!(text, "hello"),
-                    _ => panic!("expected text block"),
-                }
-            }
+            Message::User { content } => match &content[0] {
+                ContentBlock::Text { text, .. } => assert_eq!(text, "hello"),
+                _ => panic!("expected text block"),
+            },
             _ => panic!("expected user message"),
         }
     }
@@ -118,7 +122,11 @@ mod tests {
         let ctx = convert_to_context(&None, &msgs, &[]);
         assert_eq!(ctx.messages.len(), 1);
         match &ctx.messages[0] {
-            Message::ToolResult { tool_call_id, content, .. } => {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } => {
                 assert_eq!(tool_call_id, "call_1");
                 assert_eq!(content.len(), 1);
             }

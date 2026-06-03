@@ -1,6 +1,6 @@
+use async_stream::stream;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use async_stream::stream;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerSentEvent {

@@ -1,4 +1,4 @@
-use crate::{visible_width, Component, Terminal};
+use crate::{Component, Terminal, visible_width};
 
 const SYNC_START: &str = "\x1b[?2026h";
 const SYNC_END: &str = "\x1b[?2026l";

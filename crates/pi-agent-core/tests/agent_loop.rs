@@ -1,10 +1,10 @@
 mod common;
 use common::{TestProvider, text_turn, tool_use_turn};
-use std::sync::Arc;
 use futures::StreamExt;
+use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool};
 use pi_ai::registry;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model};
-use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool};
+use std::sync::Arc;
 
 fn test_model(api_key: &str) -> Model {
     Model {
@@ -14,9 +14,13 @@ fn test_model(api_key: &str) -> Model {
         provider: "test".into(),
         base_url: "".into(),
         reasoning: false,
-        input: 0.0, output: 0.0,
-        cache_read: None, cache_write: None,
-        context_window: 0, max_tokens: None, headers: None,
+        input: 0.0,
+        output: 0.0,
+        cache_read: None,
+        cache_write: None,
+        context_window: 0,
+        max_tokens: None,
+        headers: None,
     }
 }
 
@@ -32,9 +36,7 @@ fn test_config(api_key: &str) -> AgentConfig {
 #[tokio::test]
 async fn single_turn_text_response() {
     let api_key = "test-api-1";
-    let provider = Arc::new(TestProvider::new(vec![
-        text_turn("Hello, world!"),
-    ]));
+    let provider = Arc::new(TestProvider::new(vec![text_turn("Hello, world!")]));
     registry::register(api_key, provider);
 
     let agent = Agent::new(test_config(api_key));
@@ -42,12 +44,17 @@ async fn single_turn_text_response() {
     let stream = agent.prompt("hi");
     let events: Vec<_> = stream.collect().await;
 
-    let has_done = events.iter().any(|e| matches!(e, AgentEvent::AgentDone { .. }));
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::AgentDone { .. }));
     assert!(has_done, "should have AgentDone event");
 
-    let has_text = events.iter().any(|e| matches!(e, AgentEvent::LlmEvent(
-        AssistantMessageEvent::TextDelta { .. }
-    )));
+    let has_text = events.iter().any(|e| {
+        matches!(
+            e,
+            AgentEvent::LlmEvent(AssistantMessageEvent::TextDelta { .. })
+        )
+    });
     assert!(has_text, "should have text delta event");
 
     let msgs = agent.messages();
@@ -74,7 +81,10 @@ async fn tool_use_turn_executes_tool() {
         description: "echoes input".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
         execute: Arc::new(|args| {
-            let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("no text");
+            let text = args
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("no text");
             let result = vec![ContentBlock::Text {
                 text: format!("echo: {}", text),
                 text_signature: None,
@@ -87,12 +97,18 @@ async fn tool_use_turn_executes_tool() {
     let stream = agent.prompt("echo hi");
     let events: Vec<_> = stream.collect().await;
 
-    let has_tool_start = events.iter().any(|e| matches!(e, AgentEvent::ToolCallStart { .. }));
-    let has_tool_end = events.iter().any(|e| matches!(e, AgentEvent::ToolCallEnd { .. }));
+    let has_tool_start = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ToolCallStart { .. }));
+    let has_tool_end = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ToolCallEnd { .. }));
     assert!(has_tool_start, "should have ToolCallStart");
     assert!(has_tool_end, "should have ToolCallEnd");
 
-    let has_done = events.iter().any(|e| matches!(e, AgentEvent::AgentDone { .. }));
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::AgentDone { .. }));
     assert!(has_done, "should have AgentDone");
 
     let msgs = agent.messages();
@@ -116,14 +132,19 @@ async fn unknown_tool_yields_error_content_and_continues() {
     let stream = agent.prompt("use nonexistent tool");
     let events: Vec<_> = stream.collect().await;
 
-    let tool_end = events.iter().find_map(|e| match e {
-        AgentEvent::ToolCallEnd { result, .. } => Some(result.clone()),
-        _ => None,
-    }).unwrap();
+    let tool_end = events
+        .iter()
+        .find_map(|e| match e {
+            AgentEvent::ToolCallEnd { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .unwrap();
     assert!(tool_end.is_err());
     assert!(tool_end.unwrap_err().contains("unknown tool"));
 
-    let has_done = events.iter().any(|e| matches!(e, AgentEvent::AgentDone { .. }));
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::AgentDone { .. }));
     assert!(has_done);
 
     registry::unregister(api_key);
@@ -134,7 +155,11 @@ async fn max_turns_exceeded_yields_error() {
     let api_key = "test-api-4";
     let mut turns = Vec::new();
     for _ in 0..10 {
-        turns.push(tool_use_turn("tool_1", "echo", serde_json::json!({"text": "x"})));
+        turns.push(tool_use_turn(
+            "tool_1",
+            "echo",
+            serde_json::json!({"text": "x"}),
+        ));
     }
     let provider = Arc::new(TestProvider::new(turns));
     registry::register(api_key, provider);
@@ -161,7 +186,9 @@ async fn max_turns_exceeded_yields_error() {
     let stream = agent.prompt("go");
     let events: Vec<_> = stream.collect().await;
 
-    let has_error = events.iter().any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("max turns")));
+    let has_error = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("max turns")));
     assert!(has_error, "should have max turns error");
 
     registry::unregister(api_key);
@@ -170,9 +197,7 @@ async fn max_turns_exceeded_yields_error() {
 #[tokio::test]
 async fn abort_mid_turn_yields_error() {
     let api_key = "test-api-5";
-    let provider = Arc::new(TestProvider::new(vec![
-        text_turn("Hello"),
-    ]));
+    let provider = Arc::new(TestProvider::new(vec![text_turn("Hello")]));
     registry::register(api_key, provider);
 
     let agent = Agent::new(test_config(api_key));
@@ -181,7 +206,9 @@ async fn abort_mid_turn_yields_error() {
     agent.abort();
 
     let events: Vec<_> = stream.collect().await;
-    let has_abort_error = events.iter().any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("aborted")));
+    let has_abort_error = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("aborted")));
     assert!(has_abort_error, "should have aborted error");
 
     registry::unregister(api_key);

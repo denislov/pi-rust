@@ -2,11 +2,19 @@ use pi_ai::types::*;
 
 fn test_model() -> Model {
     Model {
-        id: "claude-haiku-4-5".into(), name: "Haiku".into(),
-        api: "anthropic-messages".into(), provider: "anthropic".into(),
-        base_url: "https://api.anthropic.com".into(), reasoning: false,
-        input: 1.0, output: 5.0, cache_read: None, cache_write: None,
-        context_window: 200000, max_tokens: Some(8192), headers: None,
+        id: "claude-haiku-4-5".into(),
+        name: "Haiku".into(),
+        api: "anthropic-messages".into(),
+        provider: "anthropic".into(),
+        base_url: "https://api.anthropic.com".into(),
+        reasoning: false,
+        input: 1.0,
+        output: 5.0,
+        cache_read: None,
+        cache_write: None,
+        context_window: 200000,
+        max_tokens: Some(8192),
+        headers: None,
     }
 }
 
@@ -15,7 +23,10 @@ fn basic_request_has_system_prompt_with_cache_control() {
     let ctx = Context {
         system_prompt: Some("Be concise.".into()),
         messages: vec![Message::User {
-            content: vec![ContentBlock::Text { text: "hi".into(), text_signature: None }],
+            content: vec![ContentBlock::Text {
+                text: "hi".into(),
+                text_signature: None,
+            }],
         }],
         tools: None,
     };
@@ -34,16 +45,26 @@ fn tool_result_coalescing_multiple_results() {
             tool_call_id: "a".into(),
             tool_name: None,
             is_error: None,
-            content: vec![ContentBlock::Text { text: "r1".into(), text_signature: None }],
+            content: vec![ContentBlock::Text {
+                text: "r1".into(),
+                text_signature: None,
+            }],
         },
         Message::ToolResult {
             tool_call_id: "b".into(),
             tool_name: None,
             is_error: None,
-            content: vec![ContentBlock::Text { text: "r2".into(), text_signature: None }],
+            content: vec![ContentBlock::Text {
+                text: "r2".into(),
+                text_signature: None,
+            }],
         },
     ];
-    let ctx = Context { system_prompt: None, messages: msgs, tools: None };
+    let ctx = Context {
+        system_prompt: None,
+        messages: msgs,
+        tools: None,
+    };
     let req = pi_ai::providers::anthropic::convert::build_request(&test_model(), &ctx, &None);
     assert_eq!(req.messages.len(), 1);
     assert_eq!(req.messages[0].role, "user");
@@ -71,7 +92,11 @@ fn image_block_converts_to_anthropic_format() {
 
 #[test]
 fn max_tokens_falls_back_to_model_default() {
-    let ctx = Context { system_prompt: None, messages: vec![], tools: None };
+    let ctx = Context {
+        system_prompt: None,
+        messages: vec![],
+        tools: None,
+    };
     let req = pi_ai::providers::anthropic::convert::build_request(&test_model(), &ctx, &None);
     assert_eq!(req.max_tokens, 8192);
 }

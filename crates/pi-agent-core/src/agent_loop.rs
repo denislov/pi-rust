@@ -1,11 +1,11 @@
-use std::sync::{Arc, RwLock};
 use async_stream::stream;
 use futures::StreamExt;
+use std::sync::{Arc, RwLock};
 
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
 use crate::agent::AgentState;
 use crate::convert::convert_to_context;
 use crate::types::{AgentEvent, AgentMessage, AgentStream};
+use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
 
 pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
     Box::pin(stream! {

@@ -1,7 +1,7 @@
-use std::pin::Pin;
-use std::sync::Arc;
 use futures::Stream;
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Model, StreamOptions};
+use std::pin::Pin;
+use std::sync::Arc;
 
 // ── AgentMessage ───────────────────────────────────
 
@@ -31,7 +31,9 @@ pub enum AgentMessage {
 // ── AgentTool ──────────────────────────────────────
 
 pub type ToolFn = Arc<
-    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Result<Vec<ContentBlock>, String>> + Send>>
+    dyn Fn(
+            serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<ContentBlock>, String>> + Send>>
         + Send
         + Sync,
 >;
@@ -58,12 +60,24 @@ pub struct AgentConfig {
 
 #[derive(Debug)]
 pub enum AgentEvent {
-    TurnStart { turn: u32 },
+    TurnStart {
+        turn: u32,
+    },
     LlmEvent(AssistantMessageEvent),
-    ToolCallStart { tool_call_id: String, tool_name: String },
-    ToolCallEnd { tool_call_id: String, result: Result<Vec<ContentBlock>, String> },
-    AgentDone { message: AssistantMessage },
-    AgentError { error: String },
+    ToolCallStart {
+        tool_call_id: String,
+        tool_name: String,
+    },
+    ToolCallEnd {
+        tool_call_id: String,
+        result: Result<Vec<ContentBlock>, String>,
+    },
+    AgentDone {
+        message: AssistantMessage,
+    },
+    AgentError {
+        error: String,
+    },
 }
 
 // ── AgentStream ────────────────────────────────────
@@ -82,7 +96,10 @@ mod tests {
             description: "echoes input".into(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
             execute: Arc::new(|args| {
-                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("no text");
+                let text = args
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("no text");
                 let result: Vec<ContentBlock> = vec![ContentBlock::Text {
                     text: text.to_string(),
                     text_signature: None,

@@ -1,16 +1,13 @@
+use crate::stream::EventStream;
+use crate::types::{
+    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
+};
+use async_stream::stream;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
-use async_stream::stream;
-use crate::types::{AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions};
-use crate::stream::EventStream;
 
 pub trait ApiProvider: Send + Sync {
-    fn stream(
-        &self,
-        model: &Model,
-        ctx: Context,
-        opts: Option<StreamOptions>,
-    ) -> EventStream;
+    fn stream(&self, model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream;
 }
 
 static REGISTRY: LazyLock<RwLock<HashMap<String, Arc<dyn ApiProvider>>>> =
@@ -31,11 +28,7 @@ pub fn lookup(api: &str) -> Option<Arc<dyn ApiProvider>> {
 /// Top-level entry point: resolves provider by model.api, injects env API key
 /// if not provided, delegates to provider.stream(). Returns a stream that
 /// immediately yields Error on unknown api.
-pub fn stream_model(
-    model: &Model,
-    ctx: Context,
-    mut opts: Option<StreamOptions>,
-) -> EventStream {
+pub fn stream_model(model: &Model, ctx: Context, mut opts: Option<StreamOptions>) -> EventStream {
     let api = model.api.clone();
     let provider = match lookup(&api) {
         Some(p) => p,
@@ -64,13 +57,18 @@ pub fn stream_model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use futures::StreamExt;
     use crate::types::AssistantMessage;
+    use futures::StreamExt;
+    use std::sync::Arc;
 
     struct DummyProvider;
     impl ApiProvider for DummyProvider {
-        fn stream(&self, _model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        fn stream(
+            &self,
+            _model: &Model,
+            _ctx: Context,
+            _opts: Option<StreamOptions>,
+        ) -> EventStream {
             Box::pin(stream! {
                 let mut msg = AssistantMessage::empty("dummy", "dummy");
                 msg.content.push(crate::types::ContentBlock::Text {
@@ -93,12 +91,29 @@ mod tests {
     #[tokio::test]
     async fn stream_model_unknown_api_returns_error() {
         let model = Model {
-            id: "x".into(), name: "x".into(), api: "nonexistent".into(),
-            provider: "none".into(), base_url: "".into(), reasoning: false,
-            input: 0.0, output: 0.0, cache_read: None, cache_write: None,
-            context_window: 0, max_tokens: None, headers: None,
+            id: "x".into(),
+            name: "x".into(),
+            api: "nonexistent".into(),
+            provider: "none".into(),
+            base_url: "".into(),
+            reasoning: false,
+            input: 0.0,
+            output: 0.0,
+            cache_read: None,
+            cache_write: None,
+            context_window: 0,
+            max_tokens: None,
+            headers: None,
         };
-        let mut stream = stream_model(&model, Context { system_prompt: None, messages: vec![], tools: None }, None);
+        let mut stream = stream_model(
+            &model,
+            Context {
+                system_prompt: None,
+                messages: vec![],
+                tools: None,
+            },
+            None,
+        );
         let event = stream.next().await.unwrap();
         assert!(matches!(event, AssistantMessageEvent::Error { .. }));
     }
@@ -107,12 +122,29 @@ mod tests {
     async fn stream_model_delegates_to_provider() {
         register("test-api", Arc::new(DummyProvider));
         let model = Model {
-            id: "x".into(), name: "x".into(), api: "test-api".into(),
-            provider: "test".into(), base_url: "".into(), reasoning: false,
-            input: 0.0, output: 0.0, cache_read: None, cache_write: None,
-            context_window: 0, max_tokens: None, headers: None,
+            id: "x".into(),
+            name: "x".into(),
+            api: "test-api".into(),
+            provider: "test".into(),
+            base_url: "".into(),
+            reasoning: false,
+            input: 0.0,
+            output: 0.0,
+            cache_read: None,
+            cache_write: None,
+            context_window: 0,
+            max_tokens: None,
+            headers: None,
         };
-        let mut stream = stream_model(&model, Context { system_prompt: None, messages: vec![], tools: None }, None);
+        let mut stream = stream_model(
+            &model,
+            Context {
+                system_prompt: None,
+                messages: vec![],
+                tools: None,
+            },
+            None,
+        );
         let event = stream.next().await.unwrap();
         assert!(matches!(event, AssistantMessageEvent::Done { .. }));
         unregister("test-api");

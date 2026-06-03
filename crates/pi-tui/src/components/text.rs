@@ -1,4 +1,4 @@
-use crate::{truncate_to_width, visible_width, Component};
+use crate::{Component, truncate_to_width, visible_width};
 
 pub struct Text {
     text: String,

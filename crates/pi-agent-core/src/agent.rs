@@ -1,7 +1,10 @@
-use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
-use tokio_util::sync::CancellationToken;
-use crate::types::{AgentMessage, AgentTool, AgentConfig, AgentStream};
 use crate::agent_loop;
+use crate::types::{AgentConfig, AgentMessage, AgentStream, AgentTool};
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio_util::sync::CancellationToken;
 
 pub struct AgentState {
     pub messages: Vec<AgentMessage>,
@@ -69,7 +72,9 @@ impl Agent {
         }
 
         let state = self.state.clone();
-        let guard = RunGuard { flag: self.running.clone() };
+        let guard = RunGuard {
+            flag: self.running.clone(),
+        };
         Box::pin(async_stream::stream! {
             let _guard = guard;
             let mut stream = agent_loop::run_loop(state);

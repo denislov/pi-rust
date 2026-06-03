@@ -1,6 +1,4 @@
-use pi_tui::{
-    Component, RenderStrategy, TerminalOp, Text, Tui, TuiError, VirtualTerminal,
-};
+use pi_tui::{Component, RenderStrategy, TerminalOp, Text, Tui, TuiError, VirtualTerminal};
 
 struct RawComponent {
     lines: Vec<String>,
@@ -34,7 +32,11 @@ fn first_render_uses_synchronized_full_redraw() {
     assert!(tui.terminal().ops().contains(&TerminalOp::HideCursor));
     assert!(tui.terminal().ops().contains(&TerminalOp::ClearScreen));
     assert!(tui.terminal().written_output().contains("\x1b[?2026h"));
-    assert!(tui.terminal().written_output().contains("hello\x1b[0m\x1b]8;;\x07"));
+    assert!(
+        tui.terminal()
+            .written_output()
+            .contains("hello\x1b[0m\x1b]8;;\x07")
+    );
     assert!(tui.terminal().written_output().contains("\x1b[?2026l"));
 }
 
@@ -66,7 +68,9 @@ fn line_too_wide_errors_before_writing() {
 fn second_render_updates_from_first_changed_line_without_full_clear() {
     let terminal = VirtualTerminal::new(20, 5);
     let mut tui = Tui::new(terminal);
-    tui.add_child(Box::new(RawComponent::new(&["header", "working", "footer"])));
+    tui.add_child(Box::new(RawComponent::new(&[
+        "header", "working", "footer",
+    ])));
     tui.render_once().unwrap();
     tui.terminal_mut().clear_ops();
 

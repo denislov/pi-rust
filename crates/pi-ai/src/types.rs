@@ -41,13 +41,9 @@ pub enum ContentBlock {
 #[serde(tag = "role")]
 pub enum Message {
     #[serde(rename = "user")]
-    User {
-        content: Vec<ContentBlock>,
-    },
+    User { content: Vec<ContentBlock> },
     #[serde(rename = "assistant")]
-    Assistant {
-        content: Vec<ContentBlock>,
-    },
+    Assistant { content: Vec<ContentBlock> },
     #[serde(rename = "toolResult")]
     ToolResult {
         #[serde(rename = "toolCallId")]
@@ -295,7 +291,10 @@ mod tests {
 
     #[test]
     fn content_block_text_roundtrip() {
-        let cb = ContentBlock::Text { text: "hello".into(), text_signature: None };
+        let cb = ContentBlock::Text {
+            text: "hello".into(),
+            text_signature: None,
+        };
         let json = serde_json::to_string(&cb).unwrap();
         assert_eq!(json, r#"{"type":"text","text":"hello"}"#);
         let back: ContentBlock = serde_json::from_str(&json).unwrap();
@@ -305,8 +304,10 @@ mod tests {
     #[test]
     fn content_block_toolcall_roundtrip() {
         let cb = ContentBlock::ToolCall {
-            id: "toolu_01".into(), name: "read".into(),
-            arguments: serde_json::json!({"path": "/x"}), thought_signature: None,
+            id: "toolu_01".into(),
+            name: "read".into(),
+            arguments: serde_json::json!({"path": "/x"}),
+            thought_signature: None,
         };
         let json = serde_json::to_string(&cb).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -318,7 +319,12 @@ mod tests {
 
     #[test]
     fn message_user_roundtrip() {
-        let msg = Message::User { content: vec![ContentBlock::Text { text: "hi".into(), text_signature: None }] };
+        let msg = Message::User {
+            content: vec![ContentBlock::Text {
+                text: "hi".into(),
+                text_signature: None,
+            }],
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""role":"user""#));
         let back: Message = serde_json::from_str(&json).unwrap();
@@ -360,7 +366,10 @@ mod tests {
         let mut msg = AssistantMessage::empty("test", "test");
         msg.error_message = Some("fail".into());
         msg.stop_reason = StopReason::Error;
-        let ev = AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
+        let ev = AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message: msg,
+        };
         let json = serde_json::to_string(&ev).unwrap();
         assert!(json.contains(r#""type":"error""#));
         let back: AssistantMessageEvent = serde_json::from_str(&json).unwrap();
@@ -392,8 +401,14 @@ mod tests {
 
     #[test]
     fn stop_reason_serde() {
-        assert_eq!(serde_json::to_string(&StopReason::Stop).unwrap(), r#""stop""#);
-        assert_eq!(serde_json::to_string(&StopReason::ToolUse).unwrap(), r#""toolUse""#);
+        assert_eq!(
+            serde_json::to_string(&StopReason::Stop).unwrap(),
+            r#""stop""#
+        );
+        assert_eq!(
+            serde_json::to_string(&StopReason::ToolUse).unwrap(),
+            r#""toolUse""#
+        );
         let sr: StopReason = serde_json::from_str(r#""toolUse""#).unwrap();
         assert_eq!(sr, StopReason::ToolUse);
     }
@@ -401,11 +416,19 @@ mod tests {
     #[test]
     fn model_serde_camelcase() {
         let m = Model {
-            id: "claude-sonnet-4-5".into(), name: "Claude Sonnet 4.5".into(),
-            api: "anthropic-messages".into(), provider: "anthropic".into(),
-            base_url: "https://api.anthropic.com".into(), reasoning: true,
-            input: 3.0, output: 15.0, cache_read: None, cache_write: None,
-            context_window: 200000, max_tokens: Some(8192), headers: None,
+            id: "claude-sonnet-4-5".into(),
+            name: "Claude Sonnet 4.5".into(),
+            api: "anthropic-messages".into(),
+            provider: "anthropic".into(),
+            base_url: "https://api.anthropic.com".into(),
+            reasoning: true,
+            input: 3.0,
+            output: 15.0,
+            cache_read: None,
+            cache_write: None,
+            context_window: 200000,
+            max_tokens: Some(8192),
+            headers: None,
         };
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains(r#""baseUrl""#));

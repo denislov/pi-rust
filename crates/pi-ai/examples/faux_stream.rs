@@ -1,26 +1,36 @@
-use std::sync::Arc;
 use futures::StreamExt;
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
 use pi_ai::registry;
 use pi_ai::types::*;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
-    let provider = Arc::new(FauxProvider::new(vec![
-        FauxResponse {
-            text_deltas: vec!["Thinking step-by-step...\n".into(), "The answer ".into(), "is 42.".into()],
-            thinking_deltas: vec![],
-            tool_calls: vec![],
-        },
-    ]));
+    let provider = Arc::new(FauxProvider::new(vec![FauxResponse {
+        text_deltas: vec![
+            "Thinking step-by-step...\n".into(),
+            "The answer ".into(),
+            "is 42.".into(),
+        ],
+        thinking_deltas: vec![],
+        tool_calls: vec![],
+    }]));
     registry::register("faux-api", provider);
 
     let model = Model {
-        id: "faux-model".into(), name: "Faux Model".into(),
-        api: "faux-api".into(), provider: "faux".into(),
-        base_url: String::new(), reasoning: false,
-        input: 0.0, output: 0.0, cache_read: None, cache_write: None,
-        context_window: 0, max_tokens: None, headers: None,
+        id: "faux-model".into(),
+        name: "Faux Model".into(),
+        api: "faux-api".into(),
+        provider: "faux".into(),
+        base_url: String::new(),
+        reasoning: false,
+        input: 0.0,
+        output: 0.0,
+        cache_read: None,
+        cache_write: None,
+        context_window: 0,
+        max_tokens: None,
+        headers: None,
     };
 
     let ctx = Context {
@@ -54,7 +64,10 @@ async fn main() {
                 println!("usage: {:?}", message.usage);
             }
             AssistantMessageEvent::Error { message, .. } => {
-                eprintln!("\nError: {}", message.error_message.as_deref().unwrap_or("unknown error"));
+                eprintln!(
+                    "\nError: {}",
+                    message.error_message.as_deref().unwrap_or("unknown error")
+                );
             }
             _ => {}
         }

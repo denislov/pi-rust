@@ -1,4 +1,4 @@
-use pi_tui::{visible_width, Component, Container, Spacer, Text};
+use pi_tui::{Component, Container, Spacer, Text, visible_width};
 
 #[test]
 fn spacer_renders_empty_lines() {
@@ -33,7 +33,10 @@ fn text_splits_long_words_without_exceeding_width() {
     let mut text = Text::new("abcdefghij");
     let lines = text.render(4);
 
-    assert_eq!(lines, vec!["abcd".to_string(), "efgh".to_string(), "ij".to_string()]);
+    assert_eq!(
+        lines,
+        vec!["abcd".to_string(), "efgh".to_string(), "ij".to_string()]
+    );
     assert!(lines.iter().all(|line| visible_width(line) <= 4));
 }
 

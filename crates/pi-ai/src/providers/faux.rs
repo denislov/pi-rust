@@ -1,11 +1,11 @@
-use std::sync::Mutex;
-use async_stream::stream;
 use crate::registry::ApiProvider;
-use crate::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model,
-    StopReason, StreamOptions, Usage,
-};
 use crate::stream::EventStream;
+use crate::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StopReason,
+    StreamOptions, Usage,
+};
+use async_stream::stream;
+use std::sync::Mutex;
 
 pub struct FauxProvider {
     pub responses: Mutex<FauxState>,
@@ -70,7 +70,10 @@ impl FauxProvider {
 
     /// Create a single faux call with the given responses and stop reason.
     pub fn single_call(responses: Vec<FauxResponse>, stop_reason: StopReason) -> FauxCall {
-        FauxCall { responses, stop_reason }
+        FauxCall {
+            responses,
+            stop_reason,
+        }
     }
 
     /// Create a text-only faux call with the given stop reason.

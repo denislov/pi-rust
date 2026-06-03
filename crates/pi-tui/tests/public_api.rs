@@ -1,6 +1,6 @@
 use pi_tui::{
-    visible_width, Component, Container, ProcessTerminal, Spacer, Terminal, TerminalSize, Text,
-    Tui, VirtualTerminal,
+    Component, Container, ProcessTerminal, Spacer, Terminal, TerminalSize, Text, Tui,
+    VirtualTerminal, visible_width,
 };
 
 #[test]
@@ -15,7 +15,13 @@ fn public_api_symbols_are_importable() {
 
     let terminal = VirtualTerminal::new(20, 5);
     let tui = Tui::new(terminal);
-    assert_eq!(tui.terminal().size(), TerminalSize { columns: 20, rows: 5 });
+    assert_eq!(
+        tui.terminal().size(),
+        TerminalSize {
+            columns: 20,
+            rows: 5
+        }
+    );
 
     let _ = std::mem::size_of::<ProcessTerminal>();
 }

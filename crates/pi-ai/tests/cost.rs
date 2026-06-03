@@ -1,12 +1,14 @@
+use pi_ai::models::{calculate_cost, lookup_model};
 use pi_ai::types::*;
-use pi_ai::models::{lookup_model, calculate_cost};
 
 #[test]
 fn haiku_cost() {
     let model = lookup_model("claude-haiku-4-5").unwrap();
     let mut usage = Usage {
-        input: 1_000_000, output: 1_000_000,
-        cache_read: 0, cache_write: 0,
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 0,
+        cache_write: 0,
         total_tokens: 2_000_000,
         cost: Cost::default(),
     };
@@ -19,8 +21,10 @@ fn haiku_cost() {
 fn opus_cost_with_cache() {
     let model = lookup_model("claude-opus-4-5").unwrap();
     let mut usage = Usage {
-        input: 0, output: 0,
-        cache_read: 1_000_000, cache_write: 1_000_000,
+        input: 0,
+        output: 0,
+        cache_read: 1_000_000,
+        cache_write: 1_000_000,
         total_tokens: 2_000_000,
         cost: Cost::default(),
     };

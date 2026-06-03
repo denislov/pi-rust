@@ -17,7 +17,10 @@ pub fn visible_width(text: &str) -> usize {
             continue;
         }
 
-        let ch = text[pos..].chars().next().expect("pos is on a char boundary");
+        let ch = text[pos..]
+            .chars()
+            .next()
+            .expect("pos is on a char boundary");
         if ch == '\t' {
             clean.push_str("   ");
         } else {
@@ -45,7 +48,10 @@ pub fn truncate_to_width(text: &str, max_width: usize) -> String {
             continue;
         }
 
-        let ch = text[pos..].chars().next().expect("pos is on a char boundary");
+        let ch = text[pos..]
+            .chars()
+            .next()
+            .expect("pos is on a char boundary");
         if ch == '\t' {
             if width + 3 > max_width {
                 break;

@@ -1,8 +1,11 @@
-use std::sync::Mutex;
 use async_stream::stream;
 use pi_ai::registry::ApiProvider;
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StopReason, StreamOptions};
 use pi_ai::stream::EventStream;
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StopReason,
+    StreamOptions,
+};
+use std::sync::Mutex;
 
 /// A scripted LLM response for one turn.
 pub struct ScriptedTurn {
@@ -19,7 +22,9 @@ pub struct TestProvider {
 
 impl TestProvider {
     pub fn new(turns: Vec<ScriptedTurn>) -> Self {
-        Self { turns: Mutex::new(turns) }
+        Self {
+            turns: Mutex::new(turns),
+        }
     }
 }
 
@@ -41,8 +46,10 @@ impl ApiProvider for TestProvider {
             turns.remove(0)
         };
 
-        let content = turn.events.last().map(|e| {
-            match e {
+        let content = turn
+            .events
+            .last()
+            .map(|e| match e {
                 AssistantMessageEvent::Start { partial, .. } => partial.content.clone(),
                 AssistantMessageEvent::TextStart { partial, .. } => partial.content.clone(),
                 AssistantMessageEvent::TextDelta { partial, .. } => partial.content.clone(),
@@ -55,8 +62,8 @@ impl ApiProvider for TestProvider {
                 AssistantMessageEvent::ToolcallEnd { partial, .. } => partial.content.clone(),
                 AssistantMessageEvent::Done { message, .. } => message.content.clone(),
                 AssistantMessageEvent::Error { .. } => vec![],
-            }
-        }).unwrap_or_default();
+            })
+            .unwrap_or_default();
 
         Box::pin(stream! {
             for event in &turn.events {
@@ -85,14 +92,20 @@ impl ApiProvider for TestProvider {
 
 /// Helper: create a simple text-response turn.
 pub fn text_turn(text: &str) -> ScriptedTurn {
-    let text_block = ContentBlock::Text { text: text.into(), text_signature: None };
+    let text_block = ContentBlock::Text {
+        text: text.into(),
+        text_signature: None,
+    };
     let mut msg = AssistantMessage::empty("test", "test-model");
     msg.content.push(text_block.clone());
     let partial = msg.clone();
 
     ScriptedTurn {
         events: vec![
-            AssistantMessageEvent::Start { content_index: None, partial: partial.clone() },
+            AssistantMessageEvent::Start {
+                content_index: None,
+                partial: partial.clone(),
+            },
             AssistantMessageEvent::TextStart {
                 content_index: 0,
                 partial: {
@@ -101,8 +114,15 @@ pub fn text_turn(text: &str) -> ScriptedTurn {
                     p
                 },
             },
-            AssistantMessageEvent::TextDelta { content_index: 0, delta: text.into(), partial: partial.clone() },
-            AssistantMessageEvent::TextEnd { content_index: 0, partial: partial.clone() },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: text.into(),
+                partial: partial.clone(),
+            },
+            AssistantMessageEvent::TextEnd {
+                content_index: 0,
+                partial: partial.clone(),
+            },
         ],
         stop_reason: StopReason::Stop,
         response_id: "resp_1".into(),
@@ -126,7 +146,10 @@ pub fn tool_use_turn(tool_id: &str, tool_name: &str, arguments: serde_json::Valu
 
     ScriptedTurn {
         events: vec![
-            AssistantMessageEvent::Start { content_index: None, partial: partial.clone() },
+            AssistantMessageEvent::Start {
+                content_index: None,
+                partial: partial.clone(),
+            },
             AssistantMessageEvent::ToolcallStart {
                 content_index: 0,
                 partial: {
@@ -145,7 +168,10 @@ pub fn tool_use_turn(tool_id: &str, tool_name: &str, arguments: serde_json::Valu
                 delta: json_str,
                 partial: partial.clone(),
             },
-            AssistantMessageEvent::ToolcallEnd { content_index: 0, partial: partial.clone() },
+            AssistantMessageEvent::ToolcallEnd {
+                content_index: 0,
+                partial: partial.clone(),
+            },
         ],
         stop_reason: StopReason::ToolUse,
         response_id: "resp_tool".into(),

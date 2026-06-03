@@ -1,8 +1,6 @@
 use bytes::Bytes;
 use futures::stream;
-use pi_ai::types::{
-    AssistantMessageEvent, ContentBlock, Model, StopReason,
-};
+use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model, StopReason};
 
 fn test_model() -> Model {
     Model {
@@ -12,9 +10,12 @@ fn test_model() -> Model {
         provider: "anthropic".into(),
         base_url: "https://api.anthropic.com".into(),
         reasoning: true,
-        input: 3.0, output: 15.0,
-        cache_read: Some(0.30), cache_write: Some(3.75),
-        context_window: 200000, max_tokens: Some(8192),
+        input: 3.0,
+        output: 15.0,
+        cache_read: Some(0.30),
+        cache_write: Some(3.75),
+        context_window: 200000,
+        max_tokens: Some(8192),
         headers: None,
     }
 }
@@ -36,13 +37,23 @@ async fn text_only_stream() {
     use futures::StreamExt;
 
     let events: Vec<_> = event_stream.collect().await;
-    assert!(events.len() >= 3, "expected at least 3 events, got {}", events.len());
+    assert!(
+        events.len() >= 3,
+        "expected at least 3 events, got {}",
+        events.len()
+    );
 
     assert!(matches!(events[0], AssistantMessageEvent::Start { .. }));
 
-    let has_text_start = events.iter().any(|e| matches!(e, AssistantMessageEvent::TextStart { .. }));
-    let has_text_delta = events.iter().any(|e| matches!(e, AssistantMessageEvent::TextDelta { .. }));
-    let has_text_end = events.iter().any(|e| matches!(e, AssistantMessageEvent::TextEnd { .. }));
+    let has_text_start = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::TextStart { .. }));
+    let has_text_delta = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::TextDelta { .. }));
+    let has_text_end = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::TextEnd { .. }));
     assert!(has_text_start);
     assert!(has_text_delta);
     assert!(has_text_end);
@@ -75,9 +86,15 @@ async fn thinking_and_tool_use_stream() {
 
     let events: Vec<_> = event_stream.collect().await;
 
-    let has_thinking = events.iter().any(|e| matches!(e, AssistantMessageEvent::ThinkingStart { .. }));
-    let has_toolcall = events.iter().any(|e| matches!(e, AssistantMessageEvent::ToolcallStart { .. }));
-    let has_text = events.iter().any(|e| matches!(e, AssistantMessageEvent::TextStart { .. }));
+    let has_thinking = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::ThinkingStart { .. }));
+    let has_toolcall = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::ToolcallStart { .. }));
+    let has_text = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::TextStart { .. }));
     assert!(has_thinking, "should have thinking events");
     assert!(has_toolcall, "should have tool use events");
     assert!(has_text, "should have text events");
