@@ -180,10 +180,10 @@ where
                             };
                         }
                         wire::ContentBlockDelta::SignatureDelta { signature } => {
-                            if block_type.as_deref() == Some("thinking") {
-                                pending_thinking_signature = Some(signature);
-                            } else {
-                                pending_text_signature = Some(signature);
+                            match block_type.as_deref() {
+                                Some("thinking") => pending_thinking_signature = Some(signature),
+                                Some("tool_use") => pending_thought_signature = Some(signature),
+                                _ => pending_text_signature = Some(signature),
                             }
                         }
                         wire::ContentBlockDelta::InputJsonDelta { partial_json } => {
