@@ -58,6 +58,23 @@ fn build_models() -> Vec<Model> {
             headers: None,
         }
     }
+    fn deepseek_m(id: &str, name: &str, reasoning: bool) -> Model {
+        Model {
+            id: id.into(),
+            name: name.into(),
+            api: "deepseek-chat-completions".into(),
+            provider: "deepseek".into(),
+            base_url: "https://api.deepseek.com".into(),
+            reasoning,
+            input: 0.0,
+            output: 0.0,
+            cache_read: None,
+            cache_write: None,
+            context_window: 64_000,
+            max_tokens: Some(8192),
+            headers: None,
+        }
+    }
     vec![
         m(
             "claude-sonnet-4-5",
@@ -147,6 +164,8 @@ fn build_models() -> Vec<Model> {
             200_000,
             4096,
         ),
+        deepseek_m("deepseek-v4-flash", "DeepSeek V4 Flash", false),
+        deepseek_m("deepseek-v4-pro", "DeepSeek V4 Pro", true),
     ]
 }
 
@@ -164,6 +183,13 @@ mod tests {
     #[test]
     fn lookup_unknown_model() {
         assert!(lookup_model("nonexistent").is_none());
+    }
+
+    #[test]
+    fn lookup_deepseek_model() {
+        let m = lookup_model("deepseek-v4-flash").unwrap();
+        assert_eq!(m.provider, "deepseek");
+        assert_eq!(m.api, "deepseek-chat-completions");
     }
 
     #[test]

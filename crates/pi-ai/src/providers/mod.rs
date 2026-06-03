@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod deepseek;
 pub mod faux;
 
 use crate::registry;
@@ -10,5 +11,9 @@ pub fn register_builtins() {
     registry::register(
         "anthropic-messages",
         Arc::new(anthropic::AnthropicProvider::new(None)),
+    );
+    registry::register(
+        "deepseek-chat-completions",
+        Arc::new(deepseek::DeepSeekProvider::new(None)),
     );
 }

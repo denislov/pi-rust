@@ -1,8 +1,10 @@
 /// Resolves an API key from the environment for the given provider.
 /// For "anthropic", checks ANTHROPIC_API_KEY plus common aliases.
+/// For "deepseek", checks DEEPSEEK_API_KEY plus common aliases.
 pub fn env_api_key(provider: &str) -> Option<String> {
     let vars = match provider {
         "anthropic" => &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_KEY"][..],
+        "deepseek" => &["DEEPSEEK_API_KEY", "DEEPSEEK_KEY"][..],
         _ => &[],
     };
     for var in vars {
@@ -42,5 +44,16 @@ mod tests {
     #[test]
     fn returns_none_for_unknown_provider() {
         assert_eq!(env_api_key("nonexistent"), None);
+    }
+
+    #[test]
+    fn returns_deepseek_key() {
+        unsafe {
+            std::env::set_var("DEEPSEEK_API_KEY", "sk-deepseek-test");
+        }
+        assert_eq!(env_api_key("deepseek"), Some("sk-deepseek-test".into()));
+        unsafe {
+            std::env::remove_var("DEEPSEEK_API_KEY");
+        }
     }
 }
