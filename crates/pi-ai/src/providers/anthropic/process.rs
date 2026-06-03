@@ -97,12 +97,11 @@ where
                         wire::ContentBlockStart::Text { text } => {
                             block_type = Some("text".into());
                             accumulated_text = text.clone();
-                            let mut p = partial.clone();
-                            p.content.push(ContentBlock::Text {
+                            partial.content.push(ContentBlock::Text {
                                 text: text.clone(),
                                 text_signature: None,
                             });
-                            yield AssistantMessageEvent::TextStart { partial: p };
+                            yield AssistantMessageEvent::TextStart { partial: partial.clone() };
                             if !accumulated_text.is_empty() {
                                 yield AssistantMessageEvent::TextDelta {
                                     delta: text,
@@ -113,13 +112,12 @@ where
                         wire::ContentBlockStart::Thinking { thinking } => {
                             block_type = Some("thinking".into());
                             accumulated_thinking = thinking.clone();
-                            let mut p = partial.clone();
-                            p.content.push(ContentBlock::Thinking {
+                            partial.content.push(ContentBlock::Thinking {
                                 thinking: thinking.clone(),
                                 thinking_signature: None,
                                 redacted: None,
                             });
-                            yield AssistantMessageEvent::ThinkingStart { partial: p };
+                            yield AssistantMessageEvent::ThinkingStart { partial: partial.clone() };
                             if !accumulated_thinking.is_empty() {
                                 yield AssistantMessageEvent::ThinkingDelta {
                                     delta: thinking,
@@ -129,26 +127,24 @@ where
                         }
                         wire::ContentBlockStart::RedactedThinking { .. } => {
                             block_type = Some("thinking".into());
-                            let mut p = partial.clone();
-                            p.content.push(ContentBlock::Thinking {
+                            partial.content.push(ContentBlock::Thinking {
                                 thinking: String::new(),
                                 thinking_signature: None,
                                 redacted: Some(true),
                             });
-                            yield AssistantMessageEvent::ThinkingStart { partial: p };
+                            yield AssistantMessageEvent::ThinkingStart { partial: partial.clone() };
                         }
                         wire::ContentBlockStart::ToolUse { id, name } => {
                             block_type = Some("tool_use".into());
                             _block_id = Some(id.clone());
                             accumulated_tool_args.clear();
-                            let mut p = partial.clone();
-                            p.content.push(ContentBlock::ToolCall {
+                            partial.content.push(ContentBlock::ToolCall {
                                 id: id.clone(),
                                 name: name.clone(),
                                 arguments: serde_json::json!({}),
                                 thought_signature: None,
                             });
-                            yield AssistantMessageEvent::ToolcallStart { partial: p };
+                            yield AssistantMessageEvent::ToolcallStart { partial: partial.clone() };
                         }
                     }
                 }

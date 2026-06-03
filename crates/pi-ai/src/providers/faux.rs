@@ -56,12 +56,11 @@ impl ApiProvider for FauxProvider {
 
             for resp in &responses {
                 if !resp.text_deltas.is_empty() {
-                    let mut p = partial.clone();
-                    p.content.push(ContentBlock::Text {
+                    partial.content.push(ContentBlock::Text {
                         text: resp.text_deltas.join(""),
                         text_signature: None,
                     });
-                    yield AssistantMessageEvent::TextStart { partial: p };
+                    yield AssistantMessageEvent::TextStart { partial: partial.clone() };
                     for delta in &resp.text_deltas {
                         if let Some(ContentBlock::Text { text, .. }) = partial.content.last_mut() {
                             text.push_str(delta);
@@ -75,13 +74,12 @@ impl ApiProvider for FauxProvider {
                 }
 
                 if !resp.thinking_deltas.is_empty() {
-                    let mut p = partial.clone();
-                    p.content.push(ContentBlock::Thinking {
+                    partial.content.push(ContentBlock::Thinking {
                         thinking: resp.thinking_deltas.join(""),
                         thinking_signature: None,
                         redacted: None,
                     });
-                    yield AssistantMessageEvent::ThinkingStart { partial: p };
+                    yield AssistantMessageEvent::ThinkingStart { partial: partial.clone() };
                     for delta in &resp.thinking_deltas {
                         yield AssistantMessageEvent::ThinkingDelta {
                             delta: delta.clone(),
@@ -92,14 +90,13 @@ impl ApiProvider for FauxProvider {
                 }
 
                 for tc in &resp.tool_calls {
-                    let mut p = partial.clone();
-                    p.content.push(ContentBlock::ToolCall {
+                    partial.content.push(ContentBlock::ToolCall {
                         id: tc.id.clone(),
                         name: tc.name.clone(),
                         arguments: tc.final_arguments.clone(),
                         thought_signature: None,
                     });
-                    yield AssistantMessageEvent::ToolcallStart { partial: p };
+                    yield AssistantMessageEvent::ToolcallStart { partial: partial.clone() };
                     let mut accumulated = String::new();
                     for delta in &tc.deltas {
                         accumulated.push_str(delta);
