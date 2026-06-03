@@ -1,0 +1,55 @@
+use crate::{CliArgs, CliError};
+use pi_agent_core::{AgentConfig, AgentTool};
+use pi_ai::types::{Model, StreamOptions};
+
+pub const DEFAULT_MODEL_ID: &str = "claude-sonnet-4-5";
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful coding assistant.";
+
+#[derive(Clone)]
+pub struct CliRunOptions {
+    pub model_override: Option<Model>,
+    pub tools: Vec<AgentTool>,
+    pub register_builtins: bool,
+}
+
+impl Default for CliRunOptions {
+    fn default() -> Self {
+        Self {
+            model_override: None,
+            tools: Vec::new(),
+            register_builtins: true,
+        }
+    }
+}
+
+pub fn select_model(args: &CliArgs, model_override: Option<Model>) -> Result<Model, CliError> {
+    if let Some(model_id) = &args.model {
+        return pi_ai::lookup_model(model_id)
+            .ok_or_else(|| CliError::UnknownModel(model_id.clone()));
+    }
+
+    if let Some(model) = model_override {
+        return Ok(model);
+    }
+
+    pi_ai::lookup_model(DEFAULT_MODEL_ID)
+        .ok_or_else(|| CliError::UnknownModel(DEFAULT_MODEL_ID.to_string()))
+}
+
+pub fn build_agent_config(
+    model: Model,
+    system_prompt: Option<String>,
+    max_turns: u32,
+    api_key: Option<String>,
+) -> AgentConfig {
+    let stream_options = api_key.map(|api_key| StreamOptions {
+        api_key: Some(api_key),
+        ..Default::default()
+    });
+    AgentConfig {
+        model,
+        system_prompt: Some(system_prompt.unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())),
+        max_turns,
+        stream_options,
+    }
+}
