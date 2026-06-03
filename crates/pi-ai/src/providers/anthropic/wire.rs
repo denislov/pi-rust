@@ -64,7 +64,7 @@ pub struct ThinkingConfig {
 #[serde(tag = "type")]
 pub enum StreamEvent {
     #[serde(rename = "message_start")]
-    MessageStart { message: MessageStart },
+    MessageStart { message: MessageInfo },
     #[serde(rename = "content_block_start")]
     ContentBlockStart { index: u32, content_block: ContentBlockStart },
     #[serde(rename = "content_block_delta")]
@@ -77,11 +77,6 @@ pub enum StreamEvent {
     MessageStop,
     #[serde(rename = "ping")]
     Ping,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct MessageStart {
-    pub message: MessageInfo,
 }
 
 #[derive(Debug, Clone, Deserialize)]
