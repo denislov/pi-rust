@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+crossterm = "0.28"
+thiserror = "2"
+unicode-segmentation = "1"
+unicode-width = "0.2"
