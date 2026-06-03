@@ -1,9 +1,9 @@
 mod common;
-use common::{TestProvider, text_turn, tool_use_turn};
+use common::{ScriptedTurn, TestProvider, text_turn, tool_use_turn};
 use futures::StreamExt;
 use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool};
 use pi_ai::registry;
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model};
+use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Model, StopReason};
 use std::sync::Arc;
 
 fn test_model(api_key: &str) -> Model {
@@ -210,6 +210,38 @@ async fn abort_mid_turn_yields_error() {
         .iter()
         .any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("aborted")));
     assert!(has_abort_error, "should have aborted error");
+
+    registry::unregister(api_key);
+}
+
+#[tokio::test]
+async fn provider_error_event_preserves_error_message() {
+    let api_key = "test-api-provider-error";
+    let mut message = AssistantMessage::empty("test", "test-model");
+    message.error_message = Some("provider failed".into());
+    message.stop_reason = StopReason::Error;
+    let provider = Arc::new(TestProvider::new(vec![ScriptedTurn {
+        events: vec![AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message,
+        }],
+        stop_reason: StopReason::Error,
+        response_id: "resp_error".into(),
+        model_name: "test-model".into(),
+    }]));
+    registry::register(api_key, provider);
+
+    let agent = Agent::new(test_config(api_key));
+
+    let stream = agent.prompt("hi");
+    let events: Vec<_> = stream.collect().await;
+    let has_provider_error = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::AgentError { error } if error.contains("provider failed")
+        )
+    });
+    assert!(has_provider_error, "should preserve provider error");
 
     registry::unregister(api_key);
 }

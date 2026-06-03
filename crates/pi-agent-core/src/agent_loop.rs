@@ -50,6 +50,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
 
             let mut llm_stream = pi_ai::stream_model(&model, ctx, Some(opts));
             let mut assistant_message: Option<pi_ai::types::AssistantMessage> = None;
+            let mut stream_error: Option<String> = None;
 
             while let Some(event) = llm_stream.next().await {
                 let is_terminal = matches!(
@@ -58,6 +59,14 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 );
                 if let AssistantMessageEvent::Done { message, .. } = &event {
                     assistant_message = Some(message.clone());
+                }
+                if let AssistantMessageEvent::Error { message, .. } = &event {
+                    stream_error = Some(
+                        message
+                            .error_message
+                            .clone()
+                            .unwrap_or_else(|| "LLM error".into()),
+                    );
                 }
                 yield AgentEvent::LlmEvent(event);
                 if is_terminal {
@@ -69,7 +78,8 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 Some(m) => m,
                 None => {
                     yield AgentEvent::AgentError {
-                        error: "LLM stream ended without Done event".into(),
+                        error: stream_error
+                            .unwrap_or_else(|| "LLM stream ended without Done event".into()),
                     };
                     return;
                 }
