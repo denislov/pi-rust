@@ -18,6 +18,8 @@ pub enum AgentMessage {
     ToolResult {
         message_id: String,
         tool_call_id: String,
+        tool_name: String,
+        is_error: bool,
         content: Vec<ContentBlock>,
     },
     SystemPrompt {

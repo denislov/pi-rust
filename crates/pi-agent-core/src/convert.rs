@@ -18,8 +18,10 @@ pub fn convert_to_context(
             AgentMessage::Assistant { message, .. } => Some(Message::Assistant {
                 content: message.content.clone(),
             }),
-            AgentMessage::ToolResult { tool_call_id, content, .. } => Some(Message::ToolResult {
+            AgentMessage::ToolResult { tool_call_id, content, tool_name, is_error, .. } => Some(Message::ToolResult {
                 tool_call_id: tool_call_id.clone(),
+                tool_name: Some(tool_name.clone()),
+                is_error: Some(*is_error),
                 content: content.clone(),
             }),
             AgentMessage::SystemPrompt { .. } => None,
@@ -106,6 +108,8 @@ mod tests {
         let msgs = vec![AgentMessage::ToolResult {
             message_id: "3".into(),
             tool_call_id: "call_1".into(),
+            tool_name: "test_tool".into(),
+            is_error: false,
             content: vec![ContentBlock::Text {
                 text: "result".into(),
                 text_signature: None,
@@ -114,7 +118,7 @@ mod tests {
         let ctx = convert_to_context(&None, &msgs, &[]);
         assert_eq!(ctx.messages.len(), 1);
         match &ctx.messages[0] {
-            Message::ToolResult { tool_call_id, content } => {
+            Message::ToolResult { tool_call_id, content, .. } => {
                 assert_eq!(tool_call_id, "call_1");
                 assert_eq!(content.len(), 1);
             }

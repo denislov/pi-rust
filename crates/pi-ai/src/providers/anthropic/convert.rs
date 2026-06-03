@@ -108,7 +108,7 @@ fn convert_messages(messages: &[Message]) -> Vec<wire::RequestMessage> {
                     content: convert_content(content),
                 });
             }
-            Message::ToolResult { tool_call_id, content } => {
+            Message::ToolResult { tool_call_id, content, .. } => {
                 let tool_content = serde_json::json!({
                     "type": "tool_result",
                     "tool_use_id": normalize_tool_call_id(tool_call_id),
@@ -234,10 +234,14 @@ mod tests {
         let messages = vec![
             Message::ToolResult {
                 tool_call_id: "call_1".into(),
+                tool_name: None,
+                is_error: None,
                 content: vec![ContentBlock::Text { text: "result1".into(), text_signature: None }],
             },
             Message::ToolResult {
                 tool_call_id: "call_2".into(),
+                tool_name: None,
+                is_error: None,
                 content: vec![ContentBlock::Text { text: "result2".into(), text_signature: None }],
             },
         ];

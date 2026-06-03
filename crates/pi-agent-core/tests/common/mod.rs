@@ -29,9 +29,12 @@ impl ApiProvider for TestProvider {
             let mut turns = self.turns.lock().unwrap();
             if turns.is_empty() {
                 return Box::pin(stream! {
+                    let mut msg = AssistantMessage::empty("test", "test-model");
+                    msg.error_message = Some("no more scripted turns".into());
+                    msg.stop_reason = StopReason::Error;
                     yield AssistantMessageEvent::Error {
                         reason: StopReason::Error,
-                        error: "no more scripted turns".into(),
+                        message: msg,
                     };
                 });
             }
@@ -40,16 +43,16 @@ impl ApiProvider for TestProvider {
 
         let content = turn.events.last().map(|e| {
             match e {
-                AssistantMessageEvent::Start { partial } => partial.content.clone(),
-                AssistantMessageEvent::TextStart { partial } => partial.content.clone(),
+                AssistantMessageEvent::Start { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::TextStart { partial, .. } => partial.content.clone(),
                 AssistantMessageEvent::TextDelta { partial, .. } => partial.content.clone(),
-                AssistantMessageEvent::TextEnd { partial } => partial.content.clone(),
-                AssistantMessageEvent::ThinkingStart { partial } => partial.content.clone(),
+                AssistantMessageEvent::TextEnd { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ThinkingStart { partial, .. } => partial.content.clone(),
                 AssistantMessageEvent::ThinkingDelta { partial, .. } => partial.content.clone(),
-                AssistantMessageEvent::ThinkingEnd { partial } => partial.content.clone(),
-                AssistantMessageEvent::ToolcallStart { partial } => partial.content.clone(),
+                AssistantMessageEvent::ThinkingEnd { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ToolcallStart { partial, .. } => partial.content.clone(),
                 AssistantMessageEvent::ToolcallDelta { partial, .. } => partial.content.clone(),
-                AssistantMessageEvent::ToolcallEnd { partial } => partial.content.clone(),
+                AssistantMessageEvent::ToolcallEnd { partial, .. } => partial.content.clone(),
                 AssistantMessageEvent::Done { message, .. } => message.content.clone(),
                 AssistantMessageEvent::Error { .. } => vec![],
             }
@@ -89,16 +92,17 @@ pub fn text_turn(text: &str) -> ScriptedTurn {
 
     ScriptedTurn {
         events: vec![
-            AssistantMessageEvent::Start { partial: partial.clone() },
+            AssistantMessageEvent::Start { content_index: None, partial: partial.clone() },
             AssistantMessageEvent::TextStart {
+                content_index: 0,
                 partial: {
                     let mut p = partial.clone();
                     p.content = vec![text_block.clone()];
                     p
                 },
             },
-            AssistantMessageEvent::TextDelta { delta: text.into(), partial: partial.clone() },
-            AssistantMessageEvent::TextEnd { partial: partial.clone() },
+            AssistantMessageEvent::TextDelta { content_index: 0, delta: text.into(), partial: partial.clone() },
+            AssistantMessageEvent::TextEnd { content_index: 0, partial: partial.clone() },
         ],
         stop_reason: StopReason::Stop,
         response_id: "resp_1".into(),
@@ -122,8 +126,9 @@ pub fn tool_use_turn(tool_id: &str, tool_name: &str, arguments: serde_json::Valu
 
     ScriptedTurn {
         events: vec![
-            AssistantMessageEvent::Start { partial: partial.clone() },
+            AssistantMessageEvent::Start { content_index: None, partial: partial.clone() },
             AssistantMessageEvent::ToolcallStart {
+                content_index: 0,
                 partial: {
                     let mut p = partial.clone();
                     p.content = vec![ContentBlock::ToolCall {
@@ -136,10 +141,11 @@ pub fn tool_use_turn(tool_id: &str, tool_name: &str, arguments: serde_json::Valu
                 },
             },
             AssistantMessageEvent::ToolcallDelta {
+                content_index: 0,
                 delta: json_str,
                 partial: partial.clone(),
             },
-            AssistantMessageEvent::ToolcallEnd { partial: partial.clone() },
+            AssistantMessageEvent::ToolcallEnd { content_index: 0, partial: partial.clone() },
         ],
         stop_reason: StopReason::ToolUse,
         response_id: "resp_tool".into(),

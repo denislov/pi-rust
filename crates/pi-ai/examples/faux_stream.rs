@@ -53,8 +53,8 @@ async fn main() {
                 println!("stop reason: {:?}", message.stop_reason);
                 println!("usage: {:?}", message.usage);
             }
-            AssistantMessageEvent::Error { error, .. } => {
-                eprintln!("\nError: {}", error);
+            AssistantMessageEvent::Error { message, .. } => {
+                eprintln!("\nError: {}", message.error_message.as_deref().unwrap_or("unknown error"));
             }
             _ => {}
         }

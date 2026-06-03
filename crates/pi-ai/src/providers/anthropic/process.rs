@@ -25,7 +25,7 @@ where
     Box::pin(stream! {
         let mut partial = AssistantMessage::empty("anthropic-messages", &model.id);
         let mut block_type: Option<String> = None;
-        let mut _block_id: Option<String> = None;
+        let mut block_index: u32 = 0;
         let mut accumulated_text = String::new();
         let mut accumulated_thinking = String::new();
         let mut accumulated_tool_args = String::new();
@@ -46,7 +46,7 @@ where
                     partial.error_message = Some("cancelled".into());
                     yield AssistantMessageEvent::Error {
                         reason: StopReason::Aborted,
-                        error: "cancelled".into(),
+                        message: partial.clone(),
                     };
                     return;
                 }
@@ -59,7 +59,7 @@ where
                     partial.error_message = Some(e.clone());
                     yield AssistantMessageEvent::Error {
                         reason: StopReason::Error,
-                        error: e,
+                        message: partial.clone(),
                     };
                     return;
                 }
@@ -69,9 +69,11 @@ where
             let wire_event: wire::StreamEvent = match serde_json::from_str(&sse_event.data) {
                 Ok(v) => v,
                 Err(e) => {
+                    partial.stop_reason = StopReason::Error;
+                    partial.error_message = Some(format!("SSE parse error: {}", e));
                     yield AssistantMessageEvent::Error {
                         reason: StopReason::Error,
-                        error: format!("SSE parse error: {}", e),
+                        message: partial.clone(),
                     };
                     return;
                 }
@@ -87,12 +89,13 @@ where
                         .unwrap()
                         .as_secs();
                     if first_event {
-                        yield AssistantMessageEvent::Start { partial: partial.clone() };
+                        yield AssistantMessageEvent::Start { content_index: None, partial: partial.clone() };
                         first_event = false;
                     }
                 }
 
-                wire::StreamEvent::ContentBlockStart { index: _index, content_block } => {
+                wire::StreamEvent::ContentBlockStart { index, content_block } => {
+                    block_index = index;
                     match content_block {
                         wire::ContentBlockStart::Text { text } => {
                             block_type = Some("text".into());
@@ -101,9 +104,10 @@ where
                                 text: text.clone(),
                                 text_signature: None,
                             });
-                            yield AssistantMessageEvent::TextStart { partial: partial.clone() };
+                            yield AssistantMessageEvent::TextStart { content_index: index, partial: partial.clone() };
                             if !accumulated_text.is_empty() {
                                 yield AssistantMessageEvent::TextDelta {
+                                    content_index: index,
                                     delta: text,
                                     partial: partial.clone(),
                                 };
@@ -117,9 +121,10 @@ where
                                 thinking_signature: None,
                                 redacted: None,
                             });
-                            yield AssistantMessageEvent::ThinkingStart { partial: partial.clone() };
+                            yield AssistantMessageEvent::ThinkingStart { content_index: index, partial: partial.clone() };
                             if !accumulated_thinking.is_empty() {
                                 yield AssistantMessageEvent::ThinkingDelta {
+                                    content_index: index,
                                     delta: thinking,
                                     partial: partial.clone(),
                                 };
@@ -132,11 +137,10 @@ where
                                 thinking_signature: None,
                                 redacted: Some(true),
                             });
-                            yield AssistantMessageEvent::ThinkingStart { partial: partial.clone() };
+                            yield AssistantMessageEvent::ThinkingStart { content_index: index, partial: partial.clone() };
                         }
                         wire::ContentBlockStart::ToolUse { id, name } => {
                             block_type = Some("tool_use".into());
-                            _block_id = Some(id.clone());
                             accumulated_tool_args.clear();
                             partial.content.push(ContentBlock::ToolCall {
                                 id: id.clone(),
@@ -144,7 +148,7 @@ where
                                 arguments: serde_json::json!({}),
                                 thought_signature: None,
                             });
-                            yield AssistantMessageEvent::ToolcallStart { partial: partial.clone() };
+                            yield AssistantMessageEvent::ToolcallStart { content_index: index, partial: partial.clone() };
                         }
                     }
                 }
@@ -153,24 +157,26 @@ where
                     match delta {
                         wire::ContentBlockDelta::TextDelta { text } => {
                             if let Some(ContentBlock::Text { text: t, .. }) =
-                                partial.content.last_mut()
+                                partial.content.get_mut(block_index as usize)
                             {
                                 t.push_str(&text);
                             }
                             accumulated_text.push_str(&text);
                             yield AssistantMessageEvent::TextDelta {
+                                content_index: block_index,
                                 delta: text,
                                 partial: partial.clone(),
                             };
                         }
                         wire::ContentBlockDelta::ThinkingDelta { thinking } => {
                             if let Some(ContentBlock::Thinking { thinking: t, .. }) =
-                                partial.content.last_mut()
+                                partial.content.get_mut(block_index as usize)
                             {
                                 t.push_str(&thinking);
                             }
                             accumulated_thinking.push_str(&thinking);
                             yield AssistantMessageEvent::ThinkingDelta {
+                                content_index: block_index,
                                 delta: thinking,
                                 partial: partial.clone(),
                             };
@@ -186,11 +192,12 @@ where
                             accumulated_tool_args.push_str(&partial_json);
                             let parsed = parse_streaming_json(&accumulated_tool_args);
                             if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                                partial.content.last_mut()
+                                partial.content.get_mut(block_index as usize)
                             {
                                 *arguments = parsed;
                             }
                             yield AssistantMessageEvent::ToolcallDelta {
+                                content_index: block_index,
                                 delta: partial_json,
                                 partial: partial.clone(),
                             };
@@ -202,32 +209,31 @@ where
                     match block_type.as_deref() {
                         Some("text") => {
                             if let Some(ContentBlock::Text { text_signature, .. }) =
-                                partial.content.last_mut()
+                                partial.content.get_mut(block_index as usize)
                             {
                                 *text_signature = pending_text_signature.take();
                             }
-                            yield AssistantMessageEvent::TextEnd { partial: partial.clone() };
+                            yield AssistantMessageEvent::TextEnd { content_index: block_index, partial: partial.clone() };
                         }
                         Some("thinking") => {
                             if let Some(ContentBlock::Thinking { thinking_signature, .. }) =
-                                partial.content.last_mut()
+                                partial.content.get_mut(block_index as usize)
                             {
                                 *thinking_signature = pending_thinking_signature.take();
                             }
-                            yield AssistantMessageEvent::ThinkingEnd { partial: partial.clone() };
+                            yield AssistantMessageEvent::ThinkingEnd { content_index: block_index, partial: partial.clone() };
                         }
                         Some("tool_use") => {
                             if let Some(ContentBlock::ToolCall { thought_signature, .. }) =
-                                partial.content.last_mut()
+                                partial.content.get_mut(block_index as usize)
                             {
                                 *thought_signature = pending_thought_signature.take();
                             }
-                            yield AssistantMessageEvent::ToolcallEnd { partial: partial.clone() };
+                            yield AssistantMessageEvent::ToolcallEnd { content_index: block_index, partial: partial.clone() };
                         }
                         _ => {}
                     }
                     block_type = None;
-                    _block_id = None;
                 }
 
                 wire::StreamEvent::MessageDelta { delta, usage } => {
@@ -271,7 +277,7 @@ where
         partial.error_message = Some("stream ended without message_stop".into());
         yield AssistantMessageEvent::Error {
             reason: StopReason::Error,
-            error: "stream ended without message_stop".into(),
+            message: partial.clone(),
         };
     })
 }

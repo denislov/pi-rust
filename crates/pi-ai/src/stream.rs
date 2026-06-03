@@ -8,7 +8,7 @@ pub async fn complete(mut stream: EventStream) -> Result<AssistantMessage, Strin
     while let Some(event) = stream.next().await {
         match event {
             AssistantMessageEvent::Done { message, .. } => return Ok(message),
-            AssistantMessageEvent::Error { error, .. } => return Err(error),
+            AssistantMessageEvent::Error { message, .. } => return Err(message.error_message.unwrap_or_default()),
             _ => continue,
         }
     }
@@ -41,7 +41,7 @@ mod tests {
     async fn complete_returns_done_message() {
         let msg = dummy_message();
         let stream = make_event_stream(vec![
-            AssistantMessageEvent::Start { partial: msg.clone() },
+            AssistantMessageEvent::Start { content_index: None, partial: msg.clone() },
             AssistantMessageEvent::Done { reason: StopReason::Stop, message: msg.clone() },
         ]);
         let result = complete(stream).await.unwrap();
@@ -50,8 +50,11 @@ mod tests {
 
     #[tokio::test]
     async fn complete_returns_error() {
+        let mut err_msg = AssistantMessage::empty("test", "test");
+        err_msg.error_message = Some("fail".into());
+        err_msg.stop_reason = StopReason::Error;
         let stream = make_event_stream(vec![
-            AssistantMessageEvent::Error { reason: StopReason::Error, error: "fail".into() },
+            AssistantMessageEvent::Error { reason: StopReason::Error, message: err_msg },
         ]);
         let result = complete(stream).await;
         assert!(result.is_err());

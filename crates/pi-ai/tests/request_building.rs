@@ -32,10 +32,14 @@ fn tool_result_coalescing_multiple_results() {
     let msgs = vec![
         Message::ToolResult {
             tool_call_id: "a".into(),
+            tool_name: None,
+            is_error: None,
             content: vec![ContentBlock::Text { text: "r1".into(), text_signature: None }],
         },
         Message::ToolResult {
             tool_call_id: "b".into(),
+            tool_name: None,
+            is_error: None,
             content: vec![ContentBlock::Text { text: "r2".into(), text_signature: None }],
         },
     ];

@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
 use tokio_util::sync::CancellationToken;
 use crate::types::{AgentMessage, AgentTool, AgentConfig, AgentStream};
 use crate::agent_loop;
@@ -10,8 +10,19 @@ pub struct AgentState {
     pub cancel_token: CancellationToken,
 }
 
+struct RunGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::SeqCst);
+    }
+}
+
 pub struct Agent {
     state: Arc<RwLock<AgentState>>,
+    running: Arc<AtomicBool>,
 }
 
 impl Agent {
@@ -23,6 +34,7 @@ impl Agent {
                 cancel_token: CancellationToken::new(),
                 config,
             })),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -42,12 +54,30 @@ impl Agent {
     /// Returns an AgentStream that yields events until the model stops
     /// or an error occurs.
     pub fn prompt(&self, text: &str) -> AgentStream {
-        let msg_count = self.state.read().unwrap().messages.len();
-        self.state.write().unwrap().messages.push(AgentMessage::UserText {
-            message_id: format!("user_{}", msg_count),
-            text: text.to_string(),
-        });
-        agent_loop::run_loop(self.state.clone())
+        if self.running.swap(true, Ordering::SeqCst) {
+            panic!("prompt() called while agent is already running");
+        }
+
+        {
+            let mut state = self.state.write().unwrap();
+            state.cancel_token = CancellationToken::new();
+            let msg_count = state.messages.len();
+            state.messages.push(AgentMessage::UserText {
+                message_id: format!("user_{}", msg_count),
+                text: text.to_string(),
+            });
+        }
+
+        let state = self.state.clone();
+        let guard = RunGuard { flag: self.running.clone() };
+        Box::pin(async_stream::stream! {
+            let _guard = guard;
+            let mut stream = agent_loop::run_loop(state);
+            use futures::StreamExt;
+            while let Some(event) = stream.next().await {
+                yield event;
+            }
+        })
     }
 
     /// Cancels an in-flight loop. Safe to call from another task.

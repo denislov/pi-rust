@@ -33,19 +33,22 @@ fn assistant_message_roundtrip() {
 fn event_stream_all_variants_serialize() {
     let msg = AssistantMessage::empty("test", "test-model");
 
+    let mut err_msg = msg.clone();
+    err_msg.error_message = Some("oops".into());
+    err_msg.stop_reason = StopReason::Error;
     let events = vec![
-        AssistantMessageEvent::Start { partial: msg.clone() },
-        AssistantMessageEvent::TextStart { partial: msg.clone() },
-        AssistantMessageEvent::TextDelta { delta: "hi".into(), partial: msg.clone() },
-        AssistantMessageEvent::TextEnd { partial: msg.clone() },
-        AssistantMessageEvent::ThinkingStart { partial: msg.clone() },
-        AssistantMessageEvent::ThinkingDelta { delta: "hmm".into(), partial: msg.clone() },
-        AssistantMessageEvent::ThinkingEnd { partial: msg.clone() },
-        AssistantMessageEvent::ToolcallStart { partial: msg.clone() },
-        AssistantMessageEvent::ToolcallDelta { delta: "{}".into(), partial: msg.clone() },
-        AssistantMessageEvent::ToolcallEnd { partial: msg.clone() },
+        AssistantMessageEvent::Start { content_index: None, partial: msg.clone() },
+        AssistantMessageEvent::TextStart { content_index: 0, partial: msg.clone() },
+        AssistantMessageEvent::TextDelta { content_index: 0, delta: "hi".into(), partial: msg.clone() },
+        AssistantMessageEvent::TextEnd { content_index: 0, partial: msg.clone() },
+        AssistantMessageEvent::ThinkingStart { content_index: 0, partial: msg.clone() },
+        AssistantMessageEvent::ThinkingDelta { content_index: 0, delta: "hmm".into(), partial: msg.clone() },
+        AssistantMessageEvent::ThinkingEnd { content_index: 0, partial: msg.clone() },
+        AssistantMessageEvent::ToolcallStart { content_index: 0, partial: msg.clone() },
+        AssistantMessageEvent::ToolcallDelta { content_index: 0, delta: "{}".into(), partial: msg.clone() },
+        AssistantMessageEvent::ToolcallEnd { content_index: 0, partial: msg.clone() },
         AssistantMessageEvent::Done { reason: StopReason::Stop, message: msg.clone() },
-        AssistantMessageEvent::Error { reason: StopReason::Error, error: "oops".into() },
+        AssistantMessageEvent::Error { reason: StopReason::Error, message: err_msg },
     ];
 
     for event in &events {

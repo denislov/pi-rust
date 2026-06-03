@@ -106,41 +106,46 @@ impl ApiProvider for FauxProvider {
                 .unwrap()
                 .as_secs();
 
-            yield AssistantMessageEvent::Start { partial: partial.clone() };
+            yield AssistantMessageEvent::Start { content_index: None, partial: partial.clone() };
 
             for resp in &responses {
                 if !resp.text_deltas.is_empty() {
                     partial.content.push(ContentBlock::Text {
-                        text: resp.text_deltas.join(""),
+                        text: String::new(),
                         text_signature: None,
                     });
-                    yield AssistantMessageEvent::TextStart { partial: partial.clone() };
+                    yield AssistantMessageEvent::TextStart { content_index: 0, partial: partial.clone() };
                     for delta in &resp.text_deltas {
                         if let Some(ContentBlock::Text { text, .. }) = partial.content.last_mut() {
                             text.push_str(delta);
                         }
                         yield AssistantMessageEvent::TextDelta {
+                            content_index: 0,
                             delta: delta.clone(),
                             partial: partial.clone(),
                         };
                     }
-                    yield AssistantMessageEvent::TextEnd { partial: partial.clone() };
+                    yield AssistantMessageEvent::TextEnd { content_index: 0, partial: partial.clone() };
                 }
 
                 if !resp.thinking_deltas.is_empty() {
                     partial.content.push(ContentBlock::Thinking {
-                        thinking: resp.thinking_deltas.join(""),
+                        thinking: String::new(),
                         thinking_signature: None,
                         redacted: None,
                     });
-                    yield AssistantMessageEvent::ThinkingStart { partial: partial.clone() };
+                    yield AssistantMessageEvent::ThinkingStart { content_index: 0, partial: partial.clone() };
                     for delta in &resp.thinking_deltas {
+                        if let Some(ContentBlock::Thinking { thinking, .. }) = partial.content.last_mut() {
+                            thinking.push_str(delta);
+                        }
                         yield AssistantMessageEvent::ThinkingDelta {
+                            content_index: 0,
                             delta: delta.clone(),
                             partial: partial.clone(),
                         };
                     }
-                    yield AssistantMessageEvent::ThinkingEnd { partial: partial.clone() };
+                    yield AssistantMessageEvent::ThinkingEnd { content_index: 0, partial: partial.clone() };
                 }
 
                 for tc in &resp.tool_calls {
@@ -150,19 +155,20 @@ impl ApiProvider for FauxProvider {
                         arguments: tc.final_arguments.clone(),
                         thought_signature: None,
                     });
-                    yield AssistantMessageEvent::ToolcallStart { partial: partial.clone() };
+                    yield AssistantMessageEvent::ToolcallStart { content_index: 0, partial: partial.clone() };
                     let mut accumulated = String::new();
                     for delta in &tc.deltas {
                         accumulated.push_str(delta);
                         if let Some(ContentBlock::ToolCall { arguments, .. }) = partial.content.last_mut() {
-                            *arguments = serde_json::json!(accumulated);
+                            *arguments = serde_json::json!(&accumulated);
                         }
                         yield AssistantMessageEvent::ToolcallDelta {
+                            content_index: 0,
                             delta: delta.to_string(),
                             partial: partial.clone(),
                         };
                     }
-                    yield AssistantMessageEvent::ToolcallEnd { partial: partial.clone() };
+                    yield AssistantMessageEvent::ToolcallEnd { content_index: 0, partial: partial.clone() };
                 }
             }
 

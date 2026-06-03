@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 use async_stream::stream;
-use crate::types::{AssistantMessageEvent, Context, Model, StopReason, StreamOptions};
+use crate::types::{AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions};
 use crate::stream::EventStream;
 
 pub trait ApiProvider: Send + Sync {
@@ -41,9 +41,12 @@ pub fn stream_model(
         Some(p) => p,
         None => {
             return Box::pin(stream! {
+                let mut msg = AssistantMessage::empty("registry", "");
+                msg.error_message = Some(format!("unknown provider api: {}", api));
+                msg.stop_reason = StopReason::Error;
                 yield AssistantMessageEvent::Error {
                     reason: StopReason::Error,
-                    error: format!("unknown provider api: {}", api),
+                    message: msg,
                 };
             });
         }

@@ -130,18 +130,20 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                             result: result.clone(),
                         };
 
-                        let content = match &result {
-                            Ok(blocks) => blocks.clone(),
-                            Err(e) => vec![ContentBlock::Text {
+                        let (content, is_error) = match &result {
+                            Ok(blocks) => (blocks.clone(), false),
+                            Err(e) => (vec![ContentBlock::Text {
                                 text: e.clone(),
                                 text_signature: None,
-                            }],
+                            }], true),
                         };
                         {
                             let mut s = state.write().unwrap();
                             s.messages.push(AgentMessage::ToolResult {
                                 message_id: tool_id.clone(),
                                 tool_call_id: tool_id.clone(),
+                                tool_name: tool_name.clone(),
+                                is_error,
                                 content,
                             });
                         }

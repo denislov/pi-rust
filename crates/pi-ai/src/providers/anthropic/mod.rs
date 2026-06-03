@@ -7,7 +7,7 @@ use async_stream::stream;
 use futures::StreamExt;
 
 use crate::registry::ApiProvider;
-use crate::types::{AssistantMessageEvent, Context, Model, StopReason, StreamOptions};
+use crate::types::{AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions};
 use crate::stream::EventStream;
 use crate::util::env_keys::env_api_key;
 use convert::build_request;
@@ -43,10 +43,14 @@ impl ApiProvider for AnthropicProvider {
         let cancel = opts.as_ref().and_then(|o| o.cancel.clone());
 
         let Some(api_key) = key else {
+            let model_id = model.id.clone();
             return Box::pin(stream! {
+                let mut msg = AssistantMessage::empty("anthropic-messages", &model_id);
+                msg.error_message = Some("No Anthropic API key found. Set ANTHROPIC_API_KEY or pass apiKey in options.".into());
+                msg.stop_reason = StopReason::Error;
                 yield AssistantMessageEvent::Error {
                     reason: StopReason::Error,
-                    error: "No Anthropic API key found. Set ANTHROPIC_API_KEY or pass apiKey in options.".into(),
+                    message: msg,
                 };
             });
         };
@@ -76,13 +80,17 @@ impl ApiProvider for AnthropicProvider {
         }
 
         let model = model.clone();
+        let model_id = model.id.clone();
         Box::pin(stream! {
             let response = match request.send().await {
                 Ok(r) => r,
                 Err(e) => {
+                    let mut msg = AssistantMessage::empty("anthropic-messages", &model_id);
+                    msg.error_message = Some(format!("HTTP request failed: {}", e));
+                    msg.stop_reason = StopReason::Error;
                     yield AssistantMessageEvent::Error {
                         reason: StopReason::Error,
-                        error: format!("HTTP request failed: {}", e),
+                        message: msg,
                     };
                     return;
                 }
@@ -91,9 +99,12 @@ impl ApiProvider for AnthropicProvider {
             if !response.status().is_success() {
                 let status = response.status().as_u16();
                 let body = response.text().await.unwrap_or_default();
+                let mut msg = AssistantMessage::empty("anthropic-messages", &model_id);
+                msg.error_message = Some(format!("HTTP {} : {}", status, body));
+                msg.stop_reason = StopReason::Error;
                 yield AssistantMessageEvent::Error {
                     reason: StopReason::Error,
-                    error: format!("HTTP {} : {}", status, body),
+                    message: msg,
                 };
                 return;
             }
