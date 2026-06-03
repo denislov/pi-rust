@@ -1,0 +1,334 @@
+use serde::{Deserialize, Serialize};
+
+// ── Content blocks ──────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    #[serde(rename = "text")]
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_signature: Option<String>,
+    },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking_signature: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        redacted: Option<bool>,
+    },
+    #[serde(rename = "image")]
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
+    #[serde(rename = "toolCall")]
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
+    },
+}
+
+// ── Messages ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "role")]
+pub enum Message {
+    #[serde(rename = "user")]
+    User {
+        content: Vec<ContentBlock>,
+    },
+    #[serde(rename = "assistant")]
+    Assistant {
+        content: Vec<ContentBlock>,
+    },
+    #[serde(rename = "toolResult")]
+    ToolResult {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        content: Vec<ContentBlock>,
+    },
+}
+
+// ── Usage & cost ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Cost {
+    pub input: f64,
+    pub output: f64,
+    #[serde(rename = "cacheRead")]
+    pub cache_read: f64,
+    #[serde(rename = "cacheWrite")]
+    pub cache_write: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Usage {
+    pub input: u32,
+    pub output: u32,
+    #[serde(rename = "cacheRead")]
+    pub cache_read: u32,
+    #[serde(rename = "cacheWrite")]
+    pub cache_write: u32,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: u32,
+    pub cost: Cost,
+}
+
+// ── Stop reason ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum StopReason {
+    Stop,
+    Length,
+    #[serde(rename = "toolUse")]
+    ToolUse,
+    Error,
+    Aborted,
+}
+
+// ── Assistant message (response-side) ───────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AssistantMessage {
+    pub content: Vec<ContentBlock>,
+    pub api: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    pub model: String,
+    #[serde(rename = "responseModel", skip_serializing_if = "Option::is_none")]
+    pub response_model: Option<String>,
+    #[serde(rename = "responseId", skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
+    pub usage: Usage,
+    #[serde(rename = "stopReason")]
+    pub stop_reason: StopReason,
+    #[serde(rename = "errorMessage", skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    pub timestamp: u64,
+}
+
+impl AssistantMessage {
+    pub fn empty(api: &str, model: &str) -> Self {
+        Self {
+            content: Vec::new(),
+            api: api.to_string(),
+            provider: None,
+            model: model.to_string(),
+            response_model: None,
+            response_id: None,
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        }
+    }
+}
+
+// ── Streaming events ────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum AssistantMessageEvent {
+    #[serde(rename = "start")]
+    Start { partial: AssistantMessage },
+    #[serde(rename = "textStart")]
+    TextStart { partial: AssistantMessage },
+    #[serde(rename = "textDelta")]
+    TextDelta { delta: String, partial: AssistantMessage },
+    #[serde(rename = "textEnd")]
+    TextEnd { partial: AssistantMessage },
+    #[serde(rename = "thinkingStart")]
+    ThinkingStart { partial: AssistantMessage },
+    #[serde(rename = "thinkingDelta")]
+    ThinkingDelta { delta: String, partial: AssistantMessage },
+    #[serde(rename = "thinkingEnd")]
+    ThinkingEnd { partial: AssistantMessage },
+    #[serde(rename = "toolcallStart")]
+    ToolcallStart { partial: AssistantMessage },
+    #[serde(rename = "toolcallDelta")]
+    ToolcallDelta { delta: String, partial: AssistantMessage },
+    #[serde(rename = "toolcallEnd")]
+    ToolcallEnd { partial: AssistantMessage },
+    #[serde(rename = "done")]
+    Done {
+        reason: StopReason,
+        message: AssistantMessage,
+    },
+    #[serde(rename = "error")]
+    Error {
+        reason: StopReason,
+        error: String,
+    },
+}
+
+// ── Context, tools, models ──────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Context {
+    #[serde(rename = "systemPrompt", skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Tool {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Model {
+    pub id: String,
+    pub name: String,
+    pub api: String,
+    pub provider: String,
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    pub reasoning: bool,
+    pub input: f64,
+    pub output: f64,
+    #[serde(rename = "cacheRead", skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<f64>,
+    #[serde(rename = "cacheWrite", skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<f64>,
+    #[serde(rename = "contextWindow")]
+    pub context_window: u32,
+    #[serde(rename = "maxTokens", skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StreamOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(rename = "maxTokens", skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(rename = "cacheRetention", skip_serializing_if = "Option::is_none")]
+    pub cache_retention: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
+    #[serde(rename = "toolChoice", skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<serde_json::Value>,
+    #[serde(skip)]
+    pub cancel: Option<tokio_util::sync::CancellationToken>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ThinkingConfig {
+    pub enabled: bool,
+    #[serde(rename = "budgetTokens", skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
+// ── Tests: serde roundtrip ──────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_block_text_roundtrip() {
+        let cb = ContentBlock::Text { text: "hello".into(), text_signature: None };
+        let json = serde_json::to_string(&cb).unwrap();
+        assert_eq!(json, r#"{"type":"text","text":"hello"}"#);
+        let back: ContentBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cb);
+    }
+
+    #[test]
+    fn content_block_toolcall_roundtrip() {
+        let cb = ContentBlock::ToolCall {
+            id: "toolu_01".into(), name: "read".into(),
+            arguments: serde_json::json!({"path": "/x"}), thought_signature: None,
+        };
+        let json = serde_json::to_string(&cb).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "toolCall");
+        assert_eq!(parsed["id"], "toolu_01");
+        let back: ContentBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cb);
+    }
+
+    #[test]
+    fn message_user_roundtrip() {
+        let msg = Message::User { content: vec![ContentBlock::Text { text: "hi".into(), text_signature: None }] };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""role":"user""#));
+        let back: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, msg);
+    }
+
+    #[test]
+    fn message_tool_result_roundtrip() {
+        let msg = Message::ToolResult {
+            tool_call_id: "call_1".into(),
+            content: vec![ContentBlock::Text { text: "ok".into(), text_signature: None }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""toolCallId":"call_1""#));
+        let back: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, msg);
+    }
+
+    #[test]
+    fn event_done_roundtrip() {
+        let ev = AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: AssistantMessage::empty("anthropic-messages", "claude-sonnet-4-5"),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains(r#""type":"done""#));
+        let back: AssistantMessageEvent = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, AssistantMessageEvent::Done { .. }));
+    }
+
+    #[test]
+    fn event_error_roundtrip() {
+        let ev = AssistantMessageEvent::Error { reason: StopReason::Error, error: "fail".into() };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains(r#""type":"error""#));
+    }
+
+    #[test]
+    fn stop_reason_serde() {
+        assert_eq!(serde_json::to_string(&StopReason::Stop).unwrap(), r#""stop""#);
+        assert_eq!(serde_json::to_string(&StopReason::ToolUse).unwrap(), r#""toolUse""#);
+        let sr: StopReason = serde_json::from_str(r#""toolUse""#).unwrap();
+        assert_eq!(sr, StopReason::ToolUse);
+    }
+
+    #[test]
+    fn model_serde_camelcase() {
+        let m = Model {
+            id: "claude-sonnet-4-5".into(), name: "Claude Sonnet 4.5".into(),
+            api: "anthropic-messages".into(), provider: "anthropic".into(),
+            base_url: "https://api.anthropic.com".into(), reasoning: true,
+            input: 3.0, output: 15.0, cache_read: None, cache_write: None,
+            context_window: 200000, max_tokens: Some(8192), headers: None,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains(r#""baseUrl""#));
+        assert!(json.contains(r#""contextWindow""#));
+        assert!(json.contains(r#""maxTokens""#));
+    }
+}
