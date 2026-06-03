@@ -42,8 +42,9 @@ impl Agent {
     /// Returns an AgentStream that yields events until the model stops
     /// or an error occurs.
     pub fn prompt(&self, text: &str) -> AgentStream {
+        let msg_count = self.state.read().unwrap().messages.len();
         self.state.write().unwrap().messages.push(AgentMessage::UserText {
-            message_id: format!("user_{}", self.state.read().unwrap().messages.len()),
+            message_id: format!("user_{}", msg_count),
             text: text.to_string(),
         });
         agent_loop::run_loop(self.state.clone())
