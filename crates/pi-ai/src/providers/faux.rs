@@ -8,7 +8,20 @@ use crate::types::{
 use crate::stream::EventStream;
 
 pub struct FauxProvider {
-    pub responses: Mutex<Vec<FauxResponse>>,
+    pub responses: Mutex<FauxState>,
+}
+
+pub struct FauxState {
+    /// Queue of per-call responses. Each call to stream() pops the first entry.
+    pub call_queue: Vec<FauxCall>,
+    /// Default responses used when call_queue is empty (backward compat).
+    pub default_responses: Vec<FauxResponse>,
+}
+
+#[derive(Clone)]
+pub struct FauxCall {
+    pub responses: Vec<FauxResponse>,
+    pub stop_reason: StopReason,
 }
 
 #[derive(Clone)]
@@ -28,7 +41,23 @@ pub struct FauxToolCall {
 
 impl FauxProvider {
     pub fn new(responses: Vec<FauxResponse>) -> Self {
-        Self { responses: Mutex::new(responses) }
+        Self {
+            responses: Mutex::new(FauxState {
+                call_queue: vec![],
+                default_responses: responses,
+            }),
+        }
+    }
+
+    /// Create a provider with a queue of per-call responses.
+    /// Each stream() call pops the next FauxCall and replays it.
+    pub fn with_call_queue(calls: Vec<FauxCall>) -> Self {
+        Self {
+            responses: Mutex::new(FauxState {
+                call_queue: calls,
+                default_responses: vec![],
+            }),
+        }
     }
 
     pub fn simple_text(text: &str) -> Self {
@@ -38,11 +67,36 @@ impl FauxProvider {
             tool_calls: vec![],
         }])
     }
+
+    /// Create a single faux call with the given responses and stop reason.
+    pub fn single_call(responses: Vec<FauxResponse>, stop_reason: StopReason) -> FauxCall {
+        FauxCall { responses, stop_reason }
+    }
+
+    /// Create a text-only faux call with the given stop reason.
+    pub fn text_call(text: &str, stop_reason: StopReason) -> FauxCall {
+        FauxCall {
+            responses: vec![FauxResponse {
+                text_deltas: vec![text.to_string()],
+                thinking_deltas: vec![],
+                tool_calls: vec![],
+            }],
+            stop_reason,
+        }
+    }
 }
 
 impl ApiProvider for FauxProvider {
     fn stream(&self, model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
-        let responses = self.responses.lock().unwrap().clone();
+        let (responses, stop_reason) = {
+            let mut state = self.responses.lock().unwrap();
+            if let Some(call) = state.call_queue.first().cloned() {
+                state.call_queue.remove(0);
+                (call.responses, call.stop_reason)
+            } else {
+                (state.default_responses.clone(), StopReason::Stop)
+            }
+        };
         let model_id = model.id.clone();
         Box::pin(stream! {
             let mut partial = AssistantMessage::empty("faux", &model_id);
@@ -116,10 +170,10 @@ impl ApiProvider for FauxProvider {
                 input: 10, output: 20, total_tokens: 30,
                 ..Default::default()
             };
-            partial.stop_reason = StopReason::Stop;
+            partial.stop_reason = stop_reason.clone();
 
             yield AssistantMessageEvent::Done {
-                reason: StopReason::Stop,
+                reason: stop_reason,
                 message: partial,
             };
         })

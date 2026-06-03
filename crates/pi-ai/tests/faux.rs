@@ -2,7 +2,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use pi_ai::types::*;
 use pi_ai::registry;
-use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
+use pi_ai::providers::faux::{FauxProvider, FauxCall, FauxResponse, FauxToolCall};
 use pi_ai::stream::complete;
 
 fn faux_model() -> Model {
@@ -84,4 +84,46 @@ async fn complete_with_faux() {
     assert_eq!(result.stop_reason, StopReason::Stop);
     assert!(!result.content.is_empty());
     registry::unregister("faux-api");
+}
+
+#[tokio::test]
+async fn faux_call_queue_with_tool_use() {
+    let provider = Arc::new(FauxProvider::with_call_queue(vec![
+        FauxCall {
+            responses: vec![FauxResponse {
+                text_deltas: vec![],
+                thinking_deltas: vec![],
+                tool_calls: vec![FauxToolCall {
+                    id: "toolu_01".into(),
+                    name: "search".into(),
+                    deltas: vec!["{\"q\":".into(), "\"rust\"}".into()],
+                    final_arguments: serde_json::json!({"q": "rust"}),
+                }],
+            }],
+            stop_reason: StopReason::ToolUse,
+        },
+    ]));
+    registry::register("faux-call-queue", provider);
+
+    let model = Model {
+        id: "faux-model".into(), name: "Faux".into(),
+        api: "faux-call-queue".into(), provider: "faux".into(),
+        base_url: "".into(), reasoning: false,
+        input: 0.0, output: 0.0, cache_read: None, cache_write: None,
+        context_window: 0, max_tokens: None, headers: None,
+    };
+    let ctx = Context { system_prompt: None, messages: vec![], tools: None };
+
+    let stream = registry::stream_model(&model, ctx, None);
+    let events: Vec<_> = stream.collect().await;
+
+    let last = events.last().unwrap();
+    match last {
+        AssistantMessageEvent::Done { reason, .. } => {
+            assert_eq!(*reason, StopReason::ToolUse);
+        }
+        other => panic!("expected Done with ToolUse, got {:?}", other),
+    }
+
+    registry::unregister("faux-call-queue");
 }
