@@ -1,14 +1,9 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+pub mod types;
+pub mod agent;
+pub mod convert;
+pub mod agent_loop;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use agent::Agent;
+pub use types::{
+    AgentMessage, AgentTool, AgentConfig, AgentEvent, AgentStream, ToolFn,
+};
