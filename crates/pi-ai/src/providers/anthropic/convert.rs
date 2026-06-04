@@ -245,7 +245,12 @@ mod tests {
             reasoning: false,
             thinking_level_map: None,
             input: vec![ModelInput::Text],
-            cost: ModelCost { input: 1.0, output: 5.0, cache_read: 0.0, cache_write: 0.0 },
+            cost: ModelCost {
+                input: 1.0,
+                output: 5.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
             context_window: 200000,
             max_tokens: 8192,
             headers: None,

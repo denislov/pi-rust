@@ -289,6 +289,12 @@ pub struct StreamOptions {
     pub headers: Option<serde_json::Value>,
     #[serde(skip)]
     pub cancel: Option<tokio_util::sync::CancellationToken>,
+    #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(rename = "maxRetries", skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(rename = "maxRetryDelayMs", skip_serializing_if = "Option::is_none")]
+    pub max_retry_delay_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -428,6 +434,29 @@ mod tests {
         );
         let sr: StopReason = serde_json::from_str(r#""toolUse""#).unwrap();
         assert_eq!(sr, StopReason::ToolUse);
+    }
+
+    #[test]
+    fn stream_options_serializes_retry_fields() {
+        let opts = StreamOptions {
+            timeout_ms: Some(30000),
+            max_retries: Some(3),
+            max_retry_delay_ms: Some(5000),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&opts).unwrap();
+        assert!(json.contains(r#""timeoutMs":30000"#));
+        assert!(json.contains(r#""maxRetries":3"#));
+        assert!(json.contains(r#""maxRetryDelayMs":5000"#));
+    }
+
+    #[test]
+    fn stream_options_skips_none_retry_fields() {
+        let opts = StreamOptions::default();
+        let json = serde_json::to_string(&opts).unwrap();
+        assert!(!json.contains("timeoutMs"));
+        assert!(!json.contains("maxRetries"));
+        assert!(!json.contains("maxRetryDelayMs"));
     }
 
     #[test]

@@ -14,7 +14,12 @@ fn faux_model(api: &str) -> Model {
         reasoning: false,
         thinking_level_map: None,
         input: vec![ModelInput::Text],
-        cost: ModelCost { input: 0.0, output: 0.0, cache_read: 0.0, cache_write: 0.0 },
+        cost: ModelCost {
+            input: 0.0,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        },
         context_window: 0,
         max_tokens: 0,
         headers: None,

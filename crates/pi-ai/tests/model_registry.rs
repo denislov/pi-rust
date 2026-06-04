@@ -1,4 +1,6 @@
-use pi_ai::models::{all_models, calculate_cost, get_model, get_models, get_providers, lookup_model};
+use pi_ai::models::{
+    all_models, calculate_cost, get_model, get_models, get_providers, lookup_model,
+};
 use pi_ai::types::{Model, ModelCost, ModelInput, Usage};
 
 #[test]
@@ -125,6 +127,25 @@ fn generated_registry_has_unique_provider_id_pairs() {
             "duplicate model pair: {}/{}",
             model.provider,
             model.id
+        );
+    }
+}
+
+#[test]
+fn all_builtin_apis_registered() {
+    pi_ai::providers::register_builtins();
+    let apis = [
+        "anthropic-messages",
+        "deepseek-chat-completions",
+        "openai-completions",
+        "openai-responses",
+        "google-generative-ai",
+    ];
+    for api in apis {
+        assert!(
+            pi_ai::registry::lookup(api).is_some(),
+            "expected built-in api {} to be registered",
+            api
         );
     }
 }

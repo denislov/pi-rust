@@ -4,13 +4,13 @@ use futures::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
 
 use super::convert::map_stop_reason;
-use super::sse::iterate_sse;
 use super::wire;
 use crate::models::calculate_cost;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, Model, StopReason, Usage,
 };
 use crate::util::json_repair::parse_streaming_json;
+use crate::util::sse::iterate_sse;
 
 /// Process an SSE body stream into an EventStream.
 /// This is the pure, testable core — no reqwest dependency.

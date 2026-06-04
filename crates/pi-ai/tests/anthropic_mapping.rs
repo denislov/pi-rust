@@ -12,7 +12,12 @@ fn test_model() -> Model {
         reasoning: true,
         thinking_level_map: None,
         input: vec![ModelInput::Text],
-        cost: ModelCost { input: 3.0, output: 15.0, cache_read: 0.30, cache_write: 3.75 },
+        cost: ModelCost {
+            input: 3.0,
+            output: 15.0,
+            cache_read: 0.30,
+            cache_write: 3.75,
+        },
         context_window: 200000,
         max_tokens: 8192,
         headers: None,

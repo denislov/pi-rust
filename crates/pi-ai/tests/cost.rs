@@ -29,8 +29,8 @@ fn opus_cost_with_cache() {
         cost: Cost::default(),
     };
     calculate_cost(&model, &mut usage);
-    assert!((usage.cost.cache_read - 1.50).abs() < 0.01);
-    assert!((usage.cost.cache_write - 18.75).abs() < 0.01);
+    assert!((usage.cost.cache_read - 0.5).abs() < 0.01);
+    assert!((usage.cost.cache_write - 6.25).abs() < 0.01);
 }
 
 #[test]

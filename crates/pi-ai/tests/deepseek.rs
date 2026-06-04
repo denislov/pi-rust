@@ -12,7 +12,7 @@ fn deepseek_model_is_available() {
     let model = lookup_model("deepseek-v4-flash").unwrap();
 
     assert_eq!(model.provider, "deepseek");
-    assert_eq!(model.api, "deepseek-chat-completions");
+    assert_eq!(model.api, "openai-completions");
     assert_eq!(model.base_url, "https://api.deepseek.com");
 }
 

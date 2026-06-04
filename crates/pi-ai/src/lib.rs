@@ -9,6 +9,6 @@ pub use models::{all_models, calculate_cost, get_model, get_models, get_provider
 pub use registry::{register, stream_model};
 pub use stream::{EventStream, complete};
 pub use types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Cost, Message, Model, ModelCost,
-    ModelInput, StopReason, StreamOptions, ThinkingConfig, Tool, Usage,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Cost, Message, Model,
+    ModelCost, ModelInput, StopReason, StreamOptions, ThinkingConfig, Tool, Usage,
 };
