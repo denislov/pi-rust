@@ -92,6 +92,10 @@ impl JsonlSessionRepo {
                 }
             }
         }
+        results.sort_by(|a, b| {
+            let mtime = |p: &PathBuf| fs::metadata(p).and_then(|m| m.modified()).ok();
+            mtime(&b.path).cmp(&mtime(&a.path))
+        });
         Ok(results)
     }
 
@@ -134,10 +138,14 @@ impl JsonlSessionRepo {
     }
 
     pub fn most_recent(&self, cwd: &str) -> Result<Option<JsonlSessionStorage>, SessionError> {
-        let all = self.list(Some(cwd))?;
+        let mut all = self.list(Some(cwd))?;
         if all.is_empty() {
             return Ok(None);
         }
+        all.sort_by(|a, b| {
+            let mtime = |p: &PathBuf| fs::metadata(p).and_then(|m| m.modified()).ok();
+            mtime(&b.path).cmp(&mtime(&a.path))
+        });
         for meta in &all {
             if let Ok(storage) = JsonlSessionStorage::open(&meta.path) {
                 return Ok(Some(storage));
@@ -181,6 +189,12 @@ impl JsonlSessionRepo {
         if let Some(ref lid) = leaf_id {
             let by_id: std::collections::HashMap<&str, &SessionEntry> =
                 entries.iter().map(|e| (e.id.as_str(), e)).collect();
+            if !by_id.contains_key(lid.as_str()) {
+                return Err(SessionError::new(
+                    SessionErrorCode::InvalidForkTarget,
+                    format!("entry id not found in source session: {lid}"),
+                ));
+            }
             let mut path_entries = Vec::new();
             let mut current: Option<&SessionEntry> = by_id.get(lid.as_str()).copied();
             while let Some(entry) = current {
@@ -197,5 +211,70 @@ impl JsonlSessionRepo {
         }
 
         Ok(target)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::StoredAgentMessage;
+    use pi_ai::types::ContentBlock;
+    use std::thread;
+    use std::time::Duration;
+
+    fn user_entry(id: &str, parent: Option<&str>, text: &str) -> SessionEntry {
+        SessionEntry::message(
+            id.into(),
+            parent.map(str::to_string),
+            crate::session::create_timestamp(),
+            StoredAgentMessage::User {
+                content: vec![ContentBlock::Text {
+                    text: text.into(),
+                    text_signature: None,
+                }],
+                timestamp: 1,
+            },
+        )
+    }
+
+    #[test]
+    fn test_most_recent_returns_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = JsonlSessionRepo::new(dir.path());
+
+        let mut older = repo.create("/tmp/project", Some("session-older")).unwrap();
+        older
+            .append_entry(user_entry("entry001", None, "older"))
+            .unwrap();
+        drop(older);
+
+        thread::sleep(Duration::from_millis(10));
+
+        let mut newer = repo.create("/tmp/project", Some("session-newer")).unwrap();
+        newer
+            .append_entry(user_entry("entry001", None, "newer"))
+            .unwrap();
+        drop(newer);
+
+        let most_recent = repo.most_recent("/tmp/project").unwrap();
+        assert!(most_recent.is_some());
+        assert_eq!(most_recent.unwrap().header().id, "session-newer");
+    }
+
+    #[test]
+    fn test_fork_unknown_entry_id_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = JsonlSessionRepo::new(dir.path());
+
+        let source = repo.create("/tmp/project", Some("source-session")).unwrap();
+        let source_path = source.path().to_path_buf();
+        drop(source);
+
+        let result = repo.fork(&source_path, "/tmp/fork", None, Some("nonexistent-entry"));
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            SessionErrorCode::InvalidForkTarget
+        );
     }
 }

@@ -64,7 +64,11 @@ pub struct ActiveSession {
 }
 
 pub fn agent_message_to_stored(msg: &pi_agent_core::AgentMessage) -> Option<StoredAgentMessage> {
-    session::agent_message_to_stored(msg)
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    session::agent_message_to_stored(msg, timestamp_ms)
 }
 
 pub fn append_agent_message(

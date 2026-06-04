@@ -322,3 +322,145 @@ fn collect_jsonl_files(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>
         }
     }
 }
+
+#[tokio::test]
+async fn continue_maintains_parent_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let sessions = dir.path().join("sessions");
+
+    let api1 = "chain-first";
+    registry::register(api1, Arc::new(FauxProvider::simple_text("first response")));
+    let options1 = test_options(api1, &cwd, &sessions);
+    let result = run_cli_with_options(
+        vec![
+            "--session-id".into(),
+            "test123".into(),
+            "-p".into(),
+            "first".into(),
+        ],
+        options1,
+    )
+    .await;
+    assert_eq!(result.exit_code, 0);
+    registry::unregister(api1);
+
+    let api2 = "chain-second";
+    registry::register(api2, Arc::new(FauxProvider::simple_text("second response")));
+    let options2 = test_options(api2, &cwd, &sessions);
+    let result = run_cli_with_options(
+        vec![
+            "--session-id".into(),
+            "test123".into(),
+            "-p".into(),
+            "second".into(),
+        ],
+        options2,
+    )
+    .await;
+    assert_eq!(result.exit_code, 0);
+    registry::unregister(api2);
+
+    let mut files = Vec::new();
+    collect_jsonl_files(dir.path(), &mut files);
+    assert_eq!(files.len(), 1);
+    let text = std::fs::read_to_string(&files[0]).unwrap();
+    let entries: Vec<serde_json::Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    let mut user_ids: Vec<String> = Vec::new();
+    let mut assistant_ids: Vec<String> = Vec::new();
+    for entry in &entries {
+        let entry_type = entry["type"].as_str().unwrap_or("");
+        if entry_type == "message" {
+            let role = entry["message"]["role"].as_str().unwrap_or("");
+            let id = entry["id"].as_str().unwrap().to_string();
+            if role == "user" {
+                user_ids.push(id);
+            } else if role == "assistant" {
+                assistant_ids.push(id);
+            }
+        }
+    }
+
+    assert!(
+        user_ids.len() >= 2,
+        "expected at least 2 user messages, got {}",
+        user_ids.len()
+    );
+    assert!(
+        assistant_ids.len() >= 2,
+        "expected at least 2 assistant messages, got {}",
+        assistant_ids.len()
+    );
+
+    let second_user_parent = entries
+        .iter()
+        .find(|e| e["id"].as_str() == Some(&user_ids[1]))
+        .and_then(|e| e["parentId"].as_str())
+        .map(|s| s.to_string());
+    assert_eq!(
+        second_user_parent.as_deref(),
+        Some(assistant_ids[0].as_str()),
+        "second user message should chain from first assistant"
+    );
+
+    let second_assistant_parent = entries
+        .iter()
+        .find(|e| e["id"].as_str() == Some(&assistant_ids[1]))
+        .and_then(|e| e["parentId"].as_str())
+        .map(|s| s.to_string());
+    assert_eq!(
+        second_assistant_parent.as_deref(),
+        Some(user_ids[1].as_str()),
+        "second assistant message should chain from second user"
+    );
+}
+
+#[tokio::test]
+async fn session_dir_flag_writes_to_custom_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let custom_sessions = dir.path().join("custom").join("sessions").join("path");
+    std::fs::create_dir_all(&custom_sessions).unwrap();
+
+    let api = "session-dir-custom";
+    registry::register(api, Arc::new(FauxProvider::simple_text("answer")));
+
+    let options = CliRunOptions {
+        model_override: Some(faux_model(api)),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: cwd.clone(),
+            session_dir: None,
+        },
+    };
+
+    let result = run_cli_with_options(
+        vec![
+            "--session-dir".into(),
+            custom_sessions.display().to_string(),
+            "-p".into(),
+            "hi".into(),
+        ],
+        options,
+    )
+    .await;
+    assert_eq!(result.exit_code, 0);
+    registry::unregister(api);
+
+    let mut files = Vec::new();
+    collect_jsonl_files(&custom_sessions, &mut files);
+    assert!(
+        !files.is_empty(),
+        "expected jsonl files under custom session path {:?}",
+        custom_sessions
+    );
+}

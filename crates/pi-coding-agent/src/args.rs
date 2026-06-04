@@ -137,6 +137,17 @@ where
         parsed.prompt = Some(prompt_parts.join(" "));
     }
 
+    let session_target_count = parsed.continue_session as u32
+        + parsed.resume as u32
+        + parsed.session.is_some() as u32
+        + parsed.session_id.is_some() as u32
+        + parsed.fork.is_some() as u32;
+    if session_target_count > 1 {
+        return Err(CliError::InvalidSessionFlags(
+            "multiple session target flags are not allowed".into(),
+        ));
+    }
+
     if parsed.no_session && has_session_target(&parsed) {
         return Err(CliError::InvalidSessionFlags(
             "--no-session cannot be combined with session selection flags".into(),

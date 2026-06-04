@@ -97,7 +97,11 @@ pub async fn run_cli_with_options(
 
     let session_enabled = !parsed.no_session;
     let session = if session_enabled {
-        Some(options.session.clone())
+        let mut session_opts = options.session.clone();
+        if let Some(ref dir) = parsed.session_dir {
+            session_opts.session_dir = Some(std::path::PathBuf::from(dir));
+        }
+        Some(session_opts)
     } else {
         None
     };

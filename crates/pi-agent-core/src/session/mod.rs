@@ -17,7 +17,10 @@ pub use types::{
     StoredUsage, StoredUsageCost,
 };
 
-pub fn agent_message_to_stored(msg: &crate::types::AgentMessage) -> Option<StoredAgentMessage> {
+pub fn agent_message_to_stored(
+    msg: &crate::types::AgentMessage,
+    timestamp_ms: u64,
+) -> Option<StoredAgentMessage> {
     use crate::types::AgentMessage;
 
     match msg {
@@ -29,7 +32,7 @@ pub fn agent_message_to_stored(msg: &crate::types::AgentMessage) -> Option<Store
                 text: text.clone(),
                 text_signature: None,
             }],
-            timestamp: 0,
+            timestamp: timestamp_ms,
         }),
         AgentMessage::Assistant {
             message_id: _,
@@ -69,7 +72,7 @@ pub fn agent_message_to_stored(msg: &crate::types::AgentMessage) -> Option<Store
             tool_name: tool_name.clone(),
             content: content.clone(),
             is_error: *is_error,
-            timestamp: 0,
+            timestamp: timestamp_ms,
         }),
         AgentMessage::SystemPrompt { .. } => None,
     }

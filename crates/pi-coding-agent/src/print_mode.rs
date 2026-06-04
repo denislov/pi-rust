@@ -162,13 +162,19 @@ fn capture_session_messages(
         &[]
     };
 
+    let current_leaf = active
+        .storage
+        .get_leaf_id()
+        .map_err(|e| CliError::SessionFailure(e.message))?;
+
     let timestamp = create_timestamp();
+    let mut prev_parent = current_leaf;
     if let Some(name) = session_name {
         let entry_id = generate_entry_id(existing_ids);
         existing_ids.insert(entry_id.clone());
         let session_info_entry = pi_agent_core::session::SessionEntry::session_info(
-            entry_id,
-            None,
+            entry_id.clone(),
+            prev_parent.clone(),
             timestamp.clone(),
             name.clone(),
         );
@@ -176,9 +182,9 @@ fn capture_session_messages(
             .storage
             .append_entry(session_info_entry)
             .map_err(|e| CliError::SessionFailure(e.message))?;
+        prev_parent = Some(entry_id);
     }
 
-    let mut prev_parent: Option<String> = None;
     for msg in new_messages {
         let entry_id = generate_entry_id(existing_ids);
         existing_ids.insert(entry_id.clone());

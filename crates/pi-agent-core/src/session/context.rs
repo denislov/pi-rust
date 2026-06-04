@@ -12,18 +12,18 @@ pub struct SessionContext {
 }
 
 fn infer_leaf_id(entries: &[SessionEntry]) -> Option<String> {
-    entries.iter().rev().find_map(|entry| {
+    for entry in entries.iter().rev() {
         if entry.entry_type == "leaf" {
-            entry
-                .field("targetId")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        } else if entry.entry_type == "session" {
-            None
-        } else {
-            Some(entry.id.clone())
+            let target = entry.field("targetId");
+            if target.map_or(true, |v| v.is_null()) {
+                return None;
+            }
+            return target.and_then(|v| v.as_str()).map(str::to_string);
+        } else if entry.entry_type != "session" {
+            return Some(entry.id.clone());
         }
-    })
+    }
+    None
 }
 
 fn path_to_root<'a>(
