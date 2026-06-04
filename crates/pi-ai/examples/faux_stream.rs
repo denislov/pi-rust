@@ -24,13 +24,13 @@ async fn main() {
         provider: "faux".into(),
         base_url: String::new(),
         reasoning: false,
-        input: 0.0,
-        output: 0.0,
-        cache_read: None,
-        cache_write: None,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost { input: 0.0, output: 0.0, cache_read: 0.0, cache_write: 0.0 },
         context_window: 0,
-        max_tokens: None,
+        max_tokens: 0,
         headers: None,
+        compat: None,
     };
 
     let ctx = Context {

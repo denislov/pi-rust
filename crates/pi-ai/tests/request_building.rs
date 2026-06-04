@@ -8,13 +8,13 @@ fn test_model() -> Model {
         provider: "anthropic".into(),
         base_url: "https://api.anthropic.com".into(),
         reasoning: false,
-        input: 1.0,
-        output: 5.0,
-        cache_read: None,
-        cache_write: None,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost { input: 1.0, output: 5.0, cache_read: 0.0, cache_write: 0.0 },
         context_window: 200000,
-        max_tokens: Some(8192),
+        max_tokens: 8192,
         headers: None,
+        compat: None,
     }
 }
 

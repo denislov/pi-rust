@@ -22,7 +22,7 @@ pub fn build_request(
         max_tokens: opts
             .as_ref()
             .and_then(|opts| opts.max_tokens)
-            .or(model.max_tokens),
+            .or(Some(model.max_tokens)),
         temperature: opts.as_ref().and_then(|opts| opts.temperature),
         stream: false,
     }

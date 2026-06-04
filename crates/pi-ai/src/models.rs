@@ -1,4 +1,4 @@
-use crate::types::{Model, Usage};
+use crate::types::{Model, ModelCost, ModelInput, Usage};
 
 /// Static model lookup by id. Returns None for unknown models.
 pub fn lookup_model(id: &str) -> Option<Model> {
@@ -8,22 +8,13 @@ pub fn lookup_model(id: &str) -> Option<Model> {
 /// Calculate cost for the given usage against a model's rates.
 /// Rates are per million tokens. Updates usage.cost in place.
 pub fn calculate_cost(model: &Model, usage: &mut Usage) {
-    let input_cost = (usage.input as f64 / 1_000_000.0) * model.input;
-    let output_cost = (usage.output as f64 / 1_000_000.0) * model.output;
-    let cache_read_cost = model
-        .cache_read
-        .map_or(0.0, |rate| (usage.cache_read as f64 / 1_000_000.0) * rate);
-    let cache_write_cost = model
-        .cache_write
-        .map_or(0.0, |rate| (usage.cache_write as f64 / 1_000_000.0) * rate);
-    usage.cost.input = input_cost;
-    usage.cost.output = output_cost;
-    usage.cost.cache_read = cache_read_cost;
-    usage.cost.cache_write = cache_write_cost;
+    usage.cost.input = (usage.input as f64 / 1_000_000.0) * model.cost.input;
+    usage.cost.output = (usage.output as f64 / 1_000_000.0) * model.cost.output;
+    usage.cost.cache_read = (usage.cache_read as f64 / 1_000_000.0) * model.cost.cache_read;
+    usage.cost.cache_write = (usage.cache_write as f64 / 1_000_000.0) * model.cost.cache_write;
 }
 
-/// Hand-crafted static model table (subset of Anthropic models).
-/// Populated inline via build_models() at first access.
+/// Static model table.
 pub fn all_models() -> &'static [Model] {
     use std::sync::LazyLock;
     static MODELS: LazyLock<Vec<Model>> = LazyLock::new(build_models);
@@ -35,10 +26,10 @@ fn build_models() -> Vec<Model> {
         id: &str,
         name: &str,
         reasoning: bool,
-        input: f64,
-        output: f64,
-        cache_read: Option<f64>,
-        cache_write: Option<f64>,
+        input_price: f64,
+        output_price: f64,
+        cache_read: f64,
+        cache_write: f64,
         context_window: u32,
         max_tokens: u32,
     ) -> Model {
@@ -49,13 +40,18 @@ fn build_models() -> Vec<Model> {
             provider: "anthropic".into(),
             base_url: "https://api.anthropic.com".into(),
             reasoning,
-            input,
-            output,
-            cache_read,
-            cache_write,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost {
+                input: input_price,
+                output: output_price,
+                cache_read,
+                cache_write,
+            },
             context_window,
-            max_tokens: Some(max_tokens),
+            max_tokens,
             headers: None,
+            compat: None,
         }
     }
     fn deepseek_m(id: &str, name: &str, reasoning: bool) -> Model {
@@ -66,13 +62,18 @@ fn build_models() -> Vec<Model> {
             provider: "deepseek".into(),
             base_url: "https://api.deepseek.com".into(),
             reasoning,
-            input: 0.0,
-            output: 0.0,
-            cache_read: None,
-            cache_write: None,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost {
+                input: 0.0,
+                output: 0.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
             context_window: 64_000,
-            max_tokens: Some(8192),
+            max_tokens: 8192,
             headers: None,
+            compat: None,
         }
     }
     vec![
@@ -82,8 +83,8 @@ fn build_models() -> Vec<Model> {
             true,
             3.0,
             15.0,
-            Some(0.30),
-            Some(3.75),
+            0.30,
+            3.75,
             200_000,
             8192,
         ),
@@ -93,8 +94,8 @@ fn build_models() -> Vec<Model> {
             false,
             1.0,
             5.0,
-            Some(0.10),
-            Some(1.25),
+            0.10,
+            1.25,
             200_000,
             8192,
         ),
@@ -104,8 +105,8 @@ fn build_models() -> Vec<Model> {
             true,
             15.0,
             75.0,
-            Some(1.50),
-            Some(18.75),
+            1.50,
+            18.75,
             200_000,
             8192,
         ),
@@ -115,8 +116,8 @@ fn build_models() -> Vec<Model> {
             true,
             3.0,
             15.0,
-            Some(0.30),
-            Some(3.75),
+            0.30,
+            3.75,
             200_000,
             8192,
         ),
@@ -126,8 +127,8 @@ fn build_models() -> Vec<Model> {
             true,
             15.0,
             75.0,
-            Some(1.50),
-            Some(18.75),
+            1.50,
+            18.75,
             200_000,
             8192,
         ),
@@ -137,8 +138,8 @@ fn build_models() -> Vec<Model> {
             false,
             3.0,
             15.0,
-            Some(0.30),
-            Some(3.75),
+            0.30,
+            3.75,
             200_000,
             8192,
         ),
@@ -148,8 +149,8 @@ fn build_models() -> Vec<Model> {
             false,
             0.80,
             4.0,
-            Some(0.08),
-            Some(1.00),
+            0.08,
+            1.00,
             200_000,
             8192,
         ),
@@ -159,8 +160,8 @@ fn build_models() -> Vec<Model> {
             false,
             15.0,
             75.0,
-            Some(1.50),
-            Some(18.75),
+            1.50,
+            18.75,
             200_000,
             4096,
         ),
@@ -177,7 +178,7 @@ mod tests {
     fn lookup_known_model() {
         let m = lookup_model("claude-sonnet-4-5").unwrap();
         assert_eq!(m.id, "claude-sonnet-4-5");
-        assert_eq!(m.input, 3.0);
+        assert!((m.cost.input - 3.0).abs() < 0.001);
     }
 
     #[test]
@@ -204,8 +205,8 @@ mod tests {
             cost: Default::default(),
         };
         calculate_cost(&model, &mut usage);
-        assert!((usage.cost.input - 1.0).abs() < 0.001); // 1M tokens * $1/M
-        assert!((usage.cost.output - 2.5).abs() < 0.001); // 500K tokens * $5/M
+        assert!((usage.cost.input - 1.0).abs() < 0.001);
+        assert!((usage.cost.output - 2.5).abs() < 0.001);
     }
 
     #[test]
@@ -220,7 +221,7 @@ mod tests {
             cost: Default::default(),
         };
         calculate_cost(&model, &mut usage);
-        assert!((usage.cost.cache_read - 0.30).abs() < 0.001); // $0.30/M
-        assert!((usage.cost.cache_write - 7.50).abs() < 0.001); // $3.75/M * 2
+        assert!((usage.cost.cache_read - 0.30).abs() < 0.001);
+        assert!((usage.cost.cache_write - 7.50).abs() < 0.001);
     }
 }

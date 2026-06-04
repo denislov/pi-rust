@@ -1,7 +1,7 @@
 use pi_agent_core::AgentTool;
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::registry;
-use pi_ai::types::{ContentBlock, Model, StopReason};
+use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
 use pi_coding_agent::{CliError, PrintModeOptions, run_print_mode};
 use std::sync::Arc;
 
@@ -13,13 +13,13 @@ fn faux_model(api: &str) -> Model {
         provider: "faux".into(),
         base_url: String::new(),
         reasoning: false,
-        input: 0.0,
-        output: 0.0,
-        cache_read: None,
-        cache_write: None,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost { input: 0.0, output: 0.0, cache_read: 0.0, cache_write: 0.0 },
         context_window: 0,
-        max_tokens: None,
+        max_tokens: 0,
         headers: None,
+        compat: None,
     }
 }
 

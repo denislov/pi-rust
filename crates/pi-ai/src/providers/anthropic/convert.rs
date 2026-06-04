@@ -40,7 +40,7 @@ pub fn build_request(model: &Model, ctx: &Context, opts: &Option<StreamOptions>)
     let max_tokens = opts
         .as_ref()
         .and_then(|o| o.max_tokens)
-        .or(model.max_tokens)
+        .or(Some(model.max_tokens))
         .unwrap_or(4096);
 
     let system = ctx.system_prompt.as_ref().map(|sp| {
@@ -190,6 +190,7 @@ fn convert_content(blocks: &[ContentBlock]) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ModelCost, ModelInput};
 
     #[test]
     fn normalize_valid_id_passes_through() {
@@ -242,13 +243,13 @@ mod tests {
             provider: "anthropic".into(),
             base_url: "https://api.anthropic.com".into(),
             reasoning: false,
-            input: 1.0,
-            output: 5.0,
-            cache_read: None,
-            cache_write: None,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost { input: 1.0, output: 5.0, cache_read: 0.0, cache_write: 0.0 },
             context_window: 200000,
-            max_tokens: Some(8192),
+            max_tokens: 8192,
             headers: None,
+            compat: None,
         };
         let ctx = Context {
             system_prompt: Some("Be helpful.".into()),

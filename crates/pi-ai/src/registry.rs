@@ -57,7 +57,7 @@ pub fn stream_model(model: &Model, ctx: Context, mut opts: Option<StreamOptions>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::AssistantMessage;
+    use crate::types::{AssistantMessage, ModelCost, ModelInput};
     use futures::StreamExt;
     use std::sync::Arc;
 
@@ -97,13 +97,13 @@ mod tests {
             provider: "none".into(),
             base_url: "".into(),
             reasoning: false,
-            input: 0.0,
-            output: 0.0,
-            cache_read: None,
-            cache_write: None,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost { input: 0.0, output: 0.0, cache_read: 0.0, cache_write: 0.0 },
             context_window: 0,
-            max_tokens: None,
+            max_tokens: 0,
             headers: None,
+            compat: None,
         };
         let mut stream = stream_model(
             &model,
@@ -128,13 +128,13 @@ mod tests {
             provider: "test".into(),
             base_url: "".into(),
             reasoning: false,
-            input: 0.0,
-            output: 0.0,
-            cache_read: None,
-            cache_write: None,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost { input: 0.0, output: 0.0, cache_read: 0.0, cache_write: 0.0 },
             context_window: 0,
-            max_tokens: None,
+            max_tokens: 0,
             headers: None,
+            compat: None,
         };
         let mut stream = stream_model(
             &model,
