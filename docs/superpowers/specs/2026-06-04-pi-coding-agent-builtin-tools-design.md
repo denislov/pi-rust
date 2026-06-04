@@ -280,3 +280,66 @@ throwing becomes an error tool result.
 - Abort signal into tools (extend `pi-agent-core::ToolFn`) + `file-mutation-queue` once parallel
   tool execution lands (ROADMAP M4).
 - TUI renderers / diff display when interactive mode is built (ROADMAP M6).
+
+## 12. Post-review clarifications (authoritative for implementation)
+
+A sub-agent review against the TS sources surfaced exact-wording and edge-case items. These
+pin model-visible behavior; tests must assert them.
+
+### 12.1 Exact error / notice strings (port verbatim; `{…}` are substituted values)
+
+**read**
+- offset past EOF (uses the raw 1-indexed user offset and the file's total line count):
+  `Offset {offset} is beyond end of file ({total_lines} lines total)`
+- first line exceeds byte limit (note: the `head -c` arg is the **raw byte count `51200`**, not the
+  formatted size; `format_size(51200) == "50.0KB"`):
+  `[Line {line} is {format_size(first_line_bytes)}, exceeds 50.0KB limit. Use bash: sed -n '{line}p' {path} | head -c 51200]`
+- truncated by lines: `{content}\n\n[Showing lines {start}-{end} of {total}. Use offset={end+1} to continue.]`
+- truncated by bytes: `{content}\n\n[Showing lines {start}-{end} of {total} (50.0KB limit). Use offset={end+1} to continue.]`
+- user `limit` stopped early with more in file: `{content}\n\n[{remaining} more lines in file. Use offset={next} to continue.]`
+
+**write** — `Successfully wrote {n} bytes to {path}` where `n = content.as_bytes().len()` (UTF-8
+byte length). This is an intentional divergence from TS, which reports JS `content.length`
+(UTF-16 code units); the Rust value is the true byte count and is more correct. Tests assert the
+Rust value, not the TS value.
+
+**edit** (port edit-diff.ts:147–183 verbatim; single-edit vs multi-edit variants differ):
+- invalid input (edits missing/empty): `Edit tool input is invalid. edits must contain at least one replacement.`
+- access failure: `Could not edit file: {path}. {reason}.` (`reason` = the io error string)
+- empty oldText — single: `oldText must not be empty in {path}.` · multi: `edits[{i}].oldText must not be empty in {path}.`
+- not found — single: `Could not find the exact text in {path}. The old text must match exactly including all whitespace and newlines.` · multi: `Could not find edits[{i}] in {path}. The oldText must match exactly including all whitespace and newlines.`
+- duplicate — single: `Found {n} occurrences of the text in {path}. The text must be unique. Please provide more context to make it unique.` · multi: `Found {n} occurrences of edits[{i}] in {path}. Each oldText must be unique. Please provide more context to make it unique.`
+- overlap: `edits[{a}] and edits[{b}] overlap in {path}. Merge them into one edit or target disjoint regions.`
+- no change — single: `No changes made to {path}. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.` · multi: `No changes made to {path}. The replacements produced identical content.`
+
+**bash**
+- nonzero exit: `{output}\n\nCommand exited with code {code}` (returned as `Err`)
+- timeout: `{output}\n\nCommand timed out after {timeout} seconds` (returned as `Err`)
+- missing cwd: `Working directory does not exist: {cwd}\nCannot execute bash commands.`
+- truncation notice (temp file deferred — **intentional divergence**: TS appends `Full output:
+  {path}`; we omit it): `{output}\n\n[Output truncated: showing last {output_lines} of
+  {total_lines} lines (50KB/2000-line limit).]`
+
+### 12.2 Behavior edge cases
+- **read offset ≤ 0**: clamp like TS `Math.max(0, offset-1)` → `start = offset.unwrap_or(1).saturating_sub(1)`; 0/negative behaves as start of file (no error).
+- **read images**: detect by **file extension** (static set `jpg/jpeg/png/gif/webp`, case-insensitive); return the text note from §6.5, never binary. Update the tool `description` to say text files only (do not claim image support).
+- **truncate_tail (bash)**: may keep a **partial last line** when a single trailing line exceeds
+  the byte limit (TS `lastLinePartial`); UTF-8 boundaries must be respected when slicing.
+- **bash stdout/stderr merge**: pipe both, read with a single multiplexer (`tokio::select!` over
+  the two `BufReader` line/chunk streams, or a merged byte stream) so chunks append in arrival
+  order; per-stream content stays intact (cross-stream interleave order is not asserted).
+- **bash shell**: fixed to `bash -c <command>` for this increment (no configurable shell path).
+- **path ~ expansion**: `~`/`~/…` → `$HOME` (`$USERPROFILE` on Windows); if the var is unset,
+  leave the path unmodified (TS-like fallback). No macOS NFD/curly/AM-PM variants.
+
+### 12.3 Wiring (explicit code change, not yet present)
+`run_cli` currently calls `run_cli_with_options(args, CliRunOptions::default())` with an empty
+tool list. This increment **changes `run_cli`** to resolve `cwd` and pass
+`builtin_tools(cwd)`; `run_cli_with_options` stays the explicit-tools seam (no built-ins unless
+the caller supplies them). `CliRunOptions::default()` keeps `tools: vec![]`.
+
+### 12.4 Added tests
+- e2e: also script a tool **error** turn (e.g. `read` a non-existent file) and assert the loop
+  delivers the error text to the model and continues (not just the success path).
+- read: offset ≤ 0, and `limit` larger than remaining lines (clip to EOF).
+- edit: empty-oldText error in both single- and multi-edit forms.
