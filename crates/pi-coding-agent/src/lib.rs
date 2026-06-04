@@ -47,8 +47,17 @@ fn stdout_with_trailing_newline(text: String) -> String {
     }
 }
 
+fn default_cli_options(cwd: std::path::PathBuf) -> CliRunOptions {
+    CliRunOptions {
+        model_override: None,
+        tools: builtin_tools(cwd),
+        register_builtins: true,
+    }
+}
+
 pub async fn run_cli(args: impl IntoIterator<Item = String>) -> CliOutput {
-    run_cli_with_options(args, CliRunOptions::default()).await
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    run_cli_with_options(args, default_cli_options(cwd)).await
 }
 
 pub async fn run_cli_with_options(
@@ -95,5 +104,19 @@ pub async fn run_cli_with_options(
     {
         Ok(text) => CliOutput::success(stdout_with_trailing_newline(text)),
         Err(error) => CliOutput::failure(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_cli_options_include_builtin_tools() {
+        let options = default_cli_options(std::path::PathBuf::from("."));
+        let names: Vec<_> = options.tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["read", "write", "edit", "bash"]);
+        assert!(options.register_builtins);
+        assert!(options.model_override.is_none());
     }
 }
