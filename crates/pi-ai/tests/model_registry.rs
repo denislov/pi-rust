@@ -1,4 +1,4 @@
-use pi_ai::models::{calculate_cost, lookup_model};
+use pi_ai::models::{all_models, calculate_cost, get_model, get_models, get_providers, lookup_model};
 use pi_ai::types::{Model, ModelCost, ModelInput, Usage};
 
 #[test]
@@ -76,4 +76,55 @@ fn lookup_default_anthropic_model_still_works() {
     let model = lookup_model("claude-sonnet-4-5").unwrap();
     assert_eq!(model.provider, "anthropic");
     assert_eq!(model.api, "anthropic-messages");
+}
+
+#[test]
+fn registry_contains_m2_models_from_ts_reference() {
+    let gpt = get_model("openai", "gpt-4.1").unwrap();
+    assert_eq!(gpt.api, "openai-responses");
+    assert_eq!(gpt.input, vec![ModelInput::Text, ModelInput::Image]);
+
+    let gpt5 = get_model("openai", "gpt-5").unwrap();
+    assert_eq!(gpt5.api, "openai-responses");
+    assert!(gpt5.reasoning);
+
+    let gemini = get_model("google", "gemini-2.5-flash").unwrap();
+    assert_eq!(gemini.api, "google-generative-ai");
+    assert!(gemini.input.contains(&ModelInput::Image));
+
+    let deepseek = get_model("deepseek", "deepseek-v4-flash").unwrap();
+    assert_eq!(deepseek.api, "openai-completions");
+    assert_eq!(deepseek.provider, "deepseek");
+
+    let claude = get_model("anthropic", "claude-sonnet-4-5").unwrap();
+    assert_eq!(claude.api, "anthropic-messages");
+}
+
+#[test]
+fn provider_listing_is_deterministic_and_non_empty() {
+    let providers = get_providers();
+    assert!(providers.windows(2).all(|w| w[0] <= w[1]));
+    assert!(providers.contains(&"anthropic".to_string()));
+    assert!(providers.contains(&"openai".to_string()));
+    assert!(providers.contains(&"google".to_string()));
+}
+
+#[test]
+fn provider_model_listing_filters_by_provider() {
+    let openai = get_models("openai");
+    assert!(openai.iter().any(|m| m.id == "gpt-4.1"));
+    assert!(openai.iter().all(|m| m.provider == "openai"));
+}
+
+#[test]
+fn generated_registry_has_unique_provider_id_pairs() {
+    let mut seen = std::collections::BTreeSet::new();
+    for model in all_models() {
+        assert!(
+            seen.insert((model.provider.clone(), model.id.clone())),
+            "duplicate model pair: {}/{}",
+            model.provider,
+            model.id
+        );
+    }
 }
