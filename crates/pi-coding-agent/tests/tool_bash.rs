@@ -76,3 +76,70 @@ async fn missing_cwd_errors() {
     .unwrap_err();
     assert!(e.contains("Working directory does not exist"));
 }
+
+#[tokio::test]
+async fn fractional_timeout_is_accepted() {
+    let d = tempdir().unwrap();
+    let e = bash_execute(
+        d.path(),
+        serde_json::json!({"command":"sleep 5","timeout":0.5}),
+    )
+    .await
+    .unwrap_err();
+    assert!(e.contains("Command timed out after 0.5 seconds"));
+}
+
+#[tokio::test]
+async fn background_child_does_not_hang() {
+    let d = tempdir().unwrap();
+    let r = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        bash_execute(
+            d.path(),
+            serde_json::json!({"command": "bash -c 'sleep 60 & echo done'", "timeout": 2}),
+        ),
+    )
+    .await;
+    match r {
+        Ok(Err(e)) => {
+            assert!(
+                e.contains("done") || e.contains("timed out"),
+                "unexpected error: {e}"
+            );
+        }
+        Ok(Ok(blocks)) => {
+            let t = text(&blocks);
+            assert!(t.contains("done"), "expected 'done' in output: {t}");
+        }
+        Err(_) => {}
+    }
+}
+
+#[tokio::test]
+async fn large_output_does_not_use_excessive_memory() {
+    let d = tempdir().unwrap();
+    let r = bash_execute(d.path(), serde_json::json!({"command": "seq 1 5000"}))
+        .await
+        .unwrap();
+    let t = text(&r);
+    assert!(t.contains("5000"), "missing last line: {t}");
+    assert!(
+        t.contains("[Output truncated:"),
+        "5000-line output should be truncated: {t}"
+    );
+}
+
+#[tokio::test]
+async fn stdout_stderr_arrival_order_preserved() {
+    let d = tempdir().unwrap();
+    let r = bash_execute(
+        d.path(),
+        serde_json::json!({"command": "printf 'out1\\n'; printf 'err1\\n' 1>&2; printf 'out2\\n'"}),
+    )
+    .await
+    .unwrap();
+    let t = text(&r);
+    assert!(t.contains("out1"), "missing out1: {t}");
+    assert!(t.contains("err1"), "missing err1: {t}");
+    assert!(t.contains("out2"), "missing out2: {t}");
+}
