@@ -71,6 +71,9 @@ async fn prints_single_turn_text_response() {
         max_turns: 5,
         tools: Vec::new(),
         register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
     })
     .await
     .unwrap();
@@ -98,6 +101,9 @@ async fn treats_length_as_successful_final_text() {
         max_turns: 5,
         tools: Vec::new(),
         register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
     })
     .await
     .unwrap();
@@ -129,6 +135,9 @@ async fn returns_agent_failure_on_error_stop_reason() {
         max_turns: 5,
         tools: Vec::new(),
         register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
     })
     .await
     .unwrap_err();
@@ -171,6 +180,9 @@ async fn supports_tool_call_loop_with_injected_tool() {
         max_turns: 5,
         tools: vec![echo_tool()],
         register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
     })
     .await
     .unwrap();

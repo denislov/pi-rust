@@ -121,6 +121,7 @@ async fn print_mode_uses_injected_model_and_returns_stdout() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ..Default::default()
         },
     )
     .await;

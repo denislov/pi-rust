@@ -132,6 +132,9 @@ async fn run_scripted_read(
         max_turns: 5,
         tools: builtin_tools(cwd),
         register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
     })
     .await
     .unwrap();

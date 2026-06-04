@@ -14,4 +14,8 @@ pub enum CliError {
     InvalidMaxTurns(String),
     #[error("agent failure: {0}")]
     AgentFailure(String),
+    #[error("{0}")]
+    InvalidSessionFlags(String),
+    #[error("{0}")]
+    SessionFailure(String),
 }

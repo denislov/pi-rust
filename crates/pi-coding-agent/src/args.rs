@@ -12,6 +12,14 @@ pub struct CliArgs {
     pub max_turns: u32,
     pub help: bool,
     pub version: bool,
+    pub continue_session: bool,
+    pub resume: bool,
+    pub no_session: bool,
+    pub session: Option<String>,
+    pub session_id: Option<String>,
+    pub fork: Option<String>,
+    pub session_dir: Option<String>,
+    pub name: Option<String>,
 }
 
 impl Default for CliArgs {
@@ -25,13 +33,21 @@ impl Default for CliArgs {
             max_turns: DEFAULT_MAX_TURNS,
             help: false,
             version: false,
+            continue_session: false,
+            resume: false,
+            no_session: false,
+            session: None,
+            session_id: None,
+            fork: None,
+            session_dir: None,
+            name: None,
         }
     }
 }
 
 pub fn help_text() -> String {
     format!(
-        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --model <id>             Model id from the built-in Rust model table\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --max-turns <n>          Maximum agent loop turns (default: 5)\n  -h, --help               Show help\n  -v, --version            Show version\n",
+        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --model <id>             Model id from the built-in Rust model table\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --max-turns <n>          Maximum agent loop turns (default: 5)\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -53,6 +69,14 @@ fn parse_max_turns(value: String) -> Result<u32, CliError> {
         return Err(CliError::InvalidMaxTurns(value));
     }
     Ok(parsed)
+}
+
+fn has_session_target(args: &CliArgs) -> bool {
+    args.continue_session
+        || args.resume
+        || args.session.is_some()
+        || args.session_id.is_some()
+        || args.fork.is_some()
 }
 
 pub fn parse_args<I>(args: I) -> Result<CliArgs, CliError>
@@ -87,6 +111,17 @@ where
                 let value = take_value(&raw, &mut i, "--max-turns")?;
                 parsed.max_turns = parse_max_turns(value)?;
             }
+            "-c" | "--continue" => parsed.continue_session = true,
+            "-r" | "--resume" => parsed.resume = true,
+            "--no-session" => parsed.no_session = true,
+            "--session" => parsed.session = Some(take_value(&raw, &mut i, "--session")?),
+            "--session-id" => parsed.session_id = Some(take_value(&raw, &mut i, "--session-id")?),
+            "--fork" => parsed.fork = Some(take_value(&raw, &mut i, "--fork")?),
+            "--session-dir" => {
+                parsed.session_dir = Some(take_value(&raw, &mut i, "--session-dir")?)
+            }
+            "--name" => parsed.name = Some(take_value(&raw, &mut i, "--name")?),
+            "-n" => parsed.name = Some(take_value(&raw, &mut i, "-n")?),
             value if value.starts_with("--") => {
                 return Err(CliError::UnknownFlag(value.to_string()));
             }
@@ -100,6 +135,18 @@ where
 
     if !prompt_parts.is_empty() {
         parsed.prompt = Some(prompt_parts.join(" "));
+    }
+
+    if parsed.no_session && has_session_target(&parsed) {
+        return Err(CliError::InvalidSessionFlags(
+            "--no-session cannot be combined with session selection flags".into(),
+        ));
+    }
+
+    if parsed.no_session && parsed.name.is_some() {
+        return Err(CliError::InvalidSessionFlags(
+            "--no-session cannot be combined with session selection flags".into(),
+        ));
     }
 
     Ok(parsed)

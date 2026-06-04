@@ -85,6 +85,16 @@ impl Agent {
         })
     }
 
+    pub fn with_messages(config: AgentConfig, messages: Vec<AgentMessage>) -> Self {
+        let agent = Self::new(config);
+        agent.replace_messages(messages);
+        agent
+    }
+
+    pub fn replace_messages(&self, messages: Vec<AgentMessage>) {
+        self.state.write().unwrap().messages = messages;
+    }
+
     /// Cancels an in-flight loop. Safe to call from another task.
     pub fn abort(&self) {
         self.state.read().unwrap().cancel_token.cancel();

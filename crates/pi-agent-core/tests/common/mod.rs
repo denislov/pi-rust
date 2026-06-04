@@ -1,9 +1,10 @@
 use async_stream::stream;
+use pi_ai::providers::faux::FauxResponse;
 use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StopReason,
-    StreamOptions,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
+    StopReason, StreamOptions,
 };
 use std::sync::Mutex;
 
@@ -176,5 +177,36 @@ pub fn tool_use_turn(tool_id: &str, tool_name: &str, arguments: serde_json::Valu
         stop_reason: StopReason::ToolUse,
         response_id: "resp_tool".into(),
         model_name: "test-model".into(),
+    }
+}
+
+pub fn faux_model(api: &str) -> Model {
+    Model {
+        id: "faux-model".into(),
+        name: "Faux Model".into(),
+        api: api.into(),
+        provider: "faux".into(),
+        base_url: String::new(),
+        reasoning: false,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost {
+            input: 0.0,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        },
+        context_window: 0,
+        max_tokens: 0,
+        headers: None,
+        compat: None,
+    }
+}
+
+pub fn faux_text_turn(text: &str) -> FauxResponse {
+    FauxResponse {
+        text_deltas: vec![text.to_string()],
+        thinking_deltas: vec![],
+        tool_calls: vec![],
     }
 }

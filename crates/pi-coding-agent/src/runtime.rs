@@ -1,15 +1,48 @@
 use crate::{CliArgs, CliError};
 use pi_agent_core::{AgentConfig, AgentTool};
 use pi_ai::types::{Model, StreamOptions};
+use std::path::PathBuf;
 
 pub const DEFAULT_MODEL_ID: &str = "claude-sonnet-4-5";
 pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful coding assistant.";
+
+#[derive(Clone, Debug)]
+pub enum SessionMode {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionRunOptions {
+    pub mode: SessionMode,
+    pub cwd: PathBuf,
+    pub session_dir: Option<PathBuf>,
+}
+
+impl SessionRunOptions {
+    pub fn disabled(cwd: PathBuf) -> Self {
+        Self {
+            mode: SessionMode::Disabled,
+            cwd,
+            session_dir: None,
+        }
+    }
+
+    pub fn enabled(cwd: PathBuf) -> Self {
+        Self {
+            mode: SessionMode::Enabled,
+            cwd,
+            session_dir: None,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct CliRunOptions {
     pub model_override: Option<Model>,
     pub tools: Vec<AgentTool>,
     pub register_builtins: bool,
+    pub session: SessionRunOptions,
 }
 
 impl Default for CliRunOptions {
@@ -18,6 +51,7 @@ impl Default for CliRunOptions {
             model_override: None,
             tools: Vec::new(),
             register_builtins: true,
+            session: SessionRunOptions::disabled(PathBuf::from(".")),
         }
     }
 }

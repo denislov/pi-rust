@@ -2,14 +2,17 @@ pub mod args;
 pub mod error;
 pub mod print_mode;
 pub mod runtime;
+pub mod session;
 pub mod tools;
 
 pub use args::{CliArgs, DEFAULT_MAX_TURNS, help_text, parse_args};
 pub use error::CliError;
 pub use print_mode::{PrintModeOptions, run_print_mode};
 pub use runtime::{
-    CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config, select_model,
+    CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, SessionMode, SessionRunOptions,
+    build_agent_config, select_model,
 };
+pub use session::{ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session};
 pub use tools::builtin_tools;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,8 +53,9 @@ fn stdout_with_trailing_newline(text: String) -> String {
 fn default_cli_options(cwd: std::path::PathBuf) -> CliRunOptions {
     CliRunOptions {
         model_override: None,
-        tools: builtin_tools(cwd),
+        tools: builtin_tools(cwd.clone()),
         register_builtins: true,
+        session: SessionRunOptions::enabled(cwd),
     }
 }
 
@@ -91,6 +95,29 @@ pub async fn run_cli_with_options(
         Err(error) => return CliOutput::failure(error),
     };
 
+    let session_enabled = !parsed.no_session;
+    let session = if session_enabled {
+        Some(options.session.clone())
+    } else {
+        None
+    };
+
+    let session_target = if parsed.no_session {
+        None
+    } else if let Some(ref fork_target) = parsed.fork {
+        Some(ResolvedSessionTarget::ForkTarget(fork_target.clone()))
+    } else if let Some(ref session_target) = parsed.session {
+        Some(ResolvedSessionTarget::OpenTarget(session_target.clone()))
+    } else if let Some(ref session_id) = parsed.session_id {
+        Some(ResolvedSessionTarget::OpenOrCreateId(session_id.clone()))
+    } else if parsed.continue_session || parsed.resume {
+        Some(ResolvedSessionTarget::ContinueMostRecent)
+    } else {
+        None
+    };
+
+    let session_name = parsed.name.clone();
+
     match run_print_mode(PrintModeOptions {
         prompt,
         model,
@@ -99,6 +126,9 @@ pub async fn run_cli_with_options(
         max_turns: parsed.max_turns,
         tools: options.tools,
         register_builtins: options.register_builtins,
+        session,
+        session_target,
+        session_name,
     })
     .await
     {

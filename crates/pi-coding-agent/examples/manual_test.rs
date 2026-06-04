@@ -67,6 +67,9 @@ async fn main() {
         max_turns: 5,
         tools: Vec::new(),
         register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
     };
 
     match run_print_mode(opts).await {
