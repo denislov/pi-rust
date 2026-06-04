@@ -11,6 +11,7 @@ use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
 use crate::util::env_keys::env_api_key;
+use crate::util::http::RetryConfig;
 use convert::build_request;
 
 pub struct OpenAIResponsesProvider {
@@ -26,8 +27,8 @@ impl OpenAIResponsesProvider {
         }
     }
 
-    fn resolve_key(&self) -> Option<String> {
-        self.api_key.clone().or_else(|| env_api_key("openai"))
+    fn resolve_key(&self, provider: &str) -> Option<String> {
+        self.api_key.clone().or_else(|| env_api_key(provider))
     }
 }
 
@@ -36,7 +37,7 @@ impl ApiProvider for OpenAIResponsesProvider {
         let key = opts
             .as_ref()
             .and_then(|o| o.api_key.clone())
-            .or_else(|| self.resolve_key());
+            .or_else(|| self.resolve_key(&model.provider));
         let cancel = opts.as_ref().and_then(|o| o.cancel.clone());
 
         let Some(api_key) = key else {
@@ -88,19 +89,43 @@ impl ApiProvider for OpenAIResponsesProvider {
 
         let model = model.clone();
         let model_id = model.id.clone();
+        let retry_cfg = RetryConfig::from_options(opts.as_ref());
         Box::pin(stream! {
-            let response = match request.send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    let mut msg = AssistantMessage::empty("openai-responses", &model_id);
-                    msg.provider = Some(model.provider.clone());
-                    msg.error_message = Some(format!("HTTP request failed: {}", e));
-                    msg.stop_reason = StopReason::Error;
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Error,
-                        message: msg,
-                    };
-                    return;
+            let send_future = request.send();
+            let response = match retry_cfg.timeout_ms {
+                Some(ms) => {
+                    match tokio::time::timeout(std::time::Duration::from_millis(ms), send_future).await {
+                        Ok(Ok(r)) => r,
+                        Ok(Err(e)) => {
+                            let mut msg = AssistantMessage::empty("openai-responses", &model_id);
+                            msg.provider = Some(model.provider.clone());
+                            msg.error_message = Some(format!("HTTP request failed: {}", e));
+                            msg.stop_reason = StopReason::Error;
+                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
+                            return;
+                        }
+                        Err(_) => {
+                            let mut msg = AssistantMessage::empty("openai-responses", &model_id);
+                            msg.provider = Some(model.provider.clone());
+                            msg.error_message = Some(format!("Request timed out after {}ms", ms));
+                            msg.stop_reason = StopReason::Error;
+                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
+                            return;
+                        }
+                    }
+                }
+                None => {
+                    match send_future.await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let mut msg = AssistantMessage::empty("openai-responses", &model_id);
+                            msg.provider = Some(model.provider.clone());
+                            msg.error_message = Some(format!("HTTP request failed: {}", e));
+                            msg.stop_reason = StopReason::Error;
+                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
+                            return;
+                        }
+                    }
                 }
             };
 

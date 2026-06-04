@@ -160,6 +160,13 @@ where
 
         partial.stop_reason = partial.stop_reason.clone();
 
+        let has_tool_calls = partial.content.iter().any(|b| {
+            matches!(b, ContentBlock::ToolCall { .. })
+        });
+        if has_tool_calls {
+            partial.stop_reason = StopReason::ToolUse;
+        }
+
         yield AssistantMessageEvent::Done {
             reason: partial.stop_reason.clone(),
             message: partial.clone(),

@@ -25,7 +25,11 @@ pub fn build_request(
     wire::ResponseCreateRequest {
         model: model.id.clone(),
         instructions: ctx.system_prompt.clone(),
-        input: ctx.messages.iter().map(convert_message).collect(),
+        input: ctx
+            .messages
+            .iter()
+            .flat_map(|m| convert_message(m))
+            .collect(),
         tools,
         max_output_tokens: max_tokens,
         temperature,
@@ -34,9 +38,9 @@ pub fn build_request(
     }
 }
 
-fn convert_message(msg: &Message) -> wire::ResponseInputItem {
+fn convert_message(msg: &Message) -> Vec<wire::ResponseInputItem> {
     match msg {
-        Message::User { content } => wire::ResponseInputItem::Message {
+        Message::User { content } => vec![wire::ResponseInputItem::Message {
             role: "user".to_string(),
             content: serde_json::json!(
                 content
@@ -54,16 +58,19 @@ fn convert_message(msg: &Message) -> wire::ResponseInputItem {
                     })
                     .collect::<Vec<_>>()
             ),
-        },
+        }],
         Message::Assistant { content } => {
-            let mut items: Vec<serde_json::Value> = Vec::new();
+            let mut items: Vec<wire::ResponseInputItem> = Vec::new();
             for b in content {
                 match b {
                     ContentBlock::Text { text, .. } => {
-                        items.push(serde_json::json!({
-                            "type": "output_text",
-                            "text": text,
-                        }));
+                        items.push(wire::ResponseInputItem::Message {
+                            role: "assistant".to_string(),
+                            content: serde_json::json!([{
+                                "type": "output_text",
+                                "text": text,
+                            }]),
+                        });
                     }
                     ContentBlock::ToolCall {
                         id,
@@ -71,20 +78,16 @@ fn convert_message(msg: &Message) -> wire::ResponseInputItem {
                         arguments,
                         ..
                     } => {
-                        items.push(serde_json::json!({
-                            "type": "function_call",
-                            "id": id,
-                            "name": name,
-                            "arguments": arguments.to_string(),
-                        }));
+                        items.push(wire::ResponseInputItem::FunctionCall {
+                            call_id: id.clone(),
+                            name: name.clone(),
+                            arguments: arguments.to_string(),
+                        });
                     }
                     _ => {}
                 }
             }
-            wire::ResponseInputItem::Message {
-                role: "assistant".to_string(),
-                content: serde_json::Value::Array(items),
-            }
+            items
         }
         Message::ToolResult {
             tool_call_id,
@@ -92,10 +95,10 @@ fn convert_message(msg: &Message) -> wire::ResponseInputItem {
             ..
         } => {
             let output = content_to_text(content);
-            wire::ResponseInputItem::FunctionCallOutput {
+            vec![wire::ResponseInputItem::FunctionCallOutput {
                 call_id: tool_call_id.clone(),
                 output,
-            }
+            }]
         }
     }
 }

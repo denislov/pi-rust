@@ -218,7 +218,14 @@ where
         if let Some(u) = usage {
             partial.usage = map_usage(&u, &model);
         }
-        partial.stop_reason = StopReason::Stop;
+        let has_tool_calls = partial.content.iter().any(|b| {
+            matches!(b, ContentBlock::ToolCall { .. })
+        });
+        partial.stop_reason = if has_tool_calls {
+            StopReason::ToolUse
+        } else {
+            StopReason::Stop
+        };
 
         yield AssistantMessageEvent::Done {
             reason: partial.stop_reason.clone(),

@@ -62,7 +62,7 @@ async fn responses_fixture_maps_text_tool_and_done() {
     let last = events.last().unwrap();
     match last {
         AssistantMessageEvent::Done { reason, message } => {
-            assert_eq!(*reason, StopReason::Stop);
+            assert_eq!(*reason, StopReason::ToolUse);
             assert!(message.usage.total_tokens > 0);
             assert!(
                 message.content.iter().any(|b| {

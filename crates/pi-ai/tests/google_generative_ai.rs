@@ -1,7 +1,9 @@
 use bytes::Bytes;
 use futures::stream;
 use pi_ai::providers::google;
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model, ModelCost, ModelInput, StopReason};
+use pi_ai::types::{
+    AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput, StopReason,
+};
 
 fn test_model() -> Model {
     Model {
@@ -62,7 +64,7 @@ async fn google_fixture_maps_thinking_tool_and_done() {
     let last = events.last().unwrap();
     match last {
         AssistantMessageEvent::Done { reason, message } => {
-            assert_eq!(*reason, StopReason::Stop);
+            assert_eq!(*reason, StopReason::ToolUse);
             assert!(message.usage.total_tokens > 0);
             assert!(
                 message.content.iter().any(|b| {
@@ -99,4 +101,24 @@ async fn complete_smoke_test() {
             .iter()
             .any(|b| { matches!(b, ContentBlock::ToolCall { name, .. } if name == "read") })
     );
+}
+
+#[test]
+fn request_serializes_camelcase_for_google_api() {
+    let model = test_model();
+    let ctx = Context {
+        system_prompt: Some("Be concise.".into()),
+        messages: vec![Message::User {
+            content: vec![ContentBlock::Text {
+                text: "hi".into(),
+                text_signature: None,
+            }],
+        }],
+        tools: None,
+    };
+    let opts = None;
+    let req = google::convert::build_request(&model, &ctx, &opts);
+    let json = serde_json::to_value(req).unwrap();
+    assert_eq!(json["systemInstruction"]["parts"][0]["text"], "Be concise.");
+    assert_eq!(json["contents"][0]["parts"][0]["text"], "hi");
 }

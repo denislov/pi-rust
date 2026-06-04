@@ -11,6 +11,7 @@ use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
 use crate::util::env_keys::env_api_key;
+use crate::util::http::RetryConfig;
 use convert::build_request;
 
 pub struct GoogleGenerativeAiProvider {
@@ -84,19 +85,43 @@ impl ApiProvider for GoogleGenerativeAiProvider {
 
         let model = model.clone();
         let model_id = model.id.clone();
+        let retry_cfg = RetryConfig::from_options(opts.as_ref());
         Box::pin(stream! {
-            let response = match request.send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    let mut msg = AssistantMessage::empty("google-generative-ai", &model_id);
-                    msg.provider = Some(model.provider.clone());
-                    msg.error_message = Some(format!("HTTP request failed: {}", e));
-                    msg.stop_reason = StopReason::Error;
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Error,
-                        message: msg,
-                    };
-                    return;
+            let send_future = request.send();
+            let response = match retry_cfg.timeout_ms {
+                Some(ms) => {
+                    match tokio::time::timeout(std::time::Duration::from_millis(ms), send_future).await {
+                        Ok(Ok(r)) => r,
+                        Ok(Err(e)) => {
+                            let mut msg = AssistantMessage::empty("google-generative-ai", &model_id);
+                            msg.provider = Some(model.provider.clone());
+                            msg.error_message = Some(format!("HTTP request failed: {}", e));
+                            msg.stop_reason = StopReason::Error;
+                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
+                            return;
+                        }
+                        Err(_) => {
+                            let mut msg = AssistantMessage::empty("google-generative-ai", &model_id);
+                            msg.provider = Some(model.provider.clone());
+                            msg.error_message = Some(format!("Request timed out after {}ms", ms));
+                            msg.stop_reason = StopReason::Error;
+                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
+                            return;
+                        }
+                    }
+                }
+                None => {
+                    match send_future.await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let mut msg = AssistantMessage::empty("google-generative-ai", &model_id);
+                            msg.provider = Some(model.provider.clone());
+                            msg.error_message = Some(format!("HTTP request failed: {}", e));
+                            msg.stop_reason = StopReason::Error;
+                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
+                            return;
+                        }
+                    }
                 }
             };
 
