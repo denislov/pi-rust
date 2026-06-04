@@ -33,12 +33,9 @@ async fn captures_stderr() {
 #[tokio::test]
 async fn nonzero_exit_is_error() {
     let d = tempdir().unwrap();
-    let e = bash_execute(
-        d.path(),
-        serde_json::json!({"command":"echo bad; exit 3"}),
-    )
-    .await
-    .unwrap_err();
+    let e = bash_execute(d.path(), serde_json::json!({"command":"echo bad; exit 3"}))
+        .await
+        .unwrap_err();
     assert!(e.contains("bad"));
     assert!(e.contains("Command exited with code 3"));
 }

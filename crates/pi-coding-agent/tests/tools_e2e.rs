@@ -1,12 +1,12 @@
 use futures::stream;
+use pi_ai::EventStream;
 use pi_ai::providers::faux::{FauxCall, FauxResponse, FauxToolCall};
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, StopReason,
     StreamOptions,
 };
-use pi_ai::EventStream;
-use pi_coding_agent::{builtin_tools, run_print_mode, PrintModeOptions};
+use pi_coding_agent::{PrintModeOptions, builtin_tools, run_print_mode};
 use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 
@@ -78,7 +78,10 @@ struct RecordingProvider {
 
 impl RecordingProvider {
     fn new(calls: Vec<FauxCall>, contexts: Arc<Mutex<Vec<Context>>>) -> Self {
-        Self { calls: Mutex::new(calls), contexts }
+        Self {
+            calls: Mutex::new(calls),
+            contexts,
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::tools::truncate::{truncate_tail, TruncationOptions};
+use crate::tools::truncate::{TruncationOptions, truncate_tail};
 use pi_agent_core::{AgentTool, ToolFn};
 use pi_ai::types::ContentBlock;
 use std::path::{Path, PathBuf};
@@ -33,10 +33,7 @@ pub async fn bash_execute(
         .and_then(|v| v.as_u64())
         .filter(|secs| *secs > 0);
     let workdir = cwd.to_path_buf();
-    if !tokio::fs::try_exists(&workdir)
-        .await
-        .unwrap_or(false)
-    {
+    if !tokio::fs::try_exists(&workdir).await.unwrap_or(false) {
         return Err(format!(
             "Working directory does not exist: {}\nCannot execute bash commands.",
             workdir.display()
@@ -92,18 +89,13 @@ pub async fn bash_execute(
     };
 
     let status_res = if let Some(secs) = timeout {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(secs),
-            async {
-                buf = collect.await;
-                child.wait().await
-            },
-        )
+        match tokio::time::timeout(std::time::Duration::from_secs(secs), async {
+            buf = collect.await;
+            child.wait().await
+        })
         .await
         {
-            Ok(s) => s
-                .map_err(|e| format!("bash: wait failed: {e}"))
-                .map(Some),
+            Ok(s) => s.map_err(|e| format!("bash: wait failed: {e}")).map(Some),
             Err(_) => {
                 let _ = child.kill().await;
                 Ok(None)

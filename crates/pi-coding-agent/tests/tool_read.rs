@@ -68,9 +68,11 @@ async fn offset_zero_reads_from_start() {
 #[tokio::test]
 async fn missing_file_errors() {
     let d = tempdir().unwrap();
-    assert!(read_execute(d.path(), serde_json::json!({"path":"nope.txt"}))
-        .await
-        .is_err());
+    assert!(
+        read_execute(d.path(), serde_json::json!({"path":"nope.txt"}))
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{
-    format_size, truncate_head, TruncationOptions, TruncatedBy, DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_BYTES, TruncatedBy, TruncationOptions, format_size, truncate_head,
 };
 use pi_agent_core::{AgentTool, ToolFn};
 use pi_ai::types::ContentBlock;
@@ -51,8 +51,14 @@ pub async fn read_execute(
         .and_then(|v| v.as_str())
         .ok_or("read: missing or non-string 'path' argument")?
         .to_string();
-    let offset = args.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize);
-    let limit = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let offset = args
+        .get("offset")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
     let abs = resolve_to_cwd(&path, cwd);
 
     let _readable = tokio::fs::File::open(&abs)

@@ -66,9 +66,7 @@ fn normalize_for_fuzzy(text: &str) -> String {
             '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
             '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
             | '\u{2212}' => '-',
-            '\u{00A0}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{2002}'..='\u{200A}' => {
-                ' '
-            }
+            '\u{00A0}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{2002}'..='\u{200A}' => ' ',
             other => other,
         })
         .collect()
@@ -152,7 +150,9 @@ fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, 
     }
     if base == new_content {
         return Err(if total == 1 {
-            format!("No changes made to {path}. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.")
+            format!(
+                "No changes made to {path}. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected."
+            )
         } else {
             format!("No changes made to {path}. The replacements produced identical content.")
         });
@@ -162,17 +162,25 @@ fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, 
 
 fn not_found(path: &str, i: usize, total: usize) -> String {
     if total == 1 {
-        format!("Could not find the exact text in {path}. The old text must match exactly including all whitespace and newlines.")
+        format!(
+            "Could not find the exact text in {path}. The old text must match exactly including all whitespace and newlines."
+        )
     } else {
-        format!("Could not find edits[{i}] in {path}. The oldText must match exactly including all whitespace and newlines.")
+        format!(
+            "Could not find edits[{i}] in {path}. The oldText must match exactly including all whitespace and newlines."
+        )
     }
 }
 
 fn duplicate(path: &str, i: usize, total: usize, n: usize) -> String {
     if total == 1 {
-        format!("Found {n} occurrences of the text in {path}. The text must be unique. Please provide more context to make it unique.")
+        format!(
+            "Found {n} occurrences of the text in {path}. The text must be unique. Please provide more context to make it unique."
+        )
     } else {
-        format!("Found {n} occurrences of edits[{i}] in {path}. Each oldText must be unique. Please provide more context to make it unique.")
+        format!(
+            "Found {n} occurrences of edits[{i}] in {path}. Each oldText must be unique. Please provide more context to make it unique."
+        )
     }
 }
 
@@ -209,7 +217,9 @@ fn parse_edits(args: &serde_json::Value) -> Result<Vec<Edit>, String> {
         });
     }
     if out.is_empty() {
-        return Err("Edit tool input is invalid. edits must contain at least one replacement.".into());
+        return Err(
+            "Edit tool input is invalid. edits must contain at least one replacement.".into(),
+        );
     }
     Ok(out)
 }
