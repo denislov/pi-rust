@@ -75,5 +75,6 @@ pub fn agent_message_to_stored(
             timestamp: timestamp_ms,
         }),
         AgentMessage::SystemPrompt { .. } => None,
+        AgentMessage::CompactionSummary { .. } => None,
     }
 }

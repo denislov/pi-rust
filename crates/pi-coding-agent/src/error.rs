@@ -12,6 +12,8 @@ pub enum CliError {
     UnknownModel(String),
     #[error("invalid max turns: {0}")]
     InvalidMaxTurns(String),
+    #[error("{0}")]
+    InvalidInput(String),
     #[error("agent failure: {0}")]
     AgentFailure(String),
     #[error("{0}")]

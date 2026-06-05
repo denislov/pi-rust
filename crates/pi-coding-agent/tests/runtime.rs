@@ -1,3 +1,4 @@
+use pi_agent_core::AgentResources;
 use pi_coding_agent::{
     CliError, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config, parse_args, select_model,
 };
@@ -55,6 +56,9 @@ fn builds_agent_config_with_defaults() {
         args.system_prompt.clone(),
         args.max_turns,
         args.api_key.clone(),
+        None,
+        None,
+        AgentResources::default(),
     );
     assert_eq!(config.system_prompt.as_deref(), Some(DEFAULT_SYSTEM_PROMPT));
     assert_eq!(config.max_turns, 5);
@@ -80,6 +84,9 @@ fn builds_agent_config_with_cli_overrides() {
         args.system_prompt.clone(),
         args.max_turns,
         args.api_key.clone(),
+        None,
+        None,
+        AgentResources::default(),
     );
     assert_eq!(config.system_prompt.as_deref(), Some("Be brief."));
     assert_eq!(config.max_turns, 9);

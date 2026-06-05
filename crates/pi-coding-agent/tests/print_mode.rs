@@ -2,7 +2,7 @@ use pi_agent_core::AgentTool;
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::registry;
 use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
-use pi_coding_agent::{CliError, PrintModeOptions, run_print_mode};
+use pi_coding_agent::{CliError, PrintModeOptions, PromptInvocation, run_print_mode};
 use std::sync::Arc;
 
 fn faux_model(api: &str) -> Model {
@@ -41,6 +41,7 @@ fn echo_tool() -> AgentTool {
         name: "echo".into(),
         description: "echoes input".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
+        execution_mode: None,
         execute: Arc::new(|args| {
             let text = args
                 .get("text")
@@ -74,6 +75,10 @@ async fn prints_single_turn_text_response() {
         session: None,
         session_target: None,
         session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: PromptInvocation::Text("hi".into()),
     })
     .await
     .unwrap();
@@ -104,6 +109,10 @@ async fn treats_length_as_successful_final_text() {
         session: None,
         session_target: None,
         session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: PromptInvocation::Text("hi".into()),
     })
     .await
     .unwrap();
@@ -138,6 +147,10 @@ async fn returns_agent_failure_on_error_stop_reason() {
         session: None,
         session_target: None,
         session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: PromptInvocation::Text("hi".into()),
     })
     .await
     .unwrap_err();
@@ -183,6 +196,10 @@ async fn supports_tool_call_loop_with_injected_tool() {
         session: None,
         session_target: None,
         session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: PromptInvocation::Text("echo hi".into()),
     })
     .await
     .unwrap();

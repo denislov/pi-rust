@@ -1,10 +1,12 @@
-use crate::types::{AgentMessage, AgentTool};
+use crate::resources::system_prompt::format_skills_for_system_prompt;
+use crate::types::{AgentMessage, AgentResources, AgentTool};
 use pi_ai::types::{ContentBlock, Context, Message, Tool};
 
 pub fn convert_to_context(
     system_prompt: &Option<String>,
     messages: &[AgentMessage],
     tools: &[AgentTool],
+    resources: &AgentResources,
 ) -> Context {
     let llm_messages: Vec<Message> = messages
         .iter()
@@ -31,6 +33,15 @@ pub fn convert_to_context(
                 content: content.clone(),
             }),
             AgentMessage::SystemPrompt { .. } => None,
+            AgentMessage::CompactionSummary { summary, .. } => Some(Message::User {
+                content: vec![ContentBlock::Text {
+                    text: format!(
+                        "The conversation history before this point was compacted into the following summary:\n\n<summary>\n{}\n</summary>",
+                        summary
+                    ),
+                    text_signature: None,
+                }],
+            }),
         })
         .collect();
 
@@ -40,7 +51,22 @@ pub fn convert_to_context(
             AgentMessage::SystemPrompt { text, .. } => Some(text.clone()),
             _ => None,
         });
-        configured.or(from_messages)
+        let base = configured.or(from_messages);
+
+        // Append skills to system prompt
+        if !resources.skills.is_empty() {
+            let skills_block = format_skills_for_system_prompt(&resources.skills);
+            if !skills_block.is_empty() {
+                match base {
+                    Some(ref b) => Some(format!("{}\n\n{}", b, skills_block)),
+                    None => Some(skills_block),
+                }
+            } else {
+                base
+            }
+        } else {
+            base
+        }
     };
 
     let llm_tools: Option<Vec<Tool>> = if tools.is_empty() {
@@ -79,7 +105,7 @@ mod tests {
             message_id: "1".into(),
             text: "hello".into(),
         }];
-        let ctx = convert_to_context(&None, &msgs, &[]);
+        let ctx = convert_to_context(&None, &msgs, &[], &AgentResources::default());
         assert_eq!(ctx.messages.len(), 1);
         match &ctx.messages[0] {
             Message::User { content } => match &content[0] {
@@ -97,7 +123,7 @@ mod tests {
             message_id: "2".into(),
             message: am.clone(),
         }];
-        let ctx = convert_to_context(&None, &msgs, &[]);
+        let ctx = convert_to_context(&None, &msgs, &[], &AgentResources::default());
         assert_eq!(ctx.messages.len(), 1);
         match &ctx.messages[0] {
             Message::Assistant { content } => {
@@ -119,7 +145,7 @@ mod tests {
                 text_signature: None,
             }],
         }];
-        let ctx = convert_to_context(&None, &msgs, &[]);
+        let ctx = convert_to_context(&None, &msgs, &[], &AgentResources::default());
         assert_eq!(ctx.messages.len(), 1);
         match &ctx.messages[0] {
             Message::ToolResult {
@@ -136,7 +162,12 @@ mod tests {
 
     #[test]
     fn system_prompt_from_config() {
-        let ctx = convert_to_context(&Some("be helpful".into()), &[], &[]);
+        let ctx = convert_to_context(
+            &Some("be helpful".into()),
+            &[],
+            &[],
+            &AgentResources::default(),
+        );
         assert_eq!(ctx.system_prompt, Some("be helpful".into()));
     }
 
@@ -146,7 +177,7 @@ mod tests {
             message_id: "4".into(),
             text: "be concise".into(),
         }];
-        let ctx = convert_to_context(&None, &msgs, &[]);
+        let ctx = convert_to_context(&None, &msgs, &[], &AgentResources::default());
         assert_eq!(ctx.system_prompt, Some("be concise".into()));
     }
 
@@ -156,7 +187,12 @@ mod tests {
             message_id: "4".into(),
             text: "from messages".into(),
         }];
-        let ctx = convert_to_context(&Some("from config".into()), &msgs, &[]);
+        let ctx = convert_to_context(
+            &Some("from config".into()),
+            &msgs,
+            &[],
+            &AgentResources::default(),
+        );
         assert_eq!(ctx.system_prompt, Some("from config".into()));
     }
 
@@ -166,9 +202,10 @@ mod tests {
             name: "search".into(),
             description: "search the web".into(),
             parameters: serde_json::json!({"type": "object"}),
+            execution_mode: None,
             execute: std::sync::Arc::new(|_| Box::pin(async { Ok(vec![]) })),
         }];
-        let ctx = convert_to_context(&None, &[], &tools);
+        let ctx = convert_to_context(&None, &[], &tools, &AgentResources::default());
         let llm_tools = ctx.tools.unwrap();
         assert_eq!(llm_tools.len(), 1);
         assert_eq!(llm_tools[0].name, "search");
@@ -177,7 +214,7 @@ mod tests {
 
     #[test]
     fn empty_tools_produce_none() {
-        let ctx = convert_to_context(&None, &[], &[]);
+        let ctx = convert_to_context(&None, &[], &[], &AgentResources::default());
         assert!(ctx.tools.is_none());
     }
 }

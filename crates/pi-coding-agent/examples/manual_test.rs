@@ -59,6 +59,7 @@ async fn main() {
         compat: None,
     };
 
+    let invocation_text = prompt.clone();
     let opts = PrintModeOptions {
         prompt,
         model,
@@ -70,6 +71,10 @@ async fn main() {
         session: None,
         session_target: None,
         session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: pi_coding_agent::PromptInvocation::Text(invocation_text),
     };
 
     match run_print_mode(opts).await {

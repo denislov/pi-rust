@@ -1,5 +1,7 @@
 use crate::agent_loop;
-use crate::types::{AgentConfig, AgentMessage, AgentStream, AgentTool};
+use crate::resources::{format_prompt_template_invocation, format_skill_invocation};
+use crate::types::{AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool};
+use std::collections::VecDeque;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, Ordering},
@@ -11,6 +13,8 @@ pub struct AgentState {
     pub tools: Vec<AgentTool>,
     pub config: AgentConfig,
     pub cancel_token: CancellationToken,
+    pub steering_queue: VecDeque<AgentMessage>,
+    pub follow_up_queue: VecDeque<AgentMessage>,
 }
 
 struct RunGuard {
@@ -36,6 +40,8 @@ impl Agent {
                 tools: Vec::new(),
                 cancel_token: CancellationToken::new(),
                 config,
+                steering_queue: VecDeque::new(),
+                follow_up_queue: VecDeque::new(),
             })),
             running: Arc::new(AtomicBool::new(false)),
         }
@@ -53,10 +59,72 @@ impl Agent {
         self.state.read().unwrap().messages.clone()
     }
 
-    /// Adds a UserText message and runs the full tool-calling loop.
-    /// Returns an AgentStream that yields events until the model stops
-    /// or an error occurs.
-    pub fn prompt(&self, text: &str) -> AgentStream {
+    pub fn set_resources(&self, resources: AgentResources) {
+        self.state.write().unwrap().config.resources = resources;
+    }
+
+    pub fn steer(&self, text: impl Into<String>) {
+        let msg_count = self.state.read().unwrap().steering_queue.len();
+        self.state
+            .write()
+            .unwrap()
+            .steering_queue
+            .push_back(AgentMessage::UserText {
+                message_id: format!("steer_{}", msg_count),
+                text: text.into(),
+            });
+    }
+
+    pub fn follow_up(&self, text: impl Into<String>) {
+        let msg_count = self.state.read().unwrap().follow_up_queue.len();
+        self.state
+            .write()
+            .unwrap()
+            .follow_up_queue
+            .push_back(AgentMessage::UserText {
+                message_id: format!("followup_{}", msg_count),
+                text: text.into(),
+            });
+    }
+
+    pub fn clear_queues(&self) {
+        let mut state = self.state.write().unwrap();
+        state.steering_queue.clear();
+        state.follow_up_queue.clear();
+    }
+
+    pub fn skill(
+        &self,
+        name: &str,
+        additional_instructions: Option<&str>,
+    ) -> Result<AgentStream, String> {
+        let resources = self.state.read().unwrap().config.resources.clone();
+        let skill = resources
+            .skills
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| format!("skill '{name}' not found"))?;
+        let prompt = format_skill_invocation(
+            &skill.name,
+            &skill.location,
+            &skill.content,
+            additional_instructions,
+        );
+        Ok(self.prompt_internal(prompt))
+    }
+
+    pub fn prompt_from_template(&self, name: &str, args: &[String]) -> Result<AgentStream, String> {
+        let resources = self.state.read().unwrap().config.resources.clone();
+        let template = resources
+            .prompt_templates
+            .iter()
+            .find(|t| t.name == name)
+            .ok_or_else(|| format!("prompt template '{name}' not found"))?;
+        let prompt = format_prompt_template_invocation(&template.name, &template.content, args);
+        Ok(self.prompt_internal(prompt))
+    }
+
+    fn prompt_internal(&self, text: String) -> AgentStream {
         if self.running.swap(true, Ordering::SeqCst) {
             panic!("prompt() called while agent is already running");
         }
@@ -67,7 +135,7 @@ impl Agent {
             let msg_count = state.messages.len();
             state.messages.push(AgentMessage::UserText {
                 message_id: format!("user_{}", msg_count),
-                text: text.to_string(),
+                text,
             });
         }
 
@@ -83,6 +151,13 @@ impl Agent {
                 yield event;
             }
         })
+    }
+
+    /// Adds a UserText message and runs the full tool-calling loop.
+    /// Returns an AgentStream that yields events until the model stops
+    /// or an error occurs.
+    pub fn prompt(&self, text: &str) -> AgentStream {
+        self.prompt_internal(text.to_string())
     }
 
     pub fn with_messages(config: AgentConfig, messages: Vec<AgentMessage>) -> Self {

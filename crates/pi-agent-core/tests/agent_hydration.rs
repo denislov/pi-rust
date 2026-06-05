@@ -16,12 +16,9 @@ async fn prompt_starts_after_hydrated_messages() {
             "second answer",
         )])),
     );
-    let config = AgentConfig {
-        model: faux_model(api),
-        system_prompt: Some("system".into()),
-        max_turns: 5,
-        stream_options: None,
-    };
+    let mut config = AgentConfig::new(faux_model(api));
+    config.system_prompt = Some("system".into());
+    config.max_turns = 5;
     let agent = Agent::with_messages(
         config,
         vec![AgentMessage::UserText {

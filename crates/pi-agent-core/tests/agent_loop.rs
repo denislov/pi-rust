@@ -37,6 +37,7 @@ fn test_config(api_key: &str) -> AgentConfig {
         system_prompt: Some("Be helpful.".into()),
         max_turns: 5,
         stream_options: None,
+        ..AgentConfig::new(test_model(api_key))
     }
 }
 
@@ -87,6 +88,7 @@ async fn tool_use_turn_executes_tool() {
         name: "echo".into(),
         description: "echoes input".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
+        execution_mode: None,
         execute: Arc::new(|args| {
             let text = args
                 .get("text")
@@ -146,8 +148,13 @@ async fn unknown_tool_yields_error_content_and_continues() {
             _ => None,
         })
         .unwrap();
-    assert!(tool_end.is_err());
-    assert!(tool_end.unwrap_err().contains("unknown tool"));
+    assert!(tool_end.is_error);
+    assert!(
+        tool_end
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text { text, .. } if text.contains("unknown tool")))
+    );
 
     let has_done = events
         .iter()
@@ -179,6 +186,7 @@ async fn max_turns_exceeded_yields_error() {
         name: "echo".into(),
         description: "echo".into(),
         parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
         execute: Arc::new(|_| {
             Box::pin(async {
                 Ok(vec![ContentBlock::Text {

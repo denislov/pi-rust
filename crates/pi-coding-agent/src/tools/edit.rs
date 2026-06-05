@@ -262,6 +262,7 @@ pub fn edit_tool(cwd: PathBuf) -> AgentTool {
         name: "edit".into(),
         description: DESCRIPTION.into(),
         parameters: schema(),
+        execution_mode: None,
         execute,
     }
 }

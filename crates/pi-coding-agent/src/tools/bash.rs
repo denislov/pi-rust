@@ -282,6 +282,7 @@ pub fn bash_tool(cwd: PathBuf) -> AgentTool {
         name: "bash".into(),
         description: DESCRIPTION.into(),
         parameters: schema(),
+        execution_mode: None,
         execute,
     }
 }

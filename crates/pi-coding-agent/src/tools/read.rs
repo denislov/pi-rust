@@ -145,6 +145,7 @@ pub fn read_tool(cwd: PathBuf) -> AgentTool {
         name: "read".into(),
         description: DESCRIPTION.into(),
         parameters: schema(),
+        execution_mode: None,
         execute,
     }
 }

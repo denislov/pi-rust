@@ -56,6 +56,7 @@ pub fn write_tool(cwd: PathBuf) -> AgentTool {
         name: "write".into(),
         description: DESCRIPTION.into(),
         parameters: schema(),
+        execution_mode: None,
         execute,
     }
 }

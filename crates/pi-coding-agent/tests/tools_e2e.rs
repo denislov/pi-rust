@@ -135,6 +135,10 @@ async fn run_scripted_read(
         session: None,
         session_target: None,
         session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: pi_coding_agent::PromptInvocation::Text("read it".into()),
     })
     .await
     .unwrap();

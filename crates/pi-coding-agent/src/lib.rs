@@ -1,6 +1,7 @@
 pub mod args;
 pub mod error;
 pub mod print_mode;
+pub mod resources;
 pub mod runtime;
 pub mod session;
 pub mod tools;
@@ -9,8 +10,8 @@ pub use args::{CliArgs, DEFAULT_MAX_TURNS, help_text, parse_args};
 pub use error::CliError;
 pub use print_mode::{PrintModeOptions, run_print_mode};
 pub use runtime::{
-    CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, SessionMode, SessionRunOptions,
-    build_agent_config, select_model,
+    CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, PromptInvocation, SessionMode,
+    SessionRunOptions, build_agent_config, select_model,
 };
 pub use session::{ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session};
 pub use tools::builtin_tools;
@@ -68,6 +69,7 @@ pub async fn run_cli_with_options(
     args: impl IntoIterator<Item = String>,
     options: CliRunOptions,
 ) -> CliOutput {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let parsed = match parse_args(args) {
         Ok(parsed) => parsed,
         Err(error) => return CliOutput::failure(error),
@@ -94,6 +96,39 @@ pub async fn run_cli_with_options(
         Ok(model) => model,
         Err(error) => return CliOutput::failure(error),
     };
+
+    let (skills, templates, diags) =
+        match resources::load_cli_resources(&parsed.skills, &parsed.prompt_templates, &cwd) {
+            Ok((s, t, d)) => (s, t, d),
+            Err(error) => return CliOutput::failure(error),
+        };
+    resources::print_diagnostics(&diags);
+
+    let invocation = if let Some(ref skill_name) = parsed.skill {
+        if resources::find_skill(&skills, skill_name).is_none() {
+            return CliOutput::failure(CliError::InvalidInput(format!(
+                "skill '{skill_name}' not found in loaded skills"
+            )));
+        }
+        PromptInvocation::Skill {
+            name: skill_name.clone(),
+            additional_instructions: None,
+        }
+    } else if let Some(ref template_name) = parsed.prompt_template {
+        if resources::find_template(&templates, template_name).is_none() {
+            return CliOutput::failure(CliError::InvalidInput(format!(
+                "prompt template '{template_name}' not found in loaded templates"
+            )));
+        }
+        PromptInvocation::PromptTemplate {
+            name: template_name.clone(),
+            args: parsed.template_args.clone(),
+        }
+    } else {
+        PromptInvocation::Text(prompt)
+    };
+
+    let agent_resources = resources::build_agent_resources(skills.to_vec(), templates.to_vec());
 
     let session_enabled = !parsed.no_session;
     let session = if session_enabled {
@@ -123,7 +158,10 @@ pub async fn run_cli_with_options(
     let session_name = parsed.name.clone();
 
     match run_print_mode(PrintModeOptions {
-        prompt,
+        prompt: match &invocation {
+            PromptInvocation::Text(t) => t.clone(),
+            _ => String::new(),
+        },
         model,
         api_key: parsed.api_key,
         system_prompt: parsed.system_prompt,
@@ -133,6 +171,10 @@ pub async fn run_cli_with_options(
         session,
         session_target,
         session_name,
+        thinking_level: parsed.thinking,
+        tool_execution: parsed.tool_execution,
+        resources: agent_resources,
+        invocation,
     })
     .await
     {

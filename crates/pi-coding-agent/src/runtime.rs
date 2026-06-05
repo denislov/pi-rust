@@ -1,5 +1,5 @@
 use crate::{CliArgs, CliError};
-use pi_agent_core::{AgentConfig, AgentTool};
+use pi_agent_core::{AgentConfig, AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
 use pi_ai::types::{Model, StreamOptions};
 use std::path::PathBuf;
 
@@ -75,15 +75,37 @@ pub fn build_agent_config(
     system_prompt: Option<String>,
     max_turns: u32,
     api_key: Option<String>,
+    thinking_level: Option<ThinkingLevel>,
+    tool_execution: Option<ToolExecutionMode>,
+    resources: AgentResources,
 ) -> AgentConfig {
     let stream_options = api_key.map(|api_key| StreamOptions {
         api_key: Some(api_key),
         ..Default::default()
     });
-    AgentConfig {
-        model,
-        system_prompt: Some(system_prompt.unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())),
-        max_turns,
-        stream_options,
+    let mut config = AgentConfig::new(model);
+    config.system_prompt = Some(system_prompt.unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()));
+    config.max_turns = max_turns;
+    config.stream_options = stream_options;
+    if let Some(tl) = thinking_level {
+        config.thinking_level = tl;
     }
+    if let Some(te) = tool_execution {
+        config.tool_execution = te;
+    }
+    config.resources = resources;
+    config
+}
+
+#[derive(Clone, Debug)]
+pub enum PromptInvocation {
+    Text(String),
+    Skill {
+        name: String,
+        additional_instructions: Option<String>,
+    },
+    PromptTemplate {
+        name: String,
+        args: Vec<String>,
+    },
 }

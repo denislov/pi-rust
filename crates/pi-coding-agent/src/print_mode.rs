@@ -1,11 +1,13 @@
-use crate::runtime::{SessionMode, SessionRunOptions};
+use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::{
     ActiveSession, ResolvedSessionTarget, append_agent_message, open_active_session,
 };
 use crate::{CliError, build_agent_config};
 use futures::StreamExt;
 use pi_agent_core::session::{self, create_timestamp, generate_entry_id};
-use pi_agent_core::{Agent, AgentEvent, AgentTool};
+use pi_agent_core::{
+    Agent, AgentEvent, AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode,
+};
 use pi_ai::types::{AssistantMessage, ContentBlock, Model};
 use std::collections::HashSet;
 
@@ -20,6 +22,10 @@ pub struct PrintModeOptions {
     pub session: Option<SessionRunOptions>,
     pub session_target: Option<ResolvedSessionTarget>,
     pub session_name: Option<String>,
+    pub thinking_level: Option<ThinkingLevel>,
+    pub tool_execution: Option<ToolExecutionMode>,
+    pub resources: AgentResources,
+    pub invocation: PromptInvocation,
 }
 
 impl PrintModeOptions {
@@ -35,6 +41,10 @@ impl PrintModeOptions {
             session: None,
             session_target: None,
             session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: AgentResources::default(),
+            invocation: PromptInvocation::Text(String::new()),
         }
     }
 }
@@ -61,6 +71,9 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
         options.system_prompt,
         options.max_turns,
         options.api_key,
+        options.thinking_level,
+        options.tool_execution,
+        options.resources.clone(),
     );
 
     let mut active_session: Option<ActiveSession> = None;
@@ -102,7 +115,23 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
         agent.add_tool(tool);
     }
 
-    let mut stream = agent.prompt(&options.prompt);
+    let mut stream =
+        match &options.invocation {
+            PromptInvocation::Text(text) if !text.is_empty() => agent.prompt(text),
+            PromptInvocation::Text(_) => {
+                return Err(CliError::MissingPrompt);
+            }
+            PromptInvocation::Skill {
+                name,
+                additional_instructions,
+            } => agent
+                .skill(name, additional_instructions.as_deref())
+                .map_err(|e| CliError::AgentFailure(e))?,
+            PromptInvocation::PromptTemplate { name, args } => agent
+                .prompt_from_template(name, args)
+                .map_err(|e| CliError::AgentFailure(e))?,
+        };
+
     let mut final_message: Option<AssistantMessage> = None;
 
     while let Some(event) = stream.next().await {

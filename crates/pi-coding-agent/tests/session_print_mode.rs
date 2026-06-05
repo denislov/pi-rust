@@ -55,6 +55,10 @@ async fn persists_new_print_mode_session() {
         }),
         session_target: None,
         session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: pi_coding_agent::PromptInvocation::Text("hi".into()),
     })
     .await
     .unwrap();
@@ -97,6 +101,10 @@ async fn persists_session_with_name() {
         }),
         session_target: None,
         session_name: Some("test-session-name".into()),
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: pi_coding_agent::PromptInvocation::Text("hi".into()),
     })
     .await
     .unwrap();

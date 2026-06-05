@@ -34,17 +34,17 @@ async fn main() {
         compat: None,
     };
 
-    let agent = Agent::new(AgentConfig {
-        model,
-        system_prompt: Some("You are a helpful assistant.".into()),
-        max_turns: 5,
-        stream_options: None,
-    });
+    let mut config = AgentConfig::new(model);
+    config.system_prompt = Some("You are a helpful assistant.".into());
+    config.max_turns = 5;
+
+    let agent = Agent::new(config);
 
     agent.add_tool(AgentTool {
         name: "search".into(),
         description: "Search the web".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+        execution_mode: None,
         execute: Arc::new(|_args| {
             Box::pin(async move {
                 Ok(vec![ContentBlock::Text {
@@ -71,15 +71,21 @@ async fn main() {
             AgentEvent::ToolCallStart { tool_name, .. } => {
                 println!("\n[tool call: {}]", tool_name);
             }
-            AgentEvent::ToolCallEnd { result, .. } => match result {
-                Ok(blocks) => println!("[tool result: {:?}]", blocks),
-                Err(e) => println!("[tool error: {}]", e),
-            },
+            AgentEvent::ToolCallEnd { result, .. } => {
+                if result.is_error {
+                    println!("[tool error: {:?}]", result.content);
+                } else {
+                    println!("[tool result: {:?}]", result.content);
+                }
+            }
             AgentEvent::AgentDone { message } => {
                 println!("\n\nDone — stop reason: {:?}", message.stop_reason);
             }
             AgentEvent::AgentError { error } => {
                 eprintln!("\nError: {}", error);
+            }
+            AgentEvent::SessionCompacted { summary, .. } => {
+                println!("\n[compacted: {}]", summary);
             }
         }
     }
@@ -94,6 +100,9 @@ async fn main() {
             }
             pi_agent_core::AgentMessage::SystemPrompt { text, .. } => {
                 println!("  System: {}", text)
+            }
+            pi_agent_core::AgentMessage::CompactionSummary { summary, .. } => {
+                println!("  Compaction: {}", summary)
             }
         }
     }
