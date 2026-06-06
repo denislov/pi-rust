@@ -6,7 +6,8 @@ use crate::{CliError, build_agent_config};
 use futures::StreamExt;
 use pi_agent_core::session::{self, create_timestamp, generate_entry_id};
 use pi_agent_core::{
-    Agent, AgentEvent, AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode,
+    Agent, AgentEvent, AgentMessage, AgentResources, AgentTool, CompactionConfig, ThinkingLevel,
+    ToolExecutionMode,
 };
 use pi_ai::types::{AssistantMessage, ContentBlock, Model};
 use std::collections::HashSet;
@@ -26,6 +27,14 @@ pub struct PrintModeOptions {
     pub tool_execution: Option<ToolExecutionMode>,
     pub resources: AgentResources,
     pub invocation: PromptInvocation,
+}
+
+#[derive(Clone, Debug)]
+struct PendingCompaction {
+    summary: String,
+    first_kept_message_id: String,
+    tokens_before: u32,
+    details: Option<serde_json::Value>,
 }
 
 impl PrintModeOptions {
@@ -66,7 +75,7 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
         pi_ai::providers::register_builtins();
     }
 
-    let config = build_agent_config(
+    let mut config = build_agent_config(
         options.model.clone(),
         options.system_prompt,
         options.max_turns,
@@ -75,6 +84,12 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
         options.tool_execution,
         options.resources.clone(),
     );
+    if matches!(
+        options.session.as_ref().map(|session| &session.mode),
+        Some(SessionMode::Enabled)
+    ) {
+        config.compaction = Some(CompactionConfig::default());
+    }
 
     let mut active_session: Option<ActiveSession> = None;
     let mut existing_ids: HashSet<String> = HashSet::new();
@@ -133,6 +148,7 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
         };
 
     let mut final_message: Option<AssistantMessage> = None;
+    let mut pending_compactions = Vec::new();
 
     while let Some(event) = stream.next().await {
         match event {
@@ -144,9 +160,21 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
                     &mut existing_ids,
                     baseline,
                     &options.session_name,
+                    &pending_compactions,
                 )?;
                 return Err(CliError::AgentFailure(error));
             }
+            AgentEvent::SessionCompacted {
+                summary,
+                first_kept_message_id,
+                tokens_before,
+                details,
+            } => pending_compactions.push(PendingCompaction {
+                summary,
+                first_kept_message_id,
+                tokens_before,
+                details,
+            }),
             _ => {}
         }
     }
@@ -158,6 +186,7 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
             &mut existing_ids,
             baseline,
             &options.session_name,
+            &pending_compactions,
         );
         CliError::AgentFailure("agent stream ended without completion".to_string())
     })?;
@@ -168,6 +197,7 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
         &mut existing_ids,
         baseline,
         &options.session_name,
+        &pending_compactions,
     )?;
 
     Ok(assistant_text(&message))
@@ -177,19 +207,23 @@ fn capture_session_messages(
     agent: &Agent,
     active_session: &mut Option<ActiveSession>,
     existing_ids: &mut HashSet<String>,
-    baseline: usize,
+    _baseline: usize,
     session_name: &Option<String>,
+    pending_compactions: &[PendingCompaction],
 ) -> Result<(), CliError> {
     let Some(active) = active_session else {
         return Ok(());
     };
 
     let messages = agent.messages();
-    let new_messages = if baseline < messages.len() {
-        &messages[baseline..]
-    } else {
-        &[]
-    };
+    let new_messages: Vec<AgentMessage> = messages
+        .iter()
+        .filter(|msg| {
+            !matches!(msg, AgentMessage::CompactionSummary { .. })
+                && !existing_ids.contains(agent_message_id(msg))
+        })
+        .cloned()
+        .collect();
 
     let current_leaf = active
         .storage
@@ -214,7 +248,27 @@ fn capture_session_messages(
         prev_parent = Some(entry_id);
     }
 
-    for msg in new_messages {
+    for compaction in pending_compactions {
+        let entry_id = generate_entry_id(existing_ids);
+        existing_ids.insert(entry_id.clone());
+        let entry = pi_agent_core::session::SessionEntry::compaction(
+            entry_id.clone(),
+            prev_parent.clone(),
+            timestamp.clone(),
+            compaction.summary.clone(),
+            compaction.first_kept_message_id.clone(),
+            compaction.tokens_before,
+            compaction.details.clone(),
+            false,
+        );
+        active
+            .storage
+            .append_entry(entry)
+            .map_err(|e| CliError::SessionFailure(e.message))?;
+        prev_parent = Some(entry_id);
+    }
+
+    for msg in &new_messages {
         let entry_id = generate_entry_id(existing_ids);
         existing_ids.insert(entry_id.clone());
         append_agent_message(
@@ -228,4 +282,14 @@ fn capture_session_messages(
     }
 
     Ok(())
+}
+
+fn agent_message_id(message: &AgentMessage) -> &str {
+    match message {
+        AgentMessage::UserText { message_id, .. }
+        | AgentMessage::Assistant { message_id, .. }
+        | AgentMessage::ToolResult { message_id, .. }
+        | AgentMessage::SystemPrompt { message_id, .. }
+        | AgentMessage::CompactionSummary { message_id, .. } => message_id,
+    }
 }

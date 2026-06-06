@@ -11,7 +11,8 @@ pub fn estimate_tokens(messages: &[AgentMessage]) -> u32 {
             }
             AgentMessage::Assistant { message, .. } => {
                 if message.usage.total_tokens > 0 {
-                    return message.usage.total_tokens;
+                    total += message.usage.total_tokens;
+                    continue;
                 }
                 for block in &message.content {
                     total += estimate_block_tokens(block);

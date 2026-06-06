@@ -1,7 +1,16 @@
+mod common;
+
+use common::faux_model;
+use futures::StreamExt;
 use pi_agent_core::compaction::estimate::estimate_tokens;
 use pi_agent_core::compaction::prepare::{prepare_compaction, should_compact};
-use pi_agent_core::{AgentMessage, CompactionSettings};
-use pi_ai::types::ContentBlock;
+use pi_agent_core::{
+    Agent, AgentConfig, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings,
+};
+use pi_ai::providers::faux::FauxProvider;
+use pi_ai::registry;
+use pi_ai::types::{ContentBlock, StopReason};
+use std::sync::Arc;
 
 fn user_msg(text: &str) -> AgentMessage {
     AgentMessage::UserText {
@@ -36,6 +45,21 @@ fn estimate_text_tokens() {
     let msgs = vec![user_msg("hello world this is about twenty five")];
     let tokens = estimate_tokens(&msgs);
     assert!(tokens > 5, "should be >5 tokens, got {}", tokens);
+}
+
+#[test]
+fn estimate_tokens_accumulates_assistant_usage_with_other_messages() {
+    let mut assistant = pi_ai::types::AssistantMessage::empty("test", "test-model");
+    assistant.usage.total_tokens = 30;
+    let msgs = vec![
+        user_msg(&"old context ".repeat(100)),
+        AgentMessage::Assistant {
+            message_id: "a".into(),
+            message: assistant,
+        },
+    ];
+
+    assert!(estimate_tokens(&msgs) > 30);
 }
 
 #[test]
@@ -104,4 +128,52 @@ fn empty_messages_no_split() {
     let (to_summarize, keep) = prepare_compaction(&[], &settings);
     assert!(to_summarize.is_empty());
     assert!(keep.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_compaction_summarizes_before_provider_request() {
+    let api = "runtime-compaction";
+    let mut config = AgentConfig::new(faux_model(api));
+    config.max_turns = 3;
+    config.compaction = Some(CompactionConfig {
+        settings: CompactionSettings {
+            enabled: true,
+            reserve_tokens: 0,
+            keep_recent_tokens: 8,
+        },
+        custom_instructions: None,
+    });
+
+    let agent = Agent::new(config);
+    agent.add_message(user_msg(&"old context ".repeat(40)));
+    agent.add_message(user_msg(&"more old context ".repeat(40)));
+
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("summary of old context", StopReason::Stop),
+            FauxProvider::text_call("final answer", StopReason::Stop),
+        ])),
+    );
+
+    let events: Vec<_> = agent.prompt("new prompt").collect().await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::SessionCompacted { summary, .. } if summary == "summary of old context"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentDone { message }
+            if message.content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Text { text, .. } if text == "final answer"
+            ))
+    )));
+    assert!(agent.messages().iter().any(|message| matches!(
+        message,
+        AgentMessage::CompactionSummary { summary, .. } if summary == "summary of old context"
+    )));
+
+    registry::unregister(api);
 }

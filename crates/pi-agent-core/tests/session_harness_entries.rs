@@ -44,13 +44,13 @@ fn model_change_entry() {
         "mc001".into(),
         Some("parent".into()),
         "2026-06-05T00:00:00.000Z".into(),
-        "model-a".into(),
-        "model-b".into(),
+        "anthropic".into(),
+        "claude-sonnet-4-5".into(),
     );
     let json = serde_json::to_value(entry).unwrap();
     assert_eq!(json["type"], "model_change");
-    assert_eq!(json["from"], "model-a");
-    assert_eq!(json["to"], "model-b");
+    assert_eq!(json["provider"], "anthropic");
+    assert_eq!(json["modelId"], "claude-sonnet-4-5");
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn active_tools_change_entry() {
     );
     let json = serde_json::to_value(entry).unwrap();
     assert_eq!(json["type"], "active_tools_change");
-    let tools = json["activeTools"].as_array().unwrap();
+    let tools = json["activeToolNames"].as_array().unwrap();
     assert_eq!(tools.len(), 2);
     assert_eq!(tools[0], "read");
     assert_eq!(tools[1], "write");

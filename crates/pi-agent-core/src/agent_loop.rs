@@ -4,13 +4,20 @@ use futures::stream::FuturesUnordered;
 use std::sync::{Arc, RwLock};
 
 use crate::agent::AgentState;
+use crate::compaction::estimate::estimate_tokens;
+use crate::compaction::prepare::prepare_compaction;
+use crate::compaction::summarize::summarize;
 use crate::convert::convert_to_context;
-use crate::hooks::{AfterToolCallContext, BeforeToolCallContext};
+use crate::hooks::{
+    AfterToolCallContext, BeforeToolCallContext, PrepareNextTurnContext, ShouldStopAfterTurnContext,
+};
 use crate::queues::drain_queue;
 use crate::types::{
     AgentEvent, AgentMessage, AgentStream, AgentToolResult, ThinkingLevel, ToolExecutionMode,
 };
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason, ThinkingConfig};
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, ThinkingConfig,
+};
 
 struct PreparedToolCall {
     index: usize,
@@ -19,6 +26,122 @@ struct PreparedToolCall {
     tool_args: serde_json::Value,
     tool: Option<crate::types::AgentTool>,
     blocked: Option<AgentToolResult>,
+}
+
+fn message_id(message: &AgentMessage) -> &str {
+    match message {
+        AgentMessage::UserText { message_id, .. }
+        | AgentMessage::Assistant { message_id, .. }
+        | AgentMessage::ToolResult { message_id, .. }
+        | AgentMessage::SystemPrompt { message_id, .. }
+        | AgentMessage::CompactionSummary { message_id, .. } => message_id,
+    }
+}
+
+async fn compact_before_provider_request(
+    state: &Arc<RwLock<AgentState>>,
+) -> Result<Option<(String, String, u32)>, String> {
+    let (config, messages, model, cancel) = {
+        let s = state.read().unwrap();
+        (
+            s.config.compaction.clone(),
+            s.messages.clone(),
+            s.config.model.clone(),
+            s.cancel_token.clone(),
+        )
+    };
+
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    if !config.settings.enabled {
+        return Ok(None);
+    }
+
+    let tokens_before = estimate_tokens(&messages);
+    let (to_summarize, keep) = prepare_compaction(&messages, &config.settings);
+    if to_summarize.is_empty() {
+        return Ok(None);
+    }
+
+    let summary = summarize(
+        &model,
+        &to_summarize,
+        config.custom_instructions.as_deref(),
+        Some(cancel),
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+
+    let first_kept_message_id = keep.first().map(message_id).unwrap_or("none").to_string();
+
+    {
+        let mut s = state.write().unwrap();
+        let mut compacted = Vec::with_capacity(1 + keep.len());
+        compacted.push(AgentMessage::CompactionSummary {
+            message_id: format!("compaction_{}", tokens_before),
+            summary: summary.clone(),
+            tokens_before,
+        });
+        compacted.extend(keep);
+        s.messages = compacted;
+    }
+
+    Ok(Some((summary, first_kept_message_id, tokens_before)))
+}
+
+async fn should_stop_after_turn(
+    state: &Arc<RwLock<AgentState>>,
+    assistant: &AssistantMessage,
+) -> Result<bool, String> {
+    let hook = {
+        let s = state.read().unwrap();
+        s.config.hooks.should_stop_after_turn.clone()
+    };
+    let Some(hook) = hook else {
+        return Ok(false);
+    };
+    let messages = {
+        let s = state.read().unwrap();
+        s.messages.clone()
+    };
+    hook(ShouldStopAfterTurnContext {
+        messages,
+        assistant_message: assistant.clone(),
+    })
+    .await
+}
+
+async fn prepare_next_turn(state: &Arc<RwLock<AgentState>>, turn: u32) -> Result<(), String> {
+    let hook = {
+        let s = state.read().unwrap();
+        s.config.hooks.prepare_next_turn.clone()
+    };
+    let Some(hook) = hook else {
+        return Ok(());
+    };
+    let messages = {
+        let s = state.read().unwrap();
+        s.messages.clone()
+    };
+    let Some(update) = hook(PrepareNextTurnContext { messages, turn }).await? else {
+        return Ok(());
+    };
+
+    let mut s = state.write().unwrap();
+    if let Some(messages) = update.messages {
+        s.messages = messages;
+    }
+    if let Some(model) = update.model {
+        s.config.model = model;
+    }
+    if let Some(thinking_level) = update.thinking_level {
+        s.config.thinking_level = thinking_level;
+    }
+    if let Some(stream_options) = update.stream_options {
+        s.config.stream_options = Some(stream_options);
+    }
+    Ok(())
 }
 
 pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
@@ -56,6 +179,22 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 let mode = s.config.steering_mode;
                 let steered = drain_queue(&mut s.steering_queue, mode);
                 s.messages.extend(steered);
+            }
+
+            match compact_before_provider_request(&state).await {
+                Ok(Some((summary, first_kept_message_id, tokens_before))) => {
+                    yield AgentEvent::SessionCompacted {
+                        summary,
+                        first_kept_message_id,
+                        tokens_before,
+                        details: None,
+                    };
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    yield AgentEvent::AgentError { error };
+                    return;
+                }
             }
 
             let (ctx, model, opts) = {
@@ -143,6 +282,23 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
 
             match &assistant.stop_reason {
                 StopReason::Stop | StopReason::Length => {
+                    match should_stop_after_turn(&state, &assistant).await {
+                        Ok(true) => {
+                            yield AgentEvent::AgentDone { message: assistant };
+                            return;
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            yield AgentEvent::AgentError { error };
+                            return;
+                        }
+                    }
+
+                    if let Err(error) = prepare_next_turn(&state, turn).await {
+                        yield AgentEvent::AgentError { error };
+                        return;
+                    }
+
                     // Check follow-up queue and steering queue before finishing
                     let has_more = {
                         let s = state.read().unwrap();
@@ -205,6 +361,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                         })
                     };
                     let use_sequential = global_mode == ToolExecutionMode::Sequential || has_sequential_override;
+                    let mut batch_results: Vec<AgentToolResult> = Vec::new();
 
                     if use_sequential {
                         for (tool_id, tool_name, tool_args) in &tool_calls {
@@ -256,6 +413,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                                 content: blocked_result.content.clone(),
                                             });
                                         }
+                                        batch_results.push(blocked_result);
                                         blocked = true;
                                     }
                                     Err(e) => {
@@ -275,6 +433,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                                 content: err.content.clone(),
                                             });
                                         }
+                                        batch_results.push(err);
                                         blocked = true;
                                     }
                                     _ => {}
@@ -348,6 +507,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                     content: result.content.clone(),
                                 });
                             }
+                            batch_results.push(result);
                         }
                     } else {
                         //--- Parallel path ---
@@ -476,6 +636,12 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
 
                         let mut sorted_results: Vec<(usize, AgentToolResult, String, String)> = Vec::new();
                         while let Some(r) = futures.next().await {
+                            let (_, result, tool_id, tool_name) = &r;
+                            yield AgentEvent::ToolCallEnd {
+                                tool_call_id: tool_id.clone(),
+                                tool_name: tool_name.clone(),
+                                result: result.clone(),
+                            };
                             sorted_results.push(r);
                         }
                         sorted_results.sort_by_key(|(idx, _, _, _)| *idx);
@@ -484,14 +650,6 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                             .into_iter()
                             .map(|(_, result, id, name)| (result, id, name))
                             .collect();
-
-                        for (result, tool_id, tool_name) in &results {
-                            yield AgentEvent::ToolCallEnd {
-                                tool_call_id: tool_id.clone(),
-                                tool_name: tool_name.clone(),
-                                result: result.clone(),
-                            };
-                        }
 
                         {
                             let mut s = state.write().unwrap();
@@ -505,6 +663,31 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                 });
                             }
                         }
+                        batch_results.extend(results.into_iter().map(|(result, _, _)| result));
+                    }
+
+                    match should_stop_after_turn(&state, &assistant).await {
+                        Ok(true) => {
+                            yield AgentEvent::AgentDone { message: assistant };
+                            return;
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            yield AgentEvent::AgentError { error };
+                            return;
+                        }
+                    }
+
+                    if !batch_results.is_empty()
+                        && batch_results.iter().all(|result| result.terminate)
+                    {
+                        yield AgentEvent::AgentDone { message: assistant };
+                        return;
+                    }
+
+                    if let Err(error) = prepare_next_turn(&state, turn).await {
+                        yield AgentEvent::AgentError { error };
+                        return;
                     }
                 }
             }

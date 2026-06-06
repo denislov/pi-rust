@@ -1,9 +1,10 @@
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
-use pi_ai::types::{Model, ModelCost, ModelInput};
+use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use pi_coding_agent::print_mode::PrintModeOptions;
 use pi_coding_agent::run_print_mode;
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
+use pi_coding_agent::session::ResolvedSessionTarget;
 use std::sync::Arc;
 
 fn faux_model(api: &str) -> Model {
@@ -118,6 +119,87 @@ async fn persists_session_with_name() {
     assert!(text.contains(r#""type":"session_info""#));
     assert!(text.contains("test-session-name"));
     registry::unregister(api);
+}
+
+#[tokio::test]
+async fn persists_compaction_entry_when_continued_session_is_too_large() {
+    let api_first = "session-print-compaction-first";
+    registry::register(api_first, Arc::new(FauxProvider::simple_text("stored")));
+    let dir = tempfile::tempdir().unwrap();
+
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+
+    let long_prompt = "old context ".repeat(12_120);
+    let first = run_print_mode(PrintModeOptions {
+        prompt: long_prompt.clone(),
+        model: faux_model(api_first),
+        api_key: None,
+        system_prompt: None,
+        max_turns: 5,
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir.clone(),
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: pi_coding_agent::PromptInvocation::Text(long_prompt),
+    })
+    .await
+    .unwrap();
+    assert_eq!(first, "stored");
+    registry::unregister(api_first);
+
+    let api_second = "session-print-compaction-second";
+    registry::register(
+        api_second,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("compact summary", StopReason::Stop),
+            FauxProvider::text_call("after compaction", StopReason::Stop),
+        ])),
+    );
+
+    let second = run_print_mode(PrintModeOptions {
+        prompt: "continue".into(),
+        model: faux_model(api_second),
+        api_key: None,
+        system_prompt: None,
+        max_turns: 5,
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir),
+        }),
+        session_target: Some(ResolvedSessionTarget::ContinueMostRecent),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: pi_coding_agent::PromptInvocation::Text("continue".into()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(second, "after compaction");
+
+    let mut files = Vec::new();
+    collect_jsonl_files(dir.path(), &mut files);
+    assert_eq!(files.len(), 1);
+    let text = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(text.contains(r#""type":"compaction""#));
+    assert!(text.contains(r#""summary":"compact summary""#));
+    assert!(text.contains(r#""firstKeptEntryId""#));
+    registry::unregister(api_second);
 }
 
 fn collect_jsonl_files(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

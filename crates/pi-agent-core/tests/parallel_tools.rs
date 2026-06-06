@@ -132,6 +132,32 @@ async fn parallel_tool_results_are_appended_in_assistant_order() {
 }
 
 #[tokio::test]
+async fn parallel_tool_end_events_are_emitted_in_completion_order() {
+    let api = "parallel-event-order";
+    let mut config = AgentConfig::new(faux_model(api));
+    config.tool_execution = ToolExecutionMode::Parallel;
+    config.max_turns = 5;
+
+    let agent = Agent::new(config);
+    agent.add_tool(delayed_tool("slow", 100, "slow_result"));
+    agent.add_tool(delayed_tool("fast", 10, "fast_result"));
+
+    make_two_tool_call_provider(api, "slow", "fast");
+
+    let mut stream = agent.prompt("go");
+    let mut end_events = Vec::new();
+    while let Some(event) = stream.next().await {
+        if let pi_agent_core::AgentEvent::ToolCallEnd { tool_name, .. } = event {
+            end_events.push(tool_name);
+        }
+    }
+
+    assert_eq!(end_events, vec!["fast", "slow"]);
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
 async fn per_tool_sequential_override_forces_batch_sequential() {
     let api = "parallel-override";
     let mut config = AgentConfig::new(faux_model(api));

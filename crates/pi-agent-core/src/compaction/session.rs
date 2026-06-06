@@ -60,7 +60,7 @@ impl SessionEntry {
     ) -> Self {
         let mut fields = Map::new();
         fields.insert(
-            "activeTools".into(),
+            "activeToolNames".into(),
             Value::Array(tools.into_iter().map(Value::String).collect()),
         );
         Self {
@@ -76,12 +76,12 @@ impl SessionEntry {
         id: String,
         parent_id: Option<String>,
         timestamp: String,
-        from: String,
-        to: String,
+        provider: String,
+        model_id: String,
     ) -> Self {
         let mut fields = Map::new();
-        fields.insert("from".into(), Value::String(from));
-        fields.insert("to".into(), Value::String(to));
+        fields.insert("provider".into(), Value::String(provider));
+        fields.insert("modelId".into(), Value::String(model_id));
         Self {
             entry_type: "model_change".into(),
             id,
