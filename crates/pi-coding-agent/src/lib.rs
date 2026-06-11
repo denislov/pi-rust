@@ -1,5 +1,6 @@
 pub mod args;
 pub mod error;
+pub mod interactive;
 pub mod print_mode;
 pub mod protocol;
 pub mod resources;
@@ -85,7 +86,7 @@ pub async fn run_cli_with_options(
     }
 
     if !parsed.print && !parsed.mode_explicit {
-        return CliOutput::failure(CliError::UnsupportedMode("interactive".into()));
+        return interactive::run_interactive_mode(parsed, options).await;
     }
 
     if parsed.mode == CliMode::Rpc {

@@ -6,11 +6,12 @@ use crate::{CliError, build_agent_config};
 use futures::StreamExt;
 use pi_agent_core::session::{self, create_timestamp, generate_entry_id};
 use pi_agent_core::{
-    Agent, AgentEvent, AgentMessage, AgentResources, AgentTool, CompactionConfig, ThinkingLevel,
-    ToolExecutionMode,
+    Agent, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, CompactionConfig,
+    ThinkingLevel, ToolExecutionMode,
 };
 use pi_ai::types::{AssistantMessage, ContentBlock, Model};
 use std::collections::HashSet;
+use tokio::sync::{mpsc, oneshot};
 
 pub struct SessionPromptOptions {
     pub prompt: String,
@@ -32,6 +33,39 @@ pub struct SessionPromptOptions {
 pub struct SessionPromptResult {
     pub final_message: AssistantMessage,
     pub messages: Vec<AgentMessage>,
+}
+
+#[derive(Clone)]
+pub struct SessionPromptAbortHandle {
+    agent: Agent,
+}
+
+impl SessionPromptAbortHandle {
+    pub fn abort(&self) {
+        self.agent.abort();
+    }
+}
+
+pub struct SpawnedSessionPrompt {
+    pub abort: SessionPromptAbortHandle,
+    pub events: mpsc::UnboundedReceiver<AgentEvent>,
+    pub done: oneshot::Receiver<Result<SessionPromptResult, CliError>>,
+}
+
+struct PreparedSessionPrompt {
+    agent: Agent,
+    active_session: Option<ActiveSession>,
+    existing_ids: HashSet<String>,
+    session_name: Option<String>,
+    invocation: PromptInvocation,
+}
+
+struct StartedSessionPrompt {
+    agent: Agent,
+    active_session: Option<ActiveSession>,
+    existing_ids: HashSet<String>,
+    session_name: Option<String>,
+    stream: AgentStream,
 }
 
 #[derive(Clone, Debug)]
@@ -56,23 +90,74 @@ pub(crate) fn assistant_text(message: &AssistantMessage) -> String {
 
 pub async fn run_session_prompt(
     options: SessionPromptOptions,
-    mut on_event: Option<&mut (dyn FnMut(&AgentEvent) -> Result<(), CliError> + Send)>,
+    on_event: Option<&mut (dyn FnMut(&AgentEvent) -> Result<(), CliError> + Send)>,
 ) -> Result<SessionPromptResult, CliError> {
-    if options.register_builtins {
+    let prepared = prepare_session_prompt(options)?;
+    drive_prepared_session_prompt(prepared, on_event).await
+}
+
+pub fn spawn_session_prompt(
+    options: SessionPromptOptions,
+) -> Result<SpawnedSessionPrompt, CliError> {
+    let prepared = prepare_session_prompt(options)?;
+    let abort = SessionPromptAbortHandle {
+        agent: prepared.agent.clone(),
+    };
+    let started = start_prepared_session_prompt(prepared)?;
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    let (done_tx, done_rx) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let mut on_event = |event: &AgentEvent| {
+            let _ = event_tx.send(event.clone());
+            Ok(())
+        };
+        let result = drive_started_session_prompt(started, Some(&mut on_event)).await;
+        let _ = done_tx.send(result);
+    });
+
+    Ok(SpawnedSessionPrompt {
+        abort,
+        events: event_rx,
+        done: done_rx,
+    })
+}
+
+fn prepare_session_prompt(
+    options: SessionPromptOptions,
+) -> Result<PreparedSessionPrompt, CliError> {
+    let SessionPromptOptions {
+        prompt: _,
+        model,
+        api_key,
+        system_prompt,
+        max_turns,
+        tools,
+        register_builtins,
+        session,
+        session_target,
+        session_name,
+        thinking_level,
+        tool_execution,
+        resources,
+        invocation,
+    } = options;
+
+    if register_builtins {
         pi_ai::providers::register_builtins();
     }
 
     let mut config = build_agent_config(
-        options.model.clone(),
-        options.system_prompt,
-        options.max_turns,
-        options.api_key,
-        options.thinking_level,
-        options.tool_execution,
-        options.resources.clone(),
+        model,
+        system_prompt,
+        max_turns,
+        api_key,
+        thinking_level,
+        tool_execution,
+        resources,
     );
     if matches!(
-        options.session.as_ref().map(|session| &session.mode),
+        session.as_ref().map(|session| &session.mode),
         Some(SessionMode::Enabled)
     ) {
         config.compaction = Some(CompactionConfig::default());
@@ -82,13 +167,10 @@ pub async fn run_session_prompt(
     let mut existing_ids: HashSet<String> = HashSet::new();
     let agent;
 
-    if let Some(ref session_opts) = options.session {
+    if let Some(ref session_opts) = session {
         match session_opts.mode {
             SessionMode::Enabled => {
-                let target = options
-                    .session_target
-                    .clone()
-                    .unwrap_or(ResolvedSessionTarget::New);
+                let target = session_target.clone().unwrap_or(ResolvedSessionTarget::New);
                 let active = open_active_session(target, session_opts)?;
 
                 for entry in active.storage.get_entries() {
@@ -109,30 +191,65 @@ pub async fn run_session_prompt(
         agent = Agent::new(config);
     }
 
-    for tool in options.tools {
+    for tool in tools {
         agent.add_tool(tool);
     }
 
-    let mut stream = match &options.invocation {
-        PromptInvocation::Text(text) if !text.is_empty() => agent.prompt(text),
+    Ok(PreparedSessionPrompt {
+        agent,
+        active_session,
+        existing_ids,
+        session_name,
+        invocation,
+    })
+}
+
+fn start_prepared_session_prompt(
+    prepared: PreparedSessionPrompt,
+) -> Result<StartedSessionPrompt, CliError> {
+    let stream = match &prepared.invocation {
+        PromptInvocation::Text(text) if !text.is_empty() => prepared.agent.prompt(text),
         PromptInvocation::Text(_) => {
             return Err(CliError::MissingPrompt);
         }
         PromptInvocation::Skill {
             name,
             additional_instructions,
-        } => agent
+        } => prepared
+            .agent
             .skill(name, additional_instructions.as_deref())
             .map_err(CliError::AgentFailure)?,
-        PromptInvocation::PromptTemplate { name, args } => agent
+        PromptInvocation::PromptTemplate { name, args } => prepared
+            .agent
             .prompt_from_template(name, args)
             .map_err(CliError::AgentFailure)?,
     };
 
+    Ok(StartedSessionPrompt {
+        agent: prepared.agent,
+        active_session: prepared.active_session,
+        existing_ids: prepared.existing_ids,
+        session_name: prepared.session_name,
+        stream,
+    })
+}
+
+async fn drive_prepared_session_prompt(
+    prepared: PreparedSessionPrompt,
+    on_event: Option<&mut (dyn FnMut(&AgentEvent) -> Result<(), CliError> + Send)>,
+) -> Result<SessionPromptResult, CliError> {
+    let started = start_prepared_session_prompt(prepared)?;
+    drive_started_session_prompt(started, on_event).await
+}
+
+async fn drive_started_session_prompt(
+    mut started: StartedSessionPrompt,
+    mut on_event: Option<&mut (dyn FnMut(&AgentEvent) -> Result<(), CliError> + Send)>,
+) -> Result<SessionPromptResult, CliError> {
     let mut final_message: Option<AssistantMessage> = None;
     let mut pending_compactions = Vec::new();
 
-    while let Some(event) = stream.next().await {
+    while let Some(event) = started.stream.next().await {
         if let Some(sink) = on_event.as_mut() {
             sink(&event)?;
         }
@@ -141,10 +258,10 @@ pub async fn run_session_prompt(
             AgentEvent::AgentDone { message } => final_message = Some(message),
             AgentEvent::AgentError { error } => {
                 capture_session_messages(
-                    &agent,
-                    &mut active_session,
-                    &mut existing_ids,
-                    &options.session_name,
+                    &started.agent,
+                    &mut started.active_session,
+                    &mut started.existing_ids,
+                    &started.session_name,
                     &pending_compactions,
                 )?;
                 return Err(CliError::AgentFailure(error));
@@ -166,26 +283,26 @@ pub async fn run_session_prompt(
 
     let final_message = final_message.ok_or_else(|| {
         let _ = capture_session_messages(
-            &agent,
-            &mut active_session,
-            &mut existing_ids,
-            &options.session_name,
+            &started.agent,
+            &mut started.active_session,
+            &mut started.existing_ids,
+            &started.session_name,
             &pending_compactions,
         );
         CliError::AgentFailure("agent stream ended without completion".to_string())
     })?;
 
     capture_session_messages(
-        &agent,
-        &mut active_session,
-        &mut existing_ids,
-        &options.session_name,
+        &started.agent,
+        &mut started.active_session,
+        &mut started.existing_ids,
+        &started.session_name,
         &pending_compactions,
     )?;
 
     Ok(SessionPromptResult {
         final_message,
-        messages: agent.messages(),
+        messages: started.agent.messages(),
     })
 }
 

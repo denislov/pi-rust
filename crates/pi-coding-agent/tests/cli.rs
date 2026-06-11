@@ -60,7 +60,7 @@ async fn version_returns_success_with_package_version() {
 }
 
 #[tokio::test]
-async fn missing_print_mode_is_rejected() {
+async fn default_prompt_routes_to_interactive_mode() {
     let output = run_cli_with_options(
         vec!["hello".to_string()],
         CliRunOptions {
@@ -72,7 +72,7 @@ async fn missing_print_mode_is_rejected() {
 
     assert_eq!(output.exit_code, 1);
     assert!(output.stdout.is_empty());
-    assert_eq!(output.stderr, "unsupported mode: interactive\n");
+    assert_eq!(output.stderr, "interactive mode requires a TTY\n");
 }
 
 #[tokio::test]

@@ -1,7 +1,15 @@
+use std::time::Duration;
+
 use crate::{Terminal, TerminalSize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalOp {
+    Start,
+    Stop,
+    DrainInput { max_ms: u64, idle_ms: u64 },
+    SetTitle(String),
+    SetProgress(bool),
+    SetKittyProtocolActive(bool),
     Write(String),
     MoveBy(i16),
     HideCursor,
@@ -15,6 +23,7 @@ pub enum TerminalOp {
 pub struct VirtualTerminal {
     size: TerminalSize,
     ops: Vec<TerminalOp>,
+    kitty_protocol_active: bool,
 }
 
 impl VirtualTerminal {
@@ -22,6 +31,7 @@ impl VirtualTerminal {
         Self {
             size: TerminalSize { columns, rows },
             ops: Vec::new(),
+            kitty_protocol_active: false,
         }
     }
 
@@ -45,6 +55,11 @@ impl VirtualTerminal {
                 _ => None,
             })
             .collect()
+    }
+
+    pub fn set_kitty_protocol_active(&mut self, active: bool) {
+        self.kitty_protocol_active = active;
+        self.ops.push(TerminalOp::SetKittyProtocolActive(active));
     }
 }
 
@@ -91,5 +106,37 @@ impl Terminal for VirtualTerminal {
     fn flush(&mut self) -> std::io::Result<()> {
         self.ops.push(TerminalOp::Flush);
         Ok(())
+    }
+
+    fn start(&mut self) -> std::io::Result<()> {
+        self.ops.push(TerminalOp::Start);
+        Ok(())
+    }
+
+    fn stop(&mut self) -> std::io::Result<()> {
+        self.ops.push(TerminalOp::Stop);
+        Ok(())
+    }
+
+    fn drain_input(&mut self, max: Duration, idle: Duration) -> std::io::Result<()> {
+        self.ops.push(TerminalOp::DrainInput {
+            max_ms: max.as_millis() as u64,
+            idle_ms: idle.as_millis() as u64,
+        });
+        Ok(())
+    }
+
+    fn set_title(&mut self, title: &str) -> std::io::Result<()> {
+        self.ops.push(TerminalOp::SetTitle(title.to_string()));
+        Ok(())
+    }
+
+    fn set_progress(&mut self, active: bool) -> std::io::Result<()> {
+        self.ops.push(TerminalOp::SetProgress(active));
+        Ok(())
+    }
+
+    fn kitty_protocol_active(&self) -> bool {
+        self.kitty_protocol_active
     }
 }

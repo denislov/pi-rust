@@ -1,5 +1,27 @@
+pub type ComponentId = usize;
+
 pub trait Component {
     fn render(&mut self, width: usize) -> Vec<String>;
+
+    fn handle_input(&mut self, _event: &crate::InputEvent) {}
+
+    fn wants_key_release(&self) -> bool {
+        false
+    }
+
+    fn set_focused(&mut self, _focused: bool) {}
+
+    fn focused(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        panic!("component does not support downcasting")
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        panic!("component does not support mutable downcasting")
+    }
 
     fn invalidate(&mut self) {}
 }
@@ -39,5 +61,13 @@ impl Component for Container {
         for child in &mut self.children {
             child.invalidate();
         }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

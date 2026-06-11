@@ -338,7 +338,7 @@ impl AgentConfig {
 
 // ── AgentEvent ─────────────────────────────────────
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AgentEvent {
     TurnStart {
         turn: u32,

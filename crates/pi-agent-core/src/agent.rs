@@ -32,6 +32,15 @@ pub struct Agent {
     running: Arc<AtomicBool>,
 }
 
+impl Clone for Agent {
+    fn clone(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            running: Arc::clone(&self.running),
+        }
+    }
+}
+
 impl Agent {
     pub fn new(config: AgentConfig) -> Self {
         Self {
