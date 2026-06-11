@@ -1,0 +1,121 @@
+use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
+use pi_ai::registry;
+use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
+use pi_coding_agent::{CliRunOptions, run_cli_with_options};
+use std::sync::Arc;
+
+fn faux_model(api: &str) -> Model {
+    Model {
+        id: "faux-model".into(),
+        name: "Faux Model".into(),
+        api: api.into(),
+        provider: "faux".into(),
+        base_url: String::new(),
+        reasoning: false,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost::default(),
+        context_window: 8_000,
+        max_tokens: 1_024,
+        headers: None,
+        compat: None,
+    }
+}
+
+fn json_lines(stdout: &str) -> Vec<serde_json::Value> {
+    stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn json_mode_emits_session_header_and_lifecycle_events() {
+    let api = "pi-coding-json-lifecycle";
+    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+
+    let output = run_cli_with_options(
+        vec![
+            "--mode".to_string(),
+            "json".to_string(),
+            "hello".to_string(),
+        ],
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 0);
+    assert!(output.stderr.is_empty());
+    let lines = json_lines(&output.stdout);
+    assert_eq!(lines[0]["type"], "session");
+    assert!(lines.iter().any(|line| line["type"] == "agent_start"));
+    assert!(lines.iter().any(|line| line["type"] == "turn_start"));
+    assert!(lines.iter().any(|line| line["type"] == "message_update"));
+    assert!(lines.iter().any(|line| line["type"] == "agent_end"));
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn json_mode_emits_tool_execution_events() {
+    let api = "pi-coding-json-tool";
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![FauxResponse {
+                    text_deltas: vec![],
+                    thinking_deltas: vec![],
+                    tool_calls: vec![FauxToolCall {
+                        id: "tool_1".into(),
+                        name: "echo".into(),
+                        deltas: vec!["{\"text\":\"hi\"}".into()],
+                        final_arguments: serde_json::json!({"text": "hi"}),
+                    }],
+                }],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxProvider::text_call("done", StopReason::Stop),
+        ])),
+    );
+
+    let tool = pi_agent_core::AgentTool::new_text(
+        "echo",
+        "echo input",
+        serde_json::json!({"type":"object","properties":{"text":{"type":"string"}}}),
+        |args| async move { Ok(format!("echo: {}", args["text"].as_str().unwrap_or(""))) },
+    );
+
+    let output = run_cli_with_options(
+        vec![
+            "--mode".to_string(),
+            "json".to_string(),
+            "echo hi".to_string(),
+        ],
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: vec![tool],
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 0);
+    let lines = json_lines(&output.stdout);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "tool_execution_start")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "tool_execution_end")
+    );
+    registry::unregister(api);
+}

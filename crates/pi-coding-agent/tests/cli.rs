@@ -131,3 +131,52 @@ async fn print_mode_uses_injected_model_and_returns_stdout() {
     assert!(output.stderr.is_empty());
     registry::unregister(api);
 }
+
+#[tokio::test]
+async fn json_mode_uses_injected_model_and_returns_jsonl() {
+    let api = "pi-coding-cli-json";
+    registry::register(api, Arc::new(FauxProvider::simple_text("Hello JSON")));
+
+    let output = run_cli_with_options(
+        vec![
+            "--mode".to_string(),
+            "json".to_string(),
+            "hello".to_string(),
+        ],
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 0);
+    assert!(output.stderr.is_empty());
+    assert!(
+        output
+            .stdout
+            .lines()
+            .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok())
+    );
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_mode_is_not_run_through_buffered_cli_output() {
+    let output = run_cli_with_options(
+        vec!["--mode".to_string(), "rpc".to_string()],
+        CliRunOptions {
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 1);
+    assert_eq!(
+        output.stderr,
+        "unsupported mode: rpc requires the streaming binary entry point\n"
+    );
+}

@@ -1,12 +1,13 @@
 pub mod args;
 pub mod error;
 pub mod print_mode;
+pub mod protocol;
 pub mod resources;
 pub mod runtime;
 pub mod session;
 pub mod tools;
 
-pub use args::{CliArgs, DEFAULT_MAX_TURNS, help_text, parse_args};
+pub use args::{CliArgs, CliMode, DEFAULT_MAX_TURNS, help_text, parse_args};
 pub use error::CliError;
 pub use print_mode::{PrintModeOptions, run_print_mode};
 pub use runtime::{
@@ -83,8 +84,14 @@ pub async fn run_cli_with_options(
         return CliOutput::success(format!("{}\n", env!("CARGO_PKG_VERSION")));
     }
 
-    if !parsed.print {
+    if !parsed.print && !parsed.mode_explicit {
         return CliOutput::failure(CliError::UnsupportedMode("interactive".into()));
+    }
+
+    if parsed.mode == CliMode::Rpc {
+        return CliOutput::failure(CliError::UnsupportedMode(
+            "rpc requires the streaming binary entry point".into(),
+        ));
     }
 
     let prompt = match parsed.prompt.clone() {
@@ -157,7 +164,7 @@ pub async fn run_cli_with_options(
 
     let session_name = parsed.name.clone();
 
-    match run_print_mode(PrintModeOptions {
+    let session_prompt_options = protocol::session_runner::SessionPromptOptions {
         prompt: match &invocation {
             PromptInvocation::Text(t) => t.clone(),
             _ => String::new(),
@@ -175,11 +182,19 @@ pub async fn run_cli_with_options(
         tool_execution: parsed.tool_execution,
         resources: agent_resources,
         invocation,
-    })
-    .await
-    {
-        Ok(text) => CliOutput::success(stdout_with_trailing_newline(text)),
-        Err(error) => CliOutput::failure(error),
+    };
+
+    match parsed.mode {
+        CliMode::Print => {
+            match run_print_mode(PrintModeOptions::from(session_prompt_options)).await {
+                Ok(text) => CliOutput::success(stdout_with_trailing_newline(text)),
+                Err(error) => CliOutput::failure(error),
+            }
+        }
+        CliMode::Json => protocol::json_mode::run_json_mode(session_prompt_options).await,
+        CliMode::Rpc => CliOutput::failure(CliError::UnsupportedMode(
+            "rpc requires the streaming binary entry point".into(),
+        )),
     }
 }
 

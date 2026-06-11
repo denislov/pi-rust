@@ -786,6 +786,7 @@ dependencies = [
  "futures",
  "pi-agent-core",
  "pi-ai",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

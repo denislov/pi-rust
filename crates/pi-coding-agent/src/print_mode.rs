@@ -1,16 +1,9 @@
-use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
-use crate::session::{
-    ActiveSession, ResolvedSessionTarget, append_agent_message, open_active_session,
-};
-use crate::{CliError, build_agent_config};
-use futures::StreamExt;
-use pi_agent_core::session::{self, create_timestamp, generate_entry_id};
-use pi_agent_core::{
-    Agent, AgentEvent, AgentMessage, AgentResources, AgentTool, CompactionConfig, ThinkingLevel,
-    ToolExecutionMode,
-};
-use pi_ai::types::{AssistantMessage, ContentBlock, Model};
-use std::collections::HashSet;
+use crate::CliError;
+use crate::protocol::session_runner::{SessionPromptOptions, assistant_text, run_session_prompt};
+use crate::runtime::{PromptInvocation, SessionRunOptions};
+use crate::session::ResolvedSessionTarget;
+use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
+use pi_ai::types::Model;
 
 pub struct PrintModeOptions {
     pub prompt: String,
@@ -27,14 +20,6 @@ pub struct PrintModeOptions {
     pub tool_execution: Option<ToolExecutionMode>,
     pub resources: AgentResources,
     pub invocation: PromptInvocation,
-}
-
-#[derive(Clone, Debug)]
-struct PendingCompaction {
-    summary: String,
-    first_kept_message_id: String,
-    tokens_before: u32,
-    details: Option<serde_json::Value>,
 }
 
 impl PrintModeOptions {
@@ -58,238 +43,47 @@ impl PrintModeOptions {
     }
 }
 
-fn assistant_text(message: &AssistantMessage) -> String {
-    message
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text, .. } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+impl From<SessionPromptOptions> for PrintModeOptions {
+    fn from(options: SessionPromptOptions) -> Self {
+        Self {
+            prompt: options.prompt,
+            model: options.model,
+            api_key: options.api_key,
+            system_prompt: options.system_prompt,
+            max_turns: options.max_turns,
+            tools: options.tools,
+            register_builtins: options.register_builtins,
+            session: options.session,
+            session_target: options.session_target,
+            session_name: options.session_name,
+            thinking_level: options.thinking_level,
+            tool_execution: options.tool_execution,
+            resources: options.resources,
+            invocation: options.invocation,
+        }
+    }
 }
 
 pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliError> {
-    if options.register_builtins {
-        pi_ai::providers::register_builtins();
-    }
-
-    let mut config = build_agent_config(
-        options.model.clone(),
-        options.system_prompt,
-        options.max_turns,
-        options.api_key,
-        options.thinking_level,
-        options.tool_execution,
-        options.resources.clone(),
-    );
-    if matches!(
-        options.session.as_ref().map(|session| &session.mode),
-        Some(SessionMode::Enabled)
-    ) {
-        config.compaction = Some(CompactionConfig::default());
-    }
-
-    let mut active_session: Option<ActiveSession> = None;
-    let mut existing_ids: HashSet<String> = HashSet::new();
-    let baseline: usize;
-    let agent;
-
-    if let Some(ref session_opts) = options.session {
-        match session_opts.mode {
-            SessionMode::Enabled => {
-                let target = options
-                    .session_target
-                    .clone()
-                    .unwrap_or(ResolvedSessionTarget::New);
-                let active = open_active_session(target, session_opts)?;
-
-                for entry in active.storage.get_entries() {
-                    existing_ids.insert(entry.id);
-                }
-
-                let entries = active.storage.get_entries();
-                let context = session::build_session_context(&entries, None)
-                    .map_err(|e| CliError::SessionFailure(e.message))?;
-                baseline = context.messages.len();
-                agent = Agent::with_messages(config, context.messages);
-                active_session = Some(active);
-            }
-            SessionMode::Disabled => {
-                baseline = 0;
-                agent = Agent::new(config);
-            }
-        }
-    } else {
-        baseline = 0;
-        agent = Agent::new(config);
-    }
-
-    for tool in options.tools {
-        agent.add_tool(tool);
-    }
-
-    let mut stream =
-        match &options.invocation {
-            PromptInvocation::Text(text) if !text.is_empty() => agent.prompt(text),
-            PromptInvocation::Text(_) => {
-                return Err(CliError::MissingPrompt);
-            }
-            PromptInvocation::Skill {
-                name,
-                additional_instructions,
-            } => agent
-                .skill(name, additional_instructions.as_deref())
-                .map_err(|e| CliError::AgentFailure(e))?,
-            PromptInvocation::PromptTemplate { name, args } => agent
-                .prompt_from_template(name, args)
-                .map_err(|e| CliError::AgentFailure(e))?,
-        };
-
-    let mut final_message: Option<AssistantMessage> = None;
-    let mut pending_compactions = Vec::new();
-
-    while let Some(event) = stream.next().await {
-        match event {
-            AgentEvent::AgentDone { message } => final_message = Some(message),
-            AgentEvent::AgentError { error } => {
-                capture_session_messages(
-                    &agent,
-                    &mut active_session,
-                    &mut existing_ids,
-                    baseline,
-                    &options.session_name,
-                    &pending_compactions,
-                )?;
-                return Err(CliError::AgentFailure(error));
-            }
-            AgentEvent::SessionCompacted {
-                summary,
-                first_kept_message_id,
-                tokens_before,
-                details,
-            } => pending_compactions.push(PendingCompaction {
-                summary,
-                first_kept_message_id,
-                tokens_before,
-                details,
-            }),
-            _ => {}
-        }
-    }
-
-    let message = final_message.ok_or_else(|| {
-        let _ = capture_session_messages(
-            &agent,
-            &mut active_session,
-            &mut existing_ids,
-            baseline,
-            &options.session_name,
-            &pending_compactions,
-        );
-        CliError::AgentFailure("agent stream ended without completion".to_string())
-    })?;
-
-    capture_session_messages(
-        &agent,
-        &mut active_session,
-        &mut existing_ids,
-        baseline,
-        &options.session_name,
-        &pending_compactions,
-    )?;
-
-    Ok(assistant_text(&message))
-}
-
-fn capture_session_messages(
-    agent: &Agent,
-    active_session: &mut Option<ActiveSession>,
-    existing_ids: &mut HashSet<String>,
-    _baseline: usize,
-    session_name: &Option<String>,
-    pending_compactions: &[PendingCompaction],
-) -> Result<(), CliError> {
-    let Some(active) = active_session else {
-        return Ok(());
-    };
-
-    let messages = agent.messages();
-    let new_messages: Vec<AgentMessage> = messages
-        .iter()
-        .filter(|msg| {
-            !matches!(msg, AgentMessage::CompactionSummary { .. })
-                && !existing_ids.contains(agent_message_id(msg))
-        })
-        .cloned()
-        .collect();
-
-    let current_leaf = active
-        .storage
-        .get_leaf_id()
-        .map_err(|e| CliError::SessionFailure(e.message))?;
-
-    let timestamp = create_timestamp();
-    let mut prev_parent = current_leaf;
-    if let Some(name) = session_name {
-        let entry_id = generate_entry_id(existing_ids);
-        existing_ids.insert(entry_id.clone());
-        let session_info_entry = pi_agent_core::session::SessionEntry::session_info(
-            entry_id.clone(),
-            prev_parent.clone(),
-            timestamp.clone(),
-            name.clone(),
-        );
-        active
-            .storage
-            .append_entry(session_info_entry)
-            .map_err(|e| CliError::SessionFailure(e.message))?;
-        prev_parent = Some(entry_id);
-    }
-
-    for compaction in pending_compactions {
-        let entry_id = generate_entry_id(existing_ids);
-        existing_ids.insert(entry_id.clone());
-        let entry = pi_agent_core::session::SessionEntry::compaction(
-            entry_id.clone(),
-            prev_parent.clone(),
-            timestamp.clone(),
-            compaction.summary.clone(),
-            compaction.first_kept_message_id.clone(),
-            compaction.tokens_before,
-            compaction.details.clone(),
-            false,
-        );
-        active
-            .storage
-            .append_entry(entry)
-            .map_err(|e| CliError::SessionFailure(e.message))?;
-        prev_parent = Some(entry_id);
-    }
-
-    for msg in &new_messages {
-        let entry_id = generate_entry_id(existing_ids);
-        existing_ids.insert(entry_id.clone());
-        append_agent_message(
-            &mut active.storage,
-            msg,
-            entry_id.clone(),
-            prev_parent.clone(),
-            timestamp.clone(),
-        )?;
-        prev_parent = Some(entry_id);
-    }
-
-    Ok(())
-}
-
-fn agent_message_id(message: &AgentMessage) -> &str {
-    match message {
-        AgentMessage::UserText { message_id, .. }
-        | AgentMessage::Assistant { message_id, .. }
-        | AgentMessage::ToolResult { message_id, .. }
-        | AgentMessage::SystemPrompt { message_id, .. }
-        | AgentMessage::CompactionSummary { message_id, .. } => message_id,
-    }
+    let result = run_session_prompt(
+        SessionPromptOptions {
+            prompt: options.prompt,
+            model: options.model,
+            api_key: options.api_key,
+            system_prompt: options.system_prompt,
+            max_turns: options.max_turns,
+            tools: options.tools,
+            register_builtins: options.register_builtins,
+            session: options.session,
+            session_target: options.session_target,
+            session_name: options.session_name,
+            thinking_level: options.thinking_level,
+            tool_execution: options.tool_execution,
+            resources: options.resources,
+            invocation: options.invocation,
+        },
+        None,
+    )
+    .await?;
+    Ok(assistant_text(&result.final_message))
 }

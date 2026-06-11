@@ -1,11 +1,34 @@
 use crate::CliError;
 use pi_agent_core::{ThinkingLevel, ToolExecutionMode};
+use std::str::FromStr;
 
 pub const DEFAULT_MAX_TURNS: u32 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliMode {
+    Print,
+    Json,
+    Rpc,
+}
+
+impl FromStr for CliMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "print" => Ok(Self::Print),
+            "json" => Ok(Self::Json),
+            "rpc" => Ok(Self::Rpc),
+            other => Err(format!("unknown mode: {other}")),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliArgs {
     pub print: bool,
+    pub mode: CliMode,
+    pub mode_explicit: bool,
     pub prompt: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
@@ -34,6 +57,8 @@ impl Default for CliArgs {
     fn default() -> Self {
         Self {
             print: false,
+            mode: CliMode::Print,
+            mode_explicit: false,
             prompt: None,
             model: None,
             api_key: None,
@@ -62,7 +87,7 @@ impl Default for CliArgs {
 
 pub fn help_text() -> String {
     format!(
-        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --model <id>             Model id from the built-in Rust model table\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --max-turns <n>          Maximum agent loop turns (default: 5)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
+        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --mode <mode>            Headless mode: print|json|rpc\n  --model <id>             Model id from the built-in Rust model table\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --max-turns <n>          Maximum agent loop turns (default: 5)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -117,6 +142,11 @@ where
             }
             "-h" | "--help" => parsed.help = true,
             "-v" | "--version" => parsed.version = true,
+            "--mode" => {
+                let value = take_value(&raw, &mut i, "--mode")?;
+                parsed.mode = value.parse().map_err(CliError::InvalidInput)?;
+                parsed.mode_explicit = true;
+            }
             "--model" => parsed.model = Some(take_value(&raw, &mut i, "--model")?),
             "--api-key" => parsed.api_key = Some(take_value(&raw, &mut i, "--api-key")?),
             "--system-prompt" => {
@@ -174,6 +204,21 @@ where
 
     if !prompt_parts.is_empty() {
         parsed.prompt = Some(prompt_parts.join(" "));
+    }
+
+    if parsed.print {
+        if parsed.mode_explicit && parsed.mode != CliMode::Print {
+            return Err(CliError::InvalidInput(
+                "--print can only be combined with --mode print".into(),
+            ));
+        }
+        parsed.mode = CliMode::Print;
+    }
+
+    if parsed.mode == CliMode::Rpc && parsed.prompt.is_some() {
+        return Err(CliError::InvalidInput(
+            "unsupported mode input: rpc does not accept positional prompt".into(),
+        ));
     }
 
     let session_target_count = parsed.continue_session as u32
