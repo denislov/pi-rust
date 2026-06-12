@@ -54,6 +54,19 @@ fn read_call(path: &str) -> FauxResponse {
     }
 }
 
+fn grep_call(pattern: &str) -> FauxResponse {
+    FauxResponse {
+        text_deltas: vec![],
+        thinking_deltas: vec![],
+        tool_calls: vec![FauxToolCall {
+            id: "tool_1".into(),
+            name: "grep".into(),
+            deltas: vec![format!(r#"{{"pattern":"{pattern}","literal":true}}"#)],
+            final_arguments: serde_json::json!({ "pattern": pattern, "literal": true }),
+        }],
+    }
+}
+
 fn message_for_call(model_id: &str, call: &FauxCall) -> AssistantMessage {
     let mut message = AssistantMessage::empty("recording-faux", model_id);
     for response in &call.responses {
@@ -147,10 +160,13 @@ async fn run_scripted_read(
 }
 
 #[test]
-fn builtin_tools_has_four() {
+fn builtin_tools_has_seven() {
     let tools = pi_coding_agent::builtin_tools(std::path::PathBuf::from("."));
     let names: Vec<_> = tools.iter().map(|t| t.name.clone()).collect();
-    assert_eq!(names, vec!["read", "write", "edit", "bash"]);
+    assert_eq!(
+        names,
+        vec!["read", "write", "edit", "bash", "grep", "find", "ls"]
+    );
 }
 
 #[tokio::test]
@@ -214,4 +230,74 @@ async fn read_builtin_tool_error_is_sent_back_to_model_and_loop_completes() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(text.contains("read: cannot read"), "{text}");
+}
+
+#[tokio::test]
+async fn grep_builtin_tool_success_is_sent_back_to_model() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("input.txt"), "alpha\nbeta").unwrap();
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let api = "pi-coding-tools-e2e-grep";
+
+    registry::register(
+        api,
+        Arc::new(RecordingProvider::new(
+            vec![
+                FauxCall {
+                    responses: vec![grep_call("beta")],
+                    stop_reason: StopReason::ToolUse,
+                },
+                FauxCall {
+                    responses: vec![text_response("done")],
+                    stop_reason: StopReason::Stop,
+                },
+            ],
+            contexts.clone(),
+        )),
+    );
+
+    let out = run_print_mode(PrintModeOptions {
+        prompt: "search".into(),
+        model: faux_model(api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: 5,
+        tools: builtin_tools(dir.path().to_path_buf()),
+        register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        invocation: pi_coding_agent::PromptInvocation::Text("search".into()),
+    })
+    .await
+    .unwrap();
+    registry::unregister(api);
+
+    assert_eq!(out, "done");
+    let contexts = contexts.lock().unwrap();
+    let second_call = contexts
+        .get(1)
+        .expect("second model call should include grep result");
+    let text = second_call
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResult {
+                tool_name, content, ..
+            } if tool_name.as_deref() == Some("grep") => Some(content),
+            _ => None,
+        })
+        .expect("grep tool result should be present")
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("input.txt:2: beta"), "{text}");
 }

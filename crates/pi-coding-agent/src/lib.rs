@@ -207,7 +207,10 @@ mod tests {
     fn default_cli_options_include_builtin_tools() {
         let options = default_cli_options(std::path::PathBuf::from("."));
         let names: Vec<_> = options.tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, vec!["read", "write", "edit", "bash"]);
+        assert_eq!(
+            names,
+            vec!["read", "write", "edit", "bash", "grep", "find", "ls"]
+        );
         assert!(options.register_builtins);
         assert!(options.model_override.is_none());
     }

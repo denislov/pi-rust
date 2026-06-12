@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 pub mod bash;
 pub mod edit;
+pub mod find;
+pub mod grep;
+pub mod ls;
 pub mod path;
 pub mod read;
 pub mod truncate;
@@ -13,6 +16,9 @@ pub fn builtin_tools(cwd: PathBuf) -> Vec<AgentTool> {
         read::read_tool(cwd.clone()),
         write::write_tool(cwd.clone()),
         edit::edit_tool(cwd.clone()),
-        bash::bash_tool(cwd),
+        bash::bash_tool(cwd.clone()),
+        grep::grep_tool(cwd.clone()),
+        find::find_tool(cwd.clone()),
+        ls::ls_tool(cwd),
     ]
 }
