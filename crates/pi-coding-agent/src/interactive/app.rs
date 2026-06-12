@@ -695,6 +695,9 @@ pub mod test_harness {
         pub rendered: String,
         pub exit_code: i32,
         pub terminal_restored: bool,
+        pub cursor_row: usize,
+        pub cursor_col: usize,
+        pub ops: Vec<TerminalOp>,
         pub session_file: PathBuf,
     }
 
@@ -792,10 +795,16 @@ pub mod test_harness {
     ) -> ScriptedInteractiveOutput {
         let terminal_restored = result.tui.terminal().ops().contains(&TerminalOp::Stop);
         let rendered = result.tui.terminal().written_output();
+        let cursor_row = result.tui.terminal().cursor_row();
+        let cursor_col = result.tui.terminal().cursor_col();
+        let ops = result.tui.terminal().ops().to_vec();
         ScriptedInteractiveOutput {
             rendered,
             exit_code: result.exit_code,
             terminal_restored,
+            cursor_row,
+            cursor_col,
+            ops,
             session_file: session_dir
                 .and_then(|dir| first_jsonl_file(dir).ok())
                 .unwrap_or_default(),

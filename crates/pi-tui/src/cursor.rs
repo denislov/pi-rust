@@ -13,7 +13,7 @@ pub fn extract_cursor_marker(
     terminal_height: usize,
 ) -> Option<CursorPosition> {
     let start = lines.len().saturating_sub(terminal_height);
-    for row in start..lines.len() {
+    for row in (start..lines.len()).rev() {
         let Some(byte_index) = lines[row].find(CURSOR_MARKER) else {
             continue;
         };

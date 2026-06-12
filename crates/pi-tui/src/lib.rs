@@ -23,6 +23,6 @@ pub use input::{
 pub use overlay::{OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, SizeValue};
 pub use runtime::RenderScheduler;
 pub use terminal::{ProcessTerminal, Terminal, TerminalSize};
-pub use tui::{RenderOutcome, RenderStrategy, Tui, TuiError};
+pub use tui::{RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError};
 pub use utils::{truncate_to_width, visible_width};
 pub use virtual_terminal::{TerminalOp, VirtualTerminal};

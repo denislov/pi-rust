@@ -1,5 +1,6 @@
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::utils::ansi_sequence_len;
 use crate::{
     CURSOR_MARKER, Component, InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager,
     visible_width,
@@ -70,6 +71,14 @@ impl Editor {
         self.text.replace_range(start..self.cursor, "");
         self.cursor = start;
     }
+
+    fn move_left(&mut self) {
+        self.cursor = previous_grapheme_boundary(&self.text, self.cursor);
+    }
+
+    fn move_right(&mut self) {
+        self.cursor = next_grapheme_boundary(&self.text, self.cursor);
+    }
 }
 
 impl Component for Editor {
@@ -114,6 +123,14 @@ impl Component for Editor {
                     .matches(event, "tui.editor.deleteCharBackward")
                 {
                     self.delete_backward();
+                    return;
+                }
+                if self.keybindings.matches(event, "tui.editor.cursorLeft") {
+                    self.move_left();
+                    return;
+                }
+                if self.keybindings.matches(event, "tui.editor.cursorRight") {
+                    self.move_right();
                     return;
                 }
 
@@ -170,7 +187,18 @@ fn wrap_line(source: &str, width: usize, lines: &mut Vec<String>) {
 
     let mut current = String::new();
     let mut current_width = 0;
-    for grapheme in source.graphemes(true) {
+    let mut pos = 0;
+    while pos < source.len() {
+        if let Some(len) = ansi_sequence_len(source, pos) {
+            current.push_str(&source[pos..pos + len]);
+            pos += len;
+            continue;
+        }
+
+        let grapheme = source[pos..]
+            .graphemes(true)
+            .next()
+            .expect("pos is inside source");
         let grapheme_width = visible_width(grapheme);
         if current_width + grapheme_width > width && !current.is_empty() {
             lines.push(std::mem::take(&mut current));
@@ -178,6 +206,7 @@ fn wrap_line(source: &str, width: usize, lines: &mut Vec<String>) {
         }
         current.push_str(grapheme);
         current_width += grapheme_width;
+        pos += grapheme.len();
     }
     if !current.is_empty() {
         lines.push(current);
@@ -190,4 +219,12 @@ fn previous_grapheme_boundary(text: &str, cursor: usize) -> usize {
         .last()
         .map(|(index, _)| index)
         .unwrap_or(0)
+}
+
+fn next_grapheme_boundary(text: &str, cursor: usize) -> usize {
+    text[cursor..]
+        .grapheme_indices(true)
+        .nth(1)
+        .map(|(index, _)| cursor + index)
+        .unwrap_or(text.len())
 }

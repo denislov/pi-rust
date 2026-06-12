@@ -2,8 +2,8 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::overlay::{OverlayEntry, OverlayHandle, OverlayOptions};
 use crate::{
-    Component, ComponentId, InputEvent, Terminal, extract_cursor_marker, is_key_release,
-    truncate_to_width, visible_width,
+    Component, ComponentId, CursorPosition, InputEvent, Terminal, extract_cursor_marker,
+    is_key_release, truncate_to_width, visible_width,
 };
 use crate::{OverlayAnchor, SizeValue};
 
@@ -22,6 +22,18 @@ pub enum RenderStrategy {
 pub struct RenderOutcome {
     pub strategy: RenderStrategy,
     pub line_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderSurface {
+    Inline,
+    Clearing,
+}
+
+impl Default for RenderSurface {
+    fn default() -> Self {
+        Self::Inline
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -47,7 +59,14 @@ pub struct Tui<T: Terminal> {
     previous_lines: Vec<String>,
     previous_width: usize,
     previous_height: usize,
+    previous_viewport_top: usize,
     cursor_row: usize,
+    owned_rows: usize,
+    rendered_once: bool,
+    render_surface: RenderSurface,
+    hardware_cursor_row: usize,
+    hardware_cursor_col: usize,
+    hardware_cursor_visible: bool,
     clear_on_shrink: bool,
     full_redraws: usize,
 }
@@ -64,10 +83,23 @@ impl<T: Terminal> Tui<T> {
             previous_lines: Vec::new(),
             previous_width: 0,
             previous_height: 0,
+            previous_viewport_top: 0,
             cursor_row: 0,
+            owned_rows: 0,
+            rendered_once: false,
+            render_surface: RenderSurface::Inline,
+            hardware_cursor_row: 0,
+            hardware_cursor_col: 0,
+            hardware_cursor_visible: false,
             clear_on_shrink: true,
             full_redraws: 0,
         }
+    }
+
+    pub fn with_surface(terminal: T, surface: RenderSurface) -> Self {
+        let mut tui = Self::new(terminal);
+        tui.render_surface = surface;
+        tui
     }
 
     pub fn terminal(&self) -> &T {
@@ -244,6 +276,10 @@ impl<T: Terminal> Tui<T> {
         self.clear_on_shrink = enabled;
     }
 
+    pub fn set_render_surface(&mut self, surface: RenderSurface) {
+        self.render_surface = surface;
+    }
+
     pub fn render_once(&mut self) -> Result<RenderOutcome, TuiError> {
         let size = self.terminal.size();
         let width = size.columns;
@@ -255,14 +291,18 @@ impl<T: Terminal> Tui<T> {
         let strategy = self.choose_strategy(&lines, width, height);
         match strategy {
             RenderStrategy::NoChange => {}
-            RenderStrategy::FullRedraw => self.render_full(&lines)?,
+            RenderStrategy::FullRedraw => {
+                self.render_full(&lines, height)?;
+            }
             RenderStrategy::Differential { first_changed_line } => {
-                self.render_differential(&lines, first_changed_line)?
+                self.render_differential(&lines, first_changed_line, height)?;
             }
         }
-        if cursor.is_some() {
-            self.terminal.show_cursor()?;
-        }
+
+        self.previous_viewport_top = viewport_top(lines.len(), height);
+        self.owned_rows = lines.len().min(height);
+        self.rendered_once = true;
+        self.position_hardware_cursor(cursor)?;
 
         self.previous_lines = lines.clone();
         self.previous_width = width;
@@ -362,12 +402,49 @@ impl<T: Terminal> Tui<T> {
             .unwrap_or(RenderStrategy::NoChange)
     }
 
-    fn render_full(&mut self, lines: &[String]) -> Result<(), TuiError> {
+    fn render_full(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
         self.full_redraws += 1;
+        match self.render_surface {
+            RenderSurface::Inline => self.render_full_inline(lines, height),
+            RenderSurface::Clearing => self.render_full_clearing(lines, height),
+        }
+    }
+
+    fn render_full_clearing(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
         self.terminal.write(SYNC_START)?;
         self.terminal.hide_cursor()?;
+        self.hardware_cursor_visible = false;
         self.terminal.clear_screen()?;
         self.write_lines(lines)?;
+        self.terminal.write(SYNC_END)?;
+        self.terminal.flush()?;
+        self.hardware_cursor_row = lines.len().saturating_sub(1);
+        self.hardware_cursor_col = last_line_width(lines);
+        self.owned_rows = lines.len().min(height);
+        Ok(())
+    }
+
+    fn render_full_inline(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
+        self.terminal.write(SYNC_START)?;
+        self.terminal.hide_cursor()?;
+        self.hardware_cursor_visible = false;
+
+        if self.rendered_once {
+            let next_viewport_top = viewport_top(lines.len(), height);
+            let visible_lines = &lines[next_viewport_top..];
+            let rows_to_clear = self.owned_rows.max(visible_lines.len()).min(height);
+            if rows_to_clear > 0 {
+                self.move_to_logical_row(self.previous_viewport_top)?;
+                self.terminal.move_to_column(0)?;
+                self.hardware_cursor_col = 0;
+                self.rewrite_rows(next_viewport_top, visible_lines, rows_to_clear)?;
+            }
+        } else {
+            self.write_lines(lines)?;
+            self.hardware_cursor_row = lines.len().saturating_sub(1);
+            self.hardware_cursor_col = last_line_width(lines);
+        }
+
         self.terminal.write(SYNC_END)?;
         self.terminal.flush()?;
         Ok(())
@@ -377,13 +454,74 @@ impl<T: Terminal> Tui<T> {
         &mut self,
         lines: &[String],
         first_changed_line: usize,
+        height: usize,
+    ) -> Result<(), TuiError> {
+        match self.render_surface {
+            RenderSurface::Inline => {
+                self.render_differential_inline(lines, first_changed_line, height)
+            }
+            RenderSurface::Clearing => self.render_differential_clearing(lines, first_changed_line),
+        }
+    }
+
+    fn render_differential_clearing(
+        &mut self,
+        lines: &[String],
+        first_changed_line: usize,
     ) -> Result<(), TuiError> {
         self.terminal.write(SYNC_START)?;
         let target = first_changed_line as i16;
-        let current = self.cursor_row as i16;
+        let current = self.hardware_cursor_row as i16;
         self.terminal.move_by(target - current)?;
+        self.terminal.move_to_column(0)?;
         self.terminal.clear_from_cursor()?;
         self.write_lines(&lines[first_changed_line..])?;
+        self.terminal.write(SYNC_END)?;
+        self.terminal.flush()?;
+        self.hardware_cursor_row = lines.len().saturating_sub(1);
+        self.hardware_cursor_col = last_line_width(lines);
+        Ok(())
+    }
+
+    fn render_differential_inline(
+        &mut self,
+        lines: &[String],
+        first_changed_line: usize,
+        height: usize,
+    ) -> Result<(), TuiError> {
+        if first_changed_line < self.previous_viewport_top {
+            return self.render_full_inline(lines, height);
+        }
+
+        let appended_lines = lines.len() > self.previous_lines.len()
+            && first_changed_line == self.previous_lines.len();
+        self.terminal.write(SYNC_START)?;
+
+        if appended_lines && first_changed_line > 0 {
+            self.move_to_logical_row(first_changed_line - 1)?;
+            self.terminal.move_to_column(0)?;
+            self.hardware_cursor_col = 0;
+            self.terminal.write("\r\n")?;
+            self.write_lines(&lines[first_changed_line..])?;
+            self.hardware_cursor_row = lines.len().saturating_sub(1);
+            self.hardware_cursor_col = last_line_width(lines);
+        } else {
+            self.move_to_logical_row(first_changed_line)?;
+            self.terminal.move_to_column(0)?;
+            self.hardware_cursor_col = 0;
+
+            let rows_to_write = lines.len().saturating_sub(first_changed_line);
+            let old_rows_to_clear = self.previous_lines.len().saturating_sub(first_changed_line);
+            let visible_capacity = height
+                .saturating_sub(first_changed_line.saturating_sub(self.previous_viewport_top));
+            let rows_to_clear = rows_to_write.max(old_rows_to_clear).min(visible_capacity);
+            self.rewrite_rows(
+                first_changed_line,
+                &lines[first_changed_line..],
+                rows_to_clear,
+            )?;
+        }
+
         self.terminal.write(SYNC_END)?;
         self.terminal.flush()?;
         Ok(())
@@ -394,9 +532,75 @@ impl<T: Terminal> Tui<T> {
             self.terminal.write(line)?;
             self.terminal.write(LINE_RESET)?;
             if index + 1 < lines.len() {
-                self.terminal.write("\n")?;
+                self.terminal.write("\r\n")?;
             }
         }
+        Ok(())
+    }
+
+    fn rewrite_rows(
+        &mut self,
+        start_row: usize,
+        lines: &[String],
+        rows_to_clear: usize,
+    ) -> Result<(), TuiError> {
+        if rows_to_clear == 0 {
+            return Ok(());
+        }
+
+        for row_offset in 0..rows_to_clear {
+            self.terminal.write("\r")?;
+            self.terminal.clear_line()?;
+            if let Some(line) = lines.get(row_offset) {
+                self.terminal.write(line)?;
+                self.terminal.write(LINE_RESET)?;
+            }
+            if row_offset + 1 < rows_to_clear {
+                self.terminal.write("\r\n")?;
+            }
+        }
+
+        self.hardware_cursor_row = start_row + rows_to_clear - 1;
+        self.hardware_cursor_col = lines
+            .get(rows_to_clear.saturating_sub(1))
+            .map(|line| visible_width(line))
+            .unwrap_or(0);
+        Ok(())
+    }
+
+    fn position_hardware_cursor(&mut self, cursor: Option<CursorPosition>) -> Result<(), TuiError> {
+        let Some(cursor) = cursor else {
+            if self.hardware_cursor_visible {
+                self.terminal.hide_cursor()?;
+                self.hardware_cursor_visible = false;
+                self.terminal.flush()?;
+            }
+            return Ok(());
+        };
+
+        let target = cursor.row.saturating_sub(self.previous_viewport_top) as i16;
+        let current = self
+            .hardware_cursor_row
+            .saturating_sub(self.previous_viewport_top) as i16;
+        self.terminal.move_by(target - current)?;
+        self.terminal.move_to_column(cursor.col)?;
+        if !self.hardware_cursor_visible {
+            self.terminal.show_cursor()?;
+            self.hardware_cursor_visible = true;
+        }
+        self.hardware_cursor_row = cursor.row;
+        self.hardware_cursor_col = cursor.col;
+        self.terminal.flush()?;
+        Ok(())
+    }
+
+    fn move_to_logical_row(&mut self, target_row: usize) -> Result<(), TuiError> {
+        let target = target_row.saturating_sub(self.previous_viewport_top) as i16;
+        let current = self
+            .hardware_cursor_row
+            .saturating_sub(self.previous_viewport_top) as i16;
+        self.terminal.move_by(target - current)?;
+        self.hardware_cursor_row = target_row;
         Ok(())
     }
 }
@@ -414,6 +618,14 @@ fn validate_lines(lines: &[String], max_width: usize) -> Result<(), TuiError> {
         }
     }
     Ok(())
+}
+
+fn viewport_top(line_count: usize, height: usize) -> usize {
+    line_count.saturating_sub(height)
+}
+
+fn last_line_width(lines: &[String]) -> usize {
+    lines.last().map(|line| visible_width(line)).unwrap_or(0)
 }
 
 fn first_changed_line(previous: &[String], next: &[String]) -> Option<usize> {

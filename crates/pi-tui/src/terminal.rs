@@ -16,6 +16,7 @@ pub trait Terminal {
     fn size(&self) -> TerminalSize;
     fn write(&mut self, data: &str) -> std::io::Result<()>;
     fn move_by(&mut self, rows: i16) -> std::io::Result<()>;
+    fn move_to_column(&mut self, column: usize) -> std::io::Result<()>;
     fn hide_cursor(&mut self) -> std::io::Result<()>;
     fn show_cursor(&mut self) -> std::io::Result<()>;
     fn clear_line(&mut self) -> std::io::Result<()>;
@@ -89,6 +90,10 @@ impl Terminal for ProcessTerminal {
             execute!(out, cursor::MoveDown(rows as u16))?;
         }
         Ok(())
+    }
+
+    fn move_to_column(&mut self, column: usize) -> std::io::Result<()> {
+        self.write(&format!("\x1b[{}G", column.saturating_add(1)))
     }
 
     fn hide_cursor(&mut self) -> std::io::Result<()> {
