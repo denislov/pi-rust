@@ -23,16 +23,28 @@ impl RenderScheduler {
         self.force |= force;
     }
 
-    pub fn should_render_now(&self, now: Instant) -> bool {
+    pub fn has_pending(&self) -> bool {
+        self.requested
+    }
+
+    pub fn next_render_at(&self, now: Instant) -> Option<Instant> {
         if !self.requested {
-            return false;
+            return None;
         }
         if self.force {
-            return true;
+            return Some(now);
         }
-        self.last_render_at
-            .map(|last| now.duration_since(last) >= self.min_interval)
-            .unwrap_or(true)
+        let Some(last) = self.last_render_at else {
+            return Some(now);
+        };
+        let next = last + self.min_interval;
+        Some(if now >= next { now } else { next })
+    }
+
+    pub fn should_render_now(&self, now: Instant) -> bool {
+        self.next_render_at(now)
+            .map(|deadline| deadline <= now)
+            .unwrap_or(false)
     }
 
     pub fn mark_rendered(&mut self, now: Instant) -> bool {

@@ -65,3 +65,29 @@ fn render_scheduler_coalesces_requests_until_interval_elapses() {
     assert!(!scheduler.should_render_now(start + Duration::from_millis(8)));
     assert!(scheduler.should_render_now(start + Duration::from_millis(16)));
 }
+
+#[test]
+fn render_scheduler_reports_next_pending_deadline() {
+    let mut scheduler = RenderScheduler::new(Duration::from_millis(16));
+    let start = Instant::now();
+
+    assert!(!scheduler.has_pending());
+    assert_eq!(scheduler.next_render_at(start), None);
+
+    scheduler.request(false);
+    assert!(scheduler.has_pending());
+    assert_eq!(scheduler.next_render_at(start), Some(start));
+    assert!(scheduler.mark_rendered(start));
+
+    scheduler.request(false);
+    assert_eq!(
+        scheduler.next_render_at(start + Duration::from_millis(5)),
+        Some(start + Duration::from_millis(16))
+    );
+
+    scheduler.request(true);
+    assert_eq!(
+        scheduler.next_render_at(start + Duration::from_millis(5)),
+        Some(start + Duration::from_millis(5))
+    );
+}

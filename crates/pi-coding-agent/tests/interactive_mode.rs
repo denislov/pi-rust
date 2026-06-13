@@ -69,3 +69,55 @@ async fn scripted_interactive_left_arrow_moves_cursor_within_prompt() {
             .any(|op| *op == TerminalOp::MoveToColumn(3))
     );
 }
+
+#[tokio::test]
+async fn scripted_interactive_coalesces_fast_typed_input_renders() {
+    let input = "abcdefghijklmnopqrst";
+    let output = run_scripted_idle_interactive(input).await.unwrap();
+
+    assert_eq!(output.cursor_col, 2 + input.len());
+    assert!(
+        sync_render_count(&output.ops) <= 2,
+        "expected first frame plus one coalesced edit render, got {}",
+        sync_render_count(&output.ops)
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_coalesces_fast_assistant_delta_renders() {
+    let deltas = vec!["x".to_string(); 40];
+    let provider = FauxProvider::new(vec![FauxResponse {
+        text_deltas: deltas,
+        thinking_deltas: vec![],
+        tool_calls: vec![],
+    }]);
+
+    let output = run_scripted_interactive(provider, "say hi\r")
+        .await
+        .unwrap();
+
+    assert!(output.contains(&"x".repeat(40)));
+    assert!(
+        sync_render_count(&output.ops) <= 4,
+        "expected assistant deltas to be batched, got {} sync renders",
+        sync_render_count(&output.ops)
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_noop_key_release_does_not_render() {
+    let output = run_scripted_idle_interactive("\x1b[97;3:3u").await.unwrap();
+
+    let prompt_cursor_moves = output
+        .ops
+        .iter()
+        .filter(|op| **op == TerminalOp::MoveToColumn(2))
+        .count();
+    assert_eq!(prompt_cursor_moves, 1);
+}
+
+fn sync_render_count(ops: &[TerminalOp]) -> usize {
+    ops.iter()
+        .filter(|op| matches!(op, TerminalOp::Write(data) if data.contains("\x1b[?2026h")))
+        .count()
+}

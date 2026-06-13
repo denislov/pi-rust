@@ -2,12 +2,14 @@ use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use pi_agent_core::AgentResources;
+use pi_agent_core::{AgentResources, session::create_session_id};
 use pi_ai::types::Model;
 use pi_tui::{
-    Component, Editor, InputEvent, KeybindingsManager, ProcessTerminal, StdinBuffer,
-    TUI_KEYBINDINGS, Terminal, Tui, TuiError, matches_key, truncate_to_width, visible_width,
+    Component, Editor, InputEvent, KeybindingsManager, ProcessTerminal, RenderScheduler,
+    StdinBuffer, TUI_KEYBINDINGS, Terminal, Tui, TuiError, is_key_release, matches_key,
+    truncate_to_width, visible_width,
 };
 
 use crate::interactive::{InteractiveEventBridge, Transcript, TranscriptItem, UiEvent};
@@ -58,6 +60,7 @@ pub async fn run_interactive_mode(parsed: CliArgs, options: CliRunOptions) -> Cl
 }
 
 static INTERACTIVE_ID: AtomicUsize = AtomicUsize::new(1);
+const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 
 struct InputPump {
     rx: tokio::sync::mpsc::UnboundedReceiver<String>,
@@ -145,6 +148,15 @@ struct InteractiveRoot {
     session_label: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct InteractiveRenderState {
+    editor_text: String,
+    editor_cursor: usize,
+    transcript: Vec<TranscriptItem>,
+    transcript_scroll_offset: usize,
+    status: InteractiveStatus,
+}
+
 impl InteractiveRoot {
     fn new(cwd: PathBuf, model_id: String, session_label: String) -> Self {
         let submitted = Arc::new(Mutex::new(None));
@@ -208,6 +220,16 @@ impl InteractiveRoot {
             self.model_id,
             self.session_label
         )
+    }
+
+    fn render_state(&self) -> InteractiveRenderState {
+        InteractiveRenderState {
+            editor_text: self.editor.text().to_string(),
+            editor_cursor: self.editor.cursor(),
+            transcript: self.transcript.items().to_vec(),
+            transcript_scroll_offset: self.transcript.scroll_offset(),
+            status: self.status,
+        }
     }
 }
 
@@ -304,8 +326,33 @@ impl PromptTask {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RenderRequest {
+    requested: bool,
+    force: bool,
+}
+
+impl RenderRequest {
+    const NONE: Self = Self {
+        requested: false,
+        force: false,
+    };
+    const NORMAL: Self = Self {
+        requested: true,
+        force: false,
+    };
+    const FORCE: Self = Self {
+        requested: true,
+        force: true,
+    };
+
+    fn changed(changed: bool) -> Self {
+        if changed { Self::NORMAL } else { Self::NONE }
+    }
+}
+
 enum LoopControl {
-    Continue,
+    Continue(RenderRequest),
     Exit,
 }
 
@@ -351,20 +398,33 @@ async fn run_started_interactive_loop<T: Terminal>(
     let mut running: Option<PromptTask> = None;
     let mut bridge = InteractiveEventBridge::new();
     let mut input_open = true;
-    render_tui(tui)?;
+    let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
+    render_scheduler.request(true);
+    flush_render_if_ready(tui, &mut render_scheduler)?;
 
     loop {
+        flush_render_if_ready(tui, &mut render_scheduler)?;
         if let Some(mut task) = running.take() {
+            let render_delay = pending_render_delay(&render_scheduler);
             tokio::select! {
+                _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
+                    flush_render_if_ready(tui, &mut render_scheduler)?;
+                    running = Some(task);
+                }
                 chunk = input.recv(), if input_open => {
                     match chunk {
                         Some(chunk) => {
                             running = Some(task);
-                            for event in stdin_buffer.process(&chunk) {
-                                match handle_input_event(tui, root_id, event, &prompt_context, &mut running)? {
-                                    LoopControl::Continue => {}
-                                    LoopControl::Exit => return Ok(0),
-                                }
+                            match process_input_events(
+                                tui,
+                                root_id,
+                                stdin_buffer.process(&chunk),
+                                &prompt_context,
+                                &mut running,
+                                &mut render_scheduler,
+                            )? {
+                                LoopControl::Continue(_) => {}
+                                LoopControl::Exit => return Ok(0),
                             }
                         }
                         None => {
@@ -376,8 +436,10 @@ async fn run_started_interactive_loop<T: Terminal>(
                 maybe_event = task.events.recv(), if !task.events_closed => {
                     match maybe_event {
                         Some(event) => {
-                            apply_agent_event(tui, root_id, &mut bridge, event)?;
-                            render_tui(tui)?;
+                            schedule_render(
+                                &mut render_scheduler,
+                                apply_agent_event(tui, root_id, &mut bridge, event)?,
+                            );
                         }
                         None => {
                             task.events_closed = true;
@@ -392,44 +454,133 @@ async fn run_started_interactive_loop<T: Terminal>(
                         ))
                     });
                     while let Ok(event) = task.events.try_recv() {
-                        apply_agent_event(tui, root_id, &mut bridge, event)?;
+                        schedule_render(
+                            &mut render_scheduler,
+                            apply_agent_event(tui, root_id, &mut bridge, event)?,
+                        );
                     }
                     finish_prompt(tui, root_id, result)?;
-                    render_tui(tui)?;
+                    schedule_render(&mut render_scheduler, RenderRequest::FORCE);
+                    flush_render_if_ready(tui, &mut render_scheduler)?;
                     running = None;
                 }
             }
         } else {
-            let Some(chunk) = input.recv().await else {
-                for event in stdin_buffer.flush() {
-                    match handle_input_event(tui, root_id, event, &prompt_context, &mut running)? {
-                        LoopControl::Continue => {}
+            if !input_open {
+                flush_pending_render(tui, &mut render_scheduler)?;
+                return Ok(0);
+            }
+
+            let render_delay = pending_render_delay(&render_scheduler);
+            tokio::select! {
+                _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
+                    flush_render_if_ready(tui, &mut render_scheduler)?;
+                }
+                chunk = input.recv() => {
+                    let Some(chunk) = chunk else {
+                        input_open = false;
+                        match process_input_events(
+                            tui,
+                            root_id,
+                            stdin_buffer.flush(),
+                            &prompt_context,
+                            &mut running,
+                            &mut render_scheduler,
+                        )? {
+                            LoopControl::Continue(_) => {}
+                            LoopControl::Exit => return Ok(0),
+                        }
+                        if running.is_none() {
+                            flush_pending_render(tui, &mut render_scheduler)?;
+                            return Ok(0);
+                        }
+                        tokio::task::yield_now().await;
+                        continue;
+                    };
+
+                    match process_input_events(
+                        tui,
+                        root_id,
+                        stdin_buffer.process(&chunk),
+                        &prompt_context,
+                        &mut running,
+                        &mut render_scheduler,
+                    )? {
+                        LoopControl::Continue(_) => {}
                         LoopControl::Exit => return Ok(0),
                     }
                     if running.is_some() {
-                        break;
+                        tokio::task::yield_now().await;
                     }
                 }
-                if running.is_none() {
-                    return Ok(0);
-                }
-                tokio::task::yield_now().await;
-                continue;
-            };
-            for event in stdin_buffer.process(&chunk) {
-                match handle_input_event(tui, root_id, event, &prompt_context, &mut running)? {
-                    LoopControl::Continue => {}
-                    LoopControl::Exit => return Ok(0),
-                }
-                if running.is_some() {
-                    break;
-                }
-            }
-            if running.is_some() {
-                tokio::task::yield_now().await;
             }
         }
     }
+}
+
+fn process_input_events<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    events: Vec<InputEvent>,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
+    render_scheduler: &mut RenderScheduler,
+) -> Result<LoopControl, CliError> {
+    for event in events {
+        match handle_input_event(tui, root_id, event, prompt_context, running)? {
+            LoopControl::Continue(request) => {
+                schedule_render(render_scheduler, request);
+                flush_render_if_ready(tui, render_scheduler)?;
+            }
+            LoopControl::Exit => return Ok(LoopControl::Exit),
+        }
+        if running.is_some() {
+            break;
+        }
+    }
+    Ok(LoopControl::Continue(RenderRequest::NONE))
+}
+
+fn schedule_render(render_scheduler: &mut RenderScheduler, request: RenderRequest) {
+    if request.requested {
+        render_scheduler.request(request.force);
+    }
+}
+
+fn pending_render_delay(render_scheduler: &RenderScheduler) -> Option<Duration> {
+    let now = Instant::now();
+    render_scheduler
+        .next_render_at(now)
+        .map(|deadline| deadline.saturating_duration_since(now))
+}
+
+async fn sleep_render_delay(delay: Option<Duration>) {
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
+    }
+}
+
+fn flush_render_if_ready<T: Terminal>(
+    tui: &mut Tui<T>,
+    render_scheduler: &mut RenderScheduler,
+) -> Result<(), CliError> {
+    let now = Instant::now();
+    if render_scheduler.should_render_now(now) {
+        render_tui(tui)?;
+        render_scheduler.mark_rendered(now);
+    }
+    Ok(())
+}
+
+fn flush_pending_render<T: Terminal>(
+    tui: &mut Tui<T>,
+    render_scheduler: &mut RenderScheduler,
+) -> Result<(), CliError> {
+    if render_scheduler.has_pending() {
+        render_scheduler.request(true);
+        flush_render_if_ready(tui, render_scheduler)?;
+    }
+    Ok(())
 }
 
 fn handle_input_event<T: Terminal>(
@@ -439,8 +590,13 @@ fn handle_input_event<T: Terminal>(
     prompt_context: &PromptContext,
     running: &mut Option<PromptTask>,
 ) -> Result<LoopControl, CliError> {
-    let (action, prompt) = {
+    if is_key_release(&event) {
+        return Ok(LoopControl::Continue(RenderRequest::NONE));
+    }
+
+    let (action, prompt, render_request) = {
         let root = root_mut(tui, root_id)?;
+        let before = root.render_state();
         root.handle_input(&event);
         let action = root.take_action();
         let prompt = if action == InteractiveAction::Submit {
@@ -448,37 +604,31 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
-        (action, prompt)
+        let after = root.render_state();
+        (action, prompt, RenderRequest::changed(before != after))
     };
 
     match action {
-        InteractiveAction::None => {
-            render_tui(tui)?;
-            Ok(LoopControl::Continue)
-        }
+        InteractiveAction::None => Ok(LoopControl::Continue(render_request)),
         InteractiveAction::Exit => Ok(LoopControl::Exit),
         InteractiveAction::AbortRunning => {
             if let Some(task) = running.as_mut() {
                 task.abort_once();
             }
-            render_tui(tui)?;
-            Ok(LoopControl::Continue)
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
         InteractiveAction::Submit => {
             if running.is_some() {
-                render_tui(tui)?;
-                return Ok(LoopControl::Continue);
+                return Ok(LoopControl::Continue(render_request));
             }
             let Some(prompt) = prompt else {
-                render_tui(tui)?;
-                return Ok(LoopControl::Continue);
+                return Ok(LoopControl::Continue(render_request));
             };
             if prompt.trim().is_empty() {
-                render_tui(tui)?;
-                return Ok(LoopControl::Continue);
+                return Ok(LoopControl::Continue(render_request));
             }
             *running = Some(start_prompt_task(tui, root_id, prompt, prompt_context)?);
-            Ok(LoopControl::Continue)
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
     }
 }
@@ -494,7 +644,6 @@ fn start_prompt_task<T: Terminal>(
         root.push_user(prompt.clone());
         root.set_status(InteractiveStatus::Running);
     }
-    render_tui(tui)?;
 
     let options = SessionPromptOptions {
         prompt: prompt.clone(),
@@ -521,11 +670,13 @@ fn apply_agent_event<T: Terminal>(
     root_id: usize,
     bridge: &mut InteractiveEventBridge,
     event: pi_agent_core::AgentEvent,
-) -> Result<(), CliError> {
+) -> Result<RenderRequest, CliError> {
     let ui_events = bridge.handle(&event);
     let root = root_mut(tui, root_id)?;
+    let before = root.render_state();
     root.apply_events(ui_events);
-    Ok(())
+    let after = root.render_state();
+    Ok(RenderRequest::changed(before != after))
 }
 
 fn finish_prompt<T: Terminal>(
@@ -578,6 +729,13 @@ fn build_prompt_context(
         Some(session_opts)
     };
 
+    let session_target = match (&session, resolve_session_target(parsed)) {
+        (Some(session), None) if matches!(session.mode, SessionMode::Enabled) => {
+            Some(ResolvedSessionTarget::OpenOrCreateId(create_session_id()))
+        }
+        (_, target) => target,
+    };
+
     Ok(PromptContext {
         model,
         api_key: parsed.api_key.clone(),
@@ -586,7 +744,7 @@ fn build_prompt_context(
         tools: options.tools,
         register_builtins: options.register_builtins,
         session,
-        session_target: resolve_session_target(parsed),
+        session_target,
         session_name: parsed.name.clone(),
         thinking_level: parsed.thinking,
         tool_execution: parsed.tool_execution,
@@ -722,6 +880,14 @@ pub mod test_harness {
         run_scripted(provider, input, Some(session_dir)).await
     }
 
+    pub async fn run_scripted_interactive_with_session_dir_and_waits(
+        provider: FauxProvider,
+        session_dir: &Path,
+        input_steps: Vec<(&str, &str)>,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_with_provider_and_waits(Arc::new(provider), session_dir, input_steps).await
+    }
+
     pub async fn run_scripted_interactive_with_provider_chunks(
         provider: Arc<dyn pi_ai::registry::ApiProvider>,
         input_chunks: Vec<&str>,
@@ -779,6 +945,55 @@ pub mod test_harness {
         registry::unregister(&api);
 
         Ok(scripted_output(result?, session_dir))
+    }
+
+    async fn run_scripted_with_provider_and_waits(
+        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        session_dir: &Path,
+        input_steps: Vec<(&str, &str)>,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        let api = format!(
+            "interactive-harness-{}",
+            INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
+        );
+        registry::register(&api, provider);
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut input = InputPump { rx, _reader: None };
+        let parsed = CliArgs::default();
+        let session = SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: session_dir.to_path_buf(),
+            session_dir: Some(session_dir.to_path_buf()),
+        };
+        let options = CliRunOptions {
+            model_override: Some(faux_model(&api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session,
+        };
+
+        let session_dir_for_input = session_dir.to_path_buf();
+        let input_steps = input_steps
+            .into_iter()
+            .map(|(chunk, wait_for)| (chunk.to_string(), wait_for.to_string()))
+            .collect::<Vec<_>>();
+        let input_driver = async move {
+            for (chunk, wait_for) in input_steps {
+                if tx.send(chunk).is_err() {
+                    return Ok::<(), CliError>(());
+                }
+                wait_for_session_text(&session_dir_for_input, &wait_for).await?;
+            }
+            Ok(())
+        };
+
+        let run = run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input);
+        let (result, input_result) = tokio::join!(run, input_driver);
+        registry::unregister(&api);
+        input_result?;
+
+        Ok(scripted_output(result?, Some(session_dir)))
     }
 
     async fn run_scripted(
@@ -840,6 +1055,33 @@ pub mod test_harness {
         files.sort();
         files.into_iter().next().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, "no jsonl session file")
+        })
+    }
+
+    async fn wait_for_session_text(root: &Path, needle: &str) -> Result<(), CliError> {
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
+        loop {
+            if session_files_contain(root, needle) {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(CliError::AgentFailure(format!(
+                    "timed out waiting for session text: {needle}"
+                )));
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    fn session_files_contain(root: &Path, needle: &str) -> bool {
+        let mut files = Vec::new();
+        if collect_jsonl_files(root, &mut files).is_err() {
+            return false;
+        }
+        files.iter().any(|path| {
+            std::fs::read_to_string(path)
+                .map(|text| text.contains(needle))
+                .unwrap_or(false)
         })
     }
 
