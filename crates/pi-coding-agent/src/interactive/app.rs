@@ -136,13 +136,21 @@ enum InteractiveStatus {
     Running,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TranscriptScrollCommand {
+    PageUp,
+    PageDown,
+}
+
 struct InteractiveRoot {
     transcript: Transcript,
     editor: Editor,
     submitted: Arc<Mutex<Option<String>>>,
+    scroll_command: Arc<Mutex<Option<TranscriptScrollCommand>>>,
     pending_submit: Option<String>,
     action: InteractiveAction,
     status: InteractiveStatus,
+    viewport_height: usize,
     cwd: PathBuf,
     model_id: String,
     session_label: String,
@@ -161,6 +169,9 @@ impl InteractiveRoot {
     fn new(cwd: PathBuf, model_id: String, session_label: String) -> Self {
         let submitted = Arc::new(Mutex::new(None));
         let submitted_for_callback = Arc::clone(&submitted);
+        let scroll_command = Arc::new(Mutex::new(None));
+        let page_up_command = Arc::clone(&scroll_command);
+        let page_down_command = Arc::clone(&scroll_command);
         let mut editor = Editor::new(KeybindingsManager::new(
             TUI_KEYBINDINGS.clone(),
             Default::default(),
@@ -168,15 +179,23 @@ impl InteractiveRoot {
         editor.set_on_submit(Box::new(move |text| {
             *submitted_for_callback.lock().unwrap() = Some(text.to_string());
         }));
+        editor.set_on_scroll_page_up(Box::new(move || {
+            *page_up_command.lock().unwrap() = Some(TranscriptScrollCommand::PageUp);
+        }));
+        editor.set_on_scroll_page_down(Box::new(move || {
+            *page_down_command.lock().unwrap() = Some(TranscriptScrollCommand::PageDown);
+        }));
         editor.set_focused(true);
 
         Self {
             transcript: Transcript::new(),
             editor,
             submitted,
+            scroll_command,
             pending_submit: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
+            viewport_height: 24,
             cwd,
             model_id,
             session_label,
@@ -193,6 +212,10 @@ impl InteractiveRoot {
 
     fn take_pending_submit(&mut self) -> Option<String> {
         self.pending_submit.take()
+    }
+
+    fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
+        self.scroll_command.lock().unwrap().take()
     }
 
     fn push_user(&mut self, prompt: String) {
@@ -239,14 +262,15 @@ impl Component for InteractiveRoot {
             return Vec::new();
         }
 
-        let mut lines = render_transcript_lines(&self.transcript, width);
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        for line in self.editor.render(width.saturating_sub(2)) {
+        let editor_lines = self.editor.render(width.saturating_sub(2));
+        let footer = fit_line(&self.footer(), width);
+        let reserved_rows = editor_lines.len().saturating_add(1);
+        let transcript_rows = self.viewport_height.saturating_sub(reserved_rows).max(1);
+        let mut lines = render_transcript_viewport(&self.transcript, width, transcript_rows);
+        for line in editor_lines {
             lines.push(fit_line(&format!("> {line}"), width));
         }
-        lines.push(fit_line(&self.footer(), width));
+        lines.push(footer);
         lines
     }
 
@@ -270,11 +294,24 @@ impl Component for InteractiveRoot {
 
         if self.status == InteractiveStatus::Idle {
             self.editor.handle_input(event);
+            if let Some(command) = self.take_scroll_command() {
+                let page_rows = self.viewport_height.saturating_sub(2).max(1);
+                match command {
+                    TranscriptScrollCommand::PageUp => self.transcript.scroll_page_up(page_rows),
+                    TranscriptScrollCommand::PageDown => {
+                        self.transcript.scroll_page_down(page_rows)
+                    }
+                }
+            }
             if let Some(prompt) = self.take_submitted() {
                 self.pending_submit = Some(prompt);
                 self.action = InteractiveAction::Submit;
             }
         }
+    }
+
+    fn set_viewport_size(&mut self, _width: usize, height: usize) {
+        self.viewport_height = height.max(1);
     }
 
     fn set_focused(&mut self, focused: bool) {
@@ -821,6 +858,29 @@ fn render_transcript_lines(transcript: &Transcript, width: usize) -> Vec<String>
         .collect()
 }
 
+fn render_transcript_viewport(
+    transcript: &Transcript,
+    width: usize,
+    viewport_rows: usize,
+) -> Vec<String> {
+    let lines = render_transcript_lines(transcript, width);
+    if lines.len() <= viewport_rows {
+        let mut padded = lines;
+        while padded.len() < viewport_rows {
+            padded.push(String::new());
+        }
+        return padded;
+    }
+
+    let bottom = lines.len().saturating_sub(transcript.scroll_offset());
+    let top = bottom.saturating_sub(viewport_rows);
+    let mut visible = lines[top..bottom].to_vec();
+    while visible.len() < viewport_rows {
+        visible.insert(0, String::new());
+    }
+    visible
+}
+
 fn fit_line(line: &str, width: usize) -> String {
     if visible_width(line) <= width {
         line.to_string()
@@ -856,6 +916,7 @@ pub mod test_harness {
         pub cursor_row: usize,
         pub cursor_col: usize,
         pub ops: Vec<TerminalOp>,
+        pub rendered_lines: Vec<String>,
         pub session_file: PathBuf,
     }
 
@@ -872,6 +933,16 @@ pub mod test_harness {
         run_scripted(provider, input, None).await
     }
 
+    pub async fn run_scripted_interactive_with_size(
+        provider: FauxProvider,
+        input: &str,
+        columns: usize,
+        rows: usize,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_with_provider_and_size(Arc::new(provider), vec![input], None, columns, rows)
+            .await
+    }
+
     pub async fn run_scripted_interactive_with_session_dir(
         provider: FauxProvider,
         session_dir: &Path,
@@ -885,7 +956,31 @@ pub mod test_harness {
         session_dir: &Path,
         input_steps: Vec<(&str, &str)>,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
-        run_scripted_with_provider_and_waits(Arc::new(provider), session_dir, input_steps).await
+        run_scripted_interactive_with_session_dir_size_and_waits(
+            provider,
+            session_dir,
+            input_steps,
+            80,
+            24,
+        )
+        .await
+    }
+
+    pub async fn run_scripted_interactive_with_session_dir_size_and_waits(
+        provider: FauxProvider,
+        session_dir: &Path,
+        input_steps: Vec<(&str, &str)>,
+        columns: usize,
+        rows: usize,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_with_provider_and_waits(
+            Arc::new(provider),
+            session_dir,
+            input_steps,
+            columns,
+            rows,
+        )
+        .await
     }
 
     pub async fn run_scripted_interactive_with_provider_chunks(
@@ -898,14 +993,27 @@ pub mod test_harness {
     pub async fn run_scripted_idle_interactive(
         input: &str,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_idle_interactive_with_size(input, 80, 24).await
+    }
+
+    pub async fn run_scripted_idle_interactive_with_size(
+        input: &str,
+        columns: usize,
+        rows: usize,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
         let mut input = InputPump::from_chunks(vec![input.to_string()]);
         let parsed = CliArgs::default();
         let options = CliRunOptions {
             register_builtins: false,
             ..CliRunOptions::default()
         };
-        let result =
-            run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input).await?;
+        let result = run_interactive_loop(
+            parsed,
+            options,
+            VirtualTerminal::new(columns, rows),
+            &mut input,
+        )
+        .await?;
         Ok(scripted_output(result, None))
     }
 
@@ -913,6 +1021,16 @@ pub mod test_harness {
         provider: Arc<dyn pi_ai::registry::ApiProvider>,
         input_chunks: Vec<&str>,
         session_dir: Option<&Path>,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_with_provider_and_size(provider, input_chunks, session_dir, 80, 24).await
+    }
+
+    async fn run_scripted_with_provider_and_size(
+        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        input_chunks: Vec<&str>,
+        session_dir: Option<&Path>,
+        columns: usize,
+        rows: usize,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         let api = format!(
             "interactive-harness-{}",
@@ -940,8 +1058,13 @@ pub mod test_harness {
             session,
         };
 
-        let result =
-            run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input).await;
+        let result = run_interactive_loop(
+            parsed,
+            options,
+            VirtualTerminal::new(columns, rows),
+            &mut input,
+        )
+        .await;
         registry::unregister(&api);
 
         Ok(scripted_output(result?, session_dir))
@@ -951,6 +1074,8 @@ pub mod test_harness {
         provider: Arc<dyn pi_ai::registry::ApiProvider>,
         session_dir: &Path,
         input_steps: Vec<(&str, &str)>,
+        columns: usize,
+        rows: usize,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         let api = format!(
             "interactive-harness-{}",
@@ -988,7 +1113,12 @@ pub mod test_harness {
             Ok(())
         };
 
-        let run = run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input);
+        let run = run_interactive_loop(
+            parsed,
+            options,
+            VirtualTerminal::new(columns, rows),
+            &mut input,
+        );
         let (result, input_result) = tokio::join!(run, input_driver);
         registry::unregister(&api);
         input_result?;
@@ -1013,6 +1143,7 @@ pub mod test_harness {
         let cursor_row = result.tui.terminal().cursor_row();
         let cursor_col = result.tui.terminal().cursor_col();
         let ops = result.tui.terminal().ops().to_vec();
+        let rendered_lines = result.tui.rendered_lines().to_vec();
         ScriptedInteractiveOutput {
             rendered,
             exit_code: result.exit_code,
@@ -1020,6 +1151,7 @@ pub mod test_harness {
             cursor_row,
             cursor_col,
             ops,
+            rendered_lines,
             session_file: session_dir
                 .and_then(|dir| first_jsonl_file(dir).ok())
                 .unwrap_or_default(),

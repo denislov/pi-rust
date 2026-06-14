@@ -54,6 +54,22 @@ fn parse_legacy_and_kitty_keys() {
 }
 
 #[test]
+fn parse_alt_modified_printable_keys() {
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1bd").unwrap()),
+        "alt+d"
+    ));
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1by").unwrap()),
+        "alt+y"
+    ));
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b\x7f").unwrap()),
+        "alt+backspace"
+    ));
+}
+
+#[test]
 fn kitty_release_events_are_detected() {
     let event = parse_key("\x1b[97;3:3u").unwrap();
     assert_eq!(event.key, Key::Char("a".to_string()));

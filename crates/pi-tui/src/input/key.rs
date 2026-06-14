@@ -252,9 +252,23 @@ fn parse_legacy_ss3(data: &str) -> Option<KeyEvent> {
         "\x1bf" => return Some(modified(Key::Right, KeyModifiers::ALT, KeyEventKind::Press)),
         "\x1bp" => return Some(modified(Key::Up, KeyModifiers::ALT, KeyEventKind::Press)),
         "\x1bn" => return Some(modified(Key::Down, KeyModifiers::ALT, KeyEventKind::Press)),
-        _ => return None,
+        _ => return parse_alt_key(data),
     };
     Some(key(parsed_key))
+}
+
+fn parse_alt_key(data: &str) -> Option<KeyEvent> {
+    let rest = data.strip_prefix('\x1b')?;
+    if rest.is_empty() {
+        return None;
+    }
+    let mut event = parse_key(rest)?;
+    if event.modifiers.is_empty() {
+        event.modifiers.insert(KeyModifiers::ALT);
+        Some(event)
+    } else {
+        None
+    }
 }
 
 fn parse_kitty_csi_u(data: &str) -> Option<KeyEvent> {

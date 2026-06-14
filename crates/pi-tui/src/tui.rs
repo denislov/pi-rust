@@ -272,6 +272,10 @@ impl<T: Terminal> Tui<T> {
         self.full_redraws
     }
 
+    pub fn rendered_lines(&self) -> &[String] {
+        &self.previous_lines
+    }
+
     pub fn set_clear_on_shrink(&mut self, enabled: bool) {
         self.clear_on_shrink = enabled;
     }
@@ -284,7 +288,7 @@ impl<T: Terminal> Tui<T> {
         let size = self.terminal.size();
         let width = size.columns;
         let height = size.rows;
-        let mut lines = self.render_lines(width);
+        let mut lines = self.render_lines(width, height);
         let cursor = extract_cursor_marker(&mut lines, height);
         validate_lines(&lines, width)?;
 
@@ -315,9 +319,10 @@ impl<T: Terminal> Tui<T> {
         })
     }
 
-    fn render_lines(&mut self, width: usize) -> Vec<String> {
+    fn render_lines(&mut self, width: usize, height: usize) -> Vec<String> {
         let mut lines = Vec::new();
         for (_, child) in &mut self.children {
+            child.set_viewport_size(width, height);
             lines.extend(child.render(width));
         }
         self.composite_overlays(&mut lines, width);

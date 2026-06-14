@@ -19,6 +19,14 @@ impl<T: Clone> UndoStack<T> {
         }
     }
 
+    pub fn pop(&mut self) -> Option<T> {
+        self.entries.pop()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     pub fn undo(&mut self, current: T) -> T {
         self.entries.pop().unwrap_or(current)
     }

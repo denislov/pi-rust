@@ -234,6 +234,12 @@ fn default_keybindings() -> BTreeMap<String, KeybindingDefinition> {
     insert(&mut definitions, "tui.editor.undo", &["ctrl+-"], "Undo");
     insert(
         &mut definitions,
+        "tui.editor.redo",
+        &["ctrl+shift+-"],
+        "Redo",
+    );
+    insert(
+        &mut definitions,
         "tui.input.newLine",
         &["shift+enter"],
         "Insert newline",

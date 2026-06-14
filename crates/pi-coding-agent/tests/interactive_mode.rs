@@ -1,6 +1,7 @@
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
 use pi_coding_agent::interactive::test_harness::{
     run_scripted_idle_interactive, run_scripted_interactive,
+    run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
 
@@ -120,4 +121,71 @@ fn sync_render_count(ops: &[TerminalOp]) -> usize {
     ops.iter()
         .filter(|op| matches!(op, TerminalOp::Write(data) if data.contains("\x1b[?2026h")))
         .count()
+}
+
+#[tokio::test]
+async fn scripted_interactive_keeps_prompt_anchored_below_transcript_viewport() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("one\ntwo\nthree\nfour\nfive\nsix")]);
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![("prompt\r", "six"), ("typed", "six")],
+        40,
+        6,
+    )
+    .await
+    .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(!frame.contains("one"));
+    assert!(frame.contains("six"));
+    assert!(frame.contains("> typed"));
+    assert!(frame.contains("status: idle"));
+    assert_eq!(
+        output
+            .rendered_lines
+            .iter()
+            .position(|line| line.contains("> typed")),
+        Some(4)
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_page_up_locks_transcript_until_page_down_returns_bottom() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("one\ntwo\nthree\nfour\nfive\nsix")]);
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![("prompt\r", "six"), ("\x1b[5~", "six")],
+        40,
+        6,
+    )
+    .await
+    .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(frame.contains("one"));
+    assert!(!frame.contains("six"));
+    assert!(frame.contains("> "));
+    assert!(frame.contains("status: idle"));
+
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("one\ntwo\nthree\nfour\nfive\nsix")]);
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![("prompt\r", "six"), ("\x1b[5~\x1b[6~", "six")],
+        40,
+        6,
+    )
+    .await
+    .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(!frame.contains("one"));
+    assert!(frame.contains("six"));
+    assert!(frame.contains("> "));
+    assert!(frame.contains("status: idle"));
 }

@@ -3,6 +3,8 @@ pub type ComponentId = usize;
 pub trait Component {
     fn render(&mut self, width: usize) -> Vec<String>;
 
+    fn set_viewport_size(&mut self, _width: usize, _height: usize) {}
+
     fn handle_input(&mut self, _event: &crate::InputEvent) {}
 
     fn wants_key_release(&self) -> bool {
@@ -55,6 +57,12 @@ impl Component for Container {
             lines.extend(child.render(width));
         }
         lines
+    }
+
+    fn set_viewport_size(&mut self, width: usize, height: usize) {
+        for child in &mut self.children {
+            child.set_viewport_size(width, height);
+        }
     }
 
     fn invalidate(&mut self) {
