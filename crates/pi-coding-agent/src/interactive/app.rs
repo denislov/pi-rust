@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use pi_agent_core::{AgentResources, session::create_session_id};
 use pi_ai::types::Model;
 use pi_tui::{
-    Component, Editor, InputEvent, KeybindingsManager, ProcessTerminal, RenderScheduler,
+    Component, Editor, InputEvent, KeybindingsManager, Markdown, ProcessTerminal, RenderScheduler,
     StdinBuffer, TUI_KEYBINDINGS, Terminal, Tui, TuiError, is_key_release, matches_key,
     truncate_to_width, visible_width,
 };
@@ -61,6 +61,7 @@ pub async fn run_interactive_mode(parsed: CliArgs, options: CliRunOptions) -> Cl
 
 static INTERACTIVE_ID: AtomicUsize = AtomicUsize::new(1);
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
+const MAX_TOOL_RESULT_LINES: usize = 3;
 
 struct InputPump {
     rx: tokio::sync::mpsc::UnboundedReceiver<String>,
@@ -150,6 +151,7 @@ struct InteractiveRoot {
     pending_submit: Option<String>,
     action: InteractiveAction,
     status: InteractiveStatus,
+    viewport_width: usize,
     viewport_height: usize,
     cwd: PathBuf,
     model_id: String,
@@ -162,6 +164,7 @@ struct InteractiveRenderState {
     editor_cursor: usize,
     transcript: Vec<TranscriptItem>,
     transcript_scroll_offset: usize,
+    transcript_has_new_output_below: bool,
     status: InteractiveStatus,
 }
 
@@ -195,6 +198,7 @@ impl InteractiveRoot {
             pending_submit: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
+            viewport_width: 80,
             viewport_height: 24,
             cwd,
             model_id,
@@ -223,8 +227,21 @@ impl InteractiveRoot {
     }
 
     fn apply_events(&mut self, events: Vec<UiEvent>) {
+        let previous_scroll_offset = self.transcript.scroll_offset();
+        let previous_rows = if previous_scroll_offset > 0 {
+            render_transcript_lines(&self.transcript, self.viewport_width).len()
+        } else {
+            0
+        };
         for event in events {
             self.transcript.apply_event(event);
+        }
+        if previous_scroll_offset > 0 {
+            let current_rows = render_transcript_lines(&self.transcript, self.viewport_width).len();
+            self.transcript.preserve_scrolled_view_after_hidden_change(
+                previous_scroll_offset,
+                current_rows.saturating_sub(previous_rows),
+            );
         }
     }
 
@@ -251,6 +268,7 @@ impl InteractiveRoot {
             editor_cursor: self.editor.cursor(),
             transcript: self.transcript.items().to_vec(),
             transcript_scroll_offset: self.transcript.scroll_offset(),
+            transcript_has_new_output_below: self.transcript.has_new_output_below(),
             status: self.status,
         }
     }
@@ -310,7 +328,8 @@ impl Component for InteractiveRoot {
         }
     }
 
-    fn set_viewport_size(&mut self, _width: usize, height: usize) {
+    fn set_viewport_size(&mut self, width: usize, height: usize) {
+        self.viewport_width = width.max(1);
         self.viewport_height = height.max(1);
     }
 
@@ -830,32 +849,55 @@ fn render_transcript_lines(transcript: &Transcript, width: usize) -> Vec<String>
         .iter()
         .flat_map(|item| match item {
             TranscriptItem::User { text } => vec![fit_line(&format!("user: {text}"), width)],
-            TranscriptItem::Assistant { markdown, .. } => markdown
-                .lines()
-                .map(|line| fit_line(line, width))
-                .collect::<Vec<_>>(),
+            TranscriptItem::Assistant { markdown, .. } => {
+                let mut markdown = Markdown::new(markdown);
+                markdown
+                    .render(width)
+                    .into_iter()
+                    .map(|line| fit_line(&line, width))
+                    .collect::<Vec<_>>()
+            }
             TranscriptItem::Tool {
                 call_id,
                 name,
                 result,
                 is_error,
                 ..
-            } => {
-                let mut lines = vec![fit_line(
-                    &format!(
-                        "tool {name} {call_id} {}",
-                        if *is_error { "error" } else { "done" }
-                    ),
-                    width,
-                )];
-                if let Some(result) = result {
-                    lines.push(fit_line(result, width));
-                }
-                lines
-            }
+            } => render_tool_lines(call_id, name, result.as_deref(), *is_error, width),
             TranscriptItem::Error { text } => vec![fit_line(&format!("error: {text}"), width)],
         })
         .collect()
+}
+
+fn render_tool_lines(
+    call_id: &str,
+    name: &str,
+    result: Option<&str>,
+    is_error: bool,
+    width: usize,
+) -> Vec<String> {
+    let status = match (result, is_error) {
+        (None, _) => "running",
+        (Some(_), true) => "error",
+        (Some(_), false) => "done",
+    };
+    let mut lines = vec![fit_line(&format!("tool {name} {call_id} {status}"), width)];
+    let Some(result) = result else {
+        return lines;
+    };
+
+    let result_lines = result.lines().collect::<Vec<_>>();
+    lines.extend(
+        result_lines
+            .iter()
+            .take(MAX_TOOL_RESULT_LINES)
+            .map(|line| fit_line(line, width)),
+    );
+    let omitted = result_lines.len().saturating_sub(MAX_TOOL_RESULT_LINES);
+    if omitted > 0 {
+        lines.push(fit_line(&format!("... truncated {omitted} lines"), width));
+    }
+    lines
 }
 
 fn render_transcript_viewport(
@@ -872,11 +914,18 @@ fn render_transcript_viewport(
         return padded;
     }
 
-    let bottom = lines.len().saturating_sub(transcript.scroll_offset());
+    let max_scroll_offset = lines.len().saturating_sub(1);
+    let scroll_offset = transcript.scroll_offset().min(max_scroll_offset);
+    let bottom = lines.len().saturating_sub(scroll_offset);
     let top = bottom.saturating_sub(viewport_rows);
     let mut visible = lines[top..bottom].to_vec();
     while visible.len() < viewport_rows {
         visible.insert(0, String::new());
+    }
+    if transcript.has_new_output_below() && !visible.is_empty() {
+        let indicator = fit_line("... new output below", width);
+        let last = visible.len() - 1;
+        visible[last] = indicator;
     }
     visible
 }
@@ -895,6 +944,43 @@ fn tui_error(error: TuiError) -> CliError {
 
 fn to_cli_error(error: std::io::Error) -> CliError {
     CliError::AgentFailure(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_transcript_lines_compacts_tool_rows_and_truncates_noisy_output() {
+        let mut transcript = Transcript::new();
+        transcript.apply_event(UiEvent::ToolStarted {
+            call_id: "tool_1".to_string(),
+            name: "read".to_string(),
+            args: serde_json::Value::Null,
+        });
+
+        assert_eq!(
+            render_transcript_lines(&transcript, 80),
+            vec!["tool read tool_1 running"]
+        );
+
+        transcript.apply_event(UiEvent::ToolFinished {
+            call_id: "tool_1".to_string(),
+            result: "line 1\nline 2\nline 3\nline 4\nline 5".to_string(),
+            is_error: false,
+        });
+
+        assert_eq!(
+            render_transcript_lines(&transcript, 80),
+            vec![
+                "tool read tool_1 done",
+                "line 1",
+                "line 2",
+                "line 3",
+                "... truncated 2 lines",
+            ]
+        );
+    }
 }
 
 pub mod test_harness {

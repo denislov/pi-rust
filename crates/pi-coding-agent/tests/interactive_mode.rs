@@ -1,4 +1,5 @@
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
+use pi_ai::types::StopReason;
 use pi_coding_agent::interactive::test_harness::{
     run_scripted_idle_interactive, run_scripted_interactive,
     run_scripted_interactive_with_session_dir_size_and_waits,
@@ -13,6 +14,10 @@ fn text_response(text: &str) -> FauxResponse {
     }
 }
 
+fn six_line_markdown() -> &'static str {
+    "- one\n- two\n- three\n- four\n- five\n- six"
+}
+
 #[tokio::test]
 async fn scripted_interactive_prompt_renders_assistant_text() {
     let provider = FauxProvider::new(vec![text_response("hello from tui")]);
@@ -23,6 +28,27 @@ async fn scripted_interactive_prompt_renders_assistant_text() {
     assert!(output.contains("hello from tui"));
     assert!(output.contains("status: idle"));
     assert!(output.terminal_restored);
+}
+
+#[tokio::test]
+async fn scripted_interactive_renders_assistant_markdown() {
+    let provider = FauxProvider::new(vec![text_response(
+        "# Title\n\nA paragraph with **bold** text and `code`.\n\n- one",
+    )]);
+    let output = run_scripted_interactive(provider, "format\r")
+        .await
+        .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(frame.contains("Title"), "{frame}");
+    assert!(
+        frame.contains("A paragraph with bold text and code."),
+        "{frame}"
+    );
+    assert!(frame.contains("- one"), "{frame}");
+    assert!(!frame.contains("# Title"), "{frame}");
+    assert!(!frame.contains("**bold**"), "{frame}");
+    assert!(!frame.contains("`code`"), "{frame}");
 }
 
 #[tokio::test]
@@ -126,7 +152,7 @@ fn sync_render_count(ops: &[TerminalOp]) -> usize {
 #[tokio::test]
 async fn scripted_interactive_keeps_prompt_anchored_below_transcript_viewport() {
     let temp = tempfile::tempdir().unwrap();
-    let provider = FauxProvider::new(vec![text_response("one\ntwo\nthree\nfour\nfive\nsix")]);
+    let provider = FauxProvider::new(vec![text_response(six_line_markdown())]);
     let output = run_scripted_interactive_with_session_dir_size_and_waits(
         provider,
         temp.path(),
@@ -154,7 +180,7 @@ async fn scripted_interactive_keeps_prompt_anchored_below_transcript_viewport() 
 #[tokio::test]
 async fn scripted_interactive_page_up_locks_transcript_until_page_down_returns_bottom() {
     let temp = tempfile::tempdir().unwrap();
-    let provider = FauxProvider::new(vec![text_response("one\ntwo\nthree\nfour\nfive\nsix")]);
+    let provider = FauxProvider::new(vec![text_response(six_line_markdown())]);
     let output = run_scripted_interactive_with_session_dir_size_and_waits(
         provider,
         temp.path(),
@@ -172,7 +198,7 @@ async fn scripted_interactive_page_up_locks_transcript_until_page_down_returns_b
     assert!(frame.contains("status: idle"));
 
     let temp = tempfile::tempdir().unwrap();
-    let provider = FauxProvider::new(vec![text_response("one\ntwo\nthree\nfour\nfive\nsix")]);
+    let provider = FauxProvider::new(vec![text_response(six_line_markdown())]);
     let output = run_scripted_interactive_with_session_dir_size_and_waits(
         provider,
         temp.path(),
@@ -188,4 +214,33 @@ async fn scripted_interactive_page_up_locks_transcript_until_page_down_returns_b
     assert!(frame.contains("six"));
     assert!(frame.contains("> "));
     assert!(frame.contains("status: idle"));
+}
+
+#[tokio::test]
+async fn scripted_interactive_new_output_does_not_unlock_scrolled_transcript() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::with_call_queue(vec![
+        FauxProvider::text_call(six_line_markdown(), StopReason::Stop),
+        FauxProvider::text_call("brand new bottom", StopReason::Stop),
+    ]);
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("first\r", "six"),
+            ("\x1b[5~", "six"),
+            ("second\r", "brand new bottom"),
+        ],
+        40,
+        6,
+    )
+    .await
+    .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(frame.contains("one"), "{frame}");
+    assert!(!frame.contains("brand new bottom"), "{frame}");
+    assert!(frame.contains("new output below"), "{frame}");
+    assert!(frame.contains("> "), "{frame}");
+    assert!(frame.contains("status: idle"), "{frame}");
 }

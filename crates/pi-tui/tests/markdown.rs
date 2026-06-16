@@ -22,3 +22,11 @@ fn markdown_lines_do_not_exceed_width() {
         );
     }
 }
+
+#[test]
+fn markdown_preserves_inline_punctuation_spacing() {
+    let mut markdown = Markdown::new("A paragraph with **bold** text and `code`.");
+    let lines = markdown.render(80);
+
+    assert_eq!(lines, vec!["A paragraph with bold text and code."]);
+}

@@ -42,6 +42,7 @@ impl TranscriptItem {
 pub struct Transcript {
     items: Vec<TranscriptItem>,
     scroll_offset: usize,
+    new_output_below: bool,
 }
 
 impl Transcript {
@@ -50,8 +51,8 @@ impl Transcript {
     }
 
     pub fn push(&mut self, item: TranscriptItem) {
+        self.record_output_below();
         self.items.push(item);
-        self.scroll_to_bottom();
     }
 
     pub fn items(&self) -> &[TranscriptItem] {
@@ -59,19 +60,39 @@ impl Transcript {
     }
 
     pub fn scroll_page_up(&mut self, rows: usize) {
-        self.scroll_offset = (self.scroll_offset + rows).min(self.max_scroll_offset());
+        self.scroll_offset = self.scroll_offset.saturating_add(rows);
     }
 
     pub fn scroll_page_down(&mut self, rows: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(rows);
+        if self.scroll_offset == 0 {
+            self.new_output_below = false;
+        }
     }
 
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+        self.new_output_below = false;
     }
 
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
+    }
+
+    pub fn has_new_output_below(&self) -> bool {
+        self.new_output_below
+    }
+
+    pub(crate) fn preserve_scrolled_view_after_hidden_change(
+        &mut self,
+        previous_scroll_offset: usize,
+        added_rows: usize,
+    ) {
+        if previous_scroll_offset == 0 {
+            return;
+        }
+        self.scroll_offset = previous_scroll_offset.saturating_add(added_rows);
+        self.new_output_below = true;
     }
 
     pub fn apply_event(&mut self, event: UiEvent) {
@@ -104,20 +125,23 @@ impl Transcript {
         }
     }
 
-    fn max_scroll_offset(&self) -> usize {
-        self.items.len().saturating_sub(1)
-    }
-
     fn append_assistant_delta(&mut self, text: &str) {
+        let was_scrolled = self.scroll_offset > 0;
         if let Some(TranscriptItem::Assistant { markdown, done, .. }) = self
             .items
             .iter_mut()
             .rev()
             .find(|item| matches!(item, TranscriptItem::Assistant { done: false, .. }))
         {
+            if was_scrolled {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
+                self.new_output_below = true;
+            } else {
+                self.scroll_offset = 0;
+                self.new_output_below = false;
+            }
             markdown.push_str(text);
             *done = false;
-            self.scroll_to_bottom();
             return;
         }
 
@@ -136,7 +160,6 @@ impl Transcript {
             .find(|item| matches!(item, TranscriptItem::Assistant { done: false, .. }))
         {
             *done = true;
-            self.scroll_to_bottom();
             return;
         }
 
@@ -163,7 +186,16 @@ impl Transcript {
         }) {
             *existing = Some(result);
             *existing_error = is_error;
+            self.record_output_below();
+        }
+    }
+
+    fn record_output_below(&mut self) {
+        if self.scroll_offset == 0 {
             self.scroll_to_bottom();
+        } else {
+            self.scroll_offset = self.scroll_offset.saturating_add(1);
+            self.new_output_below = true;
         }
     }
 }

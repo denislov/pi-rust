@@ -102,10 +102,7 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
                 in_code_block = false;
             }
             Event::Text(text) | Event::Code(text) => {
-                if !in_code_block && !current.is_empty() && !current.ends_with([' ', '\n']) {
-                    current.push(' ');
-                }
-                current.push_str(&text);
+                append_inline_text(&mut current, &text, in_code_block);
             }
             Event::SoftBreak => current.push(' '),
             Event::HardBreak => flush_current(&mut current, &mut blocks),
@@ -128,6 +125,25 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+fn append_inline_text(current: &mut String, text: &str, in_code_block: bool) {
+    if !in_code_block
+        && !current.is_empty()
+        && !current.ends_with([' ', '\n'])
+        && !text.starts_with([' ', '\n'])
+        && !starts_with_closing_punctuation(text)
+    {
+        current.push(' ');
+    }
+    current.push_str(text);
+}
+
+fn starts_with_closing_punctuation(text: &str) -> bool {
+    matches!(
+        text.chars().next(),
+        Some('.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}')
+    )
 }
 
 fn flush_current(current: &mut String, blocks: &mut Vec<String>) {
