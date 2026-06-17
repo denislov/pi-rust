@@ -129,6 +129,7 @@ impl Transcript {
                 markdown: summary,
                 done: true,
             }),
+            UiEvent::UsageUpdate { .. } => {}
         }
     }
 

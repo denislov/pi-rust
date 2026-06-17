@@ -1,5 +1,7 @@
 use pi_agent_core::{AgentEvent, AgentToolResult};
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, StopReason, Usage,
+};
 use pi_coding_agent::interactive::{InteractiveEventBridge, Transcript, TranscriptItem, UiEvent};
 
 fn assistant(text: &str) -> AssistantMessage {
@@ -10,6 +12,25 @@ fn assistant(text: &str) -> AssistantMessage {
         text: text.to_string(),
         text_signature: None,
     });
+    message
+}
+
+fn assistant_done_message(input: u32, output: u32) -> AssistantMessage {
+    let mut message = AssistantMessage::empty("faux", "faux-model");
+    message.provider = Some("faux".to_string());
+    message.stop_reason = StopReason::Stop;
+    message.content.push(ContentBlock::Text {
+        text: "done".to_string(),
+        text_signature: None,
+    });
+    message.usage = Usage {
+        input,
+        output,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: input + output,
+        cost: Cost::default(),
+    };
     message
 }
 
@@ -95,4 +116,26 @@ fn ui_events_apply_to_transcript() {
             done: true,
         }]
     );
+}
+
+#[test]
+fn agent_done_emits_usage_update_with_cumulative_totals() {
+    let mut bridge = InteractiveEventBridge::new();
+
+    let first = bridge.handle(&AgentEvent::AgentDone {
+        message: assistant_done_message(100, 40),
+    });
+    assert!(first.contains(&UiEvent::AssistantDone));
+    assert!(first.contains(&UiEvent::UsageUpdate {
+        input: 100,
+        output: 40
+    }));
+
+    let second = bridge.handle(&AgentEvent::AgentDone {
+        message: assistant_done_message(250, 60),
+    });
+    assert!(second.contains(&UiEvent::UsageUpdate {
+        input: 350,
+        output: 100
+    }));
 }

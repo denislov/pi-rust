@@ -25,14 +25,21 @@ pub enum UiEvent {
     CompactionNotice {
         summary: String,
     },
+    UsageUpdate {
+        input: u32,
+        output: u32,
+    },
 }
 
 #[derive(Debug, Default)]
-pub struct InteractiveEventBridge;
+pub struct InteractiveEventBridge {
+    total_input: u32,
+    total_output: u32,
+}
 
 impl InteractiveEventBridge {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
     pub fn handle(&mut self, event: &AgentEvent) -> Vec<UiEvent> {
@@ -56,7 +63,17 @@ impl InteractiveEventBridge {
                 result: content_blocks_to_text(&result.content),
                 is_error: result.is_error,
             }],
-            AgentEvent::AgentDone { .. } => vec![UiEvent::AssistantDone],
+            AgentEvent::AgentDone { message } => {
+                self.total_input = self.total_input.saturating_add(message.usage.input);
+                self.total_output = self.total_output.saturating_add(message.usage.output);
+                vec![
+                    UiEvent::AssistantDone,
+                    UiEvent::UsageUpdate {
+                        input: self.total_input,
+                        output: self.total_output,
+                    },
+                ]
+            }
             AgentEvent::AgentError { error } => vec![UiEvent::AgentError {
                 error: error.clone(),
             }],
