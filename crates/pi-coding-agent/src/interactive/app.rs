@@ -229,7 +229,8 @@ impl InteractiveRoot {
     fn apply_events(&mut self, events: Vec<UiEvent>) {
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = if previous_scroll_offset > 0 {
-            render_transcript_lines(&self.transcript, self.viewport_width).len()
+            render_transcript_lines(&self.transcript, self.viewport_width, MAX_TOOL_RESULT_LINES)
+                .len()
         } else {
             0
         };
@@ -237,7 +238,12 @@ impl InteractiveRoot {
             self.transcript.apply_event(event);
         }
         if previous_scroll_offset > 0 {
-            let current_rows = render_transcript_lines(&self.transcript, self.viewport_width).len();
+            let current_rows = render_transcript_lines(
+                &self.transcript,
+                self.viewport_width,
+                MAX_TOOL_RESULT_LINES,
+            )
+            .len();
             self.transcript.preserve_scrolled_view_after_hidden_change(
                 previous_scroll_offset,
                 current_rows.saturating_sub(previous_rows),
@@ -284,7 +290,12 @@ impl Component for InteractiveRoot {
         let footer = fit_line(&self.footer(), width);
         let reserved_rows = editor_lines.len().saturating_add(1);
         let transcript_rows = self.viewport_height.saturating_sub(reserved_rows).max(1);
-        let mut lines = render_transcript_viewport(&self.transcript, width, transcript_rows);
+        let mut lines = render_transcript_viewport(
+            &self.transcript,
+            width,
+            transcript_rows,
+            MAX_TOOL_RESULT_LINES,
+        );
         for line in editor_lines {
             lines.push(fit_line(&format!("> {line}"), width));
         }
@@ -843,12 +854,17 @@ fn root_mut<T: Terminal>(
         .ok_or_else(|| CliError::AgentFailure("interactive root component missing".to_string()))
 }
 
-fn render_transcript_lines(transcript: &Transcript, width: usize) -> Vec<String> {
+fn render_transcript_lines(
+    transcript: &Transcript,
+    width: usize,
+    max_tool_result_lines: usize,
+) -> Vec<String> {
     transcript
         .items()
         .iter()
         .flat_map(|item| match item {
             TranscriptItem::User { text } => vec![fit_line(&format!("user: {text}"), width)],
+            TranscriptItem::System { text } => vec![fit_line(text, width)],
             TranscriptItem::Assistant { markdown, .. } => {
                 let mut markdown = Markdown::new(markdown);
                 markdown
@@ -863,9 +879,15 @@ fn render_transcript_lines(transcript: &Transcript, width: usize) -> Vec<String>
                 result,
                 is_error,
                 ..
-            } => render_tool_lines(call_id, name, result.as_deref(), *is_error, width),
+            } => render_tool_lines(
+                call_id,
+                name,
+                result.as_deref(),
+                *is_error,
+                width,
+                max_tool_result_lines,
+            ),
             TranscriptItem::Error { text } => vec![fit_line(&format!("error: {text}"), width)],
-            TranscriptItem::System { .. } => Vec::new(),
         })
         .collect()
 }
@@ -876,6 +898,7 @@ fn render_tool_lines(
     result: Option<&str>,
     is_error: bool,
     width: usize,
+    max_tool_result_lines: usize,
 ) -> Vec<String> {
     let status = match (result, is_error) {
         (None, _) => "running",
@@ -891,10 +914,10 @@ fn render_tool_lines(
     lines.extend(
         result_lines
             .iter()
-            .take(MAX_TOOL_RESULT_LINES)
+            .take(max_tool_result_lines)
             .map(|line| fit_line(line, width)),
     );
-    let omitted = result_lines.len().saturating_sub(MAX_TOOL_RESULT_LINES);
+    let omitted = result_lines.len().saturating_sub(max_tool_result_lines);
     if omitted > 0 {
         lines.push(fit_line(&format!("... truncated {omitted} lines"), width));
     }
@@ -905,8 +928,9 @@ fn render_transcript_viewport(
     transcript: &Transcript,
     width: usize,
     viewport_rows: usize,
+    max_tool_result_lines: usize,
 ) -> Vec<String> {
-    let lines = render_transcript_lines(transcript, width);
+    let lines = render_transcript_lines(transcript, width, max_tool_result_lines);
     if lines.len() <= viewport_rows {
         let mut padded = lines;
         while padded.len() < viewport_rows {
@@ -961,7 +985,7 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80),
+            render_transcript_lines(&transcript, 80, 3),
             vec!["tool read tool_1 running"]
         );
 
@@ -972,13 +996,25 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80),
+            render_transcript_lines(&transcript, 80, 3),
             vec![
                 "tool read tool_1 done",
                 "line 1",
                 "line 2",
                 "line 3",
                 "... truncated 2 lines",
+            ]
+        );
+
+        assert_eq!(
+            render_transcript_lines(&transcript, 80, 20),
+            vec![
+                "tool read tool_1 done",
+                "line 1",
+                "line 2",
+                "line 3",
+                "line 4",
+                "line 5",
             ]
         );
     }
