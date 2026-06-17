@@ -244,3 +244,31 @@ async fn scripted_interactive_new_output_does_not_unlock_scrolled_transcript() {
     assert!(frame.contains("> "), "{frame}");
     assert!(frame.contains("status: idle"), "{frame}");
 }
+
+#[tokio::test]
+async fn scripted_interactive_shows_welcome_line_on_empty_transcript() {
+    let output = run_scripted_idle_interactive("").await.unwrap();
+    let frame = output.rendered_lines.join("\n");
+    assert!(frame.contains("pi · "), "welcome line missing: {frame}");
+    assert!(
+        frame.contains("submit"),
+        "welcome line should mention submit: {frame}"
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_footer_shows_usage_after_a_turn() {
+    let provider = FauxProvider::new(vec![text_response("ok")]);
+    let output = run_scripted_interactive(provider, "hi\r\x03")
+        .await
+        .unwrap();
+    let frame = output.rendered_lines.join("\n");
+    assert!(
+        frame.contains("status: idle"),
+        "footer must keep status: idle: {frame}"
+    );
+    assert!(
+        frame.contains("↑") && frame.contains("↓"),
+        "footer should show usage stats after a turn: {frame}"
+    );
+}

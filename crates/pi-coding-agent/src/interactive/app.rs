@@ -1,5 +1,5 @@
 use std::io::{IsTerminal, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -12,6 +12,7 @@ use pi_tui::{
     truncate_to_width, visible_width,
 };
 
+use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::{InteractiveEventBridge, Transcript, TranscriptItem, UiEvent};
 use crate::protocol::session_runner::{
     SessionPromptAbortHandle, SessionPromptOptions, SessionPromptResult, SpawnedSessionPrompt,
@@ -62,6 +63,7 @@ pub async fn run_interactive_mode(parsed: CliArgs, options: CliRunOptions) -> Cl
 static INTERACTIVE_ID: AtomicUsize = AtomicUsize::new(1);
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_TOOL_RESULT_LINES: usize = 3;
+const EXPANDED_TOOL_RESULT_LINES: usize = 20;
 
 struct InputPump {
     rx: tokio::sync::mpsc::UnboundedReceiver<String>,
@@ -156,6 +158,8 @@ struct InteractiveRoot {
     cwd: PathBuf,
     model_id: String,
     session_label: String,
+    usage: (u32, u32),
+    tool_output_expanded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +170,7 @@ struct InteractiveRenderState {
     transcript_scroll_offset: usize,
     transcript_has_new_output_below: bool,
     status: InteractiveStatus,
+    tool_output_expanded: bool,
 }
 
 impl InteractiveRoot {
@@ -190,8 +195,12 @@ impl InteractiveRoot {
         }));
         editor.set_focused(true);
 
+        let mut transcript = Transcript::new();
+        let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
+        transcript.push(TranscriptItem::system(welcome_line(&keybindings)));
+
         Self {
-            transcript: Transcript::new(),
+            transcript,
             editor,
             submitted,
             scroll_command,
@@ -203,6 +212,8 @@ impl InteractiveRoot {
             cwd,
             model_id,
             session_label,
+            usage: (0, 0),
+            tool_output_expanded: false,
         }
     }
 
@@ -235,7 +246,12 @@ impl InteractiveRoot {
             0
         };
         for event in events {
-            self.transcript.apply_event(event);
+            match event {
+                UiEvent::UsageUpdate { input, output } => {
+                    self.usage = (input, output);
+                }
+                other => self.transcript.apply_event(other),
+            }
         }
         if previous_scroll_offset > 0 {
             let current_rows = render_transcript_lines(
@@ -260,12 +276,21 @@ impl InteractiveRoot {
             InteractiveStatus::Idle => "idle",
             InteractiveStatus::Running => "running",
         };
-        format!(
-            "status: {status} | cwd: {} | model: {} | session: {}",
-            self.cwd.display(),
-            self.model_id,
-            self.session_label
-        )
+        let cwd = abbreviate_cwd(&self.cwd);
+        let mut parts = vec![
+            format!("status: {status}"),
+            format!("cwd: {cwd}"),
+            format!("model: {}", self.model_id),
+            format!("session: {}", self.session_label),
+        ];
+        if self.usage != (0, 0) {
+            parts.push(format!(
+                "↑{} ↓{}",
+                format_tokens(self.usage.0),
+                format_tokens(self.usage.1)
+            ));
+        }
+        parts.join(" | ")
     }
 
     fn render_state(&self) -> InteractiveRenderState {
@@ -276,6 +301,7 @@ impl InteractiveRoot {
             transcript_scroll_offset: self.transcript.scroll_offset(),
             transcript_has_new_output_below: self.transcript.has_new_output_below(),
             status: self.status,
+            tool_output_expanded: self.tool_output_expanded,
         }
     }
 }
@@ -290,11 +316,16 @@ impl Component for InteractiveRoot {
         let footer = fit_line(&self.footer(), width);
         let reserved_rows = editor_lines.len().saturating_add(1);
         let transcript_rows = self.viewport_height.saturating_sub(reserved_rows).max(1);
+        let max_tool_result_lines = if self.tool_output_expanded {
+            EXPANDED_TOOL_RESULT_LINES
+        } else {
+            MAX_TOOL_RESULT_LINES
+        };
         let mut lines = render_transcript_viewport(
             &self.transcript,
             width,
             transcript_rows,
-            MAX_TOOL_RESULT_LINES,
+            max_tool_result_lines,
         );
         for line in editor_lines {
             lines.push(fit_line(&format!("> {line}"), width));
@@ -319,6 +350,11 @@ impl Component for InteractiveRoot {
                     return;
                 }
             }
+        }
+
+        if matches_key(event, "ctrl+o") {
+            self.tool_output_expanded = !self.tool_output_expanded;
+            return;
         }
 
         if self.status == InteractiveStatus::Idle {
@@ -963,6 +999,38 @@ fn fit_line(line: &str, width: usize) -> String {
     }
 }
 
+fn welcome_line(keybindings: &KeybindingsManager) -> String {
+    let parts = [
+        key_hint(keybindings, "tui.input.submit", "submit"),
+        key_hint(keybindings, "tui.input.newLine", "newline"),
+        app_key_hint(keybindings, "app.interrupt", "interrupt/exit"),
+        app_key_hint(keybindings, "app.tools.expand", "expand tools"),
+        key_hint(keybindings, "tui.editor.pageUp", "scroll up"),
+        key_hint(keybindings, "tui.editor.pageDown", "scroll down"),
+    ];
+    format!("pi · {}", parts.join(" · "))
+}
+
+fn format_tokens(count: u32) -> String {
+    if count < 1000 {
+        count.to_string()
+    } else if count < 1000000 {
+        format!("{}k", count / 1000)
+    } else {
+        format!("{}M", count / 1000000)
+    }
+}
+
+fn abbreviate_cwd(cwd: &Path) -> String {
+    let display = cwd.display().to_string();
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() && display.starts_with(&home) {
+            return format!("~{}", &display[home.len()..]);
+        }
+    }
+    display
+}
+
 fn tui_error(error: TuiError) -> CliError {
     CliError::AgentFailure(error.to_string())
 }
@@ -1016,6 +1084,50 @@ mod tests {
                 "line 4",
                 "line 5",
             ]
+        );
+    }
+
+    #[test]
+    fn ctrl_o_toggles_tool_output_expansion_in_root() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_viewport_size(40, 24);
+        root.transcript.push(TranscriptItem::Tool {
+            call_id: "tool_1".to_string(),
+            name: "read".to_string(),
+            args: serde_json::Value::Null,
+            result: Some("l1\nl2\nl3\nl4\nl5\nl6".to_string()),
+            is_error: false,
+        });
+
+        let collapsed = root.render(40).join("\n");
+        assert!(
+            collapsed.contains("... truncated"),
+            "collapsed tool output should show truncation: {collapsed}"
+        );
+
+        // Ctrl+O is the single byte 0x0f, which parse_control_char maps to
+        // Key::Char("o") + CTRL. Feed it through StdinBuffer like the real loop.
+        let mut buffer = StdinBuffer::new();
+        let events = buffer.process("\x0f");
+        assert_eq!(events.len(), 1, "ctrl+o should produce one input event");
+        root.handle_input(&events[0]);
+        assert!(
+            root.tool_output_expanded,
+            "ctrl+o should flip the expand flag"
+        );
+
+        let expanded = root.render(40).join("\n");
+        assert!(
+            !expanded.contains("... truncated"),
+            "expanded tool output should not show truncation: {expanded}"
+        );
+        assert!(
+            expanded.contains("l6"),
+            "expanded tool output should show the last line: {expanded}"
         );
     }
 }
