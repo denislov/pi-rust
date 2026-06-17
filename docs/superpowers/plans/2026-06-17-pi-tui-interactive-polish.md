@@ -1188,6 +1188,70 @@ Insert a `Ctrl+O` block immediately after the `Ctrl+C` block and before the `if 
         }
 ```
 
+- [ ] **Step 7b: Include `tool_output_expanded` in the render-state diff**
+
+The input path triggers a re-render by comparing `render_state()` before and after `handle_input` (see `handle_input_event` in `app.rs`). If `tool_output_expanded` is not part of that state, flipping it produces `RenderRequest::NONE` and the expanded output never paints. Add it to both the struct and the accessor.
+
+The current struct is:
+
+```rust
+#[derive(Debug, Clone, PartialEq)]
+struct InteractiveRenderState {
+    editor_text: String,
+    editor_cursor: usize,
+    transcript: Vec<TranscriptItem>,
+    transcript_scroll_offset: usize,
+    transcript_has_new_output_below: bool,
+    status: InteractiveStatus,
+}
+```
+
+Add a field at the end:
+
+```rust
+#[derive(Debug, Clone, PartialEq)]
+struct InteractiveRenderState {
+    editor_text: String,
+    editor_cursor: usize,
+    transcript: Vec<TranscriptItem>,
+    transcript_scroll_offset: usize,
+    transcript_has_new_output_below: bool,
+    status: InteractiveStatus,
+    tool_output_expanded: bool,
+}
+```
+
+And the current `render_state` accessor ends with `status: self.status,`:
+
+```rust
+    fn render_state(&self) -> InteractiveRenderState {
+        InteractiveRenderState {
+            editor_text: self.editor.text().to_string(),
+            editor_cursor: self.editor.cursor(),
+            transcript: self.transcript.items().to_vec(),
+            transcript_scroll_offset: self.transcript.scroll_offset(),
+            transcript_has_new_output_below: self.transcript.has_new_output_below(),
+            status: self.status,
+        }
+    }
+```
+
+Add the new field:
+
+```rust
+    fn render_state(&self) -> InteractiveRenderState {
+        InteractiveRenderState {
+            editor_text: self.editor.text().to_string(),
+            editor_cursor: self.editor.cursor(),
+            transcript: self.transcript.items().to_vec(),
+            transcript_scroll_offset: self.transcript.scroll_offset(),
+            transcript_has_new_output_below: self.transcript.has_new_output_below(),
+            status: self.status,
+            tool_output_expanded: self.tool_output_expanded,
+        }
+    }
+```
+
 - [ ] **Step 8: Render with the expanded/collapsed cap**
 
 In `impl Component for InteractiveRoot`, the `render` method currently (after Task 3's deferred form) calls:
@@ -1213,7 +1277,7 @@ Replace with:
         );
 ```
 
-- [ ] **Step 9: Write failing scripted tests**
+- [ ] **Step 9a: Write failing scripted tests for welcome and footer usage**
 
 Append to `crates/pi-coding-agent/tests/interactive_mode.rs`. The file already imports `run_scripted_idle_interactive` and `run_scripted_interactive` and defines `text_response`. Append:
 
@@ -1248,66 +1312,60 @@ async fn scripted_interactive_footer_shows_usage_after_a_turn() {
         "footer should show usage stats after a turn: {frame}"
     );
 }
-
-#[tokio::test]
-async fn scripted_interactive_ctrl_o_toggles_tool_expansion() {
-    // A faux response with a tool call that returns 6 lines; collapsed shows 3
-    // plus a truncation note, expanded shows all 6 with no truncation note.
-    let provider = FauxProvider::new(vec![FauxResponse {
-        text_deltas: vec!["done".to_string()],
-        thinking_deltas: vec![],
-        tool_calls: vec![pi_ai::providers::faux::FauxToolCall {
-            name: "read".to_string(),
-            args: serde_json::json!({}),
-            result: pi_ai::providers::faux::FauxToolResult::text("l1\nl2\nl3\nl4\nl5\nl6"),
-        }],
-    }]);
-
-    let collapsed = run_scripted_interactive_with_session_dir_size_and_waits(
-        FauxProvider::new(vec![FauxResponse {
-            text_deltas: vec!["done".to_string()],
-            thinking_deltas: vec![],
-            tool_calls: vec![pi_ai::providers::faux::FauxToolCall {
-                name: "read".to_string(),
-                args: serde_json::json!({}),
-                result: pi_ai::providers::faux::FauxToolResult::text("l1\nl2\nl3\nl4\nl5\nl6"),
-            }],
-        }]),
-        std::env::temp_dir().as_path(),
-        vec![("go\r", "done"), ("\x0f", "done")],
-        40,
-        12,
-    )
-    .await
-    .unwrap();
-    let collapsed_frame = collapsed.rendered_lines.join("\n");
-    assert!(
-        collapsed_frame.contains("... truncated"),
-        "collapsed tool output should show truncation: {collapsed_frame}"
-    );
-
-    let expanded = run_scripted_interactive_with_session_dir_size_and_waits(
-        provider,
-        std::env::temp_dir().as_path(),
-        vec![("go\r", "done"), ("\x0f", "done")],
-        40,
-        12,
-    )
-    .await
-    .unwrap();
-    let expanded_frame = expanded.rendered_lines.join("\n");
-    assert!(
-        !expanded_frame.contains("... truncated"),
-        "expanded tool output should not show truncation: {expanded_frame}"
-    );
-    assert!(
-        expanded_frame.contains("l6"),
-        "expanded tool output should show the last line: {expanded_frame}"
-    );
-}
 ```
 
-Note on faux tool-call API: the exact names of `FauxToolCall` / `FauxToolResult::text` and the field shape must match `pi-ai`'s faux provider. Read `crates/pi-ai/src/providers/faux.rs` and adjust the test's construction verbatim before relying on it. If the faux provider does not expose a multi-line text tool result helper, build the `FauxResponse` directly from the real types it uses (the goal is a tool whose `content_blocks_to_text` yields `"l1\nl2\nl3\nl4\nl5\nl6"`). If shaping the faux tool call proves brittle, replace this single test with a direct `render_tool_lines(..., 3)` vs `render_tool_lines(..., 20)` assertion in the in-file unit test (Task 3 already covers the helper; this scripted test is the integration confirmation).
+Note: the faux provider reports `Usage { input: 10, output: 20, .. }` on every `Done` event (see `crates/pi-ai/src/providers/faux.rs`), so after one turn the footer renders `↑10 ↓20` and both arrows are present.
+
+- [ ] **Step 9b: Add an in-file unit test for the `Ctrl+O` toggle**
+
+The scripted harness runs with `tools: Vec::new()` and `register_builtins: false`, so it cannot execute a tool call end-to-end, and the faux provider does not synthesize tool *results* (it only streams tool-call deltas; results come from real tool execution). A scripted integration test for tool expansion is therefore infeasible without a new harness variant. Instead, verify the toggle + render path directly on `InteractiveRoot` in the in-file `#[cfg(test)] mod tests` block in `crates/pi-coding-agent/src/interactive/app.rs`.
+
+The existing in-file test module already has `use super::*;` (which brings in `InteractiveRoot`, `TranscriptItem`, `InputEvent`, `StdinBuffer`, `Transcript`, `UiEvent`) and `use super::*;` makes `PathBuf` available (it is imported at the top of `app.rs`). Append this test inside the existing `#[cfg(test)] mod tests { ... }` block (the one that currently holds `render_transcript_lines_compacts_tool_rows_and_truncates_noisy_output`):
+
+```rust
+    #[test]
+    fn ctrl_o_toggles_tool_output_expansion_in_root() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_viewport_size(40, 24);
+        root.transcript.push(TranscriptItem::Tool {
+            call_id: "tool_1".to_string(),
+            name: "read".to_string(),
+            args: serde_json::Value::Null,
+            result: Some("l1\nl2\nl3\nl4\nl5\nl6".to_string()),
+            is_error: false,
+        });
+
+        let collapsed = root.render(40).join("\n");
+        assert!(
+            collapsed.contains("... truncated"),
+            "collapsed tool output should show truncation: {collapsed}"
+        );
+
+        // Ctrl+O is the single byte 0x0f, which parse_control_char maps to
+        // Key::Char("o") + CTRL. Feed it through StdinBuffer like the real loop.
+        let mut buffer = StdinBuffer::new();
+        let events = buffer.process("\x0f");
+        assert_eq!(events.len(), 1, "ctrl+o should produce one input event");
+        root.handle_input(&events[0]);
+        assert!(root.tool_output_expanded, "ctrl+o should flip the expand flag");
+
+        let expanded = root.render(40).join("\n");
+        assert!(
+            !expanded.contains("... truncated"),
+            "expanded tool output should not show truncation: {expanded}"
+        );
+        assert!(
+            expanded.contains("l6"),
+            "expanded tool output should show the last line: {expanded}"
+        );
+    }
+```
+
+If `root.transcript` or `root.tool_output_expanded` are not accessible because of visibility, the in-file test module is inside the same crate and the fields are module-private (not `pub`), so `use super::*;` makes them reachable — no visibility change is needed. If the compiler still complains, the test is in the wrong module; ensure it is literally inside the existing `mod tests { use super::*; ... }` in `app.rs`.
 
 - [ ] **Step 10: Run tests to verify they fail**
 
@@ -1315,15 +1373,17 @@ Run from `pi-rust/`:
 
 ```bash
 cargo test -p pi-coding-agent --test interactive_mode
+cargo test -p pi-coding-agent --lib ctrl_o_toggles_tool_output_expansion_in_root
 ```
 
-Expected: the welcome and footer-usage tests FAIL (behavior not wired), and the ctrl-o test may fail to compile until the faux tool-call shape is corrected per the note above.
+Expected: the welcome and footer-usage scripted tests FAIL (behavior not wired yet), and the in-file ctrl-o test FAILS to compile (the toggle and `tool_output_expanded` field do not exist yet) until Steps 1-8 are applied.
 
 - [ ] **Step 11: Run tests to verify they pass**
 
 Run from `pi-rust/`:
 
 ```bash
+cargo test -p pi-coding-agent --lib ctrl_o_toggles_tool_output_expansion_in_root
 cargo test -p pi-coding-agent --test interactive_mode
 cargo test -p pi-coding-agent --test interactive_abort
 cargo test -p pi-coding-agent --test interactive_transcript
