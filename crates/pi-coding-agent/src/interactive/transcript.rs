@@ -18,6 +18,9 @@ pub enum TranscriptItem {
     Error {
         text: String,
     },
+    System {
+        text: String,
+    },
 }
 
 impl TranscriptItem {
@@ -35,6 +38,10 @@ impl TranscriptItem {
 
     pub fn error(text: impl Into<String>) -> Self {
         Self::Error { text: text.into() }
+    }
+
+    pub fn system(text: impl Into<String>) -> Self {
+        Self::System { text: text.into() }
     }
 }
 

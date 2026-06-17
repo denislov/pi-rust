@@ -865,6 +865,7 @@ fn render_transcript_lines(transcript: &Transcript, width: usize) -> Vec<String>
                 ..
             } => render_tool_lines(call_id, name, result.as_deref(), *is_error, width),
             TranscriptItem::Error { text } => vec![fit_line(&format!("error: {text}"), width)],
+            TranscriptItem::System { .. } => Vec::new(),
         })
         .collect()
 }
