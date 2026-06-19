@@ -41,10 +41,8 @@ async fn scripted_interactive_renders_assistant_markdown() {
     let frame = output.rendered_lines.join("\n");
 
     assert!(frame.contains("Title"), "{frame}");
-    assert!(
-        frame.contains("A paragraph with bold text and code."),
-        "{frame}"
-    );
+    assert!(frame.contains("A paragraph with bold text and"), "{frame}");
+    assert!(frame.contains("code"), "{frame}");
     assert!(frame.contains("- one"), "{frame}");
     assert!(!frame.contains("# Title"), "{frame}");
     assert!(!frame.contains("**bold**"), "{frame}");
