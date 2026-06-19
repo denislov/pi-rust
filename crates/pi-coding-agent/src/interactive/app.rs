@@ -65,6 +65,8 @@ static INTERACTIVE_ID: AtomicUsize = AtomicUsize::new(1);
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
+const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 struct InputPump {
     rx: tokio::sync::mpsc::UnboundedReceiver<String>,
@@ -161,6 +163,7 @@ struct InteractiveRoot {
     session_label: String,
     usage: (u32, u32),
     tool_output_expanded: bool,
+    spinner_frame: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +175,7 @@ struct InteractiveRenderState {
     transcript_has_new_output_below: bool,
     status: InteractiveStatus,
     tool_output_expanded: bool,
+    spinner_frame: usize,
 }
 
 impl InteractiveRoot {
@@ -215,6 +219,7 @@ impl InteractiveRoot {
             session_label,
             usage: (0, 0),
             tool_output_expanded: false,
+            spinner_frame: 0,
         }
     }
 
@@ -275,14 +280,20 @@ impl InteractiveRoot {
     }
 
     fn set_status(&mut self, status: InteractiveStatus) {
+        if status == InteractiveStatus::Idle {
+            self.spinner_frame = 0;
+        }
         self.status = status;
     }
 
     fn footer(&self) -> String {
         let color = color_enabled();
         let status_str = match self.status {
-            InteractiveStatus::Idle => "idle",
-            InteractiveStatus::Running => "running",
+            InteractiveStatus::Idle => "idle".to_string(),
+            InteractiveStatus::Running => {
+                let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
+                format!("{spinner} running")
+            }
         };
         let status_style = match self.status {
             InteractiveStatus::Idle => STATUS_IDLE,
@@ -318,6 +329,7 @@ impl InteractiveRoot {
             transcript_has_new_output_below: self.transcript.has_new_output_below(),
             status: self.status,
             tool_output_expanded: self.tool_output_expanded,
+            spinner_frame: self.spinner_frame,
         }
     }
 }
@@ -565,6 +577,14 @@ async fn run_started_interactive_loop<T: Terminal>(
                             task.events_closed = true;
                         }
                     }
+                    running = Some(task);
+                }
+                _ = tokio::time::sleep(SPINNER_INTERVAL) => {
+                    if let Some(root) = tui.component_as_mut::<InteractiveRoot>(root_id) {
+                        root.spinner_frame =
+                            (root.spinner_frame + 1) % SPINNER_FRAMES.len();
+                    }
+                    render_scheduler.request(true);
                     running = Some(task);
                 }
                 done = &mut task.done => {
@@ -1235,6 +1255,107 @@ mod tests {
         assert!(
             expanded.contains("l6"),
             "expanded tool output should show the last line: {expanded}"
+        );
+    }
+
+    #[test]
+    fn footer_shows_spinner_when_running() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Running);
+        let footer = root.footer();
+        assert!(
+            footer.contains("running"),
+            "footer should contain 'running' when status is Running: {footer}"
+        );
+        let has_spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            .iter()
+            .any(|frame| footer.contains(frame));
+        assert!(
+            has_spinner,
+            "footer should contain a braille spinner char when Running: {footer}"
+        );
+    }
+
+    #[test]
+    fn footer_no_spinner_when_idle() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Idle);
+        let footer = root.footer();
+        assert!(
+            footer.contains("status: idle"),
+            "footer should contain 'status: idle' when Idle: {footer}"
+        );
+        let has_spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            .iter()
+            .any(|frame| footer.contains(frame));
+        assert!(
+            !has_spinner,
+            "footer should NOT contain a braille spinner char when Idle: {footer}"
+        );
+    }
+
+    #[test]
+    fn spinner_frame_advances_through_sequence() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Running);
+
+        root.spinner_frame = 3;
+        let footer_at_3 = root.footer();
+        assert!(
+            footer_at_3.contains("⠸"),
+            "footer at frame 3 should contain '⠸': {footer_at_3}"
+        );
+
+        root.spinner_frame = 4;
+        let footer_at_4 = root.footer();
+        assert!(
+            footer_at_4.contains("⠼"),
+            "footer at frame 4 should contain '⠼': {footer_at_4}"
+        );
+    }
+
+    #[test]
+    fn set_status_idle_resets_spinner_frame() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.spinner_frame = 5;
+        root.set_status(InteractiveStatus::Idle);
+        assert_eq!(
+            root.spinner_frame, 0,
+            "set_status(Idle) should reset spinner_frame to 0"
+        );
+    }
+
+    #[test]
+    fn render_state_changes_with_spinner_frame() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Running);
+        root.spinner_frame = 0;
+        let state_at_0 = root.render_state();
+        root.spinner_frame = 1;
+        let state_at_1 = root.render_state();
+        assert_ne!(
+            state_at_0, state_at_1,
+            "render_state should differ when spinner_frame changes"
         );
     }
 }
