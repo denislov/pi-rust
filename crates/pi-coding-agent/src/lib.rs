@@ -1,7 +1,9 @@
 pub mod args;
 pub mod config;
 pub mod error;
+pub mod input;
 pub mod interactive;
+pub mod models;
 pub mod print_mode;
 pub mod protocol;
 pub mod resources;
@@ -72,6 +74,14 @@ pub async fn run_cli_with_options(
     args: impl IntoIterator<Item = String>,
     options: CliRunOptions,
 ) -> CliOutput {
+    run_cli_with_options_and_stdin(args, options, None).await
+}
+
+pub async fn run_cli_with_options_and_stdin(
+    args: impl IntoIterator<Item = String>,
+    mut options: CliRunOptions,
+    stdin: Option<String>,
+) -> CliOutput {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let parsed = match parse_args(args) {
         Ok(parsed) => parsed,
@@ -96,9 +106,26 @@ pub async fn run_cli_with_options(
         ));
     }
 
+    if let Some(models) = parsed.models.as_deref()
+        && let Err(error) = models::parse_model_rotation(models)
+    {
+        return CliOutput::failure(error);
+    }
+
     let prompt = match parsed.prompt.clone() {
         Some(prompt) if !prompt.trim().is_empty() => prompt,
+        _ if stdin
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()) =>
+        {
+            String::new()
+        }
         _ => return CliOutput::failure(CliError::MissingPrompt),
+    };
+    let prompt = input::merge_stdin_prompt(&prompt, stdin.as_deref());
+    let processed_prompt = match input::process_at_file_references(&prompt, &cwd) {
+        Ok(processed) => processed,
+        Err(error) => return CliOutput::failure(error),
     };
 
     let (config, config_diags) = config::load_config(&cwd);
@@ -132,12 +159,55 @@ pub async fn run_cli_with_options(
         resolved.map(|r| r.value)
     };
 
-    let (skills, templates, diags) =
-        match resources::load_cli_resources(&parsed.skills, &parsed.prompt_templates, &cwd) {
-            Ok((s, t, d)) => (s, t, d),
-            Err(error) => return CliOutput::failure(error),
-        };
+    let config_paths = config::resolve_paths(&cwd);
+    let loaded = match resources::load_cli_resources_with_options(
+        &parsed.skills,
+        &parsed.prompt_templates,
+        &cwd,
+        &config_paths.global_dir,
+        resources::ResourceLoadOptions {
+            no_skills: parsed.no_skills,
+            no_prompt_templates: parsed.no_prompt_templates,
+            no_themes: parsed.no_themes,
+            skill_paths: config.settings.skills.clone(),
+            prompt_paths: config.settings.prompts.clone(),
+            theme_paths: config.settings.themes.clone(),
+        },
+    ) {
+        Ok(loaded) => loaded,
+        Err(error) => return CliOutput::failure(error),
+    };
+    let (skills, templates, diags) = (loaded.skills, loaded.prompt_templates, loaded.diagnostics);
     resources::print_diagnostics(&diags);
+
+    let context_files =
+        resources::discover_context_files(&cwd, &config_paths.global_dir, parsed.no_context_files);
+    let mut system_prompt = parsed.system_prompt;
+    if !context_files.is_empty() || !parsed.append_system_prompt.is_empty() {
+        let mut parts = Vec::new();
+        if let Some(base) = system_prompt.take() {
+            parts.push(base);
+        }
+        for file in context_files {
+            parts.push(format!(
+                "# Context file: {}\n{}",
+                file.path.display(),
+                file.content
+            ));
+        }
+        parts.extend(parsed.append_system_prompt.clone());
+        system_prompt = Some(parts.join("\n\n"));
+    }
+
+    options.tools = tools::filter_tools(
+        options.tools,
+        &tools::ToolFilter {
+            allow: parsed.tools.clone(),
+            deny: parsed.exclude_tools.clone(),
+            no_tools: parsed.no_tools,
+            no_builtin_tools: parsed.no_builtin_tools,
+        },
+    );
 
     let invocation = if let Some(ref skill_name) = parsed.skill {
         if resources::find_skill(&skills, skill_name).is_none() {
@@ -160,7 +230,11 @@ pub async fn run_cli_with_options(
             args: parsed.template_args.clone(),
         }
     } else {
-        PromptInvocation::Text(prompt)
+        if processed_prompt.images.is_empty() {
+            PromptInvocation::Text(processed_prompt.text.clone())
+        } else {
+            PromptInvocation::Content(processed_prompt.content.clone())
+        }
     };
 
     let agent_resources = resources::build_agent_resources(skills.to_vec(), templates.to_vec());
@@ -195,11 +269,12 @@ pub async fn run_cli_with_options(
     let session_prompt_options = protocol::session_runner::SessionPromptOptions {
         prompt: match &invocation {
             PromptInvocation::Text(t) => t.clone(),
+            PromptInvocation::Content(_) => processed_prompt.text.clone(),
             _ => String::new(),
         },
         model,
         api_key: resolved_api_key,
-        system_prompt: parsed.system_prompt,
+        system_prompt,
         max_turns: parsed.max_turns,
         tools: options.tools,
         register_builtins: options.register_builtins,

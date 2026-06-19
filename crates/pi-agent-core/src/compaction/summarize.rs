@@ -37,7 +37,35 @@ pub async fn summarize(
                 is_error: Some(*is_error),
                 content: content.clone(),
             }),
-            _ => None,
+            AgentMessage::SystemPrompt { .. } | AgentMessage::CompactionSummary { .. } => None,
+            AgentMessage::BashExecution {
+                command,
+                output,
+                exclude_from_context,
+                ..
+            } => {
+                if *exclude_from_context {
+                    None
+                } else {
+                    Some(Message::User {
+                        content: vec![ContentBlock::Text {
+                            text: crate::convert::bash_execution_to_text(
+                                command, output, None, false, false, None,
+                            ),
+                            text_signature: None,
+                        }],
+                    })
+                }
+            }
+            AgentMessage::Custom { content, .. } => Some(Message::User {
+                content: content.clone(),
+            }),
+            AgentMessage::BranchSummary { summary, .. } => Some(Message::User {
+                content: vec![ContentBlock::Text {
+                    text: summary.clone(),
+                    text_signature: None,
+                }],
+            }),
         })
         .collect();
 

@@ -20,7 +20,7 @@ where
     E: std::fmt::Display + Send + 'static,
 {
     Box::pin(stream! {
-        let mut partial = AssistantMessage::empty("openai-responses", &model.id);
+        let mut partial = AssistantMessage::empty(&model.api, &model.id);
         partial.provider = Some(model.provider.clone());
         let mut text_content_index: Option<u32> = None;
         let mut tool_content_index: Option<u32> = None;

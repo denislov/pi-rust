@@ -1,6 +1,8 @@
 use crate::agent_loop;
+use crate::convert::convert_to_context;
 use crate::resources::{format_prompt_template_invocation, format_skill_invocation};
 use crate::types::{AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool};
+use pi_ai::types::{Context, StreamOptions};
 use std::collections::VecDeque;
 use std::sync::{
     Arc, RwLock,
@@ -15,6 +17,12 @@ pub struct AgentState {
     pub cancel_token: CancellationToken,
     pub steering_queue: VecDeque<AgentMessage>,
     pub follow_up_queue: VecDeque<AgentMessage>,
+    pub(crate) provider_request_override: Option<ProviderRequestOverride>,
+}
+
+pub(crate) struct ProviderRequestOverride {
+    pub context: Context,
+    pub stream_options: Option<StreamOptions>,
 }
 
 struct RunGuard {
@@ -51,6 +59,7 @@ impl Agent {
                 config,
                 steering_queue: VecDeque::new(),
                 follow_up_queue: VecDeque::new(),
+                provider_request_override: None,
             })),
             running: Arc::new(AtomicBool::new(false)),
         }
@@ -148,6 +157,10 @@ impl Agent {
             });
         }
 
+        self.run_locked()
+    }
+
+    fn run_locked(&self) -> AgentStream {
         let state = self.state.clone();
         let guard = RunGuard {
             flag: self.running.clone(),
@@ -169,6 +182,21 @@ impl Agent {
         self.prompt_internal(text.to_string())
     }
 
+    /// Runs the model/tool loop with the messages already present on the agent.
+    /// Harness code uses this when it needs to transform or patch messages before
+    /// starting a turn.
+    pub fn run(&self) -> AgentStream {
+        if self.running.swap(true, Ordering::SeqCst) {
+            panic!("run() called while agent is already running");
+        }
+
+        {
+            self.state.write().unwrap().cancel_token = CancellationToken::new();
+        }
+
+        self.run_locked()
+    }
+
     pub fn with_messages(config: AgentConfig, messages: Vec<AgentMessage>) -> Self {
         let agent = Self::new(config);
         agent.replace_messages(messages);
@@ -177,6 +205,28 @@ impl Agent {
 
     pub fn replace_messages(&self, messages: Vec<AgentMessage>) {
         self.state.write().unwrap().messages = messages;
+    }
+
+    pub fn provider_request_snapshot(&self) -> (Context, Option<StreamOptions>) {
+        let state = self.state.read().unwrap();
+        let context = convert_to_context(
+            &state.config.system_prompt,
+            &state.messages,
+            &state.tools,
+            &state.config.resources,
+        );
+        (context, state.config.stream_options.clone())
+    }
+
+    pub fn set_provider_request_override(
+        &self,
+        context: Context,
+        stream_options: Option<StreamOptions>,
+    ) {
+        self.state.write().unwrap().provider_request_override = Some(ProviderRequestOverride {
+            context,
+            stream_options,
+        });
     }
 
     /// Cancels an in-flight loop. Safe to call from another task.

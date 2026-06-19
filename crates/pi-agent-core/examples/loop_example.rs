@@ -104,6 +104,15 @@ async fn main() {
             pi_agent_core::AgentMessage::CompactionSummary { summary, .. } => {
                 println!("  Compaction: {}", summary)
             }
+            pi_agent_core::AgentMessage::BashExecution { command, .. } => {
+                println!("  BashExecution: {}", command)
+            }
+            pi_agent_core::AgentMessage::Custom { custom_type, .. } => {
+                println!("  Custom: {}", custom_type)
+            }
+            pi_agent_core::AgentMessage::BranchSummary { from_id, .. } => {
+                println!("  BranchSummary from {}", from_id)
+            }
         }
     }
 }

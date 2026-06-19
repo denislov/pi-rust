@@ -61,22 +61,78 @@ pub fn select_model(
     default_model: Option<&str>,
     model_override: Option<Model>,
 ) -> Result<Model, CliError> {
+    if let Some(models) = args.models.as_deref() {
+        let rotation = crate::models::parse_model_rotation(models)?;
+        let mut candidates = pi_ai::all_models().to_vec();
+        candidates.sort_by(|a, b| a.id.cmp(&b.id));
+        if let Some(provider) = args.provider.as_deref() {
+            candidates.retain(|model| model.provider == provider);
+        }
+        if let Some(model) = candidates
+            .into_iter()
+            .find(|model| rotation.matches(&model.id) || rotation.matches(&model.name))
+        {
+            return Ok(model);
+        }
+        return Err(CliError::UnknownModel(models.to_string()));
+    }
+
     if let Some(model_id) = &args.model {
-        return pi_ai::lookup_model(model_id)
-            .ok_or_else(|| CliError::UnknownModel(model_id.clone()));
+        let model = pi_ai::lookup_model(model_id)
+            .ok_or_else(|| CliError::UnknownModel(model_id.clone()))?;
+        if let Some(provider) = args.provider.as_deref()
+            && model.provider != provider
+        {
+            return Err(CliError::UnknownModel(format!("{provider}/{model_id}")));
+        }
+        return Ok(model);
     }
 
     if let Some(model_id) = default_model {
-        return pi_ai::lookup_model(model_id)
-            .ok_or_else(|| CliError::UnknownModel(model_id.to_string()));
+        let model = pi_ai::lookup_model(model_id)
+            .ok_or_else(|| CliError::UnknownModel(model_id.to_string()))?;
+        if let Some(provider) = args.provider.as_deref()
+            && model.provider != provider
+        {
+            if let Some(model) = first_model_for_provider(provider) {
+                return Ok(model);
+            }
+            return Err(CliError::UnknownModel(provider.to_string()));
+        }
+        return Ok(model);
     }
 
     if let Some(model) = model_override {
+        if let Some(provider) = args.provider.as_deref()
+            && model.provider != provider
+        {
+            if let Some(model) = first_model_for_provider(provider) {
+                return Ok(model);
+            }
+            return Err(CliError::UnknownModel(provider.to_string()));
+        }
         return Ok(model);
+    }
+
+    if let Some(provider) = args.provider.as_deref() {
+        if let Some(model) = first_model_for_provider(provider) {
+            return Ok(model);
+        }
+        return Err(CliError::UnknownModel(provider.to_string()));
     }
 
     pi_ai::lookup_model(DEFAULT_MODEL_ID)
         .ok_or_else(|| CliError::UnknownModel(DEFAULT_MODEL_ID.to_string()))
+}
+
+fn first_model_for_provider(provider: &str) -> Option<Model> {
+    let mut models = pi_ai::all_models()
+        .iter()
+        .filter(|model| model.provider == provider)
+        .cloned()
+        .collect::<Vec<_>>();
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models.into_iter().next()
 }
 
 pub fn build_agent_config(
@@ -109,6 +165,7 @@ pub fn build_agent_config(
 #[derive(Clone, Debug)]
 pub enum PromptInvocation {
     Text(String),
+    Content(Vec<pi_ai::types::ContentBlock>),
     Skill {
         name: String,
         additional_instructions: Option<String>,

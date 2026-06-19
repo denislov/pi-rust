@@ -28,6 +28,9 @@ pub struct PartialSettings {
     pub steering_mode: Option<String>,
     pub follow_up_mode: Option<String>,
     pub session_dir: Option<String>,
+    pub skills: Option<Vec<String>>,
+    pub prompts: Option<Vec<String>>,
+    pub themes: Option<Vec<String>>,
     pub compaction: Option<PartialCompaction>,
     pub retry: Option<PartialRetry>,
 }
@@ -55,6 +58,9 @@ pub struct Settings {
     pub steering_mode: String,
     pub follow_up_mode: String,
     pub session_dir: Option<String>,
+    pub skills: Vec<String>,
+    pub prompts: Vec<String>,
+    pub themes: Vec<String>,
     pub compaction: CompactionSettings,
     pub retry: RetrySettings,
 }
@@ -84,6 +90,16 @@ fn merge_retry(base: Option<PartialRetry>, over: Option<PartialRetry>) -> Option
     }
 }
 
+fn merge_vec(base: Option<Vec<String>>, over: Option<Vec<String>>) -> Option<Vec<String>> {
+    match (base, over) {
+        (None, x) | (x, None) => x,
+        (Some(mut base), Some(over)) => {
+            base.extend(over);
+            Some(base)
+        }
+    }
+}
+
 impl PartialSettings {
     pub fn merge(self, over: PartialSettings) -> PartialSettings {
         PartialSettings {
@@ -94,6 +110,9 @@ impl PartialSettings {
             steering_mode: over.steering_mode.or(self.steering_mode),
             follow_up_mode: over.follow_up_mode.or(self.follow_up_mode),
             session_dir: over.session_dir.or(self.session_dir),
+            skills: merge_vec(self.skills, over.skills),
+            prompts: merge_vec(self.prompts, over.prompts),
+            themes: merge_vec(self.themes, over.themes),
             compaction: merge_compaction(self.compaction, over.compaction),
             retry: merge_retry(self.retry, over.retry),
         }
@@ -114,6 +133,9 @@ impl PartialSettings {
                 .follow_up_mode
                 .unwrap_or_else(|| "one-at-a-time".to_string()),
             session_dir: self.session_dir,
+            skills: self.skills.unwrap_or_default(),
+            prompts: self.prompts.unwrap_or_default(),
+            themes: self.themes.unwrap_or_default(),
             compaction: CompactionSettings {
                 enabled: c.enabled.unwrap_or(true),
                 reserve_tokens: c.reserve_tokens.unwrap_or(16384),
@@ -261,5 +283,27 @@ mod tests {
         assert_eq!(s.default_model.as_deref(), Some("p"));
         assert_eq!(s.transport, "sse");
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn resource_paths_merge_global_and_project_settings() {
+        let global = PartialSettings {
+            skills: Some(vec!["global-skill".into()]),
+            prompts: Some(vec!["global-prompt".into()]),
+            themes: Some(vec!["global-theme".into()]),
+            ..Default::default()
+        };
+        let project = PartialSettings {
+            skills: Some(vec!["project-skill".into()]),
+            prompts: Some(vec!["project-prompt".into()]),
+            themes: Some(vec!["project-theme".into()]),
+            ..Default::default()
+        };
+
+        let s = global.merge(project).resolve();
+
+        assert_eq!(s.skills, vec!["global-skill", "project-skill"]);
+        assert_eq!(s.prompts, vec!["global-prompt", "project-prompt"]);
+        assert_eq!(s.themes, vec!["global-theme", "project-theme"]);
     }
 }

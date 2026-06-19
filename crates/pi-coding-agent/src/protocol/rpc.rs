@@ -470,6 +470,9 @@ impl RpcState {
                 StoredAgentMessage::User { .. } => user_messages += 1,
                 StoredAgentMessage::Assistant { .. } => assistant_messages += 1,
                 StoredAgentMessage::ToolResult { .. } => tool_results += 1,
+                StoredAgentMessage::BashExecution { .. }
+                | StoredAgentMessage::Custom { .. }
+                | StoredAgentMessage::BranchSummary { .. } => user_messages += 1,
             }
         }
         serde_json::json!({

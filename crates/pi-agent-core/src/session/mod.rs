@@ -74,6 +74,50 @@ pub fn agent_message_to_stored(
             is_error: *is_error,
             timestamp: timestamp_ms,
         }),
+        AgentMessage::BashExecution {
+            command,
+            output,
+            exit_code,
+            cancelled,
+            truncated,
+            full_output_path,
+            exclude_from_context,
+            timestamp,
+            ..
+        } => Some(StoredAgentMessage::BashExecution {
+            command: command.clone(),
+            output: output.clone(),
+            exit_code: *exit_code,
+            cancelled: *cancelled,
+            truncated: *truncated,
+            full_output_path: full_output_path.clone(),
+            exclude_from_context: Some(*exclude_from_context).filter(|value| *value),
+            timestamp: *timestamp,
+        }),
+        AgentMessage::Custom {
+            custom_type,
+            content,
+            display,
+            details,
+            timestamp,
+            ..
+        } => Some(StoredAgentMessage::Custom {
+            custom_type: custom_type.clone(),
+            content: content.clone(),
+            display: *display,
+            details: details.clone(),
+            timestamp: *timestamp,
+        }),
+        AgentMessage::BranchSummary {
+            summary,
+            from_id,
+            timestamp,
+            ..
+        } => Some(StoredAgentMessage::BranchSummary {
+            summary: summary.clone(),
+            from_id: from_id.clone(),
+            timestamp: *timestamp,
+        }),
         AgentMessage::SystemPrompt { .. } => None,
         AgentMessage::CompactionSummary { .. } => None,
     }

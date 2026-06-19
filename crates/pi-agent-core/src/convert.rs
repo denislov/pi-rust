@@ -42,6 +42,46 @@ pub fn convert_to_context(
                     text_signature: None,
                 }],
             }),
+            AgentMessage::BashExecution {
+                command,
+                output,
+                exit_code,
+                cancelled,
+                truncated,
+                full_output_path,
+                exclude_from_context,
+                ..
+            } => {
+                if *exclude_from_context {
+                    None
+                } else {
+                    Some(Message::User {
+                        content: vec![ContentBlock::Text {
+                            text: bash_execution_to_text(
+                                command,
+                                output,
+                                *exit_code,
+                                *cancelled,
+                                *truncated,
+                                full_output_path.as_deref(),
+                            ),
+                            text_signature: None,
+                        }],
+                    })
+                }
+            }
+            AgentMessage::Custom { content, .. } => Some(Message::User {
+                content: content.clone(),
+            }),
+            AgentMessage::BranchSummary { summary, .. } => Some(Message::User {
+                content: vec![ContentBlock::Text {
+                    text: format!(
+                        "The following is a summary of a branch that this conversation came back from:\n\n<summary>\n{}\n</summary>",
+                        summary
+                    ),
+                    text_signature: None,
+                }],
+            }),
         })
         .collect();
 
@@ -89,6 +129,35 @@ pub fn convert_to_context(
         messages: llm_messages,
         tools: llm_tools,
     }
+}
+
+pub fn bash_execution_to_text(
+    command: &str,
+    output: &str,
+    exit_code: Option<i32>,
+    cancelled: bool,
+    truncated: bool,
+    full_output_path: Option<&str>,
+) -> String {
+    let mut text = format!("Ran `{}`\n", command);
+    if output.is_empty() {
+        text.push_str("(no output)");
+    } else {
+        text.push_str("```\n");
+        text.push_str(output);
+        text.push_str("\n```");
+    }
+    if cancelled {
+        text.push_str("\n\n(command cancelled)");
+    } else if let Some(code) = exit_code
+        && code != 0
+    {
+        text.push_str(&format!("\n\nCommand exited with code {}", code));
+    }
+    if truncated && let Some(path) = full_output_path {
+        text.push_str(&format!("\n\n[Output truncated. Full output: {}]", path));
+    }
+    text
 }
 
 #[cfg(test)]

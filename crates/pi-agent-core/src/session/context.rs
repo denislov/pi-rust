@@ -123,6 +123,7 @@ fn stored_to_agent_message(_entry_id: &str, stored: StoredAgentMessage) -> Optio
                 usage: rust_usage,
                 stop_reason,
                 error_message,
+                diagnostics: None,
                 timestamp,
             };
             Some(AgentMessage::Assistant {
@@ -142,6 +143,50 @@ fn stored_to_agent_message(_entry_id: &str, stored: StoredAgentMessage) -> Optio
             tool_name,
             is_error,
             content,
+        }),
+        StoredAgentMessage::BashExecution {
+            command,
+            output,
+            exit_code,
+            cancelled,
+            truncated,
+            full_output_path,
+            exclude_from_context,
+            timestamp,
+        } => Some(AgentMessage::BashExecution {
+            message_id: _entry_id.to_string(),
+            command,
+            output,
+            exit_code,
+            cancelled,
+            truncated,
+            full_output_path,
+            exclude_from_context: exclude_from_context.unwrap_or(false),
+            timestamp,
+        }),
+        StoredAgentMessage::Custom {
+            custom_type,
+            content,
+            display,
+            details,
+            timestamp,
+        } => Some(AgentMessage::Custom {
+            message_id: _entry_id.to_string(),
+            custom_type,
+            content,
+            display,
+            details,
+            timestamp,
+        }),
+        StoredAgentMessage::BranchSummary {
+            summary,
+            from_id,
+            timestamp,
+        } => Some(AgentMessage::BranchSummary {
+            message_id: _entry_id.to_string(),
+            summary,
+            from_id,
+            timestamp,
         }),
     }
 }

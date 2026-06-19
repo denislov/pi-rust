@@ -209,6 +209,21 @@ fn start_prepared_session_prompt(
 ) -> Result<StartedSessionPrompt, CliError> {
     let stream = match &prepared.invocation {
         PromptInvocation::Text(text) if !text.is_empty() => prepared.agent.prompt(text),
+        PromptInvocation::Content(content) if !content.is_empty() => {
+            let message_id = format!("user_{}", prepared.agent.messages().len());
+            prepared.agent.add_message(AgentMessage::Custom {
+                message_id,
+                custom_type: "input".into(),
+                content: content.clone(),
+                display: true,
+                details: None,
+                timestamp: 0,
+            });
+            prepared.agent.run()
+        }
+        PromptInvocation::Content(_) => {
+            return Err(CliError::MissingPrompt);
+        }
         PromptInvocation::Text(_) => {
             return Err(CliError::MissingPrompt);
         }
@@ -392,6 +407,9 @@ fn agent_message_id(message: &AgentMessage) -> &str {
         | AgentMessage::Assistant { message_id, .. }
         | AgentMessage::ToolResult { message_id, .. }
         | AgentMessage::SystemPrompt { message_id, .. }
-        | AgentMessage::CompactionSummary { message_id, .. } => message_id,
+        | AgentMessage::CompactionSummary { message_id, .. }
+        | AgentMessage::BashExecution { message_id, .. }
+        | AgentMessage::Custom { message_id, .. }
+        | AgentMessage::BranchSummary { message_id, .. } => message_id,
     }
 }

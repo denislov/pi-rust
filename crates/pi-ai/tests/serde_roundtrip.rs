@@ -28,6 +28,7 @@ fn assistant_message_roundtrip() {
         },
         stop_reason: StopReason::Stop,
         error_message: None,
+        diagnostics: None,
         timestamp: 1717000000,
     };
     let json = serde_json::to_string_pretty(&msg).unwrap();

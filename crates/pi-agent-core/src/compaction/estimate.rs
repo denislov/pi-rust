@@ -29,6 +29,24 @@ pub fn estimate_tokens(messages: &[AgentMessage]) -> u32 {
             AgentMessage::CompactionSummary { summary, .. } => {
                 total += (summary.len() as u32) / 4;
             }
+            AgentMessage::BashExecution {
+                command,
+                output,
+                exclude_from_context,
+                ..
+            } => {
+                if !exclude_from_context {
+                    total += (command.len() as u32) / 4 + (output.len() as u32) / 4;
+                }
+            }
+            AgentMessage::Custom { content, .. } => {
+                for block in content {
+                    total += estimate_block_tokens(block);
+                }
+            }
+            AgentMessage::BranchSummary { summary, .. } => {
+                total += (summary.len() as u32) / 4;
+            }
         }
     }
 

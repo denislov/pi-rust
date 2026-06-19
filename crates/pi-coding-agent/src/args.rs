@@ -30,9 +30,12 @@ pub struct CliArgs {
     pub mode: CliMode,
     pub mode_explicit: bool,
     pub prompt: Option<String>,
+    pub provider: Option<String>,
     pub model: Option<String>,
+    pub models: Option<String>,
     pub api_key: Option<String>,
     pub system_prompt: Option<String>,
+    pub append_system_prompt: Vec<String>,
     pub max_turns: u32,
     pub help: bool,
     pub version: bool,
@@ -51,6 +54,16 @@ pub struct CliArgs {
     pub skill: Option<String>,
     pub prompt_template: Option<String>,
     pub template_args: Vec<String>,
+    pub no_context_files: bool,
+    pub no_skills: bool,
+    pub no_prompt_templates: bool,
+    pub no_themes: bool,
+    pub tools: Vec<String>,
+    pub exclude_tools: Vec<String>,
+    pub no_tools: bool,
+    pub no_builtin_tools: bool,
+    pub verbose: bool,
+    pub offline: bool,
 }
 
 impl Default for CliArgs {
@@ -60,9 +73,12 @@ impl Default for CliArgs {
             mode: CliMode::Print,
             mode_explicit: false,
             prompt: None,
+            provider: None,
             model: None,
+            models: None,
             api_key: None,
             system_prompt: None,
+            append_system_prompt: Vec::new(),
             max_turns: DEFAULT_MAX_TURNS,
             help: false,
             version: false,
@@ -81,13 +97,23 @@ impl Default for CliArgs {
             skill: None,
             prompt_template: None,
             template_args: Vec::new(),
+            no_context_files: false,
+            no_skills: false,
+            no_prompt_templates: false,
+            no_themes: false,
+            tools: Vec::new(),
+            exclude_tools: Vec::new(),
+            no_tools: false,
+            no_builtin_tools: false,
+            verbose: false,
+            offline: false,
         }
     }
 }
 
 pub fn help_text() -> String {
     format!(
-        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --mode <mode>            Headless mode: print|json|rpc\n  --model <id>             Model id from the built-in Rust model table\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --max-turns <n>          Maximum agent loop turns (default: 5)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
+        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --mode <mode>            Headless mode: print|json|rpc\n  --provider <id>          Provider preference for model selection\n  --model <id>             Model id from the built-in Rust model table\n  --models <list>          Comma-separated model rotation globs, optionally model:thinking\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --append-system-prompt <text> Append to system prompt (repeatable)\n  --max-turns <n>          Maximum agent loop turns (default: 5)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --tools, -t <names>      Comma-separated builtin tool allowlist\n  --exclude-tools, -xt <names> Comma-separated builtin tool denylist\n  --no-tools               Disable all tools\n  --no-builtin-tools       Do not register builtin tools\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --no-context-files       Disable AGENTS.md / CLAUDE.md discovery\n  --no-skills              Disable skill discovery\n  --no-prompt-templates    Disable prompt template discovery\n  --no-themes              Disable theme discovery\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  --verbose                Emit verbose diagnostics\n  --offline                Avoid network-dependent behavior where supported\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -147,10 +173,16 @@ where
                 parsed.mode = value.parse().map_err(CliError::InvalidInput)?;
                 parsed.mode_explicit = true;
             }
+            "--provider" => parsed.provider = Some(take_value(&raw, &mut i, "--provider")?),
             "--model" => parsed.model = Some(take_value(&raw, &mut i, "--model")?),
+            "--models" => parsed.models = Some(take_value(&raw, &mut i, "--models")?),
             "--api-key" => parsed.api_key = Some(take_value(&raw, &mut i, "--api-key")?),
             "--system-prompt" => {
                 parsed.system_prompt = Some(take_value(&raw, &mut i, "--system-prompt")?)
+            }
+            "--append-system-prompt" => {
+                let val = take_value(&raw, &mut i, "--append-system-prompt")?;
+                parsed.append_system_prompt.push(val);
             }
             "--max-turns" => {
                 let value = take_value(&raw, &mut i, "--max-turns")?;
@@ -183,6 +215,10 @@ where
                 let val = take_value(&raw, &mut i, "--prompt-templates")?;
                 parsed.prompt_templates.push(val);
             }
+            "--no-context-files" => parsed.no_context_files = true,
+            "--no-skills" => parsed.no_skills = true,
+            "--no-prompt-templates" => parsed.no_prompt_templates = true,
+            "--no-themes" => parsed.no_themes = true,
             "--skill" => parsed.skill = Some(take_value(&raw, &mut i, "--skill")?),
             "--prompt-template" => {
                 parsed.prompt_template = Some(take_value(&raw, &mut i, "--prompt-template")?)
@@ -191,6 +227,18 @@ where
                 let val = take_value(&raw, &mut i, "--template-arg")?;
                 parsed.template_args.push(val);
             }
+            "--tools" | "-t" => {
+                let val = take_value(&raw, &mut i, arg)?;
+                parsed.tools.extend(split_csv(&val));
+            }
+            "--exclude-tools" | "-xt" => {
+                let val = take_value(&raw, &mut i, arg)?;
+                parsed.exclude_tools.extend(split_csv(&val));
+            }
+            "--no-tools" => parsed.no_tools = true,
+            "--no-builtin-tools" => parsed.no_builtin_tools = true,
+            "--verbose" => parsed.verbose = true,
+            "--offline" => parsed.offline = true,
             value if value.starts_with("--") => {
                 return Err(CliError::UnknownFlag(value.to_string()));
             }
@@ -250,5 +298,20 @@ where
         ));
     }
 
+    if parsed.no_tools && (!parsed.tools.is_empty() || !parsed.exclude_tools.is_empty()) {
+        return Err(CliError::InvalidInput(
+            "--no-tools cannot be combined with --tools or --exclude-tools".into(),
+        ));
+    }
+
     Ok(parsed)
+}
+
+fn split_csv(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
 }

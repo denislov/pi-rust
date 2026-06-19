@@ -249,6 +249,31 @@ pub enum AgentMessage {
         summary: String,
         tokens_before: u32,
     },
+    BashExecution {
+        message_id: String,
+        command: String,
+        output: String,
+        exit_code: Option<i32>,
+        cancelled: bool,
+        truncated: bool,
+        full_output_path: Option<String>,
+        exclude_from_context: bool,
+        timestamp: u64,
+    },
+    Custom {
+        message_id: String,
+        custom_type: String,
+        content: Vec<ContentBlock>,
+        display: bool,
+        details: Option<serde_json::Value>,
+        timestamp: u64,
+    },
+    BranchSummary {
+        message_id: String,
+        summary: String,
+        from_id: String,
+        timestamp: u64,
+    },
 }
 
 // ── AgentTool ──────────────────────────────────────

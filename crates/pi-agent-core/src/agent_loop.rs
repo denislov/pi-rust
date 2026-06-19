@@ -34,7 +34,10 @@ fn message_id(message: &AgentMessage) -> &str {
         | AgentMessage::Assistant { message_id, .. }
         | AgentMessage::ToolResult { message_id, .. }
         | AgentMessage::SystemPrompt { message_id, .. }
-        | AgentMessage::CompactionSummary { message_id, .. } => message_id,
+        | AgentMessage::CompactionSummary { message_id, .. }
+        | AgentMessage::BashExecution { message_id, .. }
+        | AgentMessage::Custom { message_id, .. }
+        | AgentMessage::BranchSummary { message_id, .. } => message_id,
     }
 }
 
@@ -197,8 +200,8 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 }
             }
 
-            let (ctx, model, opts) = {
-                let s = state.read().unwrap();
+            let (mut ctx, model, mut opts, provider_request_override) = {
+                let mut s = state.write().unwrap();
                 let ctx = convert_to_context(
                     &s.config.system_prompt,
                     &s.messages,
@@ -232,8 +235,16 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 } else {
                     opts.thinking = None;
                 }
-                (ctx, s.config.model.clone(), opts)
+                (ctx, s.config.model.clone(), opts, s.provider_request_override.take())
             };
+
+            if let Some(override_request) = provider_request_override {
+                ctx = override_request.context;
+                if let Some(override_options) = override_request.stream_options {
+                    opts = override_options;
+                }
+                opts.cancel = Some(cancel.clone());
+            }
 
             let mut llm_stream = pi_ai::stream_model(&model, ctx, Some(opts));
             let mut assistant_message: Option<pi_ai::types::AssistantMessage> = None;

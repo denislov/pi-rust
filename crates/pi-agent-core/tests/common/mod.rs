@@ -81,6 +81,7 @@ impl ApiProvider for TestProvider {
                 usage: Default::default(),
                 stop_reason: turn.stop_reason.clone(),
                 error_message: None,
+                diagnostics: None,
                 timestamp: 0,
             };
             yield AssistantMessageEvent::Done {

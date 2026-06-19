@@ -112,6 +112,8 @@ pub struct AssistantMessage {
     pub stop_reason: StopReason,
     #[serde(rename = "errorMessage", skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<Vec<AssistantMessageDiagnostic>>,
     pub timestamp: u64,
 }
 
@@ -127,9 +129,32 @@ impl AssistantMessage {
             usage: Usage::default(),
             stop_reason: StopReason::Stop,
             error_message: None,
+            diagnostics: None,
             timestamp: 0,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiagnosticErrorInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AssistantMessageDiagnostic {
+    #[serde(rename = "type")]
+    pub diagnostic_type: String,
+    pub timestamp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<DiagnosticErrorInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 // ── Streaming events ────────────────────────────────────
@@ -285,6 +310,25 @@ pub struct StreamOptions {
     pub thinking: Option<ThinkingConfig>,
     #[serde(rename = "toolChoice", skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(rename = "azureApiVersion", skip_serializing_if = "Option::is_none")]
+    pub azure_api_version: Option<String>,
+    #[serde(rename = "azureResourceName", skip_serializing_if = "Option::is_none")]
+    pub azure_resource_name: Option<String>,
+    #[serde(rename = "azureBaseUrl", skip_serializing_if = "Option::is_none")]
+    pub azure_base_url: Option<String>,
+    #[serde(
+        rename = "azureDeploymentName",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub azure_deployment_name: Option<String>,
+    #[serde(rename = "bedrockRegion", skip_serializing_if = "Option::is_none")]
+    pub bedrock_region: Option<String>,
+    #[serde(rename = "bedrockProfile", skip_serializing_if = "Option::is_none")]
+    pub bedrock_profile: Option<String>,
+    #[serde(rename = "bedrockBearerToken", skip_serializing_if = "Option::is_none")]
+    pub bedrock_bearer_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<serde_json::Value>,
     #[serde(skip)]

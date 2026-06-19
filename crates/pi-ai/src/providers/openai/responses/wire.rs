@@ -14,6 +14,8 @@ pub struct ResponseCreateRequest {
     pub temperature: Option<f64>,
     #[serde(rename = "tool_choice", skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    #[serde(rename = "prompt_cache_key", skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
     pub stream: bool,
 }
 

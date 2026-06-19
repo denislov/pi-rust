@@ -2,6 +2,7 @@ fn provider_env_vars(provider: &str) -> &'static [&'static str] {
     match provider {
         "anthropic" => &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_KEY"],
         "openai" => &["OPENAI_API_KEY"],
+        "azure-openai-responses" => &["AZURE_OPENAI_API_KEY"],
         "deepseek" => &["DEEPSEEK_API_KEY", "DEEPSEEK_KEY"],
         "google" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
         "groq" => &["GROQ_API_KEY"],
@@ -25,6 +26,7 @@ fn provider_env_vars(provider: &str) -> &'static [&'static str] {
         "xiaomi-token-plan-ams" => &["XIAOMI_TOKEN_PLAN_AMS_API_KEY"],
         "xiaomi-token-plan-sgp" => &["XIAOMI_TOKEN_PLAN_SGP_API_KEY"],
         "github-copilot" => &["COPILOT_GITHUB_TOKEN"],
+        "openai-codex" => &["OPENAI_CODEX_API_KEY", "OPENAI_API_KEY"],
         _ => &[],
     }
 }

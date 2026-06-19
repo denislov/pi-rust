@@ -34,6 +34,7 @@ pub fn build_request(
         max_output_tokens: max_tokens,
         temperature,
         tool_choice: opts.as_ref().and_then(|o| o.tool_choice.clone()),
+        prompt_cache_key: opts.as_ref().and_then(|o| o.session_id.clone()),
         stream: true,
     }
 }

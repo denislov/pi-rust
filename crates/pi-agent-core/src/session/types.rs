@@ -105,6 +105,37 @@ pub enum StoredAgentMessage {
         is_error: bool,
         timestamp: u64,
     },
+    #[serde(rename = "bashExecution")]
+    BashExecution {
+        command: String,
+        output: String,
+        #[serde(rename = "exitCode", skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        cancelled: bool,
+        truncated: bool,
+        #[serde(rename = "fullOutputPath", skip_serializing_if = "Option::is_none")]
+        full_output_path: Option<String>,
+        #[serde(rename = "excludeFromContext", skip_serializing_if = "Option::is_none")]
+        exclude_from_context: Option<bool>,
+        timestamp: u64,
+    },
+    #[serde(rename = "custom")]
+    Custom {
+        #[serde(rename = "customType")]
+        custom_type: String,
+        content: Vec<ContentBlock>,
+        display: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<Value>,
+        timestamp: u64,
+    },
+    #[serde(rename = "branchSummary")]
+    BranchSummary {
+        summary: String,
+        #[serde(rename = "fromId")]
+        from_id: String,
+        timestamp: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
