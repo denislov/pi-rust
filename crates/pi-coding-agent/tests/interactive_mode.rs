@@ -270,3 +270,20 @@ async fn scripted_interactive_footer_shows_usage_after_a_turn() {
         "footer should show usage stats after a turn: {frame}"
     );
 }
+
+#[tokio::test]
+async fn scripted_interactive_quit_exits_when_idle() {
+    let output = run_scripted_idle_interactive("/quit\r").await.unwrap();
+    assert_eq!(output.exit_code, 0, "exit code should be 0 for /quit");
+}
+
+#[tokio::test]
+async fn scripted_interactive_help_does_not_crash() {
+    let output = run_scripted_idle_interactive("/help\r/quit\r")
+        .await
+        .unwrap();
+    assert_eq!(
+        output.exit_code, 0,
+        "exit code should be 0 after /help then /quit"
+    );
+}

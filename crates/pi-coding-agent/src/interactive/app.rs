@@ -984,9 +984,10 @@ fn render_transcript_lines(
                     width,
                 )]
             }
-            TranscriptItem::System { text } => {
-                vec![fit_line(&paint_with(text, &SYSTEM, color), width)]
-            }
+            TranscriptItem::System { text } => text
+                .split('\n')
+                .map(|line| fit_line(&paint_with(line, &SYSTEM, color), width))
+                .collect(),
             TranscriptItem::Assistant { markdown, .. } => {
                 let mut markdown = Markdown::new(markdown);
                 markdown
