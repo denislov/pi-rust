@@ -56,10 +56,19 @@ impl Default for CliRunOptions {
     }
 }
 
-pub fn select_model(args: &CliArgs, model_override: Option<Model>) -> Result<Model, CliError> {
+pub fn select_model(
+    args: &CliArgs,
+    default_model: Option<&str>,
+    model_override: Option<Model>,
+) -> Result<Model, CliError> {
     if let Some(model_id) = &args.model {
         return pi_ai::lookup_model(model_id)
             .ok_or_else(|| CliError::UnknownModel(model_id.clone()));
+    }
+
+    if let Some(model_id) = default_model {
+        return pi_ai::lookup_model(model_id)
+            .ok_or_else(|| CliError::UnknownModel(model_id.to_string()));
     }
 
     if let Some(model) = model_override {
