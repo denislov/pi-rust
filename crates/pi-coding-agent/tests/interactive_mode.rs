@@ -287,3 +287,46 @@ async fn scripted_interactive_help_does_not_crash() {
         "exit code should be 0 after /help then /quit"
     );
 }
+
+#[tokio::test]
+async fn scripted_interactive_help_lists_registry_commands() {
+    let output = run_scripted_idle_interactive("/help\r").await.unwrap();
+    assert!(output.contains("/model"), "{output:?}");
+    assert!(output.contains("/reload"), "{output:?}");
+    assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn scripted_interactive_known_pending_command_is_not_sent_to_provider() {
+    let output = run_scripted_idle_interactive("/model gpt-5\r")
+        .await
+        .unwrap();
+    assert!(output.contains("/model"), "{output:?}");
+    assert!(output.contains("not implemented"), "{output:?}");
+    assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn scripted_interactive_unknown_command_is_not_sent_to_provider() {
+    let output = run_scripted_idle_interactive("/definitely-unknown\r")
+        .await
+        .unwrap();
+    assert!(
+        output.contains("unknown command: /definitely-unknown"),
+        "{output:?}"
+    );
+    assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn scripted_interactive_name_updates_footer_session_label() {
+    let output = run_scripted_idle_interactive("/name Project Phoenix\r")
+        .await
+        .unwrap();
+    assert!(
+        output.contains("Session name set: Project Phoenix"),
+        "{output:?}"
+    );
+    assert!(output.contains("session: Project Phoenix"), "{output:?}");
+    assert_eq!(output.exit_code, 0);
+}

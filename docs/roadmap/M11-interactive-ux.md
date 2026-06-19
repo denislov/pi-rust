@@ -14,6 +14,7 @@
 `/hotkeys` `/fork` `/clone` `/tree` `/login` `/logout` `/new` `/compact` `/resume` `/reload`
 > 其中 `/export`/`/import`/`/share`/`/copy` 的后端实现归 [M13](M13-peripherals.md)；本里程碑做命令框架 + 其余命令。
 > 注：`docs/superpowers/specs/2026-06-19-pi-coding-agent-slash-commands-design.md` 已有设计稿，可直接接续。
+> 进度：Rust 已有内置 slash command registry，覆盖 TS 的 21 个 built-in 命令名（含 `/settings`、`/quit`）；`/help`、`/quit`、`/name`、`/session`、`/hotkeys` 已有本地行为，其余选择器/会话/外设命令先返回显式未实现提示，后续随对应组件和 M13 后端补齐。
 
 ### 2. 交互组件（~40 个选择器/对话框）
 - model-selector、oauth-selector、settings-selector、login-dialog、session-selector、tree-selector、theme-selector、config-selector、thinking-selector、scoped-models-selector 等。

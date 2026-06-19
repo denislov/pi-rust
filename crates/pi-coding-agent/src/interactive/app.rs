@@ -148,23 +148,118 @@ enum TranscriptScrollCommand {
     PageDown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum SlashCommand {
-    Quit,
-    Help,
-    Unknown(String),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BuiltinSlashCommand {
+    name: &'static str,
+    description: &'static str,
 }
 
-fn parse_slash_command(text: &str) -> Option<SlashCommand> {
+const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
+    BuiltinSlashCommand {
+        name: "settings",
+        description: "Open settings menu",
+    },
+    BuiltinSlashCommand {
+        name: "model",
+        description: "Select model",
+    },
+    BuiltinSlashCommand {
+        name: "scoped-models",
+        description: "Enable or disable models for cycling",
+    },
+    BuiltinSlashCommand {
+        name: "export",
+        description: "Export session",
+    },
+    BuiltinSlashCommand {
+        name: "import",
+        description: "Import and resume a session from JSONL",
+    },
+    BuiltinSlashCommand {
+        name: "share",
+        description: "Share session as a secret GitHub gist",
+    },
+    BuiltinSlashCommand {
+        name: "copy",
+        description: "Copy last assistant message to clipboard",
+    },
+    BuiltinSlashCommand {
+        name: "name",
+        description: "Show or set the session display name",
+    },
+    BuiltinSlashCommand {
+        name: "session",
+        description: "Show session info and stats",
+    },
+    BuiltinSlashCommand {
+        name: "changelog",
+        description: "Show changelog entries",
+    },
+    BuiltinSlashCommand {
+        name: "hotkeys",
+        description: "Show keyboard shortcuts",
+    },
+    BuiltinSlashCommand {
+        name: "fork",
+        description: "Create a new fork from a previous user message",
+    },
+    BuiltinSlashCommand {
+        name: "clone",
+        description: "Duplicate the current session at the current position",
+    },
+    BuiltinSlashCommand {
+        name: "tree",
+        description: "Navigate session tree",
+    },
+    BuiltinSlashCommand {
+        name: "login",
+        description: "Configure provider authentication",
+    },
+    BuiltinSlashCommand {
+        name: "logout",
+        description: "Remove provider authentication",
+    },
+    BuiltinSlashCommand {
+        name: "new",
+        description: "Start a new session",
+    },
+    BuiltinSlashCommand {
+        name: "compact",
+        description: "Manually compact the session context",
+    },
+    BuiltinSlashCommand {
+        name: "resume",
+        description: "Resume a different session",
+    },
+    BuiltinSlashCommand {
+        name: "reload",
+        description: "Reload keybindings and resources",
+    },
+    BuiltinSlashCommand {
+        name: "quit",
+        description: "Quit pi",
+    },
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedSlashCommand {
+    name: String,
+    args: String,
+    original: String,
+}
+
+fn parse_slash_command(text: &str) -> Option<ParsedSlashCommand> {
     if !text.starts_with('/') {
         return None;
     }
-    let command = text[1..].to_lowercase();
-    let command_name = command.split_whitespace().next().unwrap_or("");
-    Some(match command_name {
-        "quit" | "exit" | "q" => SlashCommand::Quit,
-        "help" | "h" | "?" => SlashCommand::Help,
-        _ => SlashCommand::Unknown(text.to_string()),
+    let without_slash = &text[1..];
+    let mut parts = without_slash.splitn(2, char::is_whitespace);
+    let name = parts.next().unwrap_or("").to_lowercase();
+    let args = parts.next().unwrap_or("").trim().to_string();
+    Some(ParsedSlashCommand {
+        name,
+        args,
+        original: text.to_string(),
     })
 }
 
@@ -306,21 +401,83 @@ impl InteractiveRoot {
         self.status = status;
     }
 
-    fn handle_slash_command(&mut self, command: SlashCommand) {
-        match command {
-            SlashCommand::Quit => match self.status {
+    fn handle_slash_command(&mut self, command: ParsedSlashCommand) {
+        match command.name.as_str() {
+            "quit" | "exit" | "q" => match self.status {
                 InteractiveStatus::Idle => self.action = InteractiveAction::Exit,
                 InteractiveStatus::Running => self.action = InteractiveAction::AbortRunning,
             },
-            SlashCommand::Help => {
+            "help" | "h" | "?" => {
                 self.transcript.push(TranscriptItem::system(help_text()));
             }
-            SlashCommand::Unknown(cmd) => {
+            "name" => self.handle_name_command(&command.args),
+            "session" => self.handle_session_command(),
+            "hotkeys" => self.handle_hotkeys_command(),
+            "changelog" => self.handle_changelog_command(),
+            "settings" | "model" | "scoped-models" | "export" | "import" | "share" | "copy"
+            | "fork" | "clone" | "tree" | "login" | "logout" | "new" | "compact" | "resume"
+            | "reload" => self.handle_pending_slash_command(&command),
+            _ => {
                 self.transcript.push(TranscriptItem::system(format!(
-                    "unknown command: {cmd} — type /help for available commands"
+                    "unknown command: {} - type /help for available commands",
+                    command.original
                 )));
             }
         }
+    }
+
+    fn handle_pending_slash_command(&mut self, command: &ParsedSlashCommand) {
+        self.transcript.push(TranscriptItem::system(format!(
+            "/{} is recognized but not implemented in the Rust interactive UI yet.",
+            command.name
+        )));
+    }
+
+    fn handle_name_command(&mut self, args: &str) {
+        if args.is_empty() {
+            self.transcript.push(TranscriptItem::system(format!(
+                "Session name: {}",
+                self.session_label
+            )));
+            return;
+        }
+
+        self.session_label = args.to_string();
+        self.transcript.push(TranscriptItem::system(format!(
+            "Session name set: {}",
+            self.session_label
+        )));
+    }
+
+    fn handle_session_command(&mut self) {
+        let cwd = abbreviate_cwd(&self.cwd);
+        self.transcript.push(TranscriptItem::system(format!(
+            "Session Info\n\nName: {}\nModel: {}\nCwd: {}\nTokens\nInput: {}\nOutput: {}",
+            self.session_label,
+            self.model_id,
+            cwd,
+            format_tokens(self.usage.0),
+            format_tokens(self.usage.1)
+        )));
+    }
+
+    fn handle_hotkeys_command(&mut self) {
+        let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
+        let submit = key_hint(&keybindings, "tui.input.submit", "submit");
+        let newline = key_hint(&keybindings, "tui.input.newLine", "newline");
+        let interrupt = app_key_hint(&keybindings, "app.interrupt", "interrupt/exit");
+        let expand = app_key_hint(&keybindings, "app.tools.expand", "expand tools");
+        let page_up = key_hint(&keybindings, "tui.editor.pageUp", "scroll up");
+        let page_down = key_hint(&keybindings, "tui.editor.pageDown", "scroll down");
+        self.transcript.push(TranscriptItem::system(format!(
+            "Hotkeys\n\nNavigation\n- {page_up}\n- {page_down}\n\nEditing\n- {submit}\n- {newline}\n\nApp\n- {interrupt}\n- {expand}"
+        )));
+    }
+
+    fn handle_changelog_command(&mut self) {
+        self.transcript.push(TranscriptItem::system(
+            "Changelog display is not implemented in the Rust interactive UI yet.".to_string(),
+        ));
     }
 
     fn footer(&self) -> String {
@@ -1116,8 +1273,15 @@ fn fit_line(line: &str, width: usize) -> String {
 }
 
 fn help_text() -> String {
-    "commands:\n  /help, /h, /?  — show this help\n  /quit, /q, /exit — exit interactive mode"
-        .to_string()
+    let mut lines = vec![
+        "commands:".to_string(),
+        "  /help, /h, /? - show this help".to_string(),
+    ];
+    for command in BUILTIN_SLASH_COMMANDS {
+        lines.push(format!("  /{:<13} - {}", command.name, command.description));
+    }
+    lines.push("  /q, /exit      - aliases for /quit".to_string());
+    lines.join("\n")
 }
 
 fn welcome_line(keybindings: &KeybindingsManager) -> String {
@@ -1408,34 +1572,75 @@ mod tests {
     }
 
     #[test]
-    fn parse_slash_command_recognizes_quit_variants() {
-        assert_eq!(parse_slash_command("/quit"), Some(SlashCommand::Quit));
-        assert_eq!(parse_slash_command("/QUIT"), Some(SlashCommand::Quit));
-        assert_eq!(parse_slash_command("/Quit"), Some(SlashCommand::Quit));
-        assert_eq!(parse_slash_command("/q"), Some(SlashCommand::Quit));
-        assert_eq!(parse_slash_command("/exit"), Some(SlashCommand::Quit));
+    fn slash_registry_contains_typescript_builtin_commands() {
+        let names: Vec<&str> = BUILTIN_SLASH_COMMANDS
+            .iter()
+            .map(|command| command.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "settings",
+                "model",
+                "scoped-models",
+                "export",
+                "import",
+                "share",
+                "copy",
+                "name",
+                "session",
+                "changelog",
+                "hotkeys",
+                "fork",
+                "clone",
+                "tree",
+                "login",
+                "logout",
+                "new",
+                "compact",
+                "resume",
+                "reload",
+                "quit",
+            ]
+        );
     }
 
     #[test]
-    fn parse_slash_command_recognizes_help_variants() {
-        assert_eq!(parse_slash_command("/help"), Some(SlashCommand::Help));
-        assert_eq!(parse_slash_command("/h"), Some(SlashCommand::Help));
-        assert_eq!(parse_slash_command("/?"), Some(SlashCommand::Help));
-        assert_eq!(parse_slash_command("/HELP"), Some(SlashCommand::Help));
+    fn parse_slash_command_returns_command_name_and_arguments() {
+        assert_eq!(
+            parse_slash_command("/model gpt-5"),
+            Some(ParsedSlashCommand {
+                name: "model".to_string(),
+                args: "gpt-5".to_string(),
+                original: "/model gpt-5".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/NAME Project Phoenix"),
+            Some(ParsedSlashCommand {
+                name: "name".to_string(),
+                args: "Project Phoenix".to_string(),
+                original: "/NAME Project Phoenix".to_string(),
+            })
+        );
     }
 
     #[test]
-    fn parse_slash_command_rejects_non_slash() {
+    fn parse_slash_command_preserves_non_slash_prompt_path() {
         assert_eq!(parse_slash_command("hello"), None);
         assert_eq!(parse_slash_command("  /quit"), None);
     }
 
     #[test]
-    fn parse_slash_command_unknown_command() {
-        assert_eq!(
-            parse_slash_command("/foo"),
-            Some(SlashCommand::Unknown("/foo".to_string()))
-        );
+    fn help_text_lists_all_builtin_commands() {
+        let help = help_text();
+        for command in BUILTIN_SLASH_COMMANDS {
+            assert!(
+                help.contains(&format!("/{}", command.name)),
+                "help text should list /{}: {help}",
+                command.name
+            );
+        }
     }
 
     #[test]
@@ -1445,7 +1650,11 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.handle_slash_command(SlashCommand::Quit);
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "quit".to_string(),
+            args: String::new(),
+            original: "/quit".to_string(),
+        });
         assert_eq!(root.action, InteractiveAction::Exit);
     }
 
@@ -1457,51 +1666,146 @@ mod tests {
             "no-session".to_string(),
         );
         root.set_status(InteractiveStatus::Running);
-        root.handle_slash_command(SlashCommand::Quit);
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "quit".to_string(),
+            args: String::new(),
+            original: "/quit".to_string(),
+        });
         assert_eq!(root.action, InteractiveAction::AbortRunning);
     }
 
     #[test]
-    fn handle_slash_command_help_pushs_system_item() {
+    fn handle_slash_command_help_pushes_system_item() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.handle_slash_command(SlashCommand::Help);
-        let items = root.transcript.items();
-        let last = items.last().expect("transcript should have an item");
-        match last {
-            TranscriptItem::System { text } => {
-                assert!(
-                    text.contains("/quit"),
-                    "help text should mention /quit: {text}"
-                );
-            }
-            _ => panic!("expected System item, got {last:?}"),
-        }
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "help".to_string(),
+            args: String::new(),
+            original: "/help".to_string(),
+        });
+        let text = last_system_text(&root);
+        assert!(text.contains("/model"), "{text}");
+        assert!(text.contains("/reload"), "{text}");
         assert_ne!(root.action, InteractiveAction::Submit);
         assert!(root.pending_submit.is_none());
     }
 
     #[test]
-    fn handle_slash_command_unknown_pushs_error() {
+    fn handle_known_pending_command_reports_not_implemented_without_submit() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.handle_slash_command(SlashCommand::Unknown("/foo".to_string()));
-        let items = root.transcript.items();
-        let last = items.last().expect("transcript should have an item");
-        match last {
-            TranscriptItem::System { text } => {
-                assert!(
-                    text.contains("unknown command"),
-                    "error should mention 'unknown command': {text}"
-                );
-            }
-            _ => panic!("expected System item, got {last:?}"),
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "model".to_string(),
+            args: "gpt-5".to_string(),
+            original: "/model gpt-5".to_string(),
+        });
+        let text = last_system_text(&root);
+        assert!(text.contains("/model"), "{text}");
+        assert!(text.contains("not implemented"), "{text}");
+        assert_ne!(root.action, InteractiveAction::Submit);
+        assert!(root.pending_submit.is_none());
+    }
+
+    #[test]
+    fn handle_unknown_slash_command_reports_error_without_submit() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "does-not-exist".to_string(),
+            args: String::new(),
+            original: "/does-not-exist".to_string(),
+        });
+        let text = last_system_text(&root);
+        assert!(text.contains("unknown command: /does-not-exist"), "{text}");
+        assert_ne!(root.action, InteractiveAction::Submit);
+        assert!(root.pending_submit.is_none());
+    }
+
+    #[test]
+    fn name_command_without_args_shows_current_session_label() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session-123".to_string(),
+        );
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "name".to_string(),
+            args: String::new(),
+            original: "/name".to_string(),
+        });
+        let text = last_system_text(&root);
+        assert!(text.contains("session-123"), "{text}");
+    }
+
+    #[test]
+    fn name_command_with_args_updates_session_label() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "name".to_string(),
+            args: "Project Phoenix".to_string(),
+            original: "/name Project Phoenix".to_string(),
+        });
+        assert_eq!(root.session_label, "Project Phoenix");
+        let text = last_system_text(&root);
+        assert!(text.contains("Session name set: Project Phoenix"), "{text}");
+    }
+
+    #[test]
+    fn session_command_reports_current_footer_state() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/tmp/project"),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.usage = (1234, 5678);
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "session".to_string(),
+            args: String::new(),
+            original: "/session".to_string(),
+        });
+        let text = last_system_text(&root);
+        assert!(text.contains("Session Info"), "{text}");
+        assert!(text.contains("Project Phoenix"), "{text}");
+        assert!(text.contains("faux-model"), "{text}");
+        assert!(text.contains("1k"), "{text}");
+        assert!(text.contains("5k"), "{text}");
+    }
+
+    #[test]
+    fn hotkeys_command_mentions_core_interactive_bindings() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "hotkeys".to_string(),
+            args: String::new(),
+            original: "/hotkeys".to_string(),
+        });
+        let text = last_system_text(&root);
+        assert!(text.contains("Navigation"), "{text}");
+        assert!(text.contains("Ctrl+C"), "{text}");
+        assert!(text.contains("Ctrl+O"), "{text}");
+    }
+
+    fn last_system_text(root: &InteractiveRoot) -> String {
+        match root.transcript.items().last() {
+            Some(TranscriptItem::System { text }) => text.clone(),
+            other => panic!("expected last transcript item to be System, got {other:?}"),
         }
     }
 }
