@@ -1,7 +1,8 @@
 use pi_tui::{
-    Box as TuiBox, CancellableLoader, Component, Container, KeybindingsManager, Loader,
-    ProcessTerminal, SettingItem, SettingsList, SettingsListOptions, Spacer, TUI_KEYBINDINGS,
-    Terminal, TerminalSize, Text, TruncatedText, Tui, VirtualTerminal, visible_width,
+    AutocompleteItem, AutocompleteOptions, Box as TuiBox, CancellableLoader, Component, Container,
+    KeybindingsManager, Loader, ProcessTerminal, SettingItem, SettingsList, SettingsListOptions,
+    SlashCommand, Spacer, TUI_KEYBINDINGS, Terminal, TerminalSize, Text, TruncatedText, Tui,
+    VirtualTerminal, visible_width,
 };
 
 #[test]
@@ -41,6 +42,13 @@ fn public_api_symbols_are_importable() {
         KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default()),
     );
     let _ = SettingsListOptions::default();
+
+    let provider = pi_tui::CombinedAutocompleteProvider::new(
+        vec![SlashCommand::new("model")],
+        std::path::Path::new("."),
+    );
+    let _ = provider.get_suggestions(&["/m".to_string()], 0, 2, AutocompleteOptions::default());
+    let _ = AutocompleteItem::new("model", "model");
 
     let _ = std::mem::size_of::<ProcessTerminal>();
 }

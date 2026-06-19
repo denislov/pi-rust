@@ -32,6 +32,7 @@
 - **fuzzy 匹配**（评分排序，替换 SelectList 现有的 `starts_with` 前缀匹配）。TS：`tui/src/fuzzy.ts`。
 - **autocomplete**（路径/env/命令建议）。TS：`tui/src/autocomplete.ts`。
 > 进度：`pi-tui` 已有 TS-parity fuzzy scoring/filtering，`SelectList` 已切到 fuzzy 匹配和评分排序；autocomplete 仍待移植。
+> 进度：`pi-tui` 已新增同步 `CombinedAutocompleteProvider`，支持 slash command、路径/`@` 附件、`$ENV` 建议和 completion application；fd 递归 fuzzy 文件搜索后续优化。
 
 ### 5. 主题系统（TUI-8 剩余）
 - 256 色 / RGB（当前仅 8 色 ANSI）。

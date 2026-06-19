@@ -1,3 +1,4 @@
+pub mod autocomplete;
 pub mod component;
 pub mod components;
 pub mod cursor;
@@ -14,6 +15,10 @@ pub mod utils;
 pub mod virtual_terminal;
 pub mod word_navigation;
 
+pub use autocomplete::{
+    AutocompleteItem, AutocompleteOptions, AutocompleteSuggestions, CombinedAutocompleteProvider,
+    CompletionEdit, SlashCommand,
+};
 pub use component::{Component, ComponentId, Container};
 pub use components::{
     BackgroundFn, Box, CancellableLoader, Editor, Input, Loader, LoaderIndicatorOptions, Markdown,
