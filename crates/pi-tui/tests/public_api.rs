@@ -1,6 +1,6 @@
 use pi_tui::{
-    Component, Container, ProcessTerminal, Spacer, Terminal, TerminalSize, Text, Tui,
-    VirtualTerminal, visible_width,
+    CancellableLoader, Component, Container, KeybindingsManager, Loader, ProcessTerminal, Spacer,
+    TUI_KEYBINDINGS, Terminal, TerminalSize, Text, Tui, VirtualTerminal, visible_width,
 };
 
 #[test]
@@ -21,6 +21,13 @@ fn public_api_symbols_are_importable() {
             columns: 20,
             rows: 5
         }
+    );
+
+    let mut loader = Loader::new("Loading");
+    loader.tick();
+    let _ = CancellableLoader::new(
+        loader,
+        KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default()),
     );
 
     let _ = std::mem::size_of::<ProcessTerminal>();

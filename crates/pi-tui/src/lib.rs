@@ -15,7 +15,10 @@ pub mod virtual_terminal;
 pub mod word_navigation;
 
 pub use component::{Component, ComponentId, Container};
-pub use components::{Editor, Input, Markdown, SelectItem, SelectList, Spacer, Text};
+pub use components::{
+    CancellableLoader, Editor, Input, Loader, LoaderIndicatorOptions, Markdown, SelectItem,
+    SelectList, Spacer, Text,
+};
 pub use cursor::{CURSOR_MARKER, CursorPosition, extract_cursor_marker};
 pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
 pub use input::{

@@ -24,6 +24,7 @@
 - **`Loader` / `CancellableLoader`**：把当前硬编码在 coding-agent 的 spinner 抽成 pi-tui 可复用组件（CancellableLoader 支持 Esc + `AbortSignal`）。TS：`tui/src/components/loader.ts`、`cancellable-loader.ts`。
 - `Box`（padding + 背景）、`TruncatedText`、`SettingsList`（可搜索/值循环/子菜单）。
 - `Image`（依赖下方终端图像协议）。
+> 进度：`pi-tui` 已新增可复用 `Loader` / `CancellableLoader`，支持 deterministic frame tick、消息更新、自定义/隐藏 indicator、宽度裁剪和 Escape/Ctrl+C 取消回调；coding-agent 侧硬编码 spinner 迁移仍待接入。
 
 ### 4. 搜索与补全
 - **fuzzy 匹配**（评分排序，替换 SelectList 现有的 `starts_with` 前缀匹配）。TS：`tui/src/fuzzy.ts`。
