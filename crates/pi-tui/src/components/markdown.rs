@@ -102,13 +102,32 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
             Event::Start(Tag::CodeBlock(_)) => {
                 flush_current(&mut current, &mut blocks, &mut context);
                 context.in_code_block = true;
+                blocks.push(paint("```", &Style::fg(Color::Default).dim()));
             }
             Event::End(TagEnd::CodeBlock) => {
-                flush_current(&mut current, &mut blocks, &mut context);
+                // Flush accumulated code text as dim indented lines, then close fence.
+                let code = current.trim_end();
+                for source_line in code.split('\n') {
+                    let line = if source_line.is_empty() {
+                        paint("   ", &Style::fg(Color::Default).dim())
+                    } else {
+                        paint(
+                            &format!("   {source_line}"),
+                            &Style::fg(Color::Default).dim(),
+                        )
+                    };
+                    blocks.push(line);
+                }
+                current.clear();
                 context.in_code_block = false;
+                blocks.push(paint("```", &Style::fg(Color::Default).dim()));
             }
             Event::Text(text) => {
-                append_inline_text(&mut current, &text, context.in_code_block);
+                if context.in_code_block {
+                    current.push_str(&text);
+                } else {
+                    append_inline_text(&mut current, &text, false);
+                }
             }
             Event::Code(text) => {
                 let start = current.len();
@@ -131,6 +150,11 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
 
     let mut lines = Vec::new();
     for block in blocks {
+        if block.contains("\x1b[2m") {
+            // Pre-styled code-block line; do not word-wrap.
+            lines.push(block);
+            continue;
+        }
         for source_line in block.split('\n') {
             wrap_line(source_line, width, &mut lines);
         }
@@ -188,11 +212,8 @@ fn flush_current(current: &mut String, blocks: &mut Vec<String>, context: &mut B
 }
 
 fn style_block(block: &str, context: &BlockContext) -> String {
-    // Code blocks are handled in Task 3; for now pass through plain (Task 2 scope).
-    if context.in_code_block {
-        return block.to_string();
-    }
-
+    // Code blocks are emitted directly in markdown_to_lines (fence rows + dim lines),
+    // so this function only handles headings, quotes, and plain paragraphs.
     let with_inline = apply_inline_code(block, &context.inline_code_spans);
     if context.heading {
         return paint(&with_inline, &Style::fg(Color::Default).bold());

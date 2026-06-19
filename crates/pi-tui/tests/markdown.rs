@@ -86,3 +86,43 @@ fn markdown_preserves_inline_punctuation_spacing() {
     assert!(joined.contains("A paragraph with bold text and"));
     assert!(joined.contains(&paint_with("code", &reverse(), true)));
 }
+
+#[test]
+fn markdown_code_block_has_dim_fence_rows_and_dim_content() {
+    let mut markdown = Markdown::new("```rust\nfn main() {}\n```");
+    let lines = markdown.render(40);
+    let joined = lines.join("\n");
+
+    let dim_fence = paint_with("```", &dim(), true);
+    let dim_content = paint_with("   fn main() {}", &dim(), true);
+
+    assert!(
+        joined.contains(&dim_fence),
+        "expected dim fence row in: {joined:?}"
+    );
+    assert!(
+        joined.contains(&dim_content),
+        "expected dim indented content in: {joined:?}"
+    );
+    // Two fence rows (open + close).
+    assert_eq!(
+        joined.matches(&dim_fence).count(),
+        2,
+        "expected two fence rows in: {joined:?}"
+    );
+}
+
+#[test]
+fn markdown_code_block_multiline_content_each_line_indented_and_dim() {
+    let mut markdown = Markdown::new("```\nlet a = 1;\nlet b = 2;\n```");
+    let lines = markdown.render(40);
+    let joined = lines.join("\n");
+    assert!(
+        joined.contains(&paint_with("   let a = 1;", &dim(), true)),
+        "expected dim indented first line in: {joined:?}"
+    );
+    assert!(
+        joined.contains(&paint_with("   let b = 2;", &dim(), true)),
+        "expected dim indented second line in: {joined:?}"
+    );
+}
