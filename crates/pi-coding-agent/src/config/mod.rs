@@ -1,4 +1,5 @@
 pub mod paths;
+pub mod settings;
 
 use std::path::PathBuf;
 
