@@ -101,9 +101,35 @@ pub async fn run_cli_with_options(
         _ => return CliOutput::failure(CliError::MissingPrompt),
     };
 
-    let model = match select_model(&parsed, options.model_override) {
+    let (config, config_diags) = config::load_config(&cwd);
+    let diag_text = config::drain_diagnostics(&config_diags);
+    if !diag_text.is_empty() {
+        eprint!("{diag_text}");
+    }
+
+    let model = match select_model(
+        &parsed,
+        config.settings.default_model.as_deref(),
+        options.model_override,
+    ) {
         Ok(model) => model,
         Err(error) => return CliOutput::failure(error),
+    };
+
+    let provider = model.provider.clone();
+    let resolved_api_key = {
+        let mut key_diags = Vec::new();
+        let resolved = config::auth::resolve_api_key(
+            &provider,
+            parsed.api_key.as_deref(),
+            &config.auth,
+            &mut key_diags,
+        );
+        let key_text = config::drain_diagnostics(&key_diags);
+        if !key_text.is_empty() {
+            eprint!("{key_text}");
+        }
+        resolved.map(|r| r.value)
     };
 
     let (skills, templates, diags) =
@@ -172,7 +198,7 @@ pub async fn run_cli_with_options(
             _ => String::new(),
         },
         model,
-        api_key: parsed.api_key,
+        api_key: resolved_api_key,
         system_prompt: parsed.system_prompt,
         max_turns: parsed.max_turns,
         tools: options.tools,

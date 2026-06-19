@@ -133,7 +133,10 @@ fn check_permissions(path: &Path, diags: &mut Vec<ConfigDiagnostic>) {
         let mode = meta.permissions().mode();
         if mode & 0o077 != 0 {
             diags.push(ConfigDiagnostic::warn(
-                format!("auth.toml has loose permissions {:o}; expected 0600", mode & 0o777),
+                format!(
+                    "auth.toml has loose permissions {:o}; expected 0600",
+                    mode & 0o777
+                ),
                 Some(path.to_path_buf()),
             ));
         }
@@ -193,29 +196,47 @@ mod tests {
     #[test]
     fn literal_passthrough() {
         let mut d = Vec::new();
-        assert_eq!(resolve_config_value("sk-literal", &mut d), Some("sk-literal".into()));
+        assert_eq!(
+            resolve_config_value("sk-literal", &mut d),
+            Some("sk-literal".into())
+        );
         assert!(d.is_empty());
     }
 
     #[test]
     fn dollar_var_and_braced_var() {
-        unsafe { std::env::set_var("PI_TEST_KEY", "secret"); }
+        unsafe {
+            std::env::set_var("PI_TEST_KEY", "secret");
+        }
         let mut d = Vec::new();
-        assert_eq!(resolve_config_value("$PI_TEST_KEY", &mut d), Some("secret".into()));
-        assert_eq!(resolve_config_value("pre-${PI_TEST_KEY}-post", &mut d), Some("pre-secret-post".into()));
-        unsafe { std::env::remove_var("PI_TEST_KEY"); }
+        assert_eq!(
+            resolve_config_value("$PI_TEST_KEY", &mut d),
+            Some("secret".into())
+        );
+        assert_eq!(
+            resolve_config_value("pre-${PI_TEST_KEY}-post", &mut d),
+            Some("pre-secret-post".into())
+        );
+        unsafe {
+            std::env::remove_var("PI_TEST_KEY");
+        }
     }
 
     #[test]
     fn escapes() {
         let mut d = Vec::new();
-        assert_eq!(resolve_config_value("$$literal", &mut d), Some("$literal".into()));
+        assert_eq!(
+            resolve_config_value("$$literal", &mut d),
+            Some("$literal".into())
+        );
         assert_eq!(resolve_config_value("a$!b", &mut d), Some("a!b".into()));
     }
 
     #[test]
     fn unset_var_returns_none_with_diag() {
-        unsafe { std::env::remove_var("PI_TEST_MISSING"); }
+        unsafe {
+            std::env::remove_var("PI_TEST_MISSING");
+        }
         let mut d = Vec::new();
         assert_eq!(resolve_config_value("$PI_TEST_MISSING", &mut d), None);
         assert_eq!(d.len(), 1);
@@ -261,7 +282,11 @@ mod tests {
     fn store_with(provider: &str, key: &str) -> AuthStore {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.toml");
-        std::fs::write(&path, format!("[{provider}]\ntype = \"api_key\"\nkey = \"{key}\"\n")).unwrap();
+        std::fs::write(
+            &path,
+            format!("[{provider}]\ntype = \"api_key\"\nkey = \"{key}\"\n"),
+        )
+        .unwrap();
         let mut d = Vec::new();
         AuthStore::load(&path, &mut d)
     }
@@ -269,33 +294,45 @@ mod tests {
     #[test]
     fn cli_key_wins() {
         let store = store_with("anthropic", "from-file");
-        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "from-env"); }
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "from-env");
+        }
         let mut d = Vec::new();
         let r = resolve_api_key("anthropic", Some("from-cli"), &store, &mut d).unwrap();
         assert_eq!(r.value, "from-cli");
         assert_eq!(r.source, KeySource::Cli);
-        unsafe { std::env::remove_var("ANTHROPIC_API_KEY"); }
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
     }
 
     #[test]
     fn auth_file_beats_env() {
         let store = store_with("anthropic", "from-file");
-        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "from-env"); }
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "from-env");
+        }
         let mut d = Vec::new();
         let r = resolve_api_key("anthropic", None, &store, &mut d).unwrap();
         assert_eq!(r.value, "from-file");
         assert_eq!(r.source, KeySource::AuthFile);
-        unsafe { std::env::remove_var("ANTHROPIC_API_KEY"); }
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
     }
 
     #[test]
     fn falls_back_to_env_then_none() {
         let store = AuthStore::default();
-        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "from-env"); }
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "from-env");
+        }
         let mut d = Vec::new();
         let r = resolve_api_key("anthropic", None, &store, &mut d).unwrap();
         assert_eq!(r.source, KeySource::Env);
-        unsafe { std::env::remove_var("ANTHROPIC_API_KEY"); }
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
         assert!(resolve_api_key("anthropic", None, &store, &mut d).is_none());
     }
 }

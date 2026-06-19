@@ -48,11 +48,16 @@ pub fn env_api_key(provider: &str) -> Option<String> {
 /// real signing/ADC is implemented in M8.
 fn self_auth_present(provider: &str) -> bool {
     match provider {
-        "amazon-bedrock" => ["AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_BEARER_TOKEN_BEDROCK"]
-            .iter()
-            .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty())),
-        "google-vertex" => std::env::var_os("GOOGLE_APPLICATION_CREDENTIALS")
-            .is_some_and(|s| !s.is_empty()),
+        "amazon-bedrock" => [
+            "AWS_PROFILE",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_BEARER_TOKEN_BEDROCK",
+        ]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty())),
+        "google-vertex" => {
+            std::env::var_os("GOOGLE_APPLICATION_CREDENTIALS").is_some_and(|s| !s.is_empty())
+        }
         _ => false,
     }
 }
@@ -99,22 +104,37 @@ mod tests {
 
     #[test]
     fn returns_minimax_key() {
-        unsafe { std::env::set_var("MINIMAX_API_KEY", "mm-test"); }
+        unsafe {
+            std::env::set_var("MINIMAX_API_KEY", "mm-test");
+        }
         assert_eq!(env_api_key("minimax"), Some("mm-test".into()));
-        unsafe { std::env::remove_var("MINIMAX_API_KEY"); }
+        unsafe {
+            std::env::remove_var("MINIMAX_API_KEY");
+        }
     }
 
     #[test]
     fn returns_copilot_token() {
-        unsafe { std::env::set_var("COPILOT_GITHUB_TOKEN", "ghp-test"); }
+        unsafe {
+            std::env::set_var("COPILOT_GITHUB_TOKEN", "ghp-test");
+        }
         assert_eq!(env_api_key("github-copilot"), Some("ghp-test".into()));
-        unsafe { std::env::remove_var("COPILOT_GITHUB_TOKEN"); }
+        unsafe {
+            std::env::remove_var("COPILOT_GITHUB_TOKEN");
+        }
     }
 
     #[test]
     fn bedrock_returns_sentinel_when_aws_profile_set() {
-        unsafe { std::env::set_var("AWS_PROFILE", "default"); }
-        assert_eq!(env_api_key("amazon-bedrock"), Some("<authenticated>".into()));
-        unsafe { std::env::remove_var("AWS_PROFILE"); }
+        unsafe {
+            std::env::set_var("AWS_PROFILE", "default");
+        }
+        assert_eq!(
+            env_api_key("amazon-bedrock"),
+            Some("<authenticated>".into())
+        );
+        unsafe {
+            std::env::remove_var("AWS_PROFILE");
+        }
     }
 }

@@ -61,7 +61,11 @@ pub fn drain_diagnostics(diags: &[ConfigDiagnostic]) -> String {
             DiagnosticSeverity::Error => "error",
         };
         match &d.source {
-            Some(p) => out.push_str(&format!("config {label}: {} ({})\n", d.message, p.display())),
+            Some(p) => out.push_str(&format!(
+                "config {label}: {} ({})\n",
+                d.message,
+                p.display()
+            )),
             None => out.push_str(&format!("config {label}: {}\n", d.message)),
         }
     }
@@ -78,7 +82,11 @@ mod tests {
         let global = dir.path().join("global");
         std::fs::create_dir_all(&global).unwrap();
         std::fs::write(global.join("settings.toml"), "default_model = \"m\"\n").unwrap();
-        std::fs::write(global.join("auth.toml"), "[anthropic]\ntype=\"api_key\"\nkey=\"sk-x\"\n").unwrap();
+        std::fs::write(
+            global.join("auth.toml"),
+            "[anthropic]\ntype=\"api_key\"\nkey=\"sk-x\"\n",
+        )
+        .unwrap();
         // Tighten auth.toml to 0600 so the (correct) loose-perms check stays silent.
         #[cfg(unix)]
         {
@@ -90,14 +98,18 @@ mod tests {
             .unwrap();
         }
         // SAFETY: single-threaded test.
-        unsafe { std::env::set_var("PI_RUST_DIR", global.to_str().unwrap()); }
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", global.to_str().unwrap());
+        }
         let work = dir.path().join("work");
         std::fs::create_dir_all(&work).unwrap();
         let (config, diags) = load_config(&work);
         assert_eq!(config.settings.default_model.as_deref(), Some("m"));
         assert_eq!(config.auth.api_key_entry("anthropic"), Some("sk-x"));
         assert!(diags.is_empty());
-        unsafe { std::env::remove_var("PI_RUST_DIR"); }
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
     }
 
     #[test]

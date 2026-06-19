@@ -6,7 +6,7 @@ use pi_coding_agent::{
 #[test]
 fn selects_default_model_when_no_override_is_provided() {
     let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
-    let model = select_model(&args, None).unwrap();
+    let model = select_model(&args, None, None).unwrap();
     assert_eq!(model.id, DEFAULT_MODEL_ID);
 }
 
@@ -19,7 +19,7 @@ fn selects_explicit_model_from_static_table() {
         "hello".to_string(),
     ])
     .unwrap();
-    let model = select_model(&args, None).unwrap();
+    let model = select_model(&args, None, None).unwrap();
     assert_eq!(model.id, "claude-haiku-4-5");
 }
 
@@ -33,7 +33,7 @@ fn unknown_model_returns_typed_error() {
     ])
     .unwrap();
     assert_eq!(
-        select_model(&args, None).unwrap_err(),
+        select_model(&args, None, None).unwrap_err(),
         CliError::UnknownModel("missing-model".into())
     );
 }
@@ -41,16 +41,16 @@ fn unknown_model_returns_typed_error() {
 #[test]
 fn model_override_is_used_when_cli_model_is_absent() {
     let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
-    let mut override_model = select_model(&args, None).unwrap();
+    let mut override_model = select_model(&args, None, None).unwrap();
     override_model.id = "override-model".into();
-    let model = select_model(&args, Some(override_model)).unwrap();
+    let model = select_model(&args, None, Some(override_model)).unwrap();
     assert_eq!(model.id, "override-model");
 }
 
 #[test]
 fn builds_agent_config_with_defaults() {
     let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
-    let model = select_model(&args, None).unwrap();
+    let model = select_model(&args, None, None).unwrap();
     let config = build_agent_config(
         model,
         args.system_prompt.clone(),
@@ -78,7 +78,7 @@ fn builds_agent_config_with_cli_overrides() {
         "hello".to_string(),
     ])
     .unwrap();
-    let model = select_model(&args, None).unwrap();
+    let model = select_model(&args, None, None).unwrap();
     let config = build_agent_config(
         model,
         args.system_prompt.clone(),

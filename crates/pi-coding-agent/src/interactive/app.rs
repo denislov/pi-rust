@@ -879,7 +879,7 @@ fn build_prompt_context(
     parsed: &CliArgs,
     options: CliRunOptions,
 ) -> Result<PromptContext, CliError> {
-    let model = select_model(parsed, options.model_override)?;
+    let model = select_model(parsed, None, options.model_override)?;
     let cwd = options.session.cwd.clone();
     let (skills, templates, diagnostics) =
         resources::load_cli_resources(&parsed.skills, &parsed.prompt_templates, &cwd)?;

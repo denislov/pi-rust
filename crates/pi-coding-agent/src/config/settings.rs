@@ -107,8 +107,12 @@ impl PartialSettings {
             default_model: self.default_model,
             default_thinking_level: self.default_thinking_level,
             transport: self.transport.unwrap_or_else(|| "auto".to_string()),
-            steering_mode: self.steering_mode.unwrap_or_else(|| "one-at-a-time".to_string()),
-            follow_up_mode: self.follow_up_mode.unwrap_or_else(|| "one-at-a-time".to_string()),
+            steering_mode: self
+                .steering_mode
+                .unwrap_or_else(|| "one-at-a-time".to_string()),
+            follow_up_mode: self
+                .follow_up_mode
+                .unwrap_or_else(|| "one-at-a-time".to_string()),
             session_dir: self.session_dir,
             compaction: CompactionSettings {
                 enabled: c.enabled.unwrap_or(true),
@@ -127,7 +131,9 @@ impl PartialSettings {
 pub fn load_partial(path: &Path, diags: &mut Vec<ConfigDiagnostic>) -> PartialSettings {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return PartialSettings::default(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return PartialSettings::default();
+        }
         Err(err) => {
             diags.push(ConfigDiagnostic::warn(
                 format!("failed to read settings: {err}"),
@@ -229,10 +235,7 @@ mod tests {
         // deny_unknown_fields makes the whole parse fail -> default + warn diagnostic
         assert_eq!(parsed, PartialSettings::default());
         assert_eq!(diags.len(), 1);
-        assert_eq!(
-            diags[0].severity,
-            crate::config::DiagnosticSeverity::Warn
-        );
+        assert_eq!(diags[0].severity, crate::config::DiagnosticSeverity::Warn);
     }
 
     #[test]
@@ -244,7 +247,11 @@ mod tests {
             "default_model = \"g\"\ntransport = \"sse\"\n",
         )
         .unwrap();
-        std::fs::write(project.path().join("settings.toml"), "default_model = \"p\"\n").unwrap();
+        std::fs::write(
+            project.path().join("settings.toml"),
+            "default_model = \"p\"\n",
+        )
+        .unwrap();
         let paths = crate::config::ConfigPaths {
             global_dir: global.path().to_path_buf(),
             project_dir: project.path().to_path_buf(),
