@@ -1,4 +1,4 @@
-use pi_tui::{Component, Container, Spacer, Text, visible_width};
+use pi_tui::{Box as TuiBox, Component, Container, Spacer, Text, TruncatedText, visible_width};
 
 #[test]
 fn spacer_renders_empty_lines() {
@@ -47,4 +47,59 @@ fn text_handles_cjk_width_when_wrapping() {
 
     assert_eq!(lines, vec!["你好".to_string(), "world".to_string()]);
     assert!(lines.iter().all(|line| visible_width(line) <= 6));
+}
+
+#[test]
+fn truncated_text_renders_first_line_padded_to_width() {
+    let mut text = TruncatedText::new("alpha\nbeta");
+    assert_eq!(text.render(8), vec!["alpha   ".to_string()]);
+}
+
+#[test]
+fn truncated_text_applies_padding_and_truncates_to_available_width() {
+    let mut text = TruncatedText::with_padding("abcdef", 1, 1);
+    let lines = text.render(6);
+
+    assert_eq!(
+        lines,
+        vec![
+            "      ".to_string(),
+            " abcd ".to_string(),
+            "      ".to_string(),
+        ]
+    );
+    assert!(lines.iter().all(|line| visible_width(line) <= 6));
+}
+
+#[test]
+fn box_component_adds_padding_around_children() {
+    let mut panel = TuiBox::with_padding(1, 1);
+    panel.add_child(std::boxed::Box::new(TruncatedText::new("alpha")));
+
+    assert_eq!(
+        panel.render(8),
+        vec![
+            "        ".to_string(),
+            " alpha  ".to_string(),
+            "        ".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn box_component_applies_background_to_padded_lines() {
+    let mut panel = TuiBox::with_padding(1, 0);
+    panel.set_background_fn(Some(std::boxed::Box::new(|line| format!("<{line}>"))));
+    panel.add_child(std::boxed::Box::new(TruncatedText::new("ok")));
+
+    assert_eq!(panel.render(6), vec!["< ok   >".to_string()]);
+}
+
+#[test]
+fn box_component_clear_removes_children() {
+    let mut panel = TuiBox::new();
+    panel.add_child(std::boxed::Box::new(TruncatedText::new("alpha")));
+    panel.clear();
+
+    assert!(panel.render(8).is_empty());
 }

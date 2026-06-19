@@ -1,6 +1,7 @@
 use pi_tui::{
-    CancellableLoader, Component, Container, KeybindingsManager, Loader, ProcessTerminal, Spacer,
-    TUI_KEYBINDINGS, Terminal, TerminalSize, Text, Tui, VirtualTerminal, visible_width,
+    Box as TuiBox, CancellableLoader, Component, Container, KeybindingsManager, Loader,
+    ProcessTerminal, Spacer, TUI_KEYBINDINGS, Terminal, TerminalSize, Text, TruncatedText, Tui,
+    VirtualTerminal, visible_width,
 };
 
 #[test]
@@ -29,6 +30,10 @@ fn public_api_symbols_are_importable() {
         loader,
         KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default()),
     );
+
+    let mut panel = TuiBox::new();
+    panel.add_child(std::boxed::Box::new(TruncatedText::new("Loading")));
+    let _ = panel.render(20);
 
     let _ = std::mem::size_of::<ProcessTerminal>();
 }
