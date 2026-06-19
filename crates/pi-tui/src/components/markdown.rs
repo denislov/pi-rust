@@ -1,7 +1,7 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{Component, truncate_to_width, visible_width};
+use crate::{Color, Component, Style, paint, truncate_to_width, visible_width};
 
 pub struct Markdown {
     text: String,
@@ -63,60 +63,98 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
     let parser = Parser::new_ext(text, Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES);
     let mut blocks = Vec::new();
     let mut current = String::new();
-    let mut in_code_block = false;
+    let mut context = BlockContext::default();
     let mut list_depth = 0usize;
 
     for event in parser {
         match event {
             Event::Start(Tag::Heading { .. }) => {
-                flush_current(&mut current, &mut blocks);
+                flush_current(&mut current, &mut blocks, &mut context);
+                context.heading = true;
             }
-            Event::End(TagEnd::Heading(_)) => flush_current(&mut current, &mut blocks),
+            Event::End(TagEnd::Heading(_)) => {
+                flush_current(&mut current, &mut blocks, &mut context);
+            }
             Event::Start(Tag::Paragraph) => {}
-            Event::End(TagEnd::Paragraph) => flush_current(&mut current, &mut blocks),
+            Event::End(TagEnd::Paragraph) => flush_current(&mut current, &mut blocks, &mut context),
             Event::Start(Tag::List(_)) => {
                 list_depth += 1;
             }
             Event::End(TagEnd::List(_)) => {
                 list_depth = list_depth.saturating_sub(1);
-                flush_current(&mut current, &mut blocks);
+                flush_current(&mut current, &mut blocks, &mut context);
             }
             Event::Start(Tag::Item) => {
-                flush_current(&mut current, &mut blocks);
+                flush_current(&mut current, &mut blocks, &mut context);
                 if list_depth > 0 {
                     current.push_str("- ");
                 }
             }
-            Event::End(TagEnd::Item) => flush_current(&mut current, &mut blocks),
+            Event::End(TagEnd::Item) => flush_current(&mut current, &mut blocks, &mut context),
             Event::Start(Tag::BlockQuote(_)) => {
-                flush_current(&mut current, &mut blocks);
+                flush_current(&mut current, &mut blocks, &mut context);
+                context.in_quote = true;
                 current.push_str("> ");
             }
-            Event::End(TagEnd::BlockQuote(_)) => flush_current(&mut current, &mut blocks),
+            Event::End(TagEnd::BlockQuote(_)) => {
+                flush_current(&mut current, &mut blocks, &mut context);
+            }
             Event::Start(Tag::CodeBlock(_)) => {
-                flush_current(&mut current, &mut blocks);
-                in_code_block = true;
+                flush_current(&mut current, &mut blocks, &mut context);
+                context.in_code_block = true;
+                blocks.push(paint("```", &Style::fg(Color::Default).dim()));
             }
             Event::End(TagEnd::CodeBlock) => {
-                flush_current(&mut current, &mut blocks);
-                in_code_block = false;
+                // Flush accumulated code text as dim indented lines, then close fence.
+                let code = current.trim_end();
+                for source_line in code.split('\n') {
+                    let line = if source_line.is_empty() {
+                        paint("   ", &Style::fg(Color::Default).dim())
+                    } else {
+                        paint(
+                            &format!("   {source_line}"),
+                            &Style::fg(Color::Default).dim(),
+                        )
+                    };
+                    blocks.push(line);
+                }
+                current.clear();
+                context.in_code_block = false;
+                blocks.push(paint("```", &Style::fg(Color::Default).dim()));
             }
-            Event::Text(text) | Event::Code(text) => {
-                append_inline_text(&mut current, &text, in_code_block);
+            Event::Text(text) => {
+                if context.in_code_block {
+                    current.push_str(&text);
+                } else {
+                    append_inline_text(&mut current, &text, false);
+                }
+            }
+            Event::Code(text) => {
+                let start = current.len();
+                current.push_str(&text);
+                context.inline_code_spans.push((start, current.len()));
             }
             Event::SoftBreak => current.push(' '),
-            Event::HardBreak => flush_current(&mut current, &mut blocks),
+            Event::HardBreak => flush_current(&mut current, &mut blocks, &mut context),
             Event::Rule => {
-                flush_current(&mut current, &mut blocks);
-                blocks.push("-".repeat(width.min(20)));
+                flush_current(&mut current, &mut blocks, &mut context);
+                blocks.push(paint(
+                    &"-".repeat(width.min(20)),
+                    &Style::fg(Color::Default).dim(),
+                ));
             }
             _ => {}
         }
     }
-    flush_current(&mut current, &mut blocks);
+    flush_current(&mut current, &mut blocks, &mut context);
 
     let mut lines = Vec::new();
     for block in blocks {
+        if block.contains("\x1b[2m") {
+            // Pre-styled code-block line; do not word-wrap.
+            lines.push(block);
+            continue;
+        }
         for source_line in block.split('\n') {
             wrap_line(source_line, width, &mut lines);
         }
@@ -125,6 +163,14 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+#[derive(Default)]
+struct BlockContext {
+    heading: bool,
+    in_quote: bool,
+    in_code_block: bool,
+    inline_code_spans: Vec<(usize, usize)>,
 }
 
 fn append_inline_text(current: &mut String, text: &str, in_code_block: bool) {
@@ -146,12 +192,62 @@ fn starts_with_closing_punctuation(text: &str) -> bool {
     )
 }
 
-fn flush_current(current: &mut String, blocks: &mut Vec<String>) {
+fn flush_current(current: &mut String, blocks: &mut Vec<String>, context: &mut BlockContext) {
     let block = current.trim_end();
-    if !block.is_empty() {
-        blocks.push(block.to_string());
+    if block.is_empty() {
+        current.clear();
+        context.inline_code_spans.clear();
+        context.heading = false;
+        context.in_quote = false;
+        return;
     }
+
+    let styled = style_block(block, context);
+    blocks.push(styled);
+
     current.clear();
+    context.inline_code_spans.clear();
+    context.heading = false;
+    context.in_quote = false;
+}
+
+fn style_block(block: &str, context: &BlockContext) -> String {
+    // Code blocks are emitted directly in markdown_to_lines (fence rows + dim lines),
+    // so this function only handles headings, quotes, and plain paragraphs.
+    let with_inline = apply_inline_code(block, &context.inline_code_spans);
+    if context.heading {
+        return paint(&with_inline, &Style::fg(Color::Default).bold());
+    }
+    if context.in_quote {
+        return paint(&with_inline, &Style::fg(Color::Default).dim());
+    }
+    with_inline
+}
+
+fn apply_inline_code(block: &str, spans: &[(usize, usize)]) -> String {
+    if spans.is_empty() {
+        return block.to_string();
+    }
+    let reverse_style = Style::default().reverse();
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    for &(start, end) in spans {
+        // Spans are byte offsets into the original `current` before trim_end.
+        // block is current.trim_end(), so spans may be clamped.
+        let start = start.min(block.len());
+        let end = end.min(block.len());
+        if start > cursor {
+            out.push_str(&block[cursor..start]);
+        }
+        if end > start {
+            out.push_str(&paint(&block[start..end], &reverse_style));
+        }
+        cursor = end;
+    }
+    if cursor < block.len() {
+        out.push_str(&block[cursor..]);
+    }
+    out
 }
 
 fn wrap_line(source: &str, width: usize, lines: &mut Vec<String>) {

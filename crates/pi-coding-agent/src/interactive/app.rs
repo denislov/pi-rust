@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 use pi_agent_core::{AgentResources, session::create_session_id};
 use pi_ai::types::Model;
 use pi_tui::{
-    Component, Editor, InputEvent, KeybindingsManager, Markdown, ProcessTerminal, RenderScheduler,
-    StdinBuffer, TUI_KEYBINDINGS, Terminal, Tui, TuiError, is_key_release, matches_key,
-    truncate_to_width, visible_width,
+    Component, ERROR, Editor, InputEvent, KeybindingsManager, Markdown, PATH, ProcessTerminal,
+    RenderScheduler, STATUS_IDLE, STATUS_RUNNING, SYSTEM, StdinBuffer, Style, TOOL_ERROR,
+    TOOL_NAME, TUI_KEYBINDINGS, Terminal, Tui, TuiError, USER, color_enabled, is_key_release,
+    matches_key, paint_with, truncate_to_width, visible_width,
 };
 
 use crate::interactive::key_hints::{app_key_hint, key_hint};
@@ -240,8 +241,13 @@ impl InteractiveRoot {
     fn apply_events(&mut self, events: Vec<UiEvent>) {
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = if previous_scroll_offset > 0 {
-            render_transcript_lines(&self.transcript, self.viewport_width, MAX_TOOL_RESULT_LINES)
-                .len()
+            render_transcript_lines(
+                &self.transcript,
+                self.viewport_width,
+                MAX_TOOL_RESULT_LINES,
+                color_enabled(),
+            )
+            .len()
         } else {
             0
         };
@@ -258,6 +264,7 @@ impl InteractiveRoot {
                 &self.transcript,
                 self.viewport_width,
                 MAX_TOOL_RESULT_LINES,
+                color_enabled(),
             )
             .len();
             self.transcript.preserve_scrolled_view_after_hidden_change(
@@ -272,22 +279,31 @@ impl InteractiveRoot {
     }
 
     fn footer(&self) -> String {
-        let status = match self.status {
+        let color = color_enabled();
+        let status_str = match self.status {
             InteractiveStatus::Idle => "idle",
             InteractiveStatus::Running => "running",
         };
+        let status_style = match self.status {
+            InteractiveStatus::Idle => STATUS_IDLE,
+            InteractiveStatus::Running => STATUS_RUNNING,
+        };
         let cwd = abbreviate_cwd(&self.cwd);
         let mut parts = vec![
-            format!("status: {status}"),
-            format!("cwd: {cwd}"),
+            paint_with(&format!("status: {status_str}"), &status_style, color),
+            format!("cwd: {}", paint_with(&cwd, &PATH, color)),
             format!("model: {}", self.model_id),
             format!("session: {}", self.session_label),
         ];
         if self.usage != (0, 0) {
-            parts.push(format!(
-                "↑{} ↓{}",
-                format_tokens(self.usage.0),
-                format_tokens(self.usage.1)
+            parts.push(paint_with(
+                &format!(
+                    "↑{} ↓{}",
+                    format_tokens(self.usage.0),
+                    format_tokens(self.usage.1)
+                ),
+                &SYSTEM,
+                color,
             ));
         }
         parts.join(" | ")
@@ -326,6 +342,7 @@ impl Component for InteractiveRoot {
             width,
             transcript_rows,
             max_tool_result_lines,
+            color_enabled(),
         );
         for line in editor_lines {
             lines.push(fit_line(&format!("> {line}"), width));
@@ -894,13 +911,21 @@ fn render_transcript_lines(
     transcript: &Transcript,
     width: usize,
     max_tool_result_lines: usize,
+    color: bool,
 ) -> Vec<String> {
     transcript
         .items()
         .iter()
         .flat_map(|item| match item {
-            TranscriptItem::User { text } => vec![fit_line(&format!("user: {text}"), width)],
-            TranscriptItem::System { text } => vec![fit_line(text, width)],
+            TranscriptItem::User { text } => {
+                vec![fit_line(
+                    &format!("{}: {}", paint_with("user", &USER, color), text),
+                    width,
+                )]
+            }
+            TranscriptItem::System { text } => {
+                vec![fit_line(&paint_with(text, &SYSTEM, color), width)]
+            }
             TranscriptItem::Assistant { markdown, .. } => {
                 let mut markdown = Markdown::new(markdown);
                 markdown
@@ -922,8 +947,18 @@ fn render_transcript_lines(
                 *is_error,
                 width,
                 max_tool_result_lines,
+                color,
             ),
-            TranscriptItem::Error { text } => vec![fit_line(&format!("error: {text}"), width)],
+            TranscriptItem::Error { text } => {
+                vec![fit_line(
+                    &format!(
+                        "{}: {}",
+                        paint_with("error", &ERROR, color),
+                        paint_with(text, &ERROR, color)
+                    ),
+                    width,
+                )]
+            }
         })
         .collect()
 }
@@ -935,27 +970,45 @@ fn render_tool_lines(
     is_error: bool,
     width: usize,
     max_tool_result_lines: usize,
+    color: bool,
 ) -> Vec<String> {
     let status = match (result, is_error) {
         (None, _) => "running",
         (Some(_), true) => "error",
         (Some(_), false) => "done",
     };
-    let mut lines = vec![fit_line(&format!("tool {name} {call_id} {status}"), width)];
+    let status_style = match status {
+        "running" => STATUS_RUNNING,
+        "error" => TOOL_ERROR,
+        "done" => STATUS_IDLE,
+        _ => Style::default(),
+    };
+    let header = format!(
+        "{} {} {} {}",
+        paint_with("tool", &TOOL_NAME, color),
+        paint_with(name, &TOOL_NAME, color),
+        call_id,
+        paint_with(status, &status_style, color),
+    );
+    let mut lines = vec![fit_line(&header, width)];
     let Some(result) = result else {
         return lines;
     };
 
     let result_lines = result.lines().collect::<Vec<_>>();
-    lines.extend(
-        result_lines
-            .iter()
-            .take(max_tool_result_lines)
-            .map(|line| fit_line(line, width)),
-    );
+    lines.extend(result_lines.iter().take(max_tool_result_lines).map(|line| {
+        if is_error {
+            fit_line(&paint_with(line, &TOOL_ERROR, color), width)
+        } else {
+            fit_line(line, width)
+        }
+    }));
     let omitted = result_lines.len().saturating_sub(max_tool_result_lines);
     if omitted > 0 {
-        lines.push(fit_line(&format!("... truncated {omitted} lines"), width));
+        lines.push(fit_line(
+            &paint_with(&format!("... truncated {omitted} lines"), &SYSTEM, color),
+            width,
+        ));
     }
     lines
 }
@@ -965,8 +1018,9 @@ fn render_transcript_viewport(
     width: usize,
     viewport_rows: usize,
     max_tool_result_lines: usize,
+    color: bool,
 ) -> Vec<String> {
-    let lines = render_transcript_lines(transcript, width, max_tool_result_lines);
+    let lines = render_transcript_lines(transcript, width, max_tool_result_lines, color);
     if lines.len() <= viewport_rows {
         let mut padded = lines;
         while padded.len() < viewport_rows {
@@ -984,7 +1038,7 @@ fn render_transcript_viewport(
         visible.insert(0, String::new());
     }
     if transcript.has_new_output_below() && !visible.is_empty() {
-        let indicator = fit_line("... new output below", width);
+        let indicator = fit_line(&paint_with("... new output below", &SYSTEM, color), width);
         let last = visible.len() - 1;
         visible[last] = indicator;
     }
@@ -1045,6 +1099,12 @@ mod tests {
 
     #[test]
     fn render_transcript_lines_compacts_tool_rows_and_truncates_noisy_output() {
+        use pi_tui::{STATUS_IDLE, STATUS_RUNNING, SYSTEM, TOOL_NAME, paint_with};
+        let yellow = |s: &str| paint_with(s, &TOOL_NAME, true);
+        let dim = |s: &str| paint_with(s, &SYSTEM, true);
+        let running = |s: &str| paint_with(s, &STATUS_RUNNING, true);
+        let idle = |s: &str| paint_with(s, &STATUS_IDLE, true);
+
         let mut transcript = Transcript::new();
         transcript.apply_event(UiEvent::ToolStarted {
             call_id: "tool_1".to_string(),
@@ -1053,7 +1113,16 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3),
+            render_transcript_lines(&transcript, 80, 3, true),
+            vec![format!(
+                "{} {} tool_1 {}",
+                yellow("tool"),
+                yellow("read"),
+                running("running")
+            )]
+        );
+        assert_eq!(
+            render_transcript_lines(&transcript, 80, 3, false),
             vec!["tool read tool_1 running"]
         );
 
@@ -1064,7 +1133,22 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3),
+            render_transcript_lines(&transcript, 80, 3, true),
+            vec![
+                format!(
+                    "{} {} tool_1 {}",
+                    yellow("tool"),
+                    yellow("read"),
+                    idle("done")
+                ),
+                "line 1".to_string(),
+                "line 2".to_string(),
+                "line 3".to_string(),
+                dim("... truncated 2 lines"),
+            ]
+        );
+        assert_eq!(
+            render_transcript_lines(&transcript, 80, 3, false),
             vec![
                 "tool read tool_1 done",
                 "line 1",
@@ -1075,15 +1159,38 @@ mod tests {
         );
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 20),
+            render_transcript_lines(&transcript, 80, 20, true),
             vec![
-                "tool read tool_1 done",
-                "line 1",
-                "line 2",
-                "line 3",
-                "line 4",
-                "line 5",
+                format!(
+                    "{} {} tool_1 {}",
+                    yellow("tool"),
+                    yellow("read"),
+                    idle("done")
+                ),
+                "line 1".to_string(),
+                "line 2".to_string(),
+                "line 3".to_string(),
+                "line 4".to_string(),
+                "line 5".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn render_transcript_lines_colors_error_item_red_bold() {
+        use pi_tui::{ERROR, paint_with};
+        let red_bold = |s: &str| paint_with(s, &ERROR, true);
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Error {
+            text: "boom".to_string(),
+        });
+        assert_eq!(
+            render_transcript_lines(&transcript, 80, 3, true),
+            vec![format!("{}: {}", red_bold("error"), red_bold("boom"))]
+        );
+        assert_eq!(
+            render_transcript_lines(&transcript, 80, 3, false),
+            vec!["error: boom"]
         );
     }
 

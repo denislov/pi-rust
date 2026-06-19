@@ -5,6 +5,7 @@ pub mod input;
 pub mod kill_ring;
 pub mod overlay;
 pub mod runtime;
+pub mod style;
 pub mod terminal;
 pub mod tui;
 pub mod undo_stack;
@@ -22,6 +23,10 @@ pub use input::{
 };
 pub use overlay::{OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, SizeValue};
 pub use runtime::RenderScheduler;
+pub use style::{
+    Color, ERROR, PATH, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, USER,
+    color_enabled, paint, paint_with,
+};
 pub use terminal::{ProcessTerminal, Terminal, TerminalSize};
 pub use tui::{RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError};
 pub use utils::{truncate_to_width, visible_width};
