@@ -17,7 +17,8 @@ pub mod word_navigation;
 pub use component::{Component, ComponentId, Container};
 pub use components::{
     BackgroundFn, Box, CancellableLoader, Editor, Input, Loader, LoaderIndicatorOptions, Markdown,
-    SelectItem, SelectList, Spacer, Text, TruncatedText,
+    SelectItem, SelectList, SettingItem, SettingsList, SettingsListOptions, Spacer, Text,
+    TruncatedText,
 };
 pub use cursor::{CURSOR_MARKER, CursorPosition, extract_cursor_marker};
 pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
