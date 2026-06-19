@@ -12,3 +12,4 @@ pub use types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Cost, Message, Model,
     ModelCost, ModelInput, StopReason, StreamOptions, ThinkingConfig, Tool, Usage,
 };
+pub use util::env_keys::env_api_key;
