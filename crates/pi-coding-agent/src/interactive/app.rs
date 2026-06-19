@@ -148,6 +148,26 @@ enum TranscriptScrollCommand {
     PageDown,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SlashCommand {
+    Quit,
+    Help,
+    Unknown(String),
+}
+
+fn parse_slash_command(text: &str) -> Option<SlashCommand> {
+    if !text.starts_with('/') {
+        return None;
+    }
+    let command = text[1..].to_lowercase();
+    let command_name = command.split_whitespace().next().unwrap_or("");
+    Some(match command_name {
+        "quit" | "exit" | "q" => SlashCommand::Quit,
+        "help" | "h" | "?" => SlashCommand::Help,
+        _ => SlashCommand::Unknown(text.to_string()),
+    })
+}
+
 struct InteractiveRoot {
     transcript: Transcript,
     editor: Editor,
@@ -286,6 +306,23 @@ impl InteractiveRoot {
         self.status = status;
     }
 
+    fn handle_slash_command(&mut self, command: SlashCommand) {
+        match command {
+            SlashCommand::Quit => match self.status {
+                InteractiveStatus::Idle => self.action = InteractiveAction::Exit,
+                InteractiveStatus::Running => self.action = InteractiveAction::AbortRunning,
+            },
+            SlashCommand::Help => {
+                self.transcript.push(TranscriptItem::system(help_text()));
+            }
+            SlashCommand::Unknown(cmd) => {
+                self.transcript.push(TranscriptItem::system(format!(
+                    "unknown command: {cmd} — type /help for available commands"
+                )));
+            }
+        }
+    }
+
     fn footer(&self) -> String {
         let color = color_enabled();
         let status_str = match self.status {
@@ -397,9 +434,13 @@ impl Component for InteractiveRoot {
                     }
                 }
             }
-            if let Some(prompt) = self.take_submitted() {
-                self.pending_submit = Some(prompt);
-                self.action = InteractiveAction::Submit;
+            if let Some(text) = self.take_submitted() {
+                if let Some(command) = parse_slash_command(&text) {
+                    self.handle_slash_command(command);
+                } else {
+                    self.pending_submit = Some(text);
+                    self.action = InteractiveAction::Submit;
+                }
             }
         }
     }
@@ -943,9 +984,10 @@ fn render_transcript_lines(
                     width,
                 )]
             }
-            TranscriptItem::System { text } => {
-                vec![fit_line(&paint_with(text, &SYSTEM, color), width)]
-            }
+            TranscriptItem::System { text } => text
+                .split('\n')
+                .map(|line| fit_line(&paint_with(line, &SYSTEM, color), width))
+                .collect(),
             TranscriptItem::Assistant { markdown, .. } => {
                 let mut markdown = Markdown::new(markdown);
                 markdown
@@ -1073,10 +1115,16 @@ fn fit_line(line: &str, width: usize) -> String {
     }
 }
 
+fn help_text() -> String {
+    "commands:\n  /help, /h, /?  — show this help\n  /quit, /q, /exit — exit interactive mode"
+        .to_string()
+}
+
 fn welcome_line(keybindings: &KeybindingsManager) -> String {
     let parts = [
         key_hint(keybindings, "tui.input.submit", "submit"),
         key_hint(keybindings, "tui.input.newLine", "newline"),
+        "/help commands".to_string(),
         app_key_hint(keybindings, "app.interrupt", "interrupt/exit"),
         app_key_hint(keybindings, "app.tools.expand", "expand tools"),
         key_hint(keybindings, "tui.editor.pageUp", "scroll up"),
@@ -1357,6 +1405,104 @@ mod tests {
             state_at_0, state_at_1,
             "render_state should differ when spinner_frame changes"
         );
+    }
+
+    #[test]
+    fn parse_slash_command_recognizes_quit_variants() {
+        assert_eq!(parse_slash_command("/quit"), Some(SlashCommand::Quit));
+        assert_eq!(parse_slash_command("/QUIT"), Some(SlashCommand::Quit));
+        assert_eq!(parse_slash_command("/Quit"), Some(SlashCommand::Quit));
+        assert_eq!(parse_slash_command("/q"), Some(SlashCommand::Quit));
+        assert_eq!(parse_slash_command("/exit"), Some(SlashCommand::Quit));
+    }
+
+    #[test]
+    fn parse_slash_command_recognizes_help_variants() {
+        assert_eq!(parse_slash_command("/help"), Some(SlashCommand::Help));
+        assert_eq!(parse_slash_command("/h"), Some(SlashCommand::Help));
+        assert_eq!(parse_slash_command("/?"), Some(SlashCommand::Help));
+        assert_eq!(parse_slash_command("/HELP"), Some(SlashCommand::Help));
+    }
+
+    #[test]
+    fn parse_slash_command_rejects_non_slash() {
+        assert_eq!(parse_slash_command("hello"), None);
+        assert_eq!(parse_slash_command("  /quit"), None);
+    }
+
+    #[test]
+    fn parse_slash_command_unknown_command() {
+        assert_eq!(
+            parse_slash_command("/foo"),
+            Some(SlashCommand::Unknown("/foo".to_string()))
+        );
+    }
+
+    #[test]
+    fn handle_slash_command_quit_sets_exit_when_idle() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.handle_slash_command(SlashCommand::Quit);
+        assert_eq!(root.action, InteractiveAction::Exit);
+    }
+
+    #[test]
+    fn handle_slash_command_quit_sets_abort_when_running() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Running);
+        root.handle_slash_command(SlashCommand::Quit);
+        assert_eq!(root.action, InteractiveAction::AbortRunning);
+    }
+
+    #[test]
+    fn handle_slash_command_help_pushs_system_item() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.handle_slash_command(SlashCommand::Help);
+        let items = root.transcript.items();
+        let last = items.last().expect("transcript should have an item");
+        match last {
+            TranscriptItem::System { text } => {
+                assert!(
+                    text.contains("/quit"),
+                    "help text should mention /quit: {text}"
+                );
+            }
+            _ => panic!("expected System item, got {last:?}"),
+        }
+        assert_ne!(root.action, InteractiveAction::Submit);
+        assert!(root.pending_submit.is_none());
+    }
+
+    #[test]
+    fn handle_slash_command_unknown_pushs_error() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.handle_slash_command(SlashCommand::Unknown("/foo".to_string()));
+        let items = root.transcript.items();
+        let last = items.last().expect("transcript should have an item");
+        match last {
+            TranscriptItem::System { text } => {
+                assert!(
+                    text.contains("unknown command"),
+                    "error should mention 'unknown command': {text}"
+                );
+            }
+            _ => panic!("expected System item, got {last:?}"),
+        }
     }
 }
 
