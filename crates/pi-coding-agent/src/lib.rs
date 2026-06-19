@@ -1,4 +1,5 @@
 pub mod args;
+pub mod config;
 pub mod error;
 pub mod interactive;
 pub mod print_mode;
