@@ -140,6 +140,52 @@ fn check_permissions(path: &Path, diags: &mut Vec<ConfigDiagnostic>) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeySource {
+    Cli,
+    AuthFile,
+    Env,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedKey {
+    pub value: String,
+    pub source: KeySource,
+}
+
+pub fn resolve_api_key(
+    provider: &str,
+    cli_key: Option<&str>,
+    store: &AuthStore,
+    diags: &mut Vec<ConfigDiagnostic>,
+) -> Option<ResolvedKey> {
+    if let Some(key) = cli_key {
+        if !key.is_empty() {
+            return Some(ResolvedKey {
+                value: key.to_string(),
+                source: KeySource::Cli,
+            });
+        }
+    }
+    if let Some(raw) = store.api_key_entry(provider) {
+        if let Some(value) = resolve_config_value(raw, diags) {
+            if !value.is_empty() {
+                return Some(ResolvedKey {
+                    value,
+                    source: KeySource::AuthFile,
+                });
+            }
+        }
+    }
+    if let Some(value) = pi_ai::env_api_key(provider) {
+        return Some(ResolvedKey {
+            value,
+            source: KeySource::Env,
+        });
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +256,46 @@ mod tests {
         let mut d = Vec::new();
         let _ = AuthStore::load(&path, &mut d);
         assert!(d.iter().any(|x| x.message.contains("permissions")));
+    }
+
+    fn store_with(provider: &str, key: &str) -> AuthStore {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.toml");
+        std::fs::write(&path, format!("[{provider}]\ntype = \"api_key\"\nkey = \"{key}\"\n")).unwrap();
+        let mut d = Vec::new();
+        AuthStore::load(&path, &mut d)
+    }
+
+    #[test]
+    fn cli_key_wins() {
+        let store = store_with("anthropic", "from-file");
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "from-env"); }
+        let mut d = Vec::new();
+        let r = resolve_api_key("anthropic", Some("from-cli"), &store, &mut d).unwrap();
+        assert_eq!(r.value, "from-cli");
+        assert_eq!(r.source, KeySource::Cli);
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY"); }
+    }
+
+    #[test]
+    fn auth_file_beats_env() {
+        let store = store_with("anthropic", "from-file");
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "from-env"); }
+        let mut d = Vec::new();
+        let r = resolve_api_key("anthropic", None, &store, &mut d).unwrap();
+        assert_eq!(r.value, "from-file");
+        assert_eq!(r.source, KeySource::AuthFile);
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY"); }
+    }
+
+    #[test]
+    fn falls_back_to_env_then_none() {
+        let store = AuthStore::default();
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "from-env"); }
+        let mut d = Vec::new();
+        let r = resolve_api_key("anthropic", None, &store, &mut d).unwrap();
+        assert_eq!(r.source, KeySource::Env);
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY"); }
+        assert!(resolve_api_key("anthropic", None, &store, &mut d).is_none());
     }
 }
