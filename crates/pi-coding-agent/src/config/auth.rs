@@ -1,4 +1,7 @@
 use crate::config::ConfigDiagnostic;
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Expand `$VAR` / `${VAR}` from the environment, with `$$` → `$` and `$!` → `!`.
 /// Returns `None` (plus a diagnostic) if a referenced variable is unset.
@@ -74,6 +77,69 @@ pub fn resolve_config_value(raw: &str, diags: &mut Vec<ConfigDiagnostic>) -> Opt
     Some(out)
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuthEntry {
+    ApiKey { key: String },
+    Oauth(toml::Value),
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AuthStore {
+    entries: BTreeMap<String, AuthEntry>,
+}
+
+impl AuthStore {
+    pub fn load(path: &Path, diags: &mut Vec<ConfigDiagnostic>) -> AuthStore {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return AuthStore::default(),
+            Err(err) => {
+                diags.push(ConfigDiagnostic::warn(
+                    format!("failed to read auth: {err}"),
+                    Some(path.to_path_buf()),
+                ));
+                return AuthStore::default();
+            }
+        };
+        #[cfg(unix)]
+        check_permissions(path, diags);
+        match toml::from_str::<BTreeMap<String, AuthEntry>>(&text) {
+            Ok(entries) => AuthStore { entries },
+            Err(err) => {
+                diags.push(ConfigDiagnostic::warn(
+                    format!("failed to parse auth: {err}"),
+                    Some(path.to_path_buf()),
+                ));
+                AuthStore::default()
+            }
+        }
+    }
+
+    /// Raw `api_key` value for a provider (before `$ENV` substitution). `oauth`
+    /// entries return `None` in M7.
+    pub fn api_key_entry(&self, provider: &str) -> Option<&str> {
+        match self.entries.get(provider) {
+            Some(AuthEntry::ApiKey { key }) => Some(key.as_str()),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn check_permissions(path: &Path, diags: &mut Vec<ConfigDiagnostic>) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            diags.push(ConfigDiagnostic::warn(
+                format!("auth.toml has loose permissions {:o}; expected 0600", mode & 0o777),
+                Some(path.to_path_buf()),
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +173,42 @@ mod tests {
         let mut d = Vec::new();
         assert_eq!(resolve_config_value("$PI_TEST_MISSING", &mut d), None);
         assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn loads_api_key_entries_and_skips_oauth() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.toml");
+        std::fs::write(
+            &path,
+            "[anthropic]\ntype = \"api_key\"\nkey = \"sk-x\"\n\n[openai]\ntype = \"oauth\"\naccess_token = \"t\"\n",
+        )
+        .unwrap();
+        let mut d = Vec::new();
+        let store = AuthStore::load(&path, &mut d);
+        assert_eq!(store.api_key_entry("anthropic"), Some("sk-x"));
+        assert_eq!(store.api_key_entry("openai"), None); // oauth skipped in M7
+        assert_eq!(store.api_key_entry("missing"), None);
+    }
+
+    #[test]
+    fn missing_auth_file_is_empty_no_diag() {
+        let mut d = Vec::new();
+        let store = AuthStore::load(std::path::Path::new("/no/such/auth.toml"), &mut d);
+        assert_eq!(store.api_key_entry("anthropic"), None);
+        assert!(d.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loose_permissions_warn() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.toml");
+        std::fs::write(&path, "[anthropic]\ntype = \"api_key\"\nkey = \"sk-x\"\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut d = Vec::new();
+        let _ = AuthStore::load(&path, &mut d);
+        assert!(d.iter().any(|x| x.message.contains("permissions")));
     }
 }
