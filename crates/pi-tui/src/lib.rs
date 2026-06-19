@@ -1,6 +1,7 @@
 pub mod component;
 pub mod components;
 pub mod cursor;
+pub mod fuzzy;
 pub mod input;
 pub mod kill_ring;
 pub mod overlay;
@@ -16,6 +17,7 @@ pub mod word_navigation;
 pub use component::{Component, ComponentId, Container};
 pub use components::{Editor, Input, Markdown, SelectItem, SelectList, Spacer, Text};
 pub use cursor::{CURSOR_MARKER, CursorPosition, extract_cursor_marker};
+pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
 pub use input::{
     InputEvent, Key, KeyEvent, KeyEventKind, KeyModifiers, KeybindingConflict,
     KeybindingDefinition, KeybindingsConfig, KeybindingsManager, StdinBuffer, TUI_KEYBINDINGS,

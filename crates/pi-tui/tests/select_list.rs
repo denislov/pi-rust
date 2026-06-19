@@ -41,3 +41,35 @@ fn select_list_renders_bounded_lines() {
         assert!(pi_tui::visible_width(&line) <= 12);
     }
 }
+
+#[test]
+fn select_list_uses_fuzzy_filtering_for_non_contiguous_input() {
+    let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
+    let mut list = SelectList::new(
+        vec![
+            SelectItem::new("model-selector", "Model Selector"),
+            SelectItem::new("session", "Session"),
+        ],
+        5,
+        keybindings,
+    );
+
+    list.set_filter("mdl");
+    assert_eq!(list.selected_item().unwrap().value, "model-selector");
+}
+
+#[test]
+fn select_list_orders_fuzzy_matches_by_score() {
+    let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
+    let mut list = SelectList::new(
+        vec![
+            SelectItem::new("my-model", "My Model"),
+            SelectItem::new("model", "Model"),
+        ],
+        5,
+        keybindings,
+    );
+
+    list.set_filter("model");
+    assert_eq!(list.selected_item().unwrap().value, "model");
+}

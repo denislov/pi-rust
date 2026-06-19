@@ -1,5 +1,6 @@
 use crate::{
-    Component, InputEvent, Key, KeyEventKind, KeybindingsManager, truncate_to_width, visible_width,
+    Component, InputEvent, Key, KeyEventKind, KeybindingsManager, fuzzy_filter_indices,
+    truncate_to_width, visible_width,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,19 +77,7 @@ impl SelectList {
     }
 
     fn rebuild_filter(&mut self) {
-        let needle = self.filter.to_ascii_lowercase();
-        self.filtered_indices = self
-            .items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                if needle.is_empty() || item_matches(item, &needle) {
-                    Some(index)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        self.filtered_indices = fuzzy_filter_indices(&self.items, &self.filter, searchable_text);
         if self.selected >= self.filtered_indices.len() {
             self.selected = self.filtered_indices.len().saturating_sub(1);
         }
@@ -204,15 +193,11 @@ impl Component for SelectList {
     }
 }
 
-fn item_matches(item: &SelectItem, needle: &str) -> bool {
-    item.value.to_ascii_lowercase().contains(needle)
-        || item.label.to_ascii_lowercase().contains(needle)
-        || item
-            .description
-            .as_deref()
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .contains(needle)
+fn searchable_text(item: &SelectItem) -> String {
+    match &item.description {
+        Some(description) => format!("{} {} {}", item.value, item.label, description),
+        None => format!("{} {}", item.value, item.label),
+    }
 }
 
 fn fit_line(line: &str, width: usize) -> String {
