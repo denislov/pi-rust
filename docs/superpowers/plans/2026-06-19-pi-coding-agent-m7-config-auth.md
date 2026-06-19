@@ -38,7 +38,7 @@ Spec: [docs/superpowers/specs/2026-06-19-pi-coding-agent-m7-config-auth-design.m
 In `crates/pi-coding-agent/Cargo.toml`, under `[dependencies]`, add:
 
 ```toml
-dirs = "5"
+dirs = "6"
 toml = "0.8"
 ```
 
