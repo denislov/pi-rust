@@ -38,6 +38,7 @@
 - 256 色 / RGB（当前仅 8 色 ANSI）。
 - dark / light / custom 主题；各组件接受 theme（MarkdownTheme/SelectListTheme/EditorTheme…）。
 - 能力探测（`COLORTERM=truecolor/24bit`、`TERM`）。TS：`tui/src/terminal-image.ts` 的 `detectCapabilities`。
+> 进度：`pi-tui` style 已支持 ANSI 256/RGB SGR 输出与可注入的颜色能力探测（NO_COLOR、dumb、truecolor/24bit、*-256color）；dark/light/custom theme 对象和组件 theme 参数仍待接入。
 
 ### 6. 高级文本处理
 - `wrapTextWithAnsi`（ANSI 保留的换行 + grapheme 分割 + 省略号/padding）。

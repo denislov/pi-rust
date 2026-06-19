@@ -11,10 +11,12 @@ pub enum Color {
     Cyan,
     Magenta,
     White,
+    Ansi256(u8),
+    Rgb(u8, u8, u8),
 }
 
 impl Color {
-    fn fg_code(self) -> Option<u8> {
+    fn ansi16_code(self) -> Option<u8> {
         match self {
             Color::Default => None,
             Color::Red => Some(1),
@@ -24,12 +26,44 @@ impl Color {
             Color::Magenta => Some(5),
             Color::Cyan => Some(6),
             Color::White => Some(7),
+            Color::Ansi256(_) | Color::Rgb(_, _, _) => None,
         }
     }
 
-    fn bg_code(self) -> Option<u8> {
-        self.fg_code()
+    fn sgr_params(self, foreground: bool) -> Vec<String> {
+        match self {
+            Color::Default => Vec::new(),
+            Color::Ansi256(index) => {
+                vec![
+                    if foreground { "38" } else { "48" }.to_string(),
+                    "5".to_string(),
+                    index.to_string(),
+                ]
+            }
+            Color::Rgb(red, green, blue) => {
+                vec![
+                    if foreground { "38" } else { "48" }.to_string(),
+                    "2".to_string(),
+                    red.to_string(),
+                    green.to_string(),
+                    blue.to_string(),
+                ]
+            }
+            color => color
+                .ansi16_code()
+                .map(|code| vec![format!("{}{code}", if foreground { "3" } else { "4" })])
+                .unwrap_or_default(),
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum ColorLevel {
+    #[default]
+    None,
+    Ansi16,
+    Ansi256,
+    TrueColor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,7 +115,19 @@ pub fn paint(text: &str, style: &Style) -> String {
 }
 
 pub fn paint_with(text: &str, style: &Style, enabled: bool) -> String {
-    if !enabled || !style.has_any() {
+    paint_with_level(
+        text,
+        style,
+        if enabled {
+            ColorLevel::TrueColor
+        } else {
+            ColorLevel::None
+        },
+    )
+}
+
+pub fn paint_with_level(text: &str, style: &Style, level: ColorLevel) -> String {
+    if level == ColorLevel::None || !style.has_any() {
         return text.to_string();
     }
 
@@ -95,23 +141,86 @@ pub fn paint_with(text: &str, style: &Style, enabled: bool) -> String {
     if style.reverse {
         params.push("7".to_string());
     }
-    if let Some(code) = style.fg.fg_code() {
-        params.push(format!("3{code}"));
-    }
-    if let Some(code) = style.bg.bg_code() {
-        params.push(format!("4{code}"));
-    }
+    params.extend(style.fg.sgr_params(true));
+    params.extend(style.bg.sgr_params(false));
 
     format!("\x1b[{}m{}\x1b[0m", params.join(";"), text)
 }
 
-static CACHED: OnceLock<bool> = OnceLock::new();
+static CACHED_COLOR_LEVEL: OnceLock<ColorLevel> = OnceLock::new();
 
 pub fn color_enabled() -> bool {
-    *CACHED.get_or_init(|| {
-        !(std::env::var_os("NO_COLOR").is_some()
-            || std::env::var("TERM").ok().as_deref() == Some("dumb"))
-    })
+    color_level() != ColorLevel::None
+}
+
+pub fn color_level() -> ColorLevel {
+    *CACHED_COLOR_LEVEL.get_or_init(|| detect_color_level_from_env(std::env::vars()))
+}
+
+pub fn detect_color_level_from_env<I, K, V>(env: I) -> ColorLevel
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    let mut no_color = false;
+    let mut term = String::new();
+    let mut color_term = String::new();
+    let mut term_program = String::new();
+    let mut terminal_emulator = String::new();
+    let mut kitty = false;
+    let mut ghostty = false;
+    let mut wezterm = false;
+    let mut iterm = false;
+    let mut windows_terminal = false;
+
+    for (key, value) in env {
+        let key = key.as_ref();
+        let value = value.as_ref();
+        match key {
+            "NO_COLOR" => no_color = true,
+            "TERM" => term = value.to_lowercase(),
+            "COLORTERM" => color_term = value.to_lowercase(),
+            "TERM_PROGRAM" => term_program = value.to_lowercase(),
+            "TERMINAL_EMULATOR" => terminal_emulator = value.to_lowercase(),
+            "KITTY_WINDOW_ID" => kitty = true,
+            "GHOSTTY_RESOURCES_DIR" => ghostty = true,
+            "WEZTERM_PANE" => wezterm = true,
+            "ITERM_SESSION_ID" => iterm = true,
+            "WT_SESSION" => windows_terminal = true,
+            _ => {}
+        }
+    }
+
+    if no_color || term == "dumb" {
+        return ColorLevel::None;
+    }
+
+    if matches!(color_term.as_str(), "truecolor" | "24bit")
+        || kitty
+        || ghostty
+        || wezterm
+        || iterm
+        || windows_terminal
+        || matches!(
+            term_program.as_str(),
+            "kitty" | "ghostty" | "wezterm" | "iterm.app" | "vscode" | "alacritty"
+        )
+        || terminal_emulator == "jetbrains-jediterm"
+        || term.contains("ghostty")
+    {
+        return ColorLevel::TrueColor;
+    }
+
+    if term.contains("256color") {
+        return ColorLevel::Ansi256;
+    }
+
+    if term.is_empty() {
+        ColorLevel::None
+    } else {
+        ColorLevel::Ansi16
+    }
 }
 
 pub const USER: Style = Style::fg(Color::Cyan);

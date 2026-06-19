@@ -1,4 +1,6 @@
-use pi_tui::{Color, Style, paint, paint_with};
+use pi_tui::{
+    Color, ColorLevel, Style, detect_color_level_from_env, paint, paint_with, paint_with_level,
+};
 
 #[test]
 fn paint_with_disabled_returns_plain_text() {
@@ -58,5 +60,59 @@ fn paint_delegates_to_color_enabled() {
     assert!(
         out == "hi" || out == "\x1b[31mhi\x1b[0m",
         "unexpected paint output: {out:?}"
+    );
+}
+
+#[test]
+fn paint_with_enabled_ansi256_fg_and_bg() {
+    let mut style = Style::fg(Color::Ansi256(202));
+    style.bg = Color::Ansi256(17);
+    assert_eq!(
+        paint_with("hi", &style, true),
+        "\x1b[38;5;202;48;5;17mhi\x1b[0m"
+    );
+}
+
+#[test]
+fn paint_with_enabled_rgb_fg_and_bg() {
+    let mut style = Style::fg(Color::Rgb(1, 2, 3));
+    style.bg = Color::Rgb(4, 5, 6);
+    assert_eq!(
+        paint_with("hi", &style, true),
+        "\x1b[38;2;1;2;3;48;2;4;5;6mhi\x1b[0m"
+    );
+}
+
+#[test]
+fn paint_with_level_downgrades_when_color_disabled() {
+    let style = Style::fg(Color::Rgb(1, 2, 3)).bold();
+    assert_eq!(paint_with_level("hi", &style, ColorLevel::None), "hi");
+}
+
+#[test]
+fn detect_color_level_honors_no_color_and_dumb() {
+    assert_eq!(
+        detect_color_level_from_env([("NO_COLOR", "1"), ("TERM", "xterm-256color")]),
+        ColorLevel::None
+    );
+    assert_eq!(
+        detect_color_level_from_env([("TERM", "dumb")]),
+        ColorLevel::None
+    );
+}
+
+#[test]
+fn detect_color_level_detects_truecolor_and_ansi256() {
+    assert_eq!(
+        detect_color_level_from_env([("COLORTERM", "truecolor"), ("TERM", "xterm-256color")]),
+        ColorLevel::TrueColor
+    );
+    assert_eq!(
+        detect_color_level_from_env([("TERM", "screen-256color")]),
+        ColorLevel::Ansi256
+    );
+    assert_eq!(
+        detect_color_level_from_env([("TERM", "xterm")]),
+        ColorLevel::Ansi16
     );
 }

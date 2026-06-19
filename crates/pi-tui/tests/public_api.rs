@@ -2,7 +2,7 @@ use pi_tui::{
     AutocompleteItem, AutocompleteOptions, Box as TuiBox, CancellableLoader, Component, Container,
     KeybindingsManager, Loader, ProcessTerminal, SettingItem, SettingsList, SettingsListOptions,
     SlashCommand, Spacer, TUI_KEYBINDINGS, Terminal, TerminalSize, Text, TruncatedText, Tui,
-    VirtualTerminal, visible_width,
+    VirtualTerminal, color_level, detect_color_level_from_env, paint_with_level, visible_width,
 };
 
 #[test]
@@ -49,6 +49,14 @@ fn public_api_symbols_are_importable() {
     );
     let _ = provider.get_suggestions(&["/m".to_string()], 0, 2, AutocompleteOptions::default());
     let _ = AutocompleteItem::new("model", "model");
+
+    let _ = paint_with_level(
+        "x",
+        &pi_tui::Style::fg(pi_tui::Color::Ansi256(1)),
+        pi_tui::ColorLevel::Ansi256,
+    );
+    let _ = detect_color_level_from_env([("TERM", "xterm-256color")]);
+    let _ = color_level();
 
     let _ = std::mem::size_of::<ProcessTerminal>();
 }

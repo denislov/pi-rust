@@ -35,8 +35,9 @@ pub use input::{
 pub use overlay::{OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, SizeValue};
 pub use runtime::RenderScheduler;
 pub use style::{
-    Color, ERROR, PATH, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, USER,
-    color_enabled, paint, paint_with,
+    Color, ColorLevel, ERROR, PATH, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR,
+    TOOL_NAME, USER, color_enabled, color_level, detect_color_level_from_env, paint, paint_with,
+    paint_with_level,
 };
 pub use terminal::{ProcessTerminal, Terminal, TerminalSize};
 pub use tui::{RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError};
