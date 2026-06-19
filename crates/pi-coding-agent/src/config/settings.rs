@@ -1,4 +1,6 @@
+use crate::config::{ConfigDiagnostic, ConfigPaths};
 use serde::Deserialize;
+use std::path::Path;
 
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -122,6 +124,36 @@ impl PartialSettings {
     }
 }
 
+pub fn load_partial(path: &Path, diags: &mut Vec<ConfigDiagnostic>) -> PartialSettings {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return PartialSettings::default(),
+        Err(err) => {
+            diags.push(ConfigDiagnostic::warn(
+                format!("failed to read settings: {err}"),
+                Some(path.to_path_buf()),
+            ));
+            return PartialSettings::default();
+        }
+    };
+    match toml::from_str::<PartialSettings>(&text) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            diags.push(ConfigDiagnostic::warn(
+                format!("failed to parse settings: {err}"),
+                Some(path.to_path_buf()),
+            ));
+            PartialSettings::default()
+        }
+    }
+}
+
+pub fn load_settings(paths: &ConfigPaths, diags: &mut Vec<ConfigDiagnostic>) -> Settings {
+    let global = load_partial(&paths.global_settings(), diags);
+    let project = load_partial(&paths.project_settings(), diags);
+    global.merge(project).resolve()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +208,51 @@ mod tests {
         assert_eq!(s.compaction.reserve_tokens, 999); // project overrides
         assert_eq!(s.compaction.keep_recent_tokens, 200); // global field survives
         assert!(s.compaction.enabled); // default fills the gap
+    }
+
+    #[test]
+    fn missing_file_yields_default_no_diags() {
+        let mut diags = Vec::new();
+        let p = std::path::Path::new("/nonexistent/dir/settings.toml");
+        let parsed = load_partial(p, &mut diags);
+        assert_eq!(parsed, PartialSettings::default());
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn parses_toml_and_unknown_field_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "default_model = \"x\"\nbogus_field = 1\n").unwrap();
+        let mut diags = Vec::new();
+        let parsed = load_partial(&path, &mut diags);
+        // deny_unknown_fields makes the whole parse fail -> default + warn diagnostic
+        assert_eq!(parsed, PartialSettings::default());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].severity,
+            crate::config::DiagnosticSeverity::Warn
+        );
+    }
+
+    #[test]
+    fn load_settings_project_overrides_global() {
+        let global = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            global.path().join("settings.toml"),
+            "default_model = \"g\"\ntransport = \"sse\"\n",
+        )
+        .unwrap();
+        std::fs::write(project.path().join("settings.toml"), "default_model = \"p\"\n").unwrap();
+        let paths = crate::config::ConfigPaths {
+            global_dir: global.path().to_path_buf(),
+            project_dir: project.path().to_path_buf(),
+        };
+        let mut diags = Vec::new();
+        let s = load_settings(&paths, &mut diags);
+        assert_eq!(s.default_model.as_deref(), Some("p"));
+        assert_eq!(s.transport, "sse");
+        assert!(diags.is_empty());
     }
 }
