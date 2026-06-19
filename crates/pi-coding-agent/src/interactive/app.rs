@@ -579,6 +579,14 @@ async fn run_started_interactive_loop<T: Terminal>(
                     }
                     running = Some(task);
                 }
+                _ = tokio::time::sleep(SPINNER_INTERVAL) => {
+                    if let Some(root) = tui.component_as_mut::<InteractiveRoot>(root_id) {
+                        root.spinner_frame =
+                            (root.spinner_frame + 1) % SPINNER_FRAMES.len();
+                    }
+                    render_scheduler.request(true);
+                    running = Some(task);
+                }
                 done = &mut task.done => {
                     let result = done.unwrap_or_else(|_| {
                         Err(CliError::AgentFailure(
