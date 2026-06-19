@@ -29,7 +29,7 @@ Done when:
 4. An `AuthStore` loads `~/.pi-rust/auth.toml` (per-provider `{ type = "api_key", key = "..." }` entries); `oauth`-typed entries are parsed and skipped (reserved for M8) without error.
 5. API-key resolution follows the chain **`--api-key` (CLI) > `auth.toml` (api_key) > environment variable > none**, and `runtime.rs` uses it instead of reading `--api-key` directly.
 6. Auth `key` values support `$VAR` / `${VAR}` substitution and `$$` → literal `$`; an unset `$VAR` resolves to "no key from this source" with a diagnostic (not a hard error). `!command` execution is **not** implemented.
-7. When `--model`/`--provider` are absent, `select_model()` falls back to `default_provider`/`default_model` from settings.
+7. When `--model` is absent, `select_model()` falls back to `settings.default_model` (then the existing hardcoded default). `default_provider` is parsed and stored for provider-scoped selection in M8 — it is **not** wired into selection in M7.
 8. `pi-ai` `env_keys.rs` covers the additional providers `minimax`, `minimax-cn`, `xiaomi*`, `github-copilot`; `amazon-bedrock` and `google-vertex` detection return a `<authenticated>` sentinel only (no real auth in M7).
 9. Config/auth load failures are **non-fatal**: collected as `Vec<ConfigDiagnostic>` and drained to stderr at startup. `auth.toml` with permissions looser than `0600` produces a warning diagnostic (Unix).
 10. The whole suite is offline and deterministic — no network, no real credentials; env-dependent tests inject their own env and temp dirs.
@@ -42,6 +42,7 @@ Done when:
 - Writing settings back / persisting modified fields (lands with the command that needs it, e.g. `/model` in M11).
 - Settings fields for not-yet-built features: theme/markdown, terminal/images, editor/UI, keybindings, packages/extensions/skills/prompts/themes lists, scoped models, warnings, changelog.
 - Interactive settings/auth UI (M11), `/login` `/logout` commands (M8/M11).
+- `--provider` flag and provider-scoped model selection (deferred to M8/M10). M7 resolves the key from the **selected model's `provider`** field, not from a CLI provider flag.
 - Migration from pi's config (config is independent; nothing to migrate).
 
 ## 4. Design
@@ -153,9 +154,9 @@ Extend `crates/pi-ai/src/util/env_keys.rs`:
 
 ### 4.6 CLI / runtime integration
 
-- `runtime.rs`: replace direct `--api-key` read with `auth::resolve_api_key(provider, cli_key, &config.auth, std::env::vars)`. The resolved value flows into `StreamOptions.api_key` as today. A sentinel value is passed through unchanged (provider-side handling is M8).
-- `select_model()`: when `--model` absent, use `settings.default_model`; when `--provider` absent, use `settings.default_provider`; final fallback stays the existing hardcoded default.
-- `args.rs`: add `--provider <id>` (minimal: feeds provider into key/model resolution). Other M10 flags (`--no-context-files`, etc.) are out of scope here.
+- `runtime.rs`: the key-resolution provider is the **selected model's `provider`** field (`Model.provider: String`). Replace the direct `--api-key` read with `auth::resolve_api_key(&model.provider, cli_key, &config.auth)`; the resolved value flows into `StreamOptions.api_key` as today. A sentinel value passes through unchanged (provider-side handling is M8).
+- `select_model()`: chain becomes `--model` → `settings.default_model` → `model_override` → hardcoded default (all via `lookup_model`). `default_provider` is not consumed in M7 (provider-scoped lookup arrives in M8).
+- **Settings consumed in M7**: `default_model` (via `select_model`) and the API key (via `resolve_api_key`) — the two paths that prove the settings+auth base end-to-end. All other resolved fields (`default_provider`, `default_thinking_level`, `transport`, `steering_mode`, `follow_up_mode`, `compaction`, `retry`, `session_dir`) are parsed/merged/resolved so the file format is stable, but their consumption is wired by the milestone/flag that introduces each feature.
 - `load_config` is called once at startup; diagnostics drain to stderr. A `quiet_startup` gate is deferred along with the startup-settings group (its field does not exist in M7).
 
 ### 4.7 Error handling
@@ -195,8 +196,8 @@ Env-mutating tests serialize via a shared guard (env is process-global) or set v
 | `pi-coding-agent/src/config/settings.rs` | new: `Settings`/`PartialSettings`, merge, resolve, tests |
 | `pi-coding-agent/src/config/auth.rs` | new: `AuthStore`/`AuthEntry`, resolution chain, `$ENV` substitution, tests |
 | `pi-coding-agent/src/lib.rs` | edit: `mod config;` + re-exports |
-| `pi-coding-agent/src/runtime.rs` | edit: use `auth::resolve_api_key`; settings fallback in `select_model` |
-| `pi-coding-agent/src/args.rs` | edit: add `--provider` |
+| `pi-coding-agent/src/runtime.rs` | edit: use `auth::resolve_api_key`; `default_model` fallback in `select_model` |
+| `pi-coding-agent/src/args.rs` | unchanged in M7 (`--provider` deferred to M10) |
 | `pi-coding-agent/Cargo.toml` | edit: add `toml`, `dirs` deps |
 | `pi-ai/src/util/env_keys.rs` | edit: add providers + bedrock/vertex sentinels + tests |
 | `pi-coding-agent/tests/` | new/edit: runtime key-resolution integration test |
