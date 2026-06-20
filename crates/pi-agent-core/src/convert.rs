@@ -2,13 +2,15 @@ use crate::resources::system_prompt::format_skills_for_system_prompt;
 use crate::types::{AgentMessage, AgentResources, AgentTool};
 use pi_ai::types::{ContentBlock, Context, Message, Tool};
 
-pub fn convert_to_context(
-    system_prompt: &Option<String>,
+/// Convert `AgentMessage`s into the LLM-facing `Message` list. Mirrors TS
+/// `convertToLlm` (`pi/packages/agent/src/harness/messages.ts`). The harness
+/// can replace this step via the `convert_to_llm` hook; see
+/// [`crate::hooks::ConvertToLlmHook`].
+pub fn default_convert_to_llm(
     messages: &[AgentMessage],
-    tools: &[AgentTool],
-    resources: &AgentResources,
-) -> Context {
-    let llm_messages: Vec<Message> = messages
+    _resources: &AgentResources,
+) -> Vec<Message> {
+    messages
         .iter()
         .filter_map(|msg| match msg {
             AgentMessage::UserText { text, .. } => Some(Message::User {
@@ -83,17 +85,28 @@ pub fn convert_to_context(
                 }],
             }),
         })
-        .collect();
+        .collect()
+}
 
+/// Build the final `Context` from already-converted LLM `messages`. Handles the
+/// system prompt resolution and tool list construction. Use together with
+/// `default_convert_to_llm` (or a custom hook output) to produce the LLM
+/// request payload.
+pub fn assemble_context(
+    system_prompt: &Option<String>,
+    agent_messages: &[AgentMessage],
+    llm_messages: Vec<Message>,
+    tools: &[AgentTool],
+    resources: &AgentResources,
+) -> Context {
     let system = {
         let configured = system_prompt.clone();
-        let from_messages = messages.iter().find_map(|m| match m {
+        let from_messages = agent_messages.iter().find_map(|m| match m {
             AgentMessage::SystemPrompt { text, .. } => Some(text.clone()),
             _ => None,
         });
         let base = configured.or(from_messages);
 
-        // Append skills to system prompt
         if !resources.skills.is_empty() {
             let skills_block = format_skills_for_system_prompt(&resources.skills);
             if !skills_block.is_empty() {
@@ -129,6 +142,16 @@ pub fn convert_to_context(
         messages: llm_messages,
         tools: llm_tools,
     }
+}
+
+pub fn convert_to_context(
+    system_prompt: &Option<String>,
+    messages: &[AgentMessage],
+    tools: &[AgentTool],
+    resources: &AgentResources,
+) -> Context {
+    let llm_messages = default_convert_to_llm(messages, resources);
+    assemble_context(system_prompt, messages, llm_messages, tools, resources)
 }
 
 pub fn bash_execution_to_text(

@@ -7,7 +7,7 @@ use crate::agent::AgentState;
 use crate::compaction::estimate::estimate_tokens;
 use crate::compaction::prepare::prepare_compaction;
 use crate::compaction::summarize::summarize;
-use crate::convert::convert_to_context;
+use crate::convert::{assemble_context, convert_to_context, default_convert_to_llm};
 use crate::hooks::{
     AfterToolCallContext, BeforeProviderRequestContext, BeforeToolCallContext,
     PrepareNextTurnContext, ShouldStopAfterTurnContext,
@@ -204,14 +204,78 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 }
             }
 
+            let transform_hook = {
+                let s = state.read().unwrap();
+                s.config.hooks.transform_context.clone()
+            };
+            let transformed_messages = if let Some(hook) = transform_hook {
+                let original = {
+                    let s = state.read().unwrap();
+                    s.messages.clone()
+                };
+                match hook(original).await {
+                    Ok(messages) => Some(messages),
+                    Err(error) => {
+                        yield AgentEvent::AgentError { error };
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+
+            let convert_hook = {
+                let s = state.read().unwrap();
+                s.config.hooks.convert_to_llm.clone()
+            };
+            let llm_messages_override = if let Some(hook) = convert_hook {
+                let (msgs, resources) = {
+                    let s = state.read().unwrap();
+                    let msgs = transformed_messages
+                        .clone()
+                        .unwrap_or_else(|| s.messages.clone());
+                    (msgs, s.config.resources.clone())
+                };
+                match hook(msgs, resources).await {
+                    Ok(llm_messages) => Some(llm_messages),
+                    Err(error) => {
+                        yield AgentEvent::AgentError { error };
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+
             let (mut ctx, model, mut opts, provider_request_override) = {
                 let mut s = state.write().unwrap();
-                let ctx = convert_to_context(
-                    &s.config.system_prompt,
-                    &s.messages,
-                    &s.tools,
-                    &s.config.resources,
-                );
+                let messages_for_ctx = transformed_messages.as_ref().unwrap_or(&s.messages);
+                let ctx = if let Some(llm_messages) = llm_messages_override {
+                    assemble_context(
+                        &s.config.system_prompt,
+                        messages_for_ctx,
+                        llm_messages,
+                        &s.tools,
+                        &s.config.resources,
+                    )
+                } else if transformed_messages.is_some() {
+                    let llm_messages =
+                        default_convert_to_llm(messages_for_ctx, &s.config.resources);
+                    assemble_context(
+                        &s.config.system_prompt,
+                        messages_for_ctx,
+                        llm_messages,
+                        &s.tools,
+                        &s.config.resources,
+                    )
+                } else {
+                    convert_to_context(
+                        &s.config.system_prompt,
+                        &s.messages,
+                        &s.tools,
+                        &s.config.resources,
+                    )
+                };
                 let mut opts = s.config.stream_options.clone().unwrap_or_default();
                 opts.cancel = Some(cancel.clone());
                 // Apply thinking level

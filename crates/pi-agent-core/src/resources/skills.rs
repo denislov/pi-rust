@@ -1,5 +1,8 @@
 use crate::resources::frontmatter::parse_frontmatter;
-use crate::types::{DiagnosticSeverity, ResourceDiagnostic, Skill};
+use crate::types::{
+    DiagnosticSeverity, ResourceDiagnostic, Skill, SourceTag, SourcedResourceDiagnostic,
+    SourcedSkill,
+};
 use ignore::WalkBuilder;
 use std::path::PathBuf;
 
@@ -27,6 +30,33 @@ pub fn load_skills(paths: &[PathBuf]) -> (Vec<Skill>, Vec<ResourceDiagnostic>) {
     }
 
     (skills, diagnostics)
+}
+
+/// Load skills from sourced inputs. Each entry's input path is loaded with
+/// [`load_skills`]; every resulting skill and diagnostic is tagged with the
+/// associated [`SourceTag`]. Mirrors TS `loadSourcedSkills`
+/// (`pi/packages/agent/src/harness/skills.ts:83`).
+pub fn load_sourced_skills(
+    inputs: &[(PathBuf, SourceTag)],
+) -> (Vec<SourcedSkill>, Vec<SourcedResourceDiagnostic>) {
+    let mut sourced_skills = Vec::new();
+    let mut sourced_diagnostics = Vec::new();
+    for (path, source) in inputs {
+        let (skills, diagnostics) = load_skills(std::slice::from_ref(path));
+        for skill in skills {
+            sourced_skills.push(SourcedSkill {
+                skill,
+                source: source.clone(),
+            });
+        }
+        for diagnostic in diagnostics {
+            sourced_diagnostics.push(SourcedResourceDiagnostic {
+                diagnostic,
+                source: source.clone(),
+            });
+        }
+    }
+    (sourced_skills, sourced_diagnostics)
 }
 
 fn load_skills_from_dir(

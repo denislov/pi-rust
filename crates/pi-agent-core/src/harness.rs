@@ -10,7 +10,7 @@ use pi_ai::types::{Context, Model, ProviderResponseInfo, ProviderStreamHooks, St
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub type AgentHarnessStream = Pin<Box<dyn Stream<Item = AgentHarnessEvent> + Send>>;
 pub type HarnessHookFuture<T> =
@@ -187,11 +187,231 @@ pub enum AgentHarnessEvent {
     },
 }
 
+/// Lifecycle state of an [`AgentHarness`]. Mirrors the TS
+/// `AgentHarnessPhase` enum (`pi/packages/agent/src/harness/types.ts`).
+/// Only `Idle` and `Turn` are reachable in the current Rust port; the
+/// `Compaction` and `BranchSummary` variants are reserved for the
+/// to-be-ported `compact()` / `navigateTree()` flows so callers can match
+/// the full TS state space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentHarnessPhase {
+    Idle,
+    Turn,
+    Compaction,
+    BranchSummary,
+}
+
+struct PhaseResetOnDrop {
+    phase: Arc<Mutex<AgentHarnessPhase>>,
+}
+
+impl Drop for PhaseResetOnDrop {
+    fn drop(&mut self) {
+        *self.phase.lock().unwrap() = AgentHarnessPhase::Idle;
+    }
+}
+
+/// Result of [`AgentHarness::abort`]. Mirrors the TS `AbortResult`
+/// (`pi/packages/agent/src/harness/types.ts`): contains the steer and
+/// follow-up messages that were cleared from their queues. The TS variant
+/// also exposes session-level pending writes; pi-agent-core does not yet
+/// own session storage, so that field is omitted intentionally.
+#[derive(Debug, Default, Clone)]
+pub struct AbortResult {
+    pub cleared_steer: Vec<AgentMessage>,
+    pub cleared_follow_up: Vec<AgentMessage>,
+}
+
 #[derive(Clone)]
 pub struct AgentHarness {
     agent: Agent,
     hooks: AgentHarnessHooks,
     base_before_provider_request_hook: Option<LoopBeforeProviderRequestHook>,
+    observers: Arc<Mutex<Vec<Arc<ObserverEntry>>>>,
+    on_handlers: Arc<Mutex<OnHandlerRegistry>>,
+    phase: Arc<Mutex<AgentHarnessPhase>>,
+}
+
+pub type Observer = Arc<dyn Fn(&AgentHarnessEvent) + Send + Sync>;
+
+struct ObserverEntry {
+    func: Observer,
+    id: u64,
+}
+
+#[derive(Default, Clone)]
+pub struct OnHandlerRegistry {
+    next_id: u64,
+    context: Vec<OnHandlerEntry<HarnessContext, HarnessContext>>,
+    before_agent_start: Vec<OnHandlerEntry<HarnessContext, HarnessContext>>,
+    before_provider_request: Vec<OnHandlerEntry<BeforeProviderRequest, BeforeProviderRequestPatch>>,
+    before_provider_payload: Vec<OnHandlerEntry<BeforeProviderPayload, BeforeProviderPayloadPatch>>,
+    after_provider_response: Vec<OnHandlerEntry<ProviderResponse, ()>>,
+    get_api_key_and_headers: Vec<OnHandlerEntry<Model, ProviderAuth>>,
+}
+
+impl OnHandlerRegistry {
+    fn clone_for_dispatch(&self) -> OnHandlerRegistry {
+        self.clone()
+    }
+}
+
+pub struct OnHandlerEntry<I, O> {
+    id: u64,
+    func: Arc<dyn Fn(I) -> HarnessHookFuture<O> + Send + Sync>,
+}
+
+impl<I, O> Clone for OnHandlerEntry<I, O> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            func: Arc::clone(&self.func),
+        }
+    }
+}
+
+/// Type-level marker selecting which `on(...)` channel a handler registers on.
+pub trait HarnessHookKind: Sized + 'static {
+    type Input: Send + 'static;
+    type Output: Send + 'static;
+    fn register(
+        registry: &mut OnHandlerRegistry,
+        id: u64,
+        handler: Arc<dyn Fn(Self::Input) -> HarnessHookFuture<Self::Output> + Send + Sync>,
+    );
+    fn unregister(registry: &mut OnHandlerRegistry, id: u64);
+}
+
+pub mod on_kind {
+    //! Marker types for [`AgentHarness::on`].
+    pub struct ContextKind;
+    pub struct BeforeAgentStartKind;
+    pub struct BeforeProviderRequestKind;
+    pub struct BeforeProviderPayloadKind;
+    pub struct AfterProviderResponseKind;
+    pub struct GetApiKeyAndHeadersKind;
+}
+
+impl HarnessHookKind for on_kind::ContextKind {
+    type Input = HarnessContext;
+    type Output = HarnessContext;
+    fn register(
+        registry: &mut OnHandlerRegistry,
+        id: u64,
+        handler: Arc<dyn Fn(Self::Input) -> HarnessHookFuture<Self::Output> + Send + Sync>,
+    ) {
+        registry.context.push(OnHandlerEntry { id, func: handler });
+    }
+    fn unregister(registry: &mut OnHandlerRegistry, id: u64) {
+        registry.context.retain(|e| e.id != id);
+    }
+}
+
+impl HarnessHookKind for on_kind::BeforeAgentStartKind {
+    type Input = HarnessContext;
+    type Output = HarnessContext;
+    fn register(
+        registry: &mut OnHandlerRegistry,
+        id: u64,
+        handler: Arc<dyn Fn(Self::Input) -> HarnessHookFuture<Self::Output> + Send + Sync>,
+    ) {
+        registry
+            .before_agent_start
+            .push(OnHandlerEntry { id, func: handler });
+    }
+    fn unregister(registry: &mut OnHandlerRegistry, id: u64) {
+        registry.before_agent_start.retain(|e| e.id != id);
+    }
+}
+
+impl HarnessHookKind for on_kind::BeforeProviderRequestKind {
+    type Input = BeforeProviderRequest;
+    type Output = BeforeProviderRequestPatch;
+    fn register(
+        registry: &mut OnHandlerRegistry,
+        id: u64,
+        handler: Arc<dyn Fn(Self::Input) -> HarnessHookFuture<Self::Output> + Send + Sync>,
+    ) {
+        registry
+            .before_provider_request
+            .push(OnHandlerEntry { id, func: handler });
+    }
+    fn unregister(registry: &mut OnHandlerRegistry, id: u64) {
+        registry.before_provider_request.retain(|e| e.id != id);
+    }
+}
+
+impl HarnessHookKind for on_kind::BeforeProviderPayloadKind {
+    type Input = BeforeProviderPayload;
+    type Output = BeforeProviderPayloadPatch;
+    fn register(
+        registry: &mut OnHandlerRegistry,
+        id: u64,
+        handler: Arc<dyn Fn(Self::Input) -> HarnessHookFuture<Self::Output> + Send + Sync>,
+    ) {
+        registry
+            .before_provider_payload
+            .push(OnHandlerEntry { id, func: handler });
+    }
+    fn unregister(registry: &mut OnHandlerRegistry, id: u64) {
+        registry.before_provider_payload.retain(|e| e.id != id);
+    }
+}
+
+impl HarnessHookKind for on_kind::AfterProviderResponseKind {
+    type Input = ProviderResponse;
+    type Output = ();
+    fn register(
+        registry: &mut OnHandlerRegistry,
+        id: u64,
+        handler: Arc<dyn Fn(Self::Input) -> HarnessHookFuture<Self::Output> + Send + Sync>,
+    ) {
+        registry
+            .after_provider_response
+            .push(OnHandlerEntry { id, func: handler });
+    }
+    fn unregister(registry: &mut OnHandlerRegistry, id: u64) {
+        registry.after_provider_response.retain(|e| e.id != id);
+    }
+}
+
+impl HarnessHookKind for on_kind::GetApiKeyAndHeadersKind {
+    type Input = Model;
+    type Output = ProviderAuth;
+    fn register(
+        registry: &mut OnHandlerRegistry,
+        id: u64,
+        handler: Arc<dyn Fn(Self::Input) -> HarnessHookFuture<Self::Output> + Send + Sync>,
+    ) {
+        registry
+            .get_api_key_and_headers
+            .push(OnHandlerEntry { id, func: handler });
+    }
+    fn unregister(registry: &mut OnHandlerRegistry, id: u64) {
+        registry.get_api_key_and_headers.retain(|e| e.id != id);
+    }
+}
+
+/// RAII guard returned by [`AgentHarness::subscribe`] / [`AgentHarness::on`].
+/// Dropping the guard removes the listener.
+pub struct SubscriptionGuard {
+    drop_fn: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl SubscriptionGuard {
+    fn new<F: FnOnce() + Send + 'static>(f: F) -> Self {
+        Self {
+            drop_fn: Some(Box::new(f)),
+        }
+    }
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        if let Some(f) = self.drop_fn.take() {
+            f();
+        }
+    }
 }
 
 impl AgentHarness {
@@ -201,12 +421,64 @@ impl AgentHarness {
             agent: Agent::new(config),
             hooks: AgentHarnessHooks::default(),
             base_before_provider_request_hook,
+            observers: Arc::new(Mutex::new(Vec::new())),
+            on_handlers: Arc::new(Mutex::new(OnHandlerRegistry::default())),
+            phase: Arc::new(Mutex::new(AgentHarnessPhase::Idle)),
         }
+    }
+
+    /// Return the current lifecycle phase. See [`AgentHarnessPhase`].
+    pub fn phase(&self) -> AgentHarnessPhase {
+        *self.phase.lock().unwrap()
     }
 
     pub fn with_hooks(mut self, hooks: AgentHarnessHooks) -> Self {
         self.hooks = hooks;
         self
+    }
+
+    /// Register an observer that receives every harness event. Returns a guard
+    /// that removes the observer on drop. Mirrors TS `AgentHarness.subscribe`.
+    pub fn subscribe(&self, observer: Observer) -> SubscriptionGuard {
+        let id = {
+            let mut registry = self.on_handlers.lock().unwrap();
+            registry.next_id += 1;
+            registry.next_id
+        };
+        {
+            let mut observers = self.observers.lock().unwrap();
+            observers.push(Arc::new(ObserverEntry { func: observer, id }));
+        }
+        let observers = Arc::clone(&self.observers);
+        SubscriptionGuard::new(move || {
+            let mut list = observers.lock().unwrap();
+            list.retain(|entry| entry.id != id);
+        })
+    }
+
+    /// Register a typed `on(...)` handler. Multiple handlers may be registered
+    /// for the same kind; they run in registration order after the existing
+    /// per-kind hook configured via [`AgentHarnessHooks`]. Returns a guard
+    /// that removes the handler on drop.
+    pub fn on<K>(
+        &self,
+        handler: Arc<dyn Fn(K::Input) -> HarnessHookFuture<K::Output> + Send + Sync>,
+    ) -> SubscriptionGuard
+    where
+        K: HarnessHookKind,
+    {
+        let id = {
+            let mut registry = self.on_handlers.lock().unwrap();
+            registry.next_id += 1;
+            let id = registry.next_id;
+            K::register(&mut registry, id, handler);
+            id
+        };
+        let registry = Arc::clone(&self.on_handlers);
+        SubscriptionGuard::new(move || {
+            let mut reg = registry.lock().unwrap();
+            K::unregister(&mut reg, id);
+        })
     }
 
     pub fn add_message(&self, message: AgentMessage) {
@@ -221,8 +493,28 @@ impl AgentHarness {
         self.agent.messages()
     }
 
-    pub fn abort(&self) {
+    /// Enqueue a steering message that will be injected before the next
+    /// assistant response. Mirrors TS `AgentHarness.steer`.
+    pub fn steer(&self, text: impl Into<String>) {
+        self.agent.steer(text);
+    }
+
+    /// Enqueue a follow-up message that runs after the agent would otherwise
+    /// stop. Mirrors TS `AgentHarness.followUp`.
+    pub fn follow_up(&self, text: impl Into<String>) {
+        self.agent.follow_up(text);
+    }
+
+    /// Cancel an in-flight turn and drain any pending steer/follow-up
+    /// messages. Mirrors TS `AgentHarness.abort` (`pi/packages/agent/src/harness/agent-harness.ts:1005`).
+    pub fn abort(&self) -> AbortResult {
+        let cleared_steer = self.agent.drain_steering_queue();
+        let cleared_follow_up = self.agent.drain_follow_up_queue();
         self.agent.abort();
+        AbortResult {
+            cleared_steer,
+            cleared_follow_up,
+        }
     }
 
     pub fn prompt(&self, text: &str) -> AgentHarnessStream {
@@ -243,39 +535,107 @@ impl AgentHarness {
             context_config
         };
         let base_provider_hook = self.base_before_provider_request_hook.clone();
+        let observers = Arc::clone(&self.observers);
+        let on_snapshot = self.on_handlers.lock().unwrap().clone_for_dispatch();
+        let phase = Arc::clone(&self.phase);
 
         Box::pin(async_stream::stream! {
+            let busy_error = {
+                let mut current = phase.lock().unwrap();
+                if *current != AgentHarnessPhase::Idle {
+                    Some(AgentHarnessError::new(
+                        AgentHarnessErrorCode::Busy,
+                        format!("AgentHarness is busy (phase={:?})", *current),
+                    ))
+                } else {
+                    *current = AgentHarnessPhase::Turn;
+                    None
+                }
+            };
+            if let Some(error) = busy_error {
+                let listeners: Vec<Arc<ObserverEntry>> =
+                    observers.lock().unwrap().clone();
+                let event = AgentHarnessEvent::Error { error };
+                for listener in &listeners {
+                    (listener.func)(&event);
+                }
+                yield event;
+                let event = AgentHarnessEvent::Settled;
+                for listener in &listeners {
+                    (listener.func)(&event);
+                }
+                yield event;
+                return;
+            }
+            let _phase_guard = PhaseResetOnDrop {
+                phase: Arc::clone(&phase),
+            };
+
+            macro_rules! emit {
+                ($event:expr) => {{
+                    let event = $event;
+                    let listeners: Vec<Arc<ObserverEntry>> =
+                        observers.lock().unwrap().clone();
+                    for listener in listeners {
+                        (listener.func)(&event);
+                    }
+                    event
+                }};
+            }
+
             let mut harness_context = HarnessContext {
                 messages,
                 system_prompt: config,
             };
-            yield AgentHarnessEvent::BeforeAgentStart {
+            yield emit!(AgentHarnessEvent::BeforeAgentStart {
                 context: harness_context.clone(),
-            };
+            });
 
             if let Some(hook) = hooks.before_agent_start.as_ref() {
                 match hook(harness_context.clone()).await {
                     Ok(Some(updated)) => harness_context = updated,
                     Ok(None) => {}
                     Err(error) => {
-                        yield AgentHarnessEvent::Error { error };
-                        yield AgentHarnessEvent::Settled;
+                        yield emit!(AgentHarnessEvent::Error { error });
+                        yield emit!(AgentHarnessEvent::Settled);
+                        return;
+                    }
+                }
+            }
+            for entry in &on_snapshot.before_agent_start {
+                match (entry.func)(harness_context.clone()).await {
+                    Ok(Some(updated)) => harness_context = updated,
+                    Ok(None) => {}
+                    Err(error) => {
+                        yield emit!(AgentHarnessEvent::Error { error });
+                        yield emit!(AgentHarnessEvent::Settled);
                         return;
                     }
                 }
             }
 
-            yield AgentHarnessEvent::Context {
+            yield emit!(AgentHarnessEvent::Context {
                 context: harness_context.clone(),
-            };
+            });
 
             if let Some(hook) = hooks.context.as_ref() {
                 match hook(harness_context.clone()).await {
                     Ok(Some(updated)) => harness_context = updated,
                     Ok(None) => {}
                     Err(error) => {
-                        yield AgentHarnessEvent::Error { error };
-                        yield AgentHarnessEvent::Settled;
+                        yield emit!(AgentHarnessEvent::Error { error });
+                        yield emit!(AgentHarnessEvent::Settled);
+                        return;
+                    }
+                }
+            }
+            for entry in &on_snapshot.context {
+                match (entry.func)(harness_context.clone()).await {
+                    Ok(Some(updated)) => harness_context = updated,
+                    Ok(None) => {}
+                    Err(error) => {
+                        yield emit!(AgentHarnessEvent::Error { error });
+                        yield emit!(AgentHarnessEvent::Settled);
                         return;
                     }
                 }
@@ -283,22 +643,36 @@ impl AgentHarness {
 
             agent.replace_messages(harness_context.messages.clone());
             let base_provider_hook = base_provider_hook.clone();
-            if base_provider_hook.is_some()
+            let needs_provider_hook = base_provider_hook.is_some()
                 || hooks.before_provider_request.is_some()
                 || hooks.before_provider_payload.is_some()
                 || hooks.after_provider_response.is_some()
                 || hooks.get_api_key_and_headers.is_some()
-            {
+                || !on_snapshot.before_provider_request.is_empty()
+                || !on_snapshot.before_provider_payload.is_empty()
+                || !on_snapshot.after_provider_response.is_empty()
+                || !on_snapshot.get_api_key_and_headers.is_empty();
+            if needs_provider_hook {
                 agent.set_before_provider_request_hook(Some(make_provider_request_hook(
                     hooks.clone(),
                     base_provider_hook,
+                    on_snapshot.clone(),
                 )));
             }
-            let mut stream: AgentStream = agent.run();
+            let mut stream: AgentStream = match agent.run() {
+                Ok(stream) => stream,
+                Err(error) => {
+                    yield emit!(AgentHarnessEvent::Error {
+                        error: AgentHarnessError::new(AgentHarnessErrorCode::InvalidState, error),
+                    });
+                    yield emit!(AgentHarnessEvent::Settled);
+                    return;
+                }
+            };
             while let Some(event) = stream.next().await {
-                yield map_agent_event(event);
+                yield emit!(map_agent_event(event));
             }
-            yield AgentHarnessEvent::Settled;
+            yield emit!(AgentHarnessEvent::Settled);
         })
     }
 }
@@ -342,10 +716,12 @@ impl From<String> for AgentHarnessError {
 fn make_provider_request_hook(
     hooks: AgentHarnessHooks,
     base_hook: Option<LoopBeforeProviderRequestHook>,
+    on_snapshot: OnHandlerRegistry,
 ) -> LoopBeforeProviderRequestHook {
     Arc::new(move |request: LoopBeforeProviderRequest| {
         let hooks = hooks.clone();
         let base_hook = base_hook.clone();
+        let on_snapshot = on_snapshot.clone();
         Box::pin(async move {
             let mut context = request.context;
             let mut stream_options = request.stream_options;
@@ -379,6 +755,19 @@ fn make_provider_request_hook(
                     }
                 }
             }
+            for entry in &on_snapshot.get_api_key_and_headers {
+                let auth = (entry.func)(model.clone())
+                    .await
+                    .map_err(|err| err.message)?;
+                if let Some(auth) = auth {
+                    if let Some(api_key) = auth.api_key {
+                        stream_options.api_key = Some(api_key);
+                    }
+                    if let Some(headers) = auth.headers {
+                        stream_options.headers = merge_headers(stream_options.headers, headers);
+                    }
+                }
+            }
 
             if let Some(hook) = hooks.before_provider_request.as_ref() {
                 let request = BeforeProviderRequest {
@@ -397,11 +786,33 @@ fn make_provider_request_hook(
                     }
                 }
             }
+            for entry in &on_snapshot.before_provider_request {
+                let request = BeforeProviderRequest {
+                    model: model.clone(),
+                    session_id: stream_options.session_id.clone(),
+                    context: context.clone(),
+                    stream_options: stream_options.clone(),
+                };
+                if let Some(patch) = (entry.func)(request).await.map_err(|err| err.message)? {
+                    if let Some(updated_context) = patch.context {
+                        context = updated_context;
+                    }
+                    if let Some(stream_options_patch) = patch.stream_options {
+                        stream_options =
+                            apply_stream_options_patch(stream_options, stream_options_patch);
+                    }
+                }
+            }
 
-            if hooks.before_provider_payload.is_some() || hooks.after_provider_response.is_some() {
+            if hooks.before_provider_payload.is_some()
+                || hooks.after_provider_response.is_some()
+                || !on_snapshot.before_provider_payload.is_empty()
+                || !on_snapshot.after_provider_response.is_empty()
+            {
                 stream_options.hooks = Some(make_stream_hooks(
                     stream_options.hooks.clone(),
                     hooks.clone(),
+                    on_snapshot.clone(),
                 ));
             }
 
@@ -416,16 +827,20 @@ fn make_provider_request_hook(
 fn make_stream_hooks(
     prior: Option<ProviderStreamHooks>,
     hooks: AgentHarnessHooks,
+    on_snapshot: OnHandlerRegistry,
 ) -> ProviderStreamHooks {
     let payload_prior = prior.clone();
     let response_prior = prior;
     let payload_hooks = hooks.clone();
     let response_hooks = hooks;
+    let payload_on = on_snapshot.clone();
+    let response_on = on_snapshot;
 
     ProviderStreamHooks {
         on_payload: Some(Arc::new(move |model, payload| {
             let prior = payload_prior.clone();
             let hooks = payload_hooks.clone();
+            let on_snapshot = payload_on.clone();
             Box::pin(async move {
                 let mut payload = if let Some(prior) = prior.as_ref() {
                     prior.apply_payload(&model, payload).await?
@@ -442,12 +857,24 @@ fn make_stream_hooks(
                 {
                     payload = patch.payload;
                 }
+                for entry in &on_snapshot.before_provider_payload {
+                    if let Some(patch) = (entry.func)(BeforeProviderPayload {
+                        model: model.clone(),
+                        payload: payload.clone(),
+                    })
+                    .await
+                    .map_err(|err| err.message)?
+                    {
+                        payload = patch.payload;
+                    }
+                }
                 Ok(payload)
             })
         })),
         on_response: Some(Arc::new(move |response: ProviderResponseInfo| {
             let prior = response_prior.clone();
             let hooks = response_hooks.clone();
+            let on_snapshot = response_on.clone();
             Box::pin(async move {
                 if let Some(prior) = prior.as_ref() {
                     prior.emit_response(response.clone()).await?;
@@ -455,7 +882,15 @@ fn make_stream_hooks(
                 if let Some(hook) = hooks.after_provider_response.as_ref() {
                     let _ = hook(ProviderResponse {
                         status: response.status,
-                        headers: response.headers,
+                        headers: response.headers.clone(),
+                    })
+                    .await
+                    .map_err(|err| err.message)?;
+                }
+                for entry in &on_snapshot.after_provider_response {
+                    let _ = (entry.func)(ProviderResponse {
+                        status: response.status,
+                        headers: response.headers.clone(),
                     })
                     .await
                     .map_err(|err| err.message)?;

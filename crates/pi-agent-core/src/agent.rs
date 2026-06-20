@@ -131,6 +131,18 @@ impl Agent {
         state.follow_up_queue.clear();
     }
 
+    /// Drain and return all queued steering messages.
+    pub fn drain_steering_queue(&self) -> Vec<AgentMessage> {
+        let mut state = self.state.write().unwrap();
+        state.steering_queue.drain(..).collect()
+    }
+
+    /// Drain and return all queued follow-up messages.
+    pub fn drain_follow_up_queue(&self) -> Vec<AgentMessage> {
+        let mut state = self.state.write().unwrap();
+        state.follow_up_queue.drain(..).collect()
+    }
+
     pub fn skill(
         &self,
         name: &str,
@@ -205,7 +217,20 @@ impl Agent {
     /// Runs the model/tool loop with the messages already present on the agent.
     /// Harness code uses this when it needs to transform or patch messages before
     /// starting a turn.
-    pub fn run(&self) -> AgentStream {
+    ///
+    /// Mirrors TS `agentLoopContinue`: returns `Err` if `messages` is empty or
+    /// the last message is an assistant message.
+    pub fn run(&self) -> Result<AgentStream, String> {
+        {
+            let s = self.state.read().unwrap();
+            if s.messages.is_empty() {
+                return Err("Cannot continue: no messages in context".into());
+            }
+            if matches!(s.messages.last(), Some(AgentMessage::Assistant { .. })) {
+                return Err("Cannot continue from message role: assistant".into());
+            }
+        }
+
         if self.running.swap(true, Ordering::SeqCst) {
             panic!("run() called while agent is already running");
         }
@@ -214,7 +239,7 @@ impl Agent {
             self.state.write().unwrap().cancel_token = CancellationToken::new();
         }
 
-        self.run_locked()
+        Ok(self.run_locked())
     }
 
     pub fn with_messages(config: AgentConfig, messages: Vec<AgentMessage>) -> Self {

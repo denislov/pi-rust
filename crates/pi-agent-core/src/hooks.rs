@@ -1,5 +1,7 @@
-use crate::types::{AgentMessage, AgentToolResult, ProviderRequestSnapshot, ThinkingLevel};
-use pi_ai::types::{AssistantMessage, ContentBlock, Context, Model, StreamOptions};
+use crate::types::{
+    AgentMessage, AgentResources, AgentToolResult, ProviderRequestSnapshot, ThinkingLevel,
+};
+use pi_ai::types::{AssistantMessage, ContentBlock, Context, Message, Model, StreamOptions};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
@@ -14,6 +16,8 @@ pub struct AgentHooks {
     pub after_tool_call: Option<AfterToolCallHook>,
     pub should_stop_after_turn: Option<ShouldStopAfterTurnHook>,
     pub prepare_next_turn: Option<PrepareNextTurnHook>,
+    pub transform_context: Option<TransformContextHook>,
+    pub convert_to_llm: Option<ConvertToLlmHook>,
 }
 
 impl std::fmt::Debug for AgentHooks {
@@ -39,6 +43,14 @@ impl std::fmt::Debug for AgentHooks {
                 "prepare_next_turn",
                 &self.prepare_next_turn.as_ref().map(|_| ".."),
             )
+            .field(
+                "transform_context",
+                &self.transform_context.as_ref().map(|_| ".."),
+            )
+            .field(
+                "convert_to_llm",
+                &self.convert_to_llm.as_ref().map(|_| ".."),
+            )
             .finish()
     }
 }
@@ -50,6 +62,8 @@ impl AgentHooks {
             && self.after_tool_call.is_none()
             && self.should_stop_after_turn.is_none()
             && self.prepare_next_turn.is_none()
+            && self.transform_context.is_none()
+            && self.convert_to_llm.is_none()
     }
 }
 
@@ -66,6 +80,10 @@ pub type ShouldStopAfterTurnHook =
     Arc<dyn Fn(ShouldStopAfterTurnContext) -> HookFuture<bool> + Send + Sync>;
 pub type PrepareNextTurnHook =
     Arc<dyn Fn(PrepareNextTurnContext) -> HookFuture<Option<AgentLoopTurnUpdate>> + Send + Sync>;
+pub type TransformContextHook =
+    Arc<dyn Fn(Vec<AgentMessage>) -> HookFuture<Vec<AgentMessage>> + Send + Sync>;
+pub type ConvertToLlmHook =
+    Arc<dyn Fn(Vec<AgentMessage>, AgentResources) -> HookFuture<Vec<Message>> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct BeforeProviderRequestContext {

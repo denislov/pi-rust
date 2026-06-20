@@ -1,5 +1,8 @@
 use crate::resources::frontmatter::parse_frontmatter;
-use crate::types::{DiagnosticSeverity, PromptTemplate, ResourceDiagnostic};
+use crate::types::{
+    DiagnosticSeverity, PromptTemplate, ResourceDiagnostic, SourceTag, SourcedPromptTemplate,
+    SourcedResourceDiagnostic,
+};
 use std::path::PathBuf;
 
 pub fn load_prompt_templates(paths: &[PathBuf]) -> (Vec<PromptTemplate>, Vec<ResourceDiagnostic>) {
@@ -34,6 +37,31 @@ pub fn load_prompt_templates(paths: &[PathBuf]) -> (Vec<PromptTemplate>, Vec<Res
     }
 
     (templates, diagnostics)
+}
+
+/// Load prompt templates from sourced inputs. Mirrors
+/// [`crate::resources::skills::load_sourced_skills`].
+pub fn load_sourced_prompt_templates(
+    inputs: &[(PathBuf, SourceTag)],
+) -> (Vec<SourcedPromptTemplate>, Vec<SourcedResourceDiagnostic>) {
+    let mut sourced_templates = Vec::new();
+    let mut sourced_diagnostics = Vec::new();
+    for (path, source) in inputs {
+        let (templates, diagnostics) = load_prompt_templates(std::slice::from_ref(path));
+        for template in templates {
+            sourced_templates.push(SourcedPromptTemplate {
+                template,
+                source: source.clone(),
+            });
+        }
+        for diagnostic in diagnostics {
+            sourced_diagnostics.push(SourcedResourceDiagnostic {
+                diagnostic,
+                source: source.clone(),
+            });
+        }
+    }
+    (sourced_templates, sourced_diagnostics)
 }
 
 fn load_template_file(

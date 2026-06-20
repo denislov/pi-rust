@@ -189,6 +189,40 @@ pub enum DiagnosticSeverity {
     Info,
 }
 
+/// Provenance for a [`Skill`] or [`PromptTemplate`] loaded by the
+/// `load_sourced_*` helpers. Mirrors the `source` parameter of TS
+/// `loadSourcedSkills` (`pi/packages/agent/src/harness/skills.ts:83`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceTag {
+    /// Original input path the entry was loaded from.
+    pub source_path: std::path::PathBuf,
+    /// Caller-defined provenance label (e.g. "project", "user", "builtin").
+    pub source_type: String,
+}
+
+/// A [`Skill`] paired with the [`SourceTag`] of the input it was loaded from.
+#[derive(Debug, Clone)]
+pub struct SourcedSkill {
+    pub skill: Skill,
+    pub source: SourceTag,
+}
+
+/// A [`PromptTemplate`] paired with the [`SourceTag`] of the input it was
+/// loaded from.
+#[derive(Debug, Clone)]
+pub struct SourcedPromptTemplate {
+    pub template: PromptTemplate,
+    pub source: SourceTag,
+}
+
+/// A [`ResourceDiagnostic`] carrying the [`SourceTag`] of the input that
+/// produced it.
+#[derive(Debug, Clone)]
+pub struct SourcedResourceDiagnostic {
+    pub diagnostic: ResourceDiagnostic,
+    pub source: SourceTag,
+}
+
 // ── Compaction types ───────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -223,7 +223,7 @@ fn start_prepared_session_prompt(
                 details: None,
                 timestamp: 0,
             });
-            prepared.agent.run()
+            prepared.agent.run().map_err(CliError::AgentFailure)?
         }
         PromptInvocation::Content(_) => {
             return Err(CliError::MissingPrompt);

@@ -25,18 +25,21 @@ pub use errors::{
     ExecutionError, ExecutionErrorCode, FileError, FileErrorCode,
 };
 pub use harness::{
-    AgentHarness, AgentHarnessEvent, AgentHarnessHooks, BeforeAgentStartHook,
-    BeforeProviderPayload, BeforeProviderPayloadHook, BeforeProviderPayloadPatch,
-    BeforeProviderRequest, BeforeProviderRequestHook, BeforeProviderRequestPatch, ContextHook,
-    GetApiKeyAndHeadersHook, HarnessContext, HeaderPatch, Patch, ProviderAuth, ProviderResponse,
-    StreamOptionsPatch,
+    AbortResult, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentHarnessPhase,
+    BeforeAgentStartHook, BeforeProviderPayload, BeforeProviderPayloadHook,
+    BeforeProviderPayloadPatch, BeforeProviderRequest, BeforeProviderRequestHook,
+    BeforeProviderRequestPatch, ContextHook, GetApiKeyAndHeadersHook, HarnessContext,
+    HarnessHookFuture, HarnessHookKind, HeaderPatch, Observer, Patch, ProviderAuth,
+    ProviderResponse, StreamOptionsPatch, SubscriptionGuard, on_kind,
 };
 pub use hooks::{
     AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
-    BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ShouldStopAfterTurnHook,
+    BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ConvertToLlmHook,
+    ShouldStopAfterTurnHook, TransformContextHook,
 };
 pub use types::{
     AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolResult,
     CompactionConfig, CompactionSettings, PromptTemplate, ProviderRequestSnapshot, QueueMode,
-    ResourceDiagnostic, Skill, ThinkingLevel, ToolExecutionMode, ToolFn,
+    ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic,
+    SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
 };

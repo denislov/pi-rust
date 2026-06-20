@@ -319,3 +319,51 @@ async fn provider_error_event_preserves_error_message() {
 
     registry::unregister(api_key);
 }
+
+#[tokio::test]
+async fn run_returns_error_when_no_messages() {
+    let api_key = "test-run-empty";
+    registry::register(api_key, Arc::new(TestProvider::new(vec![])));
+    let agent = Agent::new(test_config(api_key));
+    let result = agent.run();
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(err.contains("no messages"), "got: {}", err);
+    registry::unregister(api_key);
+}
+
+#[tokio::test]
+async fn run_returns_error_when_last_message_is_assistant() {
+    let api_key = "test-run-assistant-tail";
+    registry::register(api_key, Arc::new(TestProvider::new(vec![])));
+    let agent = Agent::new(test_config(api_key));
+    agent.add_message(AgentMessage::UserText {
+        message_id: "u".into(),
+        text: "hi".into(),
+    });
+    agent.add_message(AgentMessage::Assistant {
+        message_id: "a".into(),
+        message: AssistantMessage::empty("test", "test-model"),
+    });
+    let result = agent.run();
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(err.contains("assistant"), "got: {}", err);
+    registry::unregister(api_key);
+}
+
+#[tokio::test]
+async fn run_succeeds_when_last_message_is_user() {
+    let api_key = "test-run-user-tail";
+    registry::register(api_key, Arc::new(TestProvider::new(vec![text_turn("ok")])));
+    let agent = Agent::new(test_config(api_key));
+    agent.add_message(AgentMessage::UserText {
+        message_id: "u".into(),
+        text: "hi".into(),
+    });
+    let stream = agent.run();
+    assert!(stream.is_ok());
+    let mut s = stream.unwrap();
+    while s.next().await.is_some() {}
+    registry::unregister(api_key);
+}

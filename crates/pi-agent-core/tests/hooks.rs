@@ -7,7 +7,7 @@ use pi_agent_core::{
 };
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
-use pi_ai::types::{ContentBlock, StopReason};
+use pi_ai::types::{ContentBlock, Message, StopReason};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -222,6 +222,167 @@ async fn should_stop_after_turn_runs_before_follow_up_queue() {
         .filter(|message| matches!(message, AgentMessage::Assistant { .. }))
         .count();
     assert_eq!(assistant_count, 1);
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn convert_to_llm_hook_overrides_default_message_conversion() {
+    let api = "hooks-convert-to-llm";
+    let captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured_for_provider = captured.clone();
+
+    struct CapturingProvider {
+        captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>>,
+    }
+    impl pi_ai::registry::ApiProvider for CapturingProvider {
+        fn stream(
+            &self,
+            _model: &pi_ai::types::Model,
+            ctx: pi_ai::types::Context,
+            _opts: Option<pi_ai::types::StreamOptions>,
+        ) -> pi_ai::stream::EventStream {
+            *self.captured.lock().unwrap() = ctx.messages.clone();
+            Box::pin(async_stream::stream! {
+                let mut msg = pi_ai::types::AssistantMessage::empty("test", "test-model");
+                msg.content.push(ContentBlock::Text {
+                    text: "ok".into(),
+                    text_signature: None,
+                });
+                msg.stop_reason = StopReason::Stop;
+                yield pi_ai::types::AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: msg,
+                };
+            })
+        }
+    }
+
+    registry::register(
+        api,
+        Arc::new(CapturingProvider {
+            captured: captured_for_provider,
+        }),
+    );
+
+    let mut config = AgentConfig::new(faux_model(api));
+    config.hooks.convert_to_llm = Some(Arc::new(|messages, _resources| {
+        Box::pin(async move {
+            let combined = messages
+                .iter()
+                .filter_map(|m| match m {
+                    AgentMessage::UserText { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            Ok(vec![Message::User {
+                content: vec![ContentBlock::Text {
+                    text: format!("merged:{}", combined),
+                    text_signature: None,
+                }],
+            }])
+        })
+    }));
+
+    let agent = Agent::new(config);
+    agent.add_message(AgentMessage::UserText {
+        message_id: "u0".into(),
+        text: "first".into(),
+    });
+    let mut stream = agent.prompt("second");
+    while stream.next().await.is_some() {}
+
+    let messages_seen = captured.lock().unwrap().clone();
+    assert_eq!(messages_seen.len(), 1);
+    match &messages_seen[0] {
+        Message::User { content } => match &content[0] {
+            ContentBlock::Text { text, .. } => assert_eq!(text, "merged:first|second"),
+            _ => panic!("expected text"),
+        },
+        _ => panic!("expected user"),
+    }
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn transform_context_hook_rewrites_messages_before_llm_call() {
+    let api = "hooks-transform-context";
+    let captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured_for_provider = captured.clone();
+
+    struct CapturingProvider {
+        captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>>,
+    }
+    impl pi_ai::registry::ApiProvider for CapturingProvider {
+        fn stream(
+            &self,
+            _model: &pi_ai::types::Model,
+            ctx: pi_ai::types::Context,
+            _opts: Option<pi_ai::types::StreamOptions>,
+        ) -> pi_ai::stream::EventStream {
+            *self.captured.lock().unwrap() = ctx.messages.clone();
+            Box::pin(async_stream::stream! {
+                let mut msg = pi_ai::types::AssistantMessage::empty("test", "test-model");
+                msg.content.push(ContentBlock::Text {
+                    text: "ok".into(),
+                    text_signature: None,
+                });
+                msg.stop_reason = StopReason::Stop;
+                yield pi_ai::types::AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: msg,
+                };
+            })
+        }
+    }
+
+    registry::register(
+        api,
+        Arc::new(CapturingProvider {
+            captured: captured_for_provider,
+        }),
+    );
+
+    let mut config = AgentConfig::new(faux_model(api));
+    config.hooks.transform_context = Some(Arc::new(|messages| {
+        Box::pin(async move {
+            let replaced = vec![AgentMessage::UserText {
+                message_id: "transformed".into(),
+                text: format!("transformed:{}", messages.len()),
+            }];
+            Ok(replaced)
+        })
+    }));
+
+    let agent = Agent::new(config);
+    agent.add_message(AgentMessage::UserText {
+        message_id: "u0".into(),
+        text: "original-1".into(),
+    });
+
+    let mut stream = agent.prompt("original-2");
+    while stream.next().await.is_some() {}
+
+    let messages_seen = captured.lock().unwrap().clone();
+    assert_eq!(messages_seen.len(), 1);
+    match &messages_seen[0] {
+        Message::User { content } => match &content[0] {
+            ContentBlock::Text { text, .. } => assert_eq!(text, "transformed:2"),
+            _ => panic!("expected text block"),
+        },
+        _ => panic!("expected user message"),
+    }
+
+    let stored = agent.messages();
+    let user_count = stored
+        .iter()
+        .filter(|m| matches!(m, AgentMessage::UserText { .. }))
+        .count();
+    assert_eq!(user_count, 2, "transform must not mutate stored messages");
 
     registry::unregister(api);
 }
