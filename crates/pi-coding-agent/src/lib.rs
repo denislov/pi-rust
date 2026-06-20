@@ -16,7 +16,8 @@ pub use error::CliError;
 pub use print_mode::{PrintModeOptions, run_print_mode};
 pub use runtime::{
     CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, PromptInvocation, SessionMode,
-    SessionRunOptions, build_agent_config, select_model,
+    SessionRunOptions, build_agent_config, effective_no_context_files, effective_session_dir,
+    select_model,
 };
 pub use session::{ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session};
 pub use tools::builtin_tools;
@@ -136,6 +137,7 @@ pub async fn run_cli_with_options_and_stdin(
 
     let model = match select_model(
         &parsed,
+        config.settings.default_provider.as_deref(),
         config.settings.default_model.as_deref(),
         options.model_override,
     ) {
@@ -172,6 +174,7 @@ pub async fn run_cli_with_options_and_stdin(
             skill_paths: config.settings.skills.clone(),
             prompt_paths: config.settings.prompts.clone(),
             theme_paths: config.settings.themes.clone(),
+            theme: config.settings.theme.clone(),
         },
     ) {
         Ok(loaded) => loaded,
@@ -180,9 +183,12 @@ pub async fn run_cli_with_options_and_stdin(
     let (skills, templates, diags) = (loaded.skills, loaded.prompt_templates, loaded.diagnostics);
     resources::print_diagnostics(&diags);
 
-    let context_files =
-        resources::discover_context_files(&cwd, &config_paths.global_dir, parsed.no_context_files);
-    let mut system_prompt = parsed.system_prompt;
+    let context_files = resources::discover_context_files(
+        &cwd,
+        &config_paths.global_dir,
+        effective_no_context_files(&parsed, &config.settings),
+    );
+    let mut system_prompt = parsed.system_prompt.clone();
     if !context_files.is_empty() || !parsed.append_system_prompt.is_empty() {
         let mut parts = Vec::new();
         if let Some(base) = system_prompt.take() {
@@ -242,8 +248,8 @@ pub async fn run_cli_with_options_and_stdin(
     let session_enabled = !parsed.no_session;
     let session = if session_enabled {
         let mut session_opts = options.session.clone();
-        if let Some(ref dir) = parsed.session_dir {
-            session_opts.session_dir = Some(std::path::PathBuf::from(dir));
+        if let Some(dir) = effective_session_dir(&parsed, &config.settings) {
+            session_opts.session_dir = Some(dir);
         }
         Some(session_opts)
     } else {
@@ -284,6 +290,7 @@ pub async fn run_cli_with_options_and_stdin(
         thinking_level: parsed.thinking,
         tool_execution: parsed.tool_execution,
         resources: agent_resources,
+        settings: Some(config.settings.clone()),
         invocation,
     };
 

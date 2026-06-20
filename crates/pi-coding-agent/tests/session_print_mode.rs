@@ -59,6 +59,7 @@ async fn persists_new_print_mode_session() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("hi".into()),
     })
     .await
@@ -105,6 +106,7 @@ async fn persists_session_with_name() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("hi".into()),
     })
     .await
@@ -151,6 +153,7 @@ async fn persists_compaction_entry_when_continued_session_is_too_large() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text(long_prompt),
     })
     .await
@@ -185,6 +188,7 @@ async fn persists_compaction_entry_when_continued_session_is_too_large() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("continue".into()),
     })
     .await

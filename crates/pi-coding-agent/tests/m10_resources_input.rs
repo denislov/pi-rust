@@ -161,6 +161,7 @@ fn resource_loader_discovers_themes_and_honors_no_themes() {
         &agent_dir,
         ResourceLoadOptions {
             theme_paths: vec![settings_theme_dir.display().to_string()],
+            theme: Some("quiet".into()),
             ..Default::default()
         },
     )
@@ -172,6 +173,10 @@ fn resource_loader_discovers_themes_and_honors_no_themes() {
         .collect();
     assert!(theme_names.contains(&"dark"));
     assert!(theme_names.contains(&"quiet"));
+    assert_eq!(
+        loaded.selected_theme.as_ref().map(|t| t.name.as_str()),
+        Some("quiet")
+    );
 
     let loaded = load_cli_resources_with_options(
         &[],
@@ -186,6 +191,7 @@ fn resource_loader_discovers_themes_and_honors_no_themes() {
     )
     .unwrap();
     assert!(loaded.themes.is_empty());
+    assert!(loaded.selected_theme.is_none());
 }
 
 #[test]
@@ -334,6 +340,7 @@ async fn multimodal_prompt_content_reaches_provider_context() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: PromptInvocation::Content(vec![
             ContentBlock::Text {
                 text: "inspect image".into(),
@@ -398,7 +405,7 @@ fn models_rotation_and_provider_select_matching_model() {
     )
     .unwrap();
 
-    let model = select_model(&args, None, None).unwrap();
+    let model = select_model(&args, None, None, None).unwrap();
 
     assert_eq!(model.provider, "anthropic");
     assert!(

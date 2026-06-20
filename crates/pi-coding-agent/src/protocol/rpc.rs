@@ -4,8 +4,8 @@ use crate::protocol::session_runner::{SessionPromptOptions, run_session_prompt};
 use crate::protocol::types::{
     ProtocolEvent, RpcCommand, RpcResponse, RpcSessionState, StreamingBehavior,
 };
-use crate::runtime::{DEFAULT_MODEL_ID, PromptInvocation};
-use crate::{CliError, CliRunOptions};
+use crate::runtime::PromptInvocation;
+use crate::{CliArgs, CliError, CliRunOptions, config, select_model};
 use pi_agent_core::session::StoredAgentMessage;
 use pi_agent_core::{AgentResources, QueueMode, ThinkingLevel};
 use pi_ai::types::Model;
@@ -106,6 +106,8 @@ pub async fn run_rpc_mode_stdio(options: CliRunOptions) -> Result<(), CliError> 
 struct RpcState {
     options: CliRunOptions,
     model: Model,
+    api_key: Option<String>,
+    settings: crate::config::Settings,
     thinking_level: ThinkingLevel,
     steering_mode: QueueMode,
     follow_up_mode: QueueMode,
@@ -123,15 +125,35 @@ impl RpcState {
         if options.register_builtins {
             pi_ai::providers::register_builtins();
         }
-        let model = match options.model_override.clone() {
-            Some(model) => model,
-            None => pi_ai::lookup_model(DEFAULT_MODEL_ID)
-                .ok_or_else(|| CliError::UnknownModel(DEFAULT_MODEL_ID.to_string()))?,
+        let cwd = options.session.cwd.clone();
+        let (config, config_diags) = config::load_config(&cwd);
+        let diag_text = config::drain_diagnostics(&config_diags);
+        if !diag_text.is_empty() {
+            eprint!("{diag_text}");
+        }
+        let args = CliArgs::default();
+        let model = select_model(
+            &args,
+            config.settings.default_provider.as_deref(),
+            config.settings.default_model.as_deref(),
+            options.model_override.clone(),
+        )?;
+        let api_key = {
+            let mut key_diags = Vec::new();
+            let resolved =
+                config::auth::resolve_api_key(&model.provider, None, &config.auth, &mut key_diags);
+            let key_text = config::drain_diagnostics(&key_diags);
+            if !key_text.is_empty() {
+                eprint!("{key_text}");
+            }
+            resolved.map(|r| r.value)
         };
 
         Ok(Self {
             options,
             model,
+            api_key,
+            settings: config.settings,
             thinking_level: ThinkingLevel::Off,
             steering_mode: QueueMode::OneAtATime,
             follow_up_mode: QueueMode::OneAtATime,
@@ -386,7 +408,7 @@ impl RpcState {
             SessionPromptOptions {
                 prompt: message.clone(),
                 model: self.model.clone(),
-                api_key: None,
+                api_key: self.api_key.clone(),
                 system_prompt: None,
                 max_turns: 5,
                 tools: self.options.tools.clone(),
@@ -397,6 +419,7 @@ impl RpcState {
                 thinking_level: Some(self.thinking_level),
                 tool_execution: None,
                 resources: AgentResources::default(),
+                settings: Some(self.settings.clone()),
                 invocation: PromptInvocation::Text(message),
             },
             Some(&mut |event| {

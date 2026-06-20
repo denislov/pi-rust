@@ -106,6 +106,40 @@ async fn rpc_parse_error_keeps_process_alive_for_next_command() {
 }
 
 #[tokio::test]
+async fn rpc_uses_settings_default_model_when_no_override_is_provided() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("settings.toml"),
+        "default_model = \"claude-haiku-4-5\"\n",
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
+    }
+
+    let input = b"{\"id\":\"s1\",\"type\":\"get_state\"}\n";
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["data"]["model"]["id"], "claude-haiku-4-5");
+
+    unsafe {
+        std::env::remove_var("PI_RUST_DIR");
+    }
+}
+
+#[tokio::test]
 async fn rpc_unsupported_command_returns_error_response() {
     let api = "pi-coding-rpc-unsupported";
     registry::register(api, Arc::new(FauxProvider::simple_text("unused")));

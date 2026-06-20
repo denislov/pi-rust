@@ -1,5 +1,8 @@
 use crate::{CliArgs, CliError};
-use pi_agent_core::{AgentConfig, AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
+use pi_agent_core::{
+    AgentConfig, AgentResources, AgentTool, CompactionConfig, CompactionSettings, ThinkingLevel,
+    ToolExecutionMode,
+};
 use pi_ai::types::{Model, StreamOptions};
 use std::path::PathBuf;
 
@@ -58,14 +61,16 @@ impl Default for CliRunOptions {
 
 pub fn select_model(
     args: &CliArgs,
+    default_provider: Option<&str>,
     default_model: Option<&str>,
     model_override: Option<Model>,
 ) -> Result<Model, CliError> {
+    let effective_provider = args.provider.as_deref().or(default_provider);
     if let Some(models) = args.models.as_deref() {
         let rotation = crate::models::parse_model_rotation(models)?;
         let mut candidates = pi_ai::all_models().to_vec();
         candidates.sort_by(|a, b| a.id.cmp(&b.id));
-        if let Some(provider) = args.provider.as_deref() {
+        if let Some(provider) = effective_provider {
             candidates.retain(|model| model.provider == provider);
         }
         if let Some(model) = candidates
@@ -80,7 +85,7 @@ pub fn select_model(
     if let Some(model_id) = &args.model {
         let model = pi_ai::lookup_model(model_id)
             .ok_or_else(|| CliError::UnknownModel(model_id.clone()))?;
-        if let Some(provider) = args.provider.as_deref()
+        if let Some(provider) = effective_provider
             && model.provider != provider
         {
             return Err(CliError::UnknownModel(format!("{provider}/{model_id}")));
@@ -91,7 +96,7 @@ pub fn select_model(
     if let Some(model_id) = default_model {
         let model = pi_ai::lookup_model(model_id)
             .ok_or_else(|| CliError::UnknownModel(model_id.to_string()))?;
-        if let Some(provider) = args.provider.as_deref()
+        if let Some(provider) = effective_provider
             && model.provider != provider
         {
             if let Some(model) = first_model_for_provider(provider) {
@@ -103,7 +108,7 @@ pub fn select_model(
     }
 
     if let Some(model) = model_override {
-        if let Some(provider) = args.provider.as_deref()
+        if let Some(provider) = effective_provider
             && model.provider != provider
         {
             if let Some(model) = first_model_for_provider(provider) {
@@ -114,7 +119,7 @@ pub fn select_model(
         return Ok(model);
     }
 
-    if let Some(provider) = args.provider.as_deref() {
+    if let Some(provider) = effective_provider {
         if let Some(model) = first_model_for_provider(provider) {
             return Ok(model);
         }
@@ -143,15 +148,35 @@ pub fn build_agent_config(
     thinking_level: Option<ThinkingLevel>,
     tool_execution: Option<ToolExecutionMode>,
     resources: AgentResources,
+    settings: Option<&crate::config::Settings>,
 ) -> AgentConfig {
-    let stream_options = api_key.map(|api_key| StreamOptions {
+    let mut stream_options = api_key.map(|api_key| StreamOptions {
         api_key: Some(api_key),
         ..Default::default()
     });
+    if let Some(settings) = settings
+        && settings.retry.enabled
+    {
+        let opts = stream_options.get_or_insert_with(StreamOptions::default);
+        opts.max_retries = Some(settings.retry.max_retries);
+        opts.max_retry_delay_ms = Some(settings.retry.base_delay_ms);
+    }
     let mut config = AgentConfig::new(model);
     config.system_prompt = Some(system_prompt.unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()));
     config.max_turns = max_turns;
     config.stream_options = stream_options;
+    if let Some(settings) = settings
+        && settings.compaction.enabled
+    {
+        config.compaction = Some(CompactionConfig {
+            settings: CompactionSettings {
+                enabled: true,
+                reserve_tokens: settings.compaction.reserve_tokens as u32,
+                keep_recent_tokens: settings.compaction.keep_recent_tokens as u32,
+            },
+            custom_instructions: None,
+        });
+    }
     if let Some(tl) = thinking_level {
         config.thinking_level = tl;
     }
@@ -160,6 +185,20 @@ pub fn build_agent_config(
     }
     config.resources = resources;
     config
+}
+
+pub fn effective_session_dir(
+    args: &CliArgs,
+    settings: &crate::config::Settings,
+) -> Option<PathBuf> {
+    args.session_dir
+        .as_deref()
+        .or(settings.session_dir.as_deref())
+        .map(PathBuf::from)
+}
+
+pub fn effective_no_context_files(args: &CliArgs, settings: &crate::config::Settings) -> bool {
+    args.no_context_files || settings.no_context_files
 }
 
 #[derive(Clone, Debug)]

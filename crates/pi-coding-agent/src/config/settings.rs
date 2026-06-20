@@ -20,6 +20,13 @@ pub struct PartialRetry {
 
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct PartialTerminal {
+    pub show_images: Option<bool>,
+    pub show_progress: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PartialSettings {
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
@@ -31,6 +38,9 @@ pub struct PartialSettings {
     pub skills: Option<Vec<String>>,
     pub prompts: Option<Vec<String>>,
     pub themes: Option<Vec<String>>,
+    pub theme: Option<String>,
+    pub no_context_files: Option<bool>,
+    pub terminal: Option<PartialTerminal>,
     pub compaction: Option<PartialCompaction>,
     pub retry: Option<PartialRetry>,
 }
@@ -50,6 +60,12 @@ pub struct RetrySettings {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TerminalSettings {
+    pub show_images: bool,
+    pub show_progress: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
@@ -61,6 +77,9 @@ pub struct Settings {
     pub skills: Vec<String>,
     pub prompts: Vec<String>,
     pub themes: Vec<String>,
+    pub theme: Option<String>,
+    pub no_context_files: bool,
+    pub terminal: TerminalSettings,
     pub compaction: CompactionSettings,
     pub retry: RetrySettings,
 }
@@ -90,6 +109,19 @@ fn merge_retry(base: Option<PartialRetry>, over: Option<PartialRetry>) -> Option
     }
 }
 
+fn merge_terminal(
+    base: Option<PartialTerminal>,
+    over: Option<PartialTerminal>,
+) -> Option<PartialTerminal> {
+    match (base, over) {
+        (None, x) | (x, None) => x,
+        (Some(b), Some(o)) => Some(PartialTerminal {
+            show_images: o.show_images.or(b.show_images),
+            show_progress: o.show_progress.or(b.show_progress),
+        }),
+    }
+}
+
 fn merge_vec(base: Option<Vec<String>>, over: Option<Vec<String>>) -> Option<Vec<String>> {
     match (base, over) {
         (None, x) | (x, None) => x,
@@ -113,6 +145,9 @@ impl PartialSettings {
             skills: merge_vec(self.skills, over.skills),
             prompts: merge_vec(self.prompts, over.prompts),
             themes: merge_vec(self.themes, over.themes),
+            theme: over.theme.or(self.theme),
+            no_context_files: over.no_context_files.or(self.no_context_files),
+            terminal: merge_terminal(self.terminal, over.terminal),
             compaction: merge_compaction(self.compaction, over.compaction),
             retry: merge_retry(self.retry, over.retry),
         }
@@ -121,6 +156,7 @@ impl PartialSettings {
     pub fn resolve(self) -> Settings {
         let c = self.compaction.unwrap_or_default();
         let r = self.retry.unwrap_or_default();
+        let t = self.terminal.unwrap_or_default();
         Settings {
             default_provider: self.default_provider,
             default_model: self.default_model,
@@ -136,6 +172,12 @@ impl PartialSettings {
             skills: self.skills.unwrap_or_default(),
             prompts: self.prompts.unwrap_or_default(),
             themes: self.themes.unwrap_or_default(),
+            theme: self.theme,
+            no_context_files: self.no_context_files.unwrap_or(false),
+            terminal: TerminalSettings {
+                show_images: t.show_images.unwrap_or(true),
+                show_progress: t.show_progress.unwrap_or(true),
+            },
             compaction: CompactionSettings {
                 enabled: c.enabled.unwrap_or(true),
                 reserve_tokens: c.reserve_tokens.unwrap_or(16384),
@@ -236,6 +278,43 @@ mod tests {
         assert_eq!(s.compaction.reserve_tokens, 999); // project overrides
         assert_eq!(s.compaction.keep_recent_tokens, 200); // global field survives
         assert!(s.compaction.enabled); // default fills the gap
+    }
+
+    #[test]
+    fn terminal_theme_and_context_settings_resolve_defaults_and_merge() {
+        let global = PartialSettings {
+            theme: Some("dark".into()),
+            no_context_files: Some(true),
+            terminal: Some(PartialTerminal {
+                show_images: Some(false),
+                show_progress: Some(false),
+            }),
+            ..Default::default()
+        };
+        let project = PartialSettings {
+            theme: Some("light".into()),
+            terminal: Some(PartialTerminal {
+                show_progress: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let s = global.merge(project).resolve();
+
+        assert_eq!(s.theme.as_deref(), Some("light"));
+        assert!(s.no_context_files);
+        assert!(!s.terminal.show_images);
+        assert!(s.terminal.show_progress);
+    }
+
+    #[test]
+    fn terminal_defaults_are_enabled_and_context_files_default_on() {
+        let s = PartialSettings::default().resolve();
+        assert!(s.terminal.show_images);
+        assert!(s.terminal.show_progress);
+        assert!(!s.no_context_files);
+        assert!(s.theme.is_none());
     }
 
     #[test]

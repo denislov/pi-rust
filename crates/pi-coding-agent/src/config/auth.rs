@@ -1,5 +1,5 @@
 use crate::config::ConfigDiagnostic;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -77,7 +77,7 @@ pub fn resolve_config_value(raw: &str, diags: &mut Vec<ConfigDiagnostic>) -> Opt
     Some(out)
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthEntry {
     ApiKey { key: String },
@@ -123,6 +123,26 @@ impl AuthStore {
             Some(AuthEntry::ApiKey { key }) => Some(key.as_str()),
             _ => None,
         }
+    }
+
+    pub fn set_api_key(&mut self, provider: impl Into<String>, key: impl Into<String>) {
+        self.entries
+            .insert(provider.into(), AuthEntry::ApiKey { key: key.into() });
+    }
+
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = toml::to_string_pretty(&self.entries)
+            .map_err(|err| std::io::Error::other(format!("failed to serialize auth: {err}")))?;
+        std::fs::write(path, text)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
     }
 }
 
@@ -170,6 +190,12 @@ pub fn resolve_api_key(
             });
         }
     }
+    if let Some(value) = pi_ai::env_api_key(provider) {
+        return Some(ResolvedKey {
+            value,
+            source: KeySource::Env,
+        });
+    }
     if let Some(raw) = store.api_key_entry(provider) {
         if let Some(value) = resolve_config_value(raw, diags) {
             if !value.is_empty() {
@@ -179,12 +205,6 @@ pub fn resolve_api_key(
                 });
             }
         }
-    }
-    if let Some(value) = pi_ai::env_api_key(provider) {
-        return Some(ResolvedKey {
-            value,
-            source: KeySource::Env,
-        });
     }
     None
 }
@@ -307,15 +327,15 @@ mod tests {
     }
 
     #[test]
-    fn auth_file_beats_env() {
+    fn env_beats_auth_file() {
         let store = store_with("anthropic", "from-file");
         unsafe {
             std::env::set_var("ANTHROPIC_API_KEY", "from-env");
         }
         let mut d = Vec::new();
         let r = resolve_api_key("anthropic", None, &store, &mut d).unwrap();
-        assert_eq!(r.value, "from-file");
-        assert_eq!(r.source, KeySource::AuthFile);
+        assert_eq!(r.value, "from-env");
+        assert_eq!(r.source, KeySource::Env);
         unsafe {
             std::env::remove_var("ANTHROPIC_API_KEY");
         }
@@ -334,5 +354,26 @@ mod tests {
             std::env::remove_var("ANTHROPIC_API_KEY");
         }
         assert!(resolve_api_key("anthropic", None, &store, &mut d).is_none());
+    }
+
+    #[test]
+    fn saves_and_loads_api_key_entries_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.toml");
+        let mut store = AuthStore::default();
+        store.set_api_key("anthropic", "sk-ant");
+        store.set_api_key("openai", "$OPENAI_API_KEY");
+
+        store.save(&path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[anthropic]"));
+        assert!(text.contains("type = \"api_key\""));
+
+        let mut d = Vec::new();
+        let loaded = AuthStore::load(&path, &mut d);
+        assert_eq!(loaded.api_key_entry("anthropic"), Some("sk-ant"));
+        assert_eq!(loaded.api_key_entry("openai"), Some("$OPENAI_API_KEY"));
+        assert!(d.is_empty());
     }
 }

@@ -78,6 +78,7 @@ async fn prints_single_turn_text_response() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
     .await
@@ -112,6 +113,7 @@ async fn treats_length_as_successful_final_text() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
     .await
@@ -150,6 +152,7 @@ async fn returns_agent_failure_on_error_stop_reason() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
     .await
@@ -199,6 +202,7 @@ async fn supports_tool_call_loop_with_injected_tool() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: PromptInvocation::Text("echo hi".into()),
     })
     .await

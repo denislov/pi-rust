@@ -74,6 +74,7 @@ async fn main() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text(invocation_text),
     };
 

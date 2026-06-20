@@ -19,6 +19,7 @@ pub struct PrintModeOptions {
     pub thinking_level: Option<ThinkingLevel>,
     pub tool_execution: Option<ToolExecutionMode>,
     pub resources: AgentResources,
+    pub settings: Option<crate::config::Settings>,
     pub invocation: PromptInvocation,
 }
 
@@ -38,6 +39,7 @@ impl PrintModeOptions {
             thinking_level: None,
             tool_execution: None,
             resources: AgentResources::default(),
+            settings: None,
             invocation: PromptInvocation::Text(String::new()),
         }
     }
@@ -59,6 +61,7 @@ impl From<SessionPromptOptions> for PrintModeOptions {
             thinking_level: options.thinking_level,
             tool_execution: options.tool_execution,
             resources: options.resources,
+            settings: options.settings,
             invocation: options.invocation,
         }
     }
@@ -80,6 +83,7 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
             thinking_level: options.thinking_level,
             tool_execution: options.tool_execution,
             resources: options.resources,
+            settings: options.settings,
             invocation: options.invocation,
         },
         None,

@@ -21,7 +21,10 @@ use crate::protocol::session_runner::{
 };
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
-use crate::{CliArgs, CliError, CliOutput, CliRunOptions, resources, select_model};
+use crate::{
+    CliArgs, CliError, CliOutput, CliRunOptions, config, effective_no_context_files,
+    effective_session_dir, resources, select_model,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InteractiveModeOptions {
@@ -115,6 +118,8 @@ impl InputPump {
 struct PromptContext {
     model: Model,
     api_key: Option<String>,
+    cli_api_key: Option<String>,
+    auth: crate::config::AuthStore,
     system_prompt: Option<String>,
     max_turns: u32,
     tools: Vec<pi_agent_core::AgentTool>,
@@ -125,6 +130,7 @@ struct PromptContext {
     thinking_level: Option<pi_agent_core::ThinkingLevel>,
     tool_execution: Option<pi_agent_core::ToolExecutionMode>,
     resources: AgentResources,
+    settings: crate::config::Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,6 +281,8 @@ struct InteractiveRoot {
     cwd: PathBuf,
     model_id: String,
     session_label: String,
+    selected_model: Option<Model>,
+    selecting_model: bool,
     usage: (u32, u32),
     tool_output_expanded: bool,
     spinner_frame: usize,
@@ -331,6 +339,8 @@ impl InteractiveRoot {
             cwd,
             model_id,
             session_label,
+            selected_model: None,
+            selecting_model: false,
             usage: (0, 0),
             tool_output_expanded: false,
             spinner_frame: 0,
@@ -339,6 +349,10 @@ impl InteractiveRoot {
 
     fn take_action(&mut self) -> InteractiveAction {
         std::mem::replace(&mut self.action, InteractiveAction::None)
+    }
+
+    fn take_selected_model(&mut self) -> Option<Model> {
+        self.selected_model.take()
     }
 
     fn take_submitted(&mut self) -> Option<String> {
@@ -409,13 +423,15 @@ impl InteractiveRoot {
             "help" | "h" | "?" => {
                 self.transcript.push(TranscriptItem::system(help_text()));
             }
+            "model" => self.handle_model_command(&command.args),
             "name" => self.handle_name_command(&command.args),
             "session" => self.handle_session_command(),
             "hotkeys" => self.handle_hotkeys_command(),
             "changelog" => self.handle_changelog_command(),
-            "settings" | "model" | "scoped-models" | "export" | "import" | "share" | "copy"
-            | "fork" | "clone" | "tree" | "login" | "logout" | "new" | "compact" | "resume"
-            | "reload" => self.handle_pending_slash_command(&command),
+            "settings" | "scoped-models" | "export" | "import" | "share" | "copy" | "fork"
+            | "clone" | "tree" | "login" | "logout" | "new" | "compact" | "resume" | "reload" => {
+                self.handle_pending_slash_command(&command)
+            }
             _ => {
                 self.transcript.push(TranscriptItem::system(format!(
                     "unknown command: {} - type /help for available commands",
@@ -430,6 +446,31 @@ impl InteractiveRoot {
             "/{} is recognized but not implemented in the Rust interactive UI yet.",
             command.name
         )));
+    }
+
+    fn handle_model_command(&mut self, args: &str) {
+        if args.is_empty() {
+            self.selecting_model = true;
+            self.editor.set_text("");
+            self.transcript
+                .push(TranscriptItem::system("Select model:".to_string()));
+            return;
+        }
+
+        match pi_ai::lookup_model(args) {
+            Some(model) => {
+                self.model_id = model.id.clone();
+                self.selected_model = Some(model);
+                self.transcript.push(TranscriptItem::system(format!(
+                    "Model set: {}",
+                    self.model_id
+                )));
+            }
+            None => {
+                self.transcript
+                    .push(TranscriptItem::system(format!("Unknown model: {args}")));
+            }
+        }
     }
 
     fn handle_name_command(&mut self, args: &str) {
@@ -576,6 +617,15 @@ impl Component for InteractiveRoot {
             return;
         }
 
+        if self.selecting_model && matches_key(event, "escape") {
+            self.selecting_model = false;
+            self.editor.set_text("");
+            self.transcript.push(TranscriptItem::system(
+                "Model selection canceled".to_string(),
+            ));
+            return;
+        }
+
         if self.status == InteractiveStatus::Idle {
             self.editor.handle_input(event);
             if let Some(command) = self.take_scroll_command() {
@@ -588,7 +638,10 @@ impl Component for InteractiveRoot {
                 }
             }
             if let Some(text) = self.take_submitted() {
-                if let Some(command) = parse_slash_command(&text) {
+                if self.selecting_model {
+                    self.selecting_model = false;
+                    self.handle_model_command(text.trim());
+                } else if let Some(command) = parse_slash_command(&text) {
                     self.handle_slash_command(command);
                 } else {
                     self.pending_submit = Some(text);
@@ -718,7 +771,7 @@ async fn run_started_interactive_loop<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
     input: &mut InputPump,
-    prompt_context: PromptContext,
+    mut prompt_context: PromptContext,
 ) -> Result<i32, CliError> {
     let mut stdin_buffer = StdinBuffer::new();
     let mut running: Option<PromptTask> = None;
@@ -745,7 +798,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                                 tui,
                                 root_id,
                                 stdin_buffer.process(&chunk),
-                                &prompt_context,
+                                &mut prompt_context,
                                 &mut running,
                                 &mut render_scheduler,
                             )? {
@@ -816,7 +869,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                             tui,
                             root_id,
                             stdin_buffer.flush(),
-                            &prompt_context,
+                            &mut prompt_context,
                             &mut running,
                             &mut render_scheduler,
                         )? {
@@ -835,7 +888,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                         tui,
                         root_id,
                         stdin_buffer.process(&chunk),
-                        &prompt_context,
+                        &mut prompt_context,
                         &mut running,
                         &mut render_scheduler,
                     )? {
@@ -855,7 +908,7 @@ fn process_input_events<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
     events: Vec<InputEvent>,
-    prompt_context: &PromptContext,
+    prompt_context: &mut PromptContext,
     running: &mut Option<PromptTask>,
     render_scheduler: &mut RenderScheduler,
 ) -> Result<LoopControl, CliError> {
@@ -920,14 +973,14 @@ fn handle_input_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
     event: InputEvent,
-    prompt_context: &PromptContext,
+    prompt_context: &mut PromptContext,
     running: &mut Option<PromptTask>,
 ) -> Result<LoopControl, CliError> {
     if is_key_release(&event) {
         return Ok(LoopControl::Continue(RenderRequest::NONE));
     }
 
-    let (action, prompt, render_request) = {
+    let (action, prompt, selected_model, render_request) = {
         let root = root_mut(tui, root_id)?;
         let before = root.render_state();
         root.handle_input(&event);
@@ -937,9 +990,24 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let selected_model = root.take_selected_model();
         let after = root.render_state();
-        (action, prompt, RenderRequest::changed(before != after))
+        (
+            action,
+            prompt,
+            selected_model,
+            RenderRequest::changed(before != after),
+        )
     };
+
+    if let Some(model) = selected_model {
+        prompt_context.api_key = resolve_prompt_api_key(
+            &model.provider,
+            prompt_context.cli_api_key.as_deref(),
+            &prompt_context.auth,
+        );
+        prompt_context.model = model;
+    }
 
     match action {
         InteractiveAction::None => Ok(LoopControl::Continue(render_request)),
@@ -992,6 +1060,7 @@ fn start_prompt_task<T: Terminal>(
         thinking_level: prompt_context.thinking_level,
         tool_execution: prompt_context.tool_execution,
         resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
         invocation: PromptInvocation::Text(prompt),
     };
 
@@ -1031,10 +1100,38 @@ fn build_prompt_context(
     parsed: &CliArgs,
     options: CliRunOptions,
 ) -> Result<PromptContext, CliError> {
-    let model = select_model(parsed, None, options.model_override)?;
     let cwd = options.session.cwd.clone();
+    let (config, config_diags) = config::load_config(&cwd);
+    let diag_text = config::drain_diagnostics(&config_diags);
+    if !diag_text.is_empty() {
+        eprint!("{diag_text}");
+    }
+    let model = select_model(
+        parsed,
+        config.settings.default_provider.as_deref(),
+        config.settings.default_model.as_deref(),
+        options.model_override,
+    )?;
+    let provider = model.provider.clone();
+    let api_key = resolve_prompt_api_key(&provider, parsed.api_key.as_deref(), &config.auth);
+    let config_paths = config::resolve_paths(&cwd);
+    let loaded = resources::load_cli_resources_with_options(
+        &parsed.skills,
+        &parsed.prompt_templates,
+        &cwd,
+        &config_paths.global_dir,
+        resources::ResourceLoadOptions {
+            no_skills: parsed.no_skills,
+            no_prompt_templates: parsed.no_prompt_templates,
+            no_themes: parsed.no_themes,
+            skill_paths: config.settings.skills.clone(),
+            prompt_paths: config.settings.prompts.clone(),
+            theme_paths: config.settings.themes.clone(),
+            theme: config.settings.theme.clone(),
+        },
+    )?;
     let (skills, templates, diagnostics) =
-        resources::load_cli_resources(&parsed.skills, &parsed.prompt_templates, &cwd)?;
+        (loaded.skills, loaded.prompt_templates, loaded.diagnostics);
     resources::print_diagnostics(&diagnostics);
 
     if let Some(ref skill_name) = parsed.skill {
@@ -1052,12 +1149,34 @@ fn build_prompt_context(
         }
     }
 
+    let context_files = resources::discover_context_files(
+        &cwd,
+        &config_paths.global_dir,
+        effective_no_context_files(parsed, &config.settings),
+    );
+    let mut system_prompt = parsed.system_prompt.clone();
+    if !context_files.is_empty() || !parsed.append_system_prompt.is_empty() {
+        let mut parts = Vec::new();
+        if let Some(base) = system_prompt.take() {
+            parts.push(base);
+        }
+        for file in context_files {
+            parts.push(format!(
+                "# Context file: {}\n{}",
+                file.path.display(),
+                file.content
+            ));
+        }
+        parts.extend(parsed.append_system_prompt.clone());
+        system_prompt = Some(parts.join("\n\n"));
+    }
+
     let session = if parsed.no_session {
         None
     } else {
         let mut session_opts = options.session;
-        if let Some(ref dir) = parsed.session_dir {
-            session_opts.session_dir = Some(PathBuf::from(dir));
+        if let Some(dir) = effective_session_dir(parsed, &config.settings) {
+            session_opts.session_dir = Some(dir);
         }
         Some(session_opts)
     };
@@ -1071,8 +1190,10 @@ fn build_prompt_context(
 
     Ok(PromptContext {
         model,
-        api_key: parsed.api_key.clone(),
-        system_prompt: parsed.system_prompt.clone(),
+        api_key,
+        cli_api_key: parsed.api_key.clone(),
+        auth: config.auth,
+        system_prompt,
         max_turns: parsed.max_turns,
         tools: options.tools,
         register_builtins: options.register_builtins,
@@ -1082,7 +1203,22 @@ fn build_prompt_context(
         thinking_level: parsed.thinking,
         tool_execution: parsed.tool_execution,
         resources: resources::build_agent_resources(skills, templates),
+        settings: config.settings,
     })
+}
+
+fn resolve_prompt_api_key(
+    provider: &str,
+    cli_api_key: Option<&str>,
+    auth: &crate::config::AuthStore,
+) -> Option<String> {
+    let mut key_diags = Vec::new();
+    let resolved = config::auth::resolve_api_key(provider, cli_api_key, auth, &mut key_diags);
+    let key_text = config::drain_diagnostics(&key_diags);
+    if !key_text.is_empty() {
+        eprint!("{key_text}");
+    }
+    resolved.map(|r| r.value)
 }
 
 fn resolve_session_target(parsed: &CliArgs) -> Option<ResolvedSessionTarget> {
@@ -1331,6 +1467,42 @@ fn to_cli_error(error: std::io::Error) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_prompt_context_uses_config_defaults_and_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.toml"),
+            "default_model = \"claude-haiku-4-5\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("auth.toml"),
+            "[anthropic]\ntype = \"api_key\"\nkey = \"from-auth\"\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                dir.path().join("auth.toml"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+        }
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
+        }
+
+        let ctx = build_prompt_context(&CliArgs::default(), CliRunOptions::default()).unwrap();
+
+        assert_eq!(ctx.model.id, "claude-haiku-4-5");
+        assert_eq!(ctx.api_key.as_deref(), Some("from-auth"));
+
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
+    }
 
     #[test]
     fn render_transcript_lines_compacts_tool_rows_and_truncates_noisy_output() {
@@ -1710,12 +1882,12 @@ mod tests {
             "no-session".to_string(),
         );
         root.handle_slash_command(ParsedSlashCommand {
-            name: "model".to_string(),
-            args: "gpt-5".to_string(),
-            original: "/model gpt-5".to_string(),
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
         });
         let text = last_system_text(&root);
-        assert!(text.contains("/model"), "{text}");
+        assert!(text.contains("/settings"), "{text}");
         assert!(text.contains("not implemented"), "{text}");
         assert_ne!(root.action, InteractiveAction::Submit);
         assert!(root.pending_submit.is_none());

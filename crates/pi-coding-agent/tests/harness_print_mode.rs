@@ -42,6 +42,7 @@ fn thinking_level_propagates_through_print_mode_options_to_agent_config() {
         Some(ThinkingLevel::High),
         Some(ToolExecutionMode::Sequential),
         AgentResources::default(),
+        None,
     );
     assert_eq!(config.thinking_level, ThinkingLevel::High);
     assert_eq!(config.tool_execution, ToolExecutionMode::Sequential);
@@ -58,6 +59,7 @@ fn default_thinking_level_is_off_when_not_specified() {
         None,
         None,
         AgentResources::default(),
+        None,
     );
     assert_eq!(config.thinking_level, ThinkingLevel::Off);
     assert_eq!(config.tool_execution, ToolExecutionMode::Parallel);
@@ -124,6 +126,7 @@ async fn print_mode_runs_with_thinking_flag() {
         thinking_level: Some(ThinkingLevel::High),
         tool_execution: Some(ToolExecutionMode::Parallel),
         resources: AgentResources::default(),
+        settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
     .await

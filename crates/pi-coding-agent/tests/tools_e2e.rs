@@ -151,6 +151,7 @@ async fn run_scripted_read(
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("read it".into()),
     })
     .await
@@ -270,6 +271,7 @@ async fn grep_builtin_tool_success_is_sent_back_to_model() {
         thinking_level: None,
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
+        settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("search".into()),
     })
     .await

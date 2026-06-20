@@ -27,6 +27,7 @@ pub struct SessionPromptOptions {
     pub thinking_level: Option<ThinkingLevel>,
     pub tool_execution: Option<ToolExecutionMode>,
     pub resources: AgentResources,
+    pub settings: Option<crate::config::Settings>,
     pub invocation: PromptInvocation,
 }
 
@@ -140,6 +141,7 @@ fn prepare_session_prompt(
         thinking_level,
         tool_execution,
         resources,
+        settings,
         invocation,
     } = options;
 
@@ -155,11 +157,13 @@ fn prepare_session_prompt(
         thinking_level,
         tool_execution,
         resources,
+        settings.as_ref(),
     );
     if matches!(
         session.as_ref().map(|session| &session.mode),
         Some(SessionMode::Enabled)
-    ) {
+    ) && settings.is_none()
+    {
         config.compaction = Some(CompactionConfig::default());
     }
 

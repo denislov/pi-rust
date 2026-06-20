@@ -1,5 +1,13 @@
+use std::sync::{Arc, Mutex};
+
+use futures::stream;
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
-use pi_ai::types::StopReason;
+use pi_ai::registry::{self, ApiProvider};
+use pi_ai::stream::EventStream;
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StopReason,
+    StreamOptions,
+};
 use pi_coding_agent::interactive::test_harness::{
     run_scripted_idle_interactive, run_scripted_interactive,
     run_scripted_interactive_with_session_dir_size_and_waits,
@@ -145,6 +153,31 @@ fn sync_render_count(ops: &[TerminalOp]) -> usize {
     ops.iter()
         .filter(|op| matches!(op, TerminalOp::Write(data) if data.contains("\x1b[?2026h")))
         .count()
+}
+
+struct RecordingModelProvider {
+    model_ids: Arc<Mutex<Vec<String>>>,
+    api_keys: Arc<Mutex<Vec<Option<String>>>>,
+}
+
+impl ApiProvider for RecordingModelProvider {
+    fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+        self.model_ids.lock().unwrap().push(model.id.clone());
+        self.api_keys
+            .lock()
+            .unwrap()
+            .push(opts.and_then(|opts| opts.api_key));
+        let mut message = AssistantMessage::empty("recording", &model.id);
+        message.content.push(ContentBlock::Text {
+            text: "model ok".to_string(),
+            text_signature: None,
+        });
+        message.stop_reason = StopReason::Stop;
+        Box::pin(stream::iter(vec![AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message,
+        }]))
+    }
 }
 
 #[tokio::test]
@@ -297,11 +330,147 @@ async fn scripted_interactive_help_lists_registry_commands() {
 }
 
 #[tokio::test]
-async fn scripted_interactive_known_pending_command_is_not_sent_to_provider() {
-    let output = run_scripted_idle_interactive("/model gpt-5\r")
+async fn scripted_interactive_model_command_switches_footer_model() {
+    let output = run_scripted_idle_interactive("/model claude-haiku-4-5\r")
         .await
         .unwrap();
-    assert!(output.contains("/model"), "{output:?}");
+    assert!(output.contains("Model set: claude-haiku-4-5"), "{output:?}");
+    assert!(output.contains("model: claude-haiku-4-5"), "{output:?}");
+    assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn scripted_interactive_model_command_changes_next_prompt_model() {
+    let target_model = pi_ai::lookup_model("claude-haiku-4-5").expect("known model");
+    let previous_provider = registry::lookup(&target_model.api);
+    let model_ids = Arc::new(Mutex::new(Vec::new()));
+    registry::register(
+        &target_model.api,
+        Arc::new(RecordingModelProvider {
+            model_ids: Arc::clone(&model_ids),
+            api_keys: Arc::new(Mutex::new(Vec::new())),
+        }),
+    );
+
+    let output = run_scripted_idle_interactive("/model claude-haiku-4-5\rhi\r").await;
+
+    match previous_provider {
+        Some(provider) => registry::register(&target_model.api, provider),
+        None => registry::unregister(&target_model.api),
+    }
+
+    output.unwrap();
+    assert_eq!(
+        model_ids.lock().unwrap().as_slice(),
+        &["claude-haiku-4-5".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_model_selector_confirms_filtered_model() {
+    let default_model = pi_ai::lookup_model("claude-sonnet-4-5").expect("known default model");
+    let previous_provider = registry::lookup(&default_model.api);
+    registry::register(
+        &default_model.api,
+        Arc::new(RecordingModelProvider {
+            model_ids: Arc::new(Mutex::new(Vec::new())),
+            api_keys: Arc::new(Mutex::new(Vec::new())),
+        }),
+    );
+
+    let output = run_scripted_idle_interactive("/model\rclaude-haiku-4-5\r").await;
+
+    match previous_provider {
+        Some(provider) => registry::register(&default_model.api, provider),
+        None => registry::unregister(&default_model.api),
+    }
+
+    let output = output.unwrap();
+    assert!(output.contains("Model set: claude-haiku-4-5"), "{output:?}");
+    assert!(output.contains("model: claude-haiku-4-5"), "{output:?}");
+    assert!(!output.contains("not implemented"), "{output:?}");
+}
+
+#[tokio::test]
+async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider() {
+    let target_model = pi_ai::lookup_model("gpt-5").expect("known model");
+    let previous_provider = registry::lookup(&target_model.api);
+    let model_ids = Arc::new(Mutex::new(Vec::new()));
+    let api_keys = Arc::new(Mutex::new(Vec::new()));
+    registry::register(
+        &target_model.api,
+        Arc::new(RecordingModelProvider {
+            model_ids: Arc::clone(&model_ids),
+            api_keys: Arc::clone(&api_keys),
+        }),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("auth.toml"),
+        "[anthropic]\ntype = \"api_key\"\nkey = \"anthropic-auth\"\n\n[openai]\ntype = \"api_key\"\nkey = \"openai-auth\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.path().join("auth.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+    let prior_openai_key = std::env::var_os("OPENAI_API_KEY");
+    let prior_anthropic_key = std::env::var_os("ANTHROPIC_API_KEY");
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path());
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    let output = run_scripted_idle_interactive("/model gpt-5\rhi\r").await;
+
+    unsafe {
+        match prior_pi_rust_dir {
+            Some(value) => std::env::set_var("PI_RUST_DIR", value),
+            None => std::env::remove_var("PI_RUST_DIR"),
+        }
+        match prior_openai_key {
+            Some(value) => std::env::set_var("OPENAI_API_KEY", value),
+            None => std::env::remove_var("OPENAI_API_KEY"),
+        }
+        match prior_anthropic_key {
+            Some(value) => std::env::set_var("ANTHROPIC_API_KEY", value),
+            None => std::env::remove_var("ANTHROPIC_API_KEY"),
+        }
+    }
+    match previous_provider {
+        Some(provider) => registry::register(&target_model.api, provider),
+        None => registry::unregister(&target_model.api),
+    }
+
+    output.unwrap();
+    assert_eq!(model_ids.lock().unwrap().as_slice(), &["gpt-5".to_string()]);
+    assert_eq!(
+        api_keys.lock().unwrap().as_slice(),
+        &[Some("openai-auth".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_model_selector_cancel_keeps_current_model() {
+    let output = run_scripted_idle_interactive("/model\r\x1b").await.unwrap();
+    assert!(!output.contains("Model set:"), "{output:?}");
+    assert!(output.contains("model: claude-sonnet-4-5"), "{output:?}");
+    assert!(!output.contains("not implemented"), "{output:?}");
+    assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn scripted_interactive_known_pending_command_is_not_sent_to_provider() {
+    let output = run_scripted_idle_interactive("/settings\r").await.unwrap();
+    assert!(output.contains("/settings"), "{output:?}");
     assert!(output.contains("not implemented"), "{output:?}");
     assert_eq!(output.exit_code, 0);
 }

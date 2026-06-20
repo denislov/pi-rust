@@ -20,6 +20,7 @@ pub struct ResourceLoadOptions {
     pub skill_paths: Vec<String>,
     pub prompt_paths: Vec<String>,
     pub theme_paths: Vec<String>,
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ pub struct LoadedResources {
     pub skills: Vec<Skill>,
     pub prompt_templates: Vec<PromptTemplate>,
     pub themes: Vec<ThemeResource>,
+    pub selected_theme: Option<ThemeResource>,
     pub diagnostics: Vec<ResourceDiagnostic>,
 }
 
@@ -157,10 +159,15 @@ pub fn load_cli_resources_with_options(
     diagnostics.extend(template_diags);
     let (themes, theme_diags) = load_themes(&resolved_themes);
     diagnostics.extend(theme_diags);
+    let selected_theme = options
+        .theme
+        .as_deref()
+        .and_then(|name| themes.iter().find(|theme| theme.name == name).cloned());
     Ok(LoadedResources {
         skills,
         prompt_templates,
         themes,
+        selected_theme,
         diagnostics,
     })
 }
