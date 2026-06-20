@@ -4,6 +4,7 @@ use pi_agent_core::resources::{
 };
 use pi_agent_core::types::DiagnosticSeverity;
 use pi_agent_core::{AgentResources, PromptTemplate, ResourceDiagnostic, Skill};
+use pi_tui::{Color, ThemePalette, TuiTheme, dark_theme, light_theme};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +38,25 @@ pub struct ThemeResource {
     pub name: String,
     pub path: PathBuf,
     pub content: String,
+}
+
+pub fn tui_theme_from_resource(resource: &ThemeResource) -> TuiTheme {
+    let value = serde_json::from_str::<serde_json::Value>(&resource.content).ok();
+    let mode = value
+        .as_ref()
+        .and_then(|value| string_field(value, "mode"))
+        .unwrap_or("dark");
+    let base = if mode.eq_ignore_ascii_case("light") {
+        light_theme().palette
+    } else {
+        dark_theme().palette
+    };
+    let palette = value
+        .as_ref()
+        .and_then(|value| value.get("palette"))
+        .map(|palette| merge_palette(base, palette))
+        .unwrap_or(base);
+    TuiTheme::custom(resource.name.clone(), palette)
 }
 
 pub fn resolve_resource_paths(paths: &[String], cwd: &Path) -> Vec<PathBuf> {
@@ -251,6 +271,92 @@ fn load_theme_file(
         path: path.to_path_buf(),
         content,
     });
+}
+
+fn merge_palette(mut palette: ThemePalette, value: &serde_json::Value) -> ThemePalette {
+    if let Some(color) = color_field(value, "accent") {
+        palette.accent = color;
+    }
+    if let Some(color) = color_field(value, "muted") {
+        palette.muted = color;
+    }
+    if let Some(color) = color_field(value, "text") {
+        palette.text = color;
+    }
+    if let Some(color) = color_field(value, "background") {
+        palette.background = color;
+    }
+    if let Some(color) = color_field(value, "error") {
+        palette.error = color;
+    }
+    if let Some(color) = color_field(value, "success") {
+        palette.success = color;
+    }
+    if let Some(color) = color_field(value, "warning") {
+        palette.warning = color;
+    }
+    if let Some(color) = color_field(value, "path") {
+        palette.path = color;
+    }
+    if let Some(color) =
+        color_field(value, "input_border").or_else(|| color_field(value, "inputBorder"))
+    {
+        palette.input_border = color;
+    }
+    if let Some(color) =
+        color_field(value, "menu_border").or_else(|| color_field(value, "menuBorder"))
+    {
+        palette.menu_border = color;
+    }
+    palette
+}
+
+fn color_field(value: &serde_json::Value, field: &str) -> Option<Color> {
+    value.get(field).and_then(parse_color)
+}
+
+fn string_field<'a>(value: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+    value.get(field).and_then(|value| value.as_str())
+}
+
+fn parse_color(value: &serde_json::Value) -> Option<Color> {
+    if let Some(index) = value.as_u64() {
+        return u8::try_from(index).ok().map(Color::Ansi256);
+    }
+    let text = value.as_str()?.trim();
+    match text.to_ascii_lowercase().as_str() {
+        "default" => Some(Color::Default),
+        "red" => Some(Color::Red),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "blue" => Some(Color::Blue),
+        "cyan" => Some(Color::Cyan),
+        "magenta" | "purple" => Some(Color::Magenta),
+        "white" => Some(Color::White),
+        text if text.starts_with('#') => parse_hex_color(text),
+        text if text.starts_with("ansi256:") => text
+            .trim_start_matches("ansi256:")
+            .parse::<u8>()
+            .ok()
+            .map(Color::Ansi256),
+        text if text.starts_with("ansi:") => text
+            .trim_start_matches("ansi:")
+            .parse::<u8>()
+            .ok()
+            .map(Color::Ansi256),
+        _ => None,
+    }
+}
+
+fn parse_hex_color(text: &str) -> Option<Color> {
+    let hex = text.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::Rgb(red, green, blue))
 }
 
 pub fn find_skill<'a>(skills: &'a [Skill], name: &str) -> Option<&'a Skill> {

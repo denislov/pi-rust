@@ -9,9 +9,9 @@ use pi_ai::types::Model;
 use pi_tui::{
     Component, ERROR, Editor, InputEvent, KeybindingsManager, Loader, Markdown, PATH,
     ProcessTerminal, RenderScheduler, STATUS_IDLE, STATUS_RUNNING, SYSTEM, StdinBuffer, Style,
-    TOOL_ERROR, TOOL_NAME, TUI_KEYBINDINGS, Terminal, Tui, TuiError, USER, color_enabled,
-    fuzzy_filter_indices, is_key_release, matches_key, paint_with, truncate_to_width,
-    visible_width,
+    TOOL_ERROR, TOOL_NAME, TUI_KEYBINDINGS, Terminal, Tui, TuiError, TuiTheme, USER, color_enabled,
+    dark_theme, fuzzy_filter_indices, is_key_release, light_theme, matches_key, paint_with,
+    truncate_to_width, visible_width,
 };
 
 use crate::interactive::key_hints::{app_key_hint, key_hint};
@@ -133,6 +133,7 @@ struct PromptContext {
     tool_execution: Option<pi_agent_core::ToolExecutionMode>,
     resources: AgentResources,
     settings: crate::config::Settings,
+    theme: TuiTheme,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,11 +291,13 @@ struct InteractiveRoot {
     session_label: String,
     selected_model: Option<Model>,
     selecting_model: bool,
+    selecting_settings: bool,
     usage: (u32, u32),
     tool_output_expanded: bool,
     spinner_frame: usize,
     slash_suggestion_selected: usize,
     slash_suggestions_dismissed_for: Option<String>,
+    theme: TuiTheme,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -309,10 +312,21 @@ struct InteractiveRenderState {
     spinner_frame: usize,
     slash_suggestion_selected: usize,
     slash_suggestions_dismissed_for: Option<String>,
+    selecting_settings: bool,
 }
 
 impl InteractiveRoot {
+    #[cfg(test)]
     fn new(cwd: PathBuf, model_id: String, session_label: String) -> Self {
+        Self::new_with_theme(cwd, model_id, session_label, dark_theme())
+    }
+
+    fn new_with_theme(
+        cwd: PathBuf,
+        model_id: String,
+        session_label: String,
+        theme: TuiTheme,
+    ) -> Self {
         let submitted = Arc::new(Mutex::new(None));
         let submitted_for_callback = Arc::clone(&submitted);
         let scroll_command = Arc::new(Mutex::new(None));
@@ -350,12 +364,20 @@ impl InteractiveRoot {
             session_label,
             selected_model: None,
             selecting_model: false,
+            selecting_settings: false,
             usage: (0, 0),
             tool_output_expanded: false,
             spinner_frame: 0,
             slash_suggestion_selected: 0,
             slash_suggestions_dismissed_for: None,
+            theme,
         }
+    }
+
+    #[cfg(test)]
+    fn with_theme(mut self, theme: TuiTheme) -> Self {
+        self.theme = theme;
+        self
     }
 
     fn take_action(&mut self) -> InteractiveAction {
@@ -435,12 +457,13 @@ impl InteractiveRoot {
                 self.transcript.push(TranscriptItem::system(help_text()));
             }
             "model" => self.handle_model_command(&command.args),
+            "settings" => self.handle_settings_command(),
             "name" => self.handle_name_command(&command.args),
             "session" => self.handle_session_command(),
             "hotkeys" => self.handle_hotkeys_command(),
             "changelog" => self.handle_changelog_command(),
-            "settings" | "scoped-models" | "export" | "import" | "share" | "copy" | "fork"
-            | "clone" | "tree" | "login" | "logout" | "new" | "compact" | "resume" | "reload" => {
+            "scoped-models" | "export" | "import" | "share" | "copy" | "fork" | "clone"
+            | "tree" | "login" | "logout" | "new" | "compact" | "resume" | "reload" => {
                 self.handle_pending_slash_command(&command)
             }
             _ => {
@@ -457,6 +480,11 @@ impl InteractiveRoot {
             "/{} is recognized but not implemented in the Rust interactive UI yet.",
             command.name
         )));
+    }
+
+    fn handle_settings_command(&mut self) {
+        self.selecting_settings = true;
+        self.editor.set_text("");
     }
 
     fn handle_model_command(&mut self, args: &str) {
@@ -574,11 +602,20 @@ impl InteractiveRoot {
             spinner_frame: self.spinner_frame,
             slash_suggestion_selected: self.slash_suggestion_selected,
             slash_suggestions_dismissed_for: self.slash_suggestions_dismissed_for.clone(),
+            selecting_settings: self.selecting_settings,
+        }
+    }
+
+    fn editor_border_style(&self) -> Style {
+        if self.selecting_model || self.selecting_settings {
+            self.theme.editor.menu_border
+        } else {
+            self.theme.editor.active_border
         }
     }
 
     fn slash_suggestion_indices(&self) -> Option<Vec<usize>> {
-        if self.selecting_model {
+        if self.selecting_model || self.selecting_settings {
             return None;
         }
         let text = self.editor.text();
@@ -646,6 +683,34 @@ impl InteractiveRoot {
         lines
     }
 
+    fn render_settings_menu(&self, width: usize) -> Vec<String> {
+        if !self.selecting_settings {
+            return Vec::new();
+        }
+        [
+            "Settings".to_string(),
+            format!("  Theme: {}", self.theme.name),
+            format!("  Model: {}", self.model_id),
+            format!("  Session: {}", self.session_label),
+            "  Esc close".to_string(),
+        ]
+        .into_iter()
+        .map(|line| fit_line(&line, width))
+        .collect()
+    }
+
+    fn render_editor_box(&mut self, width: usize) -> Vec<String> {
+        let editor_lines = self.editor.render(width.saturating_sub(2));
+        let border = editor_border_line(width, &self.editor_border_style(), color_enabled());
+        let mut lines = Vec::with_capacity(editor_lines.len() + 2);
+        lines.push(border.clone());
+        for line in editor_lines {
+            lines.push(fit_line(&format!("> {line}"), width));
+        }
+        lines.push(border);
+        lines
+    }
+
     fn handle_slash_suggestion_input(&mut self, event: &InputEvent) -> bool {
         let Some(indices) = self.slash_suggestion_indices() else {
             return false;
@@ -706,7 +771,6 @@ impl Component for InteractiveRoot {
             return Vec::new();
         }
 
-        let editor_lines = self.editor.render(width.saturating_sub(2));
         let footer = fit_line(&self.footer(), width);
         let max_tool_result_lines = if self.tool_output_expanded {
             EXPANDED_TOOL_RESULT_LINES
@@ -719,9 +783,8 @@ impl Component for InteractiveRoot {
             max_tool_result_lines,
             color_enabled(),
         );
-        for line in editor_lines {
-            lines.push(fit_line(&format!("> {line}"), width));
-        }
+        lines.extend(self.render_settings_menu(width));
+        lines.extend(self.render_editor_box(width));
         lines.extend(self.render_slash_suggestions(width));
         lines.push(footer);
         lines
@@ -759,7 +822,16 @@ impl Component for InteractiveRoot {
             return;
         }
 
+        if self.selecting_settings && matches_key(event, "escape") {
+            self.selecting_settings = false;
+            self.editor.set_text("");
+            return;
+        }
+
         if self.status == InteractiveStatus::Idle {
+            if self.selecting_settings {
+                return;
+            }
             let before_text = self.editor.text().to_string();
             if self.handle_slash_suggestion_input(event) {
                 return;
@@ -892,10 +964,11 @@ async fn run_interactive_loop<T: Terminal>(
 
     terminal.start().map_err(to_cli_error)?;
     let mut tui = Tui::new(terminal);
-    let root_id = tui.add_child_with_id(Box::new(InteractiveRoot::new(
+    let root_id = tui.add_child_with_id(Box::new(InteractiveRoot::new_with_theme(
         cwd,
         prompt_context.model.id.clone(),
         session_label,
+        prompt_context.theme.clone(),
     )));
     tui.set_focus(Some(root_id));
 
@@ -1271,6 +1344,10 @@ fn build_prompt_context(
             theme: config.settings.theme.clone(),
         },
     )?;
+    let theme = resolve_tui_theme(
+        config.settings.theme.as_deref(),
+        loaded.selected_theme.as_ref(),
+    );
     let (skills, templates, diagnostics) =
         (loaded.skills, loaded.prompt_templates, loaded.diagnostics);
     resources::print_diagnostics(&diagnostics);
@@ -1345,7 +1422,21 @@ fn build_prompt_context(
         tool_execution: parsed.tool_execution,
         resources: resources::build_agent_resources(skills, templates),
         settings: config.settings,
+        theme,
     })
+}
+
+fn resolve_tui_theme(
+    theme_name: Option<&str>,
+    selected: Option<&resources::ThemeResource>,
+) -> TuiTheme {
+    if let Some(theme) = selected {
+        return resources::tui_theme_from_resource(theme);
+    }
+    match theme_name {
+        Some("light") => light_theme(),
+        _ => dark_theme(),
+    }
 }
 
 fn resolve_prompt_api_key(
@@ -1515,6 +1606,13 @@ fn slash_completion_query(text: &str, cursor: usize) -> Option<&str> {
     Some(query)
 }
 
+fn editor_border_line(width: usize, style: &Style, color: bool) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    fit_line(&paint_with(&"─".repeat(width), style, color), width)
+}
+
 fn fit_line(line: &str, width: usize) -> String {
     if visible_width(line) <= width {
         line.to_string()
@@ -1627,6 +1725,43 @@ mod tests {
 
         assert_eq!(ctx.model.id, "claude-haiku-4-5");
         assert_eq!(ctx.api_key.as_deref(), Some("from-auth"));
+
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
+    }
+
+    #[test]
+    fn build_prompt_context_applies_selected_theme_to_editor_borders() {
+        let dir = tempfile::tempdir().unwrap();
+        let themes_dir = dir.path().join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        std::fs::write(dir.path().join("settings.toml"), "theme = \"violet\"\n").unwrap();
+        std::fs::write(
+            themes_dir.join("violet.json"),
+            r##"{
+                "name": "violet",
+                "palette": {
+                    "input_border": "#211144",
+                    "menu_border": "#1234aa"
+                }
+            }"##,
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
+        }
+
+        let ctx = build_prompt_context(&CliArgs::default(), CliRunOptions::default()).unwrap();
+
+        assert_eq!(
+            ctx.theme.editor.active_border.fg,
+            pi_tui::Color::Rgb(0x21, 0x11, 0x44)
+        );
+        assert_eq!(
+            ctx.theme.editor.menu_border.fg,
+            pi_tui::Color::Rgb(0x12, 0x34, 0xaa)
+        );
 
         unsafe {
             std::env::remove_var("PI_RUST_DIR");
@@ -1936,6 +2071,84 @@ mod tests {
     }
 
     #[test]
+    fn editor_border_uses_active_theme_style_in_normal_input_state() {
+        let theme = pi_tui::TuiTheme::custom(
+            "custom",
+            pi_tui::ThemePalette {
+                accent: pi_tui::Color::Cyan,
+                muted: pi_tui::Color::Ansi256(244),
+                text: pi_tui::Color::White,
+                background: pi_tui::Color::Default,
+                error: pi_tui::Color::Red,
+                success: pi_tui::Color::Green,
+                warning: pi_tui::Color::Yellow,
+                path: pi_tui::Color::Cyan,
+                input_border: pi_tui::Color::Rgb(10, 20, 30),
+                menu_border: pi_tui::Color::Rgb(40, 50, 60),
+            },
+        );
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        )
+        .with_theme(theme);
+
+        assert_eq!(
+            root.editor_border_style().fg,
+            pi_tui::Color::Rgb(10, 20, 30)
+        );
+
+        let rendered = root.render(40);
+        let editor_row = rendered
+            .iter()
+            .position(|line| line.contains("> "))
+            .expect("editor row should render");
+        assert!(rendered[editor_row - 1].contains("─"), "{rendered:?}");
+        assert!(rendered[editor_row + 1].contains("─"), "{rendered:?}");
+    }
+
+    #[test]
+    fn settings_menu_uses_menu_theme_border_style() {
+        let theme = pi_tui::TuiTheme::custom(
+            "custom",
+            pi_tui::ThemePalette {
+                accent: pi_tui::Color::Cyan,
+                muted: pi_tui::Color::Ansi256(244),
+                text: pi_tui::Color::White,
+                background: pi_tui::Color::Default,
+                error: pi_tui::Color::Red,
+                success: pi_tui::Color::Green,
+                warning: pi_tui::Color::Yellow,
+                path: pi_tui::Color::Cyan,
+                input_border: pi_tui::Color::Rgb(10, 20, 30),
+                menu_border: pi_tui::Color::Rgb(40, 50, 60),
+            },
+        );
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        )
+        .with_theme(theme);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+
+        assert!(root.selecting_settings);
+        assert_eq!(
+            root.editor_border_style().fg,
+            pi_tui::Color::Rgb(40, 50, 60)
+        );
+        let rendered = root.render(60).join("\n");
+        assert!(rendered.contains("Settings"), "{rendered}");
+        assert!(!rendered.contains("not implemented"), "{rendered}");
+    }
+
+    #[test]
     fn slash_suggestions_filter_and_hide_after_arguments() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
@@ -2123,12 +2336,12 @@ mod tests {
             "no-session".to_string(),
         );
         root.handle_slash_command(ParsedSlashCommand {
-            name: "settings".to_string(),
+            name: "scoped-models".to_string(),
             args: String::new(),
-            original: "/settings".to_string(),
+            original: "/scoped-models".to_string(),
         });
         let text = last_system_text(&root);
-        assert!(text.contains("/settings"), "{text}");
+        assert!(text.contains("/scoped-models"), "{text}");
         assert!(text.contains("not implemented"), "{text}");
         assert_ne!(root.action, InteractiveAction::Submit);
         assert!(root.pending_submit.is_none());

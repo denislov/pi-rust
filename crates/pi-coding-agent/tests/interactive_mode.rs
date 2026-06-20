@@ -211,7 +211,7 @@ async fn scripted_interactive_initial_render_uses_content_height() {
     let frame = output.rendered_lines.join("\n");
 
     assert!(
-        output.rendered_lines.len() <= 5,
+        output.rendered_lines.len() <= 7,
         "initial render should not pad to the full terminal height: {output:?}"
     );
     assert!(
@@ -226,6 +226,7 @@ async fn scripted_interactive_initial_render_uses_content_height() {
         frame.contains("/help"),
         "welcome line should mention /help: {frame}"
     );
+    assert!(frame.contains("─"), "input border should render: {frame}");
 }
 
 #[tokio::test]
@@ -524,10 +525,24 @@ async fn scripted_interactive_model_selector_cancel_keeps_current_model() {
 
 #[tokio::test]
 async fn scripted_interactive_known_pending_command_is_not_sent_to_provider() {
-    let output = run_scripted_idle_interactive("/settings\r").await.unwrap();
-    assert!(output.contains("/settings"), "{output:?}");
+    let output = run_scripted_idle_interactive("/scoped-models\r")
+        .await
+        .unwrap();
+    assert!(output.contains("/scoped-models"), "{output:?}");
     assert!(output.contains("not implemented"), "{output:?}");
     assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn scripted_interactive_settings_command_enters_settings_menu() {
+    let output = run_scripted_idle_interactive("/settings\r").await.unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(frame.contains("Settings"), "{frame}");
+    assert!(frame.contains("Theme:"), "{frame}");
+    assert!(frame.contains("Esc close"), "{frame}");
+    assert!(frame.contains("─"), "{frame}");
+    assert!(!frame.contains("not implemented"), "{frame}");
 }
 
 #[tokio::test]

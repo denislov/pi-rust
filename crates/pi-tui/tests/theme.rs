@@ -32,12 +32,27 @@ fn custom_theme_derives_component_themes_from_palette() {
             success: Color::Green,
             warning: Color::Yellow,
             path: Color::Cyan,
+            input_border: Color::Rgb(90, 40, 180),
+            menu_border: Color::Rgb(20, 80, 220),
         },
     );
 
     assert_eq!(theme.mode, ThemeMode::Custom);
     assert_eq!(theme.select_list.selected_text.fg, Color::Rgb(20, 120, 200));
     assert_eq!(theme.markdown.quote.fg, Color::Ansi256(244));
+    assert_eq!(theme.editor.active_border.fg, Color::Rgb(90, 40, 180));
+    assert_eq!(theme.editor.menu_border.fg, Color::Rgb(20, 80, 220));
+}
+
+#[test]
+fn built_in_themes_define_stateful_editor_border_colors() {
+    let dark = dark_theme();
+    let light = light_theme();
+
+    assert_eq!(dark.editor.active_border.fg, Color::Magenta);
+    assert_eq!(dark.editor.menu_border.fg, Color::Blue);
+    assert_eq!(light.editor.active_border.fg, Color::Magenta);
+    assert_eq!(light.editor.menu_border.fg, Color::Blue);
 }
 
 #[test]

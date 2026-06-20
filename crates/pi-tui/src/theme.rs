@@ -17,6 +17,8 @@ pub struct ThemePalette {
     pub success: Color,
     pub warning: Color,
     pub path: Color,
+    pub input_border: Color,
+    pub menu_border: Color,
 }
 
 impl ThemePalette {
@@ -30,6 +32,8 @@ impl ThemePalette {
             success: Color::Green,
             warning: Color::Yellow,
             path: Color::Cyan,
+            input_border: Color::Magenta,
+            menu_border: Color::Blue,
         }
     }
 
@@ -43,6 +47,8 @@ impl ThemePalette {
             success: Color::Green,
             warning: Color::Yellow,
             path: Color::Blue,
+            input_border: Color::Magenta,
+            menu_border: Color::Blue,
         }
     }
 }
@@ -129,6 +135,8 @@ impl Default for SettingsListTheme {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorTheme {
     pub border: Style,
+    pub active_border: Style,
+    pub menu_border: Style,
     pub placeholder: Style,
     pub select_list: SelectListTheme,
 }
@@ -137,6 +145,8 @@ impl Default for EditorTheme {
     fn default() -> Self {
         Self {
             border: Style::fg(Color::Default).dim(),
+            active_border: Style::fg(Color::Magenta),
+            menu_border: Style::fg(Color::Blue),
             placeholder: Style::fg(Color::Default).dim(),
             select_list: SelectListTheme::default(),
         }
@@ -199,6 +209,8 @@ impl TuiTheme {
         };
         let editor = EditorTheme {
             border: Style::fg(palette.muted).dim(),
+            active_border: Style::fg(palette.input_border),
+            menu_border: Style::fg(palette.menu_border),
             placeholder: Style::fg(palette.muted).dim(),
             select_list,
         };
