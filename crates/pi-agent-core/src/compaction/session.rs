@@ -90,4 +90,49 @@ impl SessionEntry {
             fields,
         }
     }
+
+    pub fn branch_summary(
+        id: String,
+        parent_id: Option<String>,
+        timestamp: String,
+        summary: String,
+        from_id: String,
+        details: Option<Value>,
+        from_hook: bool,
+    ) -> Self {
+        let mut fields = Map::new();
+        fields.insert("summary".into(), Value::String(summary));
+        fields.insert("fromId".into(), Value::String(from_id));
+        if let Some(details) = details {
+            fields.insert("details".into(), details);
+        }
+        fields.insert("fromHook".into(), Value::Bool(from_hook));
+        Self {
+            entry_type: "branch_summary".into(),
+            id,
+            parent_id,
+            timestamp,
+            fields,
+        }
+    }
+
+    pub fn leaf(
+        id: String,
+        parent_id: Option<String>,
+        timestamp: String,
+        target_id: Option<String>,
+    ) -> Self {
+        let mut fields = Map::new();
+        fields.insert(
+            "targetId".into(),
+            target_id.map(Value::String).unwrap_or(Value::Null),
+        );
+        Self {
+            entry_type: "leaf".into(),
+            id,
+            parent_id,
+            timestamp,
+            fields,
+        }
+    }
 }

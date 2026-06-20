@@ -9,11 +9,13 @@ use crate::compaction::prepare::prepare_compaction;
 use crate::compaction::summarize::summarize;
 use crate::convert::convert_to_context;
 use crate::hooks::{
-    AfterToolCallContext, BeforeToolCallContext, PrepareNextTurnContext, ShouldStopAfterTurnContext,
+    AfterToolCallContext, BeforeProviderRequestContext, BeforeToolCallContext,
+    PrepareNextTurnContext, ShouldStopAfterTurnContext,
 };
 use crate::queues::drain_queue;
 use crate::types::{
-    AgentEvent, AgentMessage, AgentStream, AgentToolResult, ThinkingLevel, ToolExecutionMode,
+    AgentEvent, AgentMessage, AgentStream, AgentToolResult, ProviderRequestSnapshot, ThinkingLevel,
+    ToolExecutionMode,
 };
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, ThinkingConfig,
@@ -245,6 +247,42 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 }
                 opts.cancel = Some(cancel.clone());
             }
+
+            let provider_hook = {
+                let s = state.read().unwrap();
+                s.config.hooks.before_provider_request.clone()
+            };
+            if let Some(hook) = provider_hook {
+                let snapshot = ProviderRequestSnapshot {
+                    model: model.clone(),
+                    context: ctx.clone(),
+                    stream_options: opts.clone(),
+                };
+                match hook(BeforeProviderRequestContext::from(snapshot)).await {
+                    Ok(Some(update)) => {
+                        if let Some(updated_context) = update.context {
+                            ctx = updated_context;
+                        }
+                        if let Some(updated_options) = update.stream_options {
+                            opts = updated_options;
+                        }
+                        opts.cancel = Some(cancel.clone());
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        yield AgentEvent::AgentError { error };
+                        return;
+                    }
+                }
+            }
+
+            yield AgentEvent::BeforeProviderRequest {
+                request: ProviderRequestSnapshot {
+                    model: model.clone(),
+                    context: ctx.clone(),
+                    stream_options: opts.clone(),
+                },
+            };
 
             let mut llm_stream = pi_ai::stream_model(&model, ctx, Some(opts));
             let mut assistant_message: Option<pi_ai::types::AssistantMessage> = None;

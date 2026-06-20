@@ -63,6 +63,7 @@ async fn main() {
             AgentEvent::TurnStart { turn } => {
                 println!("--- Turn {} ---", turn);
             }
+            AgentEvent::BeforeProviderRequest { .. } => {}
             AgentEvent::LlmEvent(e) => {
                 if let pi_ai::types::AssistantMessageEvent::TextDelta { delta, .. } = &e {
                     print!("{}", delta);

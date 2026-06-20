@@ -1,5 +1,5 @@
-use crate::types::{AgentMessage, AgentToolResult, ThinkingLevel};
-use pi_ai::types::{AssistantMessage, ContentBlock, Model, StreamOptions};
+use crate::types::{AgentMessage, AgentToolResult, ProviderRequestSnapshot, ThinkingLevel};
+use pi_ai::types::{AssistantMessage, ContentBlock, Context, Model, StreamOptions};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
@@ -9,6 +9,7 @@ pub type HookFuture<T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send>>
 
 #[derive(Clone, Default)]
 pub struct AgentHooks {
+    pub before_provider_request: Option<BeforeProviderRequestHook>,
     pub before_tool_call: Option<BeforeToolCallHook>,
     pub after_tool_call: Option<AfterToolCallHook>,
     pub should_stop_after_turn: Option<ShouldStopAfterTurnHook>,
@@ -18,6 +19,10 @@ pub struct AgentHooks {
 impl std::fmt::Debug for AgentHooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentHooks")
+            .field(
+                "before_provider_request",
+                &self.before_provider_request.as_ref().map(|_| ".."),
+            )
             .field(
                 "before_tool_call",
                 &self.before_tool_call.as_ref().map(|_| ".."),
@@ -41,12 +46,18 @@ impl std::fmt::Debug for AgentHooks {
 impl AgentHooks {
     pub fn is_empty(&self) -> bool {
         self.before_tool_call.is_none()
+            && self.before_provider_request.is_none()
             && self.after_tool_call.is_none()
             && self.should_stop_after_turn.is_none()
             && self.prepare_next_turn.is_none()
     }
 }
 
+pub type BeforeProviderRequestHook = Arc<
+    dyn Fn(BeforeProviderRequestContext) -> HookFuture<Option<BeforeProviderRequestResult>>
+        + Send
+        + Sync,
+>;
 pub type BeforeToolCallHook =
     Arc<dyn Fn(BeforeToolCallContext) -> HookFuture<Option<BeforeToolCallResult>> + Send + Sync>;
 pub type AfterToolCallHook =
@@ -55,6 +66,29 @@ pub type ShouldStopAfterTurnHook =
     Arc<dyn Fn(ShouldStopAfterTurnContext) -> HookFuture<bool> + Send + Sync>;
 pub type PrepareNextTurnHook =
     Arc<dyn Fn(PrepareNextTurnContext) -> HookFuture<Option<AgentLoopTurnUpdate>> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct BeforeProviderRequestContext {
+    pub model: Model,
+    pub context: Context,
+    pub stream_options: StreamOptions,
+}
+
+impl From<ProviderRequestSnapshot> for BeforeProviderRequestContext {
+    fn from(snapshot: ProviderRequestSnapshot) -> Self {
+        Self {
+            model: snapshot.model,
+            context: snapshot.context,
+            stream_options: snapshot.stream_options,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct BeforeProviderRequestResult {
+    pub context: Option<Context>,
+    pub stream_options: Option<StreamOptions>,
+}
 
 #[derive(Clone)]
 pub struct BeforeToolCallContext {

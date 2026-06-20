@@ -12,7 +12,7 @@ pub use registry::{register, stream_model};
 pub use stream::{EventStream, complete};
 pub use types::{
     AssistantMessage, AssistantMessageDiagnostic, AssistantMessageEvent, ContentBlock, Context,
-    Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, StopReason, StreamOptions,
-    ThinkingConfig, Tool, Usage,
+    Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, ProviderResponseInfo,
+    ProviderStreamHooks, StopReason, StreamOptions, ThinkingConfig, Tool, Usage,
 };
 pub use util::env_keys::env_api_key;

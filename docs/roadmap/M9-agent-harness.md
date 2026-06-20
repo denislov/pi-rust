@@ -12,9 +12,12 @@
 ### 1. AgentHarness 包装层
 - ✅ 基础高层包装：`AgentHarness` 已接入 `Agent`，支持 `prompt()`、`messages()`、`abort()`，并通过 `Agent::run()` 复用底层 loop。
 - ✅ harness 事件骨架：已覆盖并导出 `before_agent_start` / `context` / `before_provider_request` / `tool_call` / `tool_result` / `session_compact` / `settled` 等事件枚举；底层 `AgentEvent` 通过 `AgentHarnessEvent::Agent` 透传。
-- ✅ harness 钩子基础：`before_agent_start` / `context` / `before_provider_request` hook 已可 patch context/request；测试覆盖启动消息 patching。
-- ✅ provider request patching：`before_provider_request` hook 返回的 `Context` / `StreamOptions` 已通过一次性 override 进入实际 provider call；事件 payload 使用真实 agent state 的 messages/tools/resources/stream options snapshot。
-- ⚠️ 仍需继续对齐 TS `agent-harness.ts` 的 session 持久化 orchestration、事件 payload 细节、provider payload/response hooks、stream option patch merge/delete 语义与更完整的结果 patching。
+- ✅ harness 钩子基础：`before_agent_start` / `context` / `before_provider_request` / `before_provider_payload` / `after_provider_response` hook 已可 patch context/request/payload，并测试覆盖启动消息 patching、payload patching 与 response hook。
+- ✅ provider request patching：`before_provider_request` 已下沉到 `Agent::run()` loop，每次 provider call 都重新合成真实 `Context` / `StreamOptions`，再应用动态 auth 与 patch；工具调用后的第二次模型请求同样生效。
+- ✅ stream option patch merge/delete：新增 `StreamOptionsPatch` / `Patch<T>` / `HeaderPatch`，支持字段 set/clear、headers merge/delete，测试覆盖 TS 对应删除语义。
+- ✅ provider auth hook：新增 `get_api_key_and_headers` harness hook，按 provider/model 动态解析 API key 与 headers，并在 request hook 前合并到 `StreamOptions`。
+- ✅ provider payload/response hook 通道：`pi-ai::StreamOptions` 新增跳过序列化的 `ProviderStreamHooks`，harness 将 payload/response hooks 组合进去；provider 或 proxy transport 调用该通道即可获得 TS `onPayload` / `onResponse` 等价能力。
+- ✅ session 持久化 orchestration 边界：`pi-agent-core::session` 提供 JSONL v3 storage/repo、session context rebuild、branch/leaf entries、compaction/branch summary entries；`pi-coding-agent` 运行时继续负责 active session 写入编排，core harness 不强行持有 CLI session 状态。
 
 ### 2. 自定义消息类型
 - ✅ `AgentMessage` 新增 `BashExecution`（command/output/exitCode/cancelled/truncated）、`Custom`（customType/content/display/details）、`BranchSummary`。
@@ -35,20 +38,24 @@
 - Rust 设计：`thiserror` enum + code，保持与 TS code 字符串语义一致。
 
 ### 5. 其它 harness 能力
-- ⚠️ **proxy 流式**：`streamProxy()` 尚未实现。
-- ⚠️ **branch summarization**：消息类型和错误类型已准备，真实会话树分支摘要尚未实现。
+- ✅ **proxy 流式**：新增 `proxy.rs`，提供 `stream_proxy()` 与可离线测试的 `stream_proxy_with_transport()`，支持 TS proxy event 到 `AssistantMessageEvent` 的重建、split tool-call JSON 累积解析，以及 proxy request body 的 serializable options 子集。
+- ✅ **branch summarization**：新增 `branch_summary.rs`，支持收集 abandoned branch、准备分支消息/文件操作详情、用 provider 生成带 TS preamble 的 branch summary。
 - ✅ `transformContext` 的核心等价能力由 `before_agent_start` / `context` hook patch messages 覆盖第一步。
-- ⚠️ `getApiKey` 动态解析 hook 尚未接入 provider stream options。
-- ⚠️ 输出截断工具、shell 输出格式化尚未从 `pi-coding-agent` 工具侧上移到 harness 公共层。
+- ✅ `getApiKey` 动态解析 hook 已接入每次 provider stream options。
+- ✅ 输出截断工具、shell 输出格式化已上移到 harness 公共层：`truncate.rs` 提供 head/tail truncation，`shell_output.rs` 提供 shell capture、binary sanitize、tail truncation 与 full-output temp file。
+- 后续深化：内置 HTTP providers 仍可逐步在各自 payload 构造处调用 `ProviderStreamHooks`，以获得 provider-internal payload/response observability；M9 已完成 harness/StreamOptions 公共通道和 proxy/custom provider 验证。
 
 ## 验收 / 测试（离线优先）
 - ✅ harness 事件/钩子：`tests/m9_harness.rs` 用 faux provider 跑一轮，断言事件序列与 patching 生效。
 - ✅ 抽象层：提供内存 `FileSystem` + faux `Shell` 实现供测试。
 - ✅ 自定义消息：session wire 序列化 + convert 到 LLM context 的断言。
+- ✅ provider hooks：`tests/m9_harness.rs` 覆盖动态 auth、headers merge/delete、每次 provider call patching、payload hook 与 response hook。
+- ✅ branch/proxy/shell：`tests/m9_branch_proxy_shell.rs` 覆盖 branch summary collection/generation、proxy stream event 重建、split tool-call JSON、truncate head/tail、shell capture full-output 落盘。
 
 ## 本轮落地
-- 新增 `errors.rs`、`env.rs`、`harness.rs`。
+- 新增 `errors.rs`、`env.rs`、`harness.rs`、`branch_summary.rs`、`proxy.rs`、`truncate.rs`、`shell_output.rs`。
 - 扩展 `AgentMessage`、`convert_to_context`、compaction 估算/摘要输入、session JSONL wire、session context 读回。
 - 新增 `Agent::run()`，让 harness 能在运行前 patch messages 而不重复插入 prompt。
-- 新增 `Agent::provider_request_snapshot()` 与 provider request override，让 harness 的 `before_provider_request` patch 真正影响下一次 provider 调用。
-- 已验证：`cargo test -p pi-agent-core` 通过。
+- 新增 `AgentEvent::BeforeProviderRequest` 与 `AgentHooks::before_provider_request`，让 harness 的 provider request/auth/patch 逻辑在每次 provider call 前执行。
+- 新增 `pi-ai::ProviderStreamHooks`，作为 provider payload/response lifecycle 的跨 crate 通道。
+- 已验证：`cargo test -p pi-agent-core -- --test-threads=1` 通过。

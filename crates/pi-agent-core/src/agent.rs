@@ -1,5 +1,6 @@
 use crate::agent_loop;
 use crate::convert::convert_to_context;
+use crate::hooks::BeforeProviderRequestHook;
 use crate::resources::{format_prompt_template_invocation, format_skill_invocation};
 use crate::types::{AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool};
 use pi_ai::types::{Context, StreamOptions};
@@ -75,6 +76,25 @@ impl Agent {
 
     pub fn messages(&self) -> Vec<AgentMessage> {
         self.state.read().unwrap().messages.clone()
+    }
+
+    pub fn before_provider_request_hook(&self) -> Option<BeforeProviderRequestHook> {
+        self.state
+            .read()
+            .unwrap()
+            .config
+            .hooks
+            .before_provider_request
+            .clone()
+    }
+
+    pub fn set_before_provider_request_hook(&self, hook: Option<BeforeProviderRequestHook>) {
+        self.state
+            .write()
+            .unwrap()
+            .config
+            .hooks
+            .before_provider_request = hook;
     }
 
     pub fn set_resources(&self, resources: AgentResources) {

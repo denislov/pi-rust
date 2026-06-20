@@ -1,6 +1,8 @@
 use crate::hooks::AgentHooks;
 use futures::Stream;
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Model, StreamOptions};
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StreamOptions,
+};
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -361,12 +363,24 @@ impl AgentConfig {
     }
 }
 
+// ── Provider request snapshots ──────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct ProviderRequestSnapshot {
+    pub model: Model,
+    pub context: Context,
+    pub stream_options: StreamOptions,
+}
+
 // ── AgentEvent ─────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     TurnStart {
         turn: u32,
+    },
+    BeforeProviderRequest {
+        request: ProviderRequestSnapshot,
     },
     LlmEvent(AssistantMessageEvent),
     ToolCallStart {

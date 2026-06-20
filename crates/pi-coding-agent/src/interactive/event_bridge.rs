@@ -45,6 +45,7 @@ impl InteractiveEventBridge {
     pub fn handle(&mut self, event: &AgentEvent) -> Vec<UiEvent> {
         match event {
             AgentEvent::TurnStart { .. } => vec![UiEvent::TurnStarted],
+            AgentEvent::BeforeProviderRequest { .. } => Vec::new(),
             AgentEvent::LlmEvent(event) => self.handle_llm_event(event),
             AgentEvent::ToolCallStart {
                 tool_call_id,

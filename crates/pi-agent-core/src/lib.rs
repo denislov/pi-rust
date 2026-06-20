@@ -1,14 +1,18 @@
 pub mod agent;
 pub mod agent_loop;
+pub mod branch_summary;
 pub mod compaction;
 pub mod convert;
 pub mod env;
 pub mod errors;
 pub mod harness;
 pub mod hooks;
+pub mod proxy;
 pub mod queues;
 pub mod resources;
 pub mod session;
+pub mod shell_output;
+pub mod truncate;
 pub mod types;
 
 pub use agent::Agent;
@@ -22,7 +26,10 @@ pub use errors::{
 };
 pub use harness::{
     AgentHarness, AgentHarnessEvent, AgentHarnessHooks, BeforeAgentStartHook,
-    BeforeProviderRequest, BeforeProviderRequestHook, ContextHook, HarnessContext,
+    BeforeProviderPayload, BeforeProviderPayloadHook, BeforeProviderPayloadPatch,
+    BeforeProviderRequest, BeforeProviderRequestHook, BeforeProviderRequestPatch, ContextHook,
+    GetApiKeyAndHeadersHook, HarnessContext, HeaderPatch, Patch, ProviderAuth, ProviderResponse,
+    StreamOptionsPatch,
 };
 pub use hooks::{
     AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
@@ -30,6 +37,6 @@ pub use hooks::{
 };
 pub use types::{
     AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolResult,
-    CompactionConfig, CompactionSettings, PromptTemplate, QueueMode, ResourceDiagnostic, Skill,
-    ThinkingLevel, ToolExecutionMode, ToolFn,
+    CompactionConfig, CompactionSettings, PromptTemplate, ProviderRequestSnapshot, QueueMode,
+    ResourceDiagnostic, Skill, ThinkingLevel, ToolExecutionMode, ToolFn,
 };

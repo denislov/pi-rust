@@ -1,8 +1,9 @@
 use futures::StreamExt;
 use pi_agent_core::{
     AgentConfig, AgentEvent, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentMessage,
-    BeforeProviderRequest, ExecutionError, ExecutionOutput, FileErrorCode, FileKind, FileSystem,
-    InMemoryExecutionEnv, Shell,
+    BeforeProviderPayload, BeforeProviderPayloadPatch, BeforeProviderRequestPatch, ExecutionError,
+    ExecutionOutput, FileErrorCode, FileKind, FileSystem, HeaderPatch, InMemoryExecutionEnv, Patch,
+    ProviderAuth, ProviderResponse, Shell, StreamOptionsPatch,
 };
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::registry;
@@ -265,22 +266,25 @@ async fn before_provider_request_hook_patches_actual_provider_request() {
     });
 
     let hooks = AgentHarnessHooks {
-        before_provider_request: Some(Arc::new(|mut request: BeforeProviderRequest| {
-            assert_eq!(
-                request
-                    .stream_options
-                    .as_ref()
-                    .and_then(|options| options.temperature),
-                Some(0.2)
-            );
-            request.context.system_prompt = Some("patched system".into());
-            request.stream_options = Some(StreamOptions {
-                temperature: Some(0.7),
-                api_key: Some("hook-key".into()),
-                headers: Some(serde_json::json!({"x-hook": "yes"})),
-                ..Default::default()
-            });
-            Box::pin(async move { Ok(Some(request)) })
+        before_provider_request: Some(Arc::new(|request| {
+            assert_eq!(request.stream_options.temperature, Some(0.2));
+            let mut patched_context = request.context.clone();
+            patched_context.system_prompt = Some("patched system".into());
+            Box::pin(async move {
+                Ok(Some(BeforeProviderRequestPatch {
+                    context: Some(patched_context),
+                    stream_options: Some(StreamOptionsPatch {
+                        temperature: Some(Patch::Set(0.7)),
+                        api_key: Some(Patch::Set("hook-key".into())),
+                        headers: Some(HeaderPatch::Merge(
+                            [("x-hook".to_string(), Some(serde_json::json!("yes")))]
+                                .into_iter()
+                                .collect(),
+                        )),
+                        ..Default::default()
+                    }),
+                }))
+            })
         })),
         ..Default::default()
     };
@@ -307,6 +311,248 @@ async fn before_provider_request_hook_patches_actual_provider_request() {
         opts.headers
             .as_ref()
             .and_then(|headers| headers.get("x-hook")),
+        Some(&serde_json::json!("yes"))
+    );
+}
+
+#[tokio::test]
+async fn provider_request_auth_and_patch_merge_delete_apply_to_each_provider_call() {
+    let api = "m9-harness-auth-patch";
+    registry::unregister(api);
+    let captured = Arc::new(Mutex::new(Vec::<StreamOptions>::new()));
+    registry::register(
+        api,
+        Arc::new(RecordingProvider {
+            captured: Arc::new(Mutex::new(CapturedProviderRequest::default())),
+        }),
+    );
+
+    struct MultiCaptureProvider {
+        captured: Arc<Mutex<Vec<StreamOptions>>>,
+    }
+
+    impl ApiProvider for MultiCaptureProvider {
+        fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+            if let Some(opts) = opts {
+                self.captured.lock().unwrap().push(opts);
+            }
+            let call_index = self.captured.lock().unwrap().len();
+            let model_id = model.id.clone();
+            Box::pin(async_stream::stream! {
+                let mut msg = AssistantMessage::empty("multi-capture", &model_id);
+                msg.provider = Some("multi-capture".into());
+                if call_index == 1 {
+                    msg.content.push(ContentBlock::ToolCall {
+                        id: "call-1".into(),
+                        name: "noop".into(),
+                        arguments: serde_json::json!({}),
+                        thought_signature: None,
+                    });
+                    msg.stop_reason = StopReason::ToolUse;
+                } else {
+                    msg.content.push(ContentBlock::Text {
+                        text: "done".into(),
+                        text_signature: None,
+                    });
+                    msg.stop_reason = StopReason::Stop;
+                }
+                yield AssistantMessageEvent::Done {
+                    reason: msg.stop_reason.clone(),
+                    message: msg,
+                };
+            })
+        }
+    }
+
+    registry::unregister(api);
+    registry::register(
+        api,
+        Arc::new(MultiCaptureProvider {
+            captured: captured.clone(),
+        }),
+    );
+
+    let mut config = AgentConfig::new(faux_model(api));
+    config.max_turns = 3;
+    config.stream_options = Some(StreamOptions {
+        timeout_ms: Some(1000),
+        max_retries: Some(2),
+        headers: Some(serde_json::json!({
+            "keep": "base",
+            "remove": "base"
+        })),
+        ..Default::default()
+    });
+
+    let hooks = AgentHarnessHooks {
+        get_api_key_and_headers: Some(Arc::new(|model| {
+            assert_eq!(model.provider, "faux");
+            Box::pin(async {
+                Ok(Some(ProviderAuth {
+                    api_key: Some("dynamic-key".into()),
+                    headers: Some(serde_json::json!({"auth": "header"})),
+                }))
+            })
+        })),
+        before_provider_request: Some(Arc::new(|request| {
+            assert_eq!(
+                request.stream_options.api_key.as_deref(),
+                Some("dynamic-key")
+            );
+            assert_eq!(
+                request
+                    .stream_options
+                    .headers
+                    .as_ref()
+                    .and_then(|headers| headers.get("auth")),
+                Some(&serde_json::json!("header"))
+            );
+            Box::pin(async {
+                Ok(Some(BeforeProviderRequestPatch {
+                    context: None,
+                    stream_options: Some(StreamOptionsPatch {
+                        timeout_ms: Some(Patch::Clear),
+                        headers: Some(HeaderPatch::Merge(
+                            [
+                                ("remove".to_string(), None),
+                                ("hook".to_string(), Some(serde_json::json!("patched"))),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )),
+                        ..Default::default()
+                    }),
+                }))
+            })
+        })),
+        ..Default::default()
+    };
+
+    let harness = AgentHarness::new(config).with_hooks(hooks);
+    harness.add_tool(pi_agent_core::AgentTool::new_text(
+        "noop",
+        "no operation",
+        serde_json::json!({"type": "object"}),
+        |_| async { Ok("ok".to_string()) },
+    ));
+    let events = harness.prompt("start").collect::<Vec<_>>().await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentHarnessEvent::Agent(AgentEvent::AgentDone { .. })
+    )));
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    for opts in captured.iter() {
+        assert_eq!(opts.api_key.as_deref(), Some("dynamic-key"));
+        assert_eq!(opts.timeout_ms, None);
+        assert_eq!(opts.max_retries, Some(2));
+        let headers = opts.headers.as_ref().unwrap();
+        assert_eq!(headers.get("keep"), Some(&serde_json::json!("base")));
+        assert_eq!(headers.get("auth"), Some(&serde_json::json!("header")));
+        assert_eq!(headers.get("hook"), Some(&serde_json::json!("patched")));
+        assert!(headers.get("remove").is_none());
+    }
+}
+
+#[tokio::test]
+async fn provider_payload_and_response_hooks_are_forwarded_through_stream_options() {
+    let api = "m9-harness-payload-response";
+    registry::unregister(api);
+    let final_payload = Arc::new(Mutex::new(None::<serde_json::Value>));
+    let final_payload_provider = final_payload.clone();
+
+    struct PayloadProvider {
+        final_payload: Arc<Mutex<Option<serde_json::Value>>>,
+    }
+
+    impl ApiProvider for PayloadProvider {
+        fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+            let hooks = opts.and_then(|opts| opts.hooks);
+            let model = model.clone();
+            let final_payload = self.final_payload.clone();
+            Box::pin(async_stream::stream! {
+                let mut payload = serde_json::json!({"steps": ["provider"]});
+                if let Some(hooks) = hooks.as_ref() {
+                    payload = hooks.apply_payload(&model, payload).await.unwrap();
+                    hooks.emit_response(pi_ai::types::ProviderResponseInfo {
+                        status: Some(202),
+                        headers: Some(serde_json::json!({"x-provider": "yes"})),
+                    }).await.unwrap();
+                }
+                *final_payload.lock().unwrap() = Some(payload);
+                let mut msg = AssistantMessage::empty("payload", &model.id);
+                msg.provider = Some("payload".into());
+                msg.content.push(ContentBlock::Text {
+                    text: "ok".into(),
+                    text_signature: None,
+                });
+                msg.stop_reason = StopReason::Stop;
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: msg,
+                };
+            })
+        }
+    }
+
+    registry::register(
+        api,
+        Arc::new(PayloadProvider {
+            final_payload: final_payload_provider,
+        }),
+    );
+
+    let seen_payloads = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let seen_payloads_hook = seen_payloads.clone();
+    let seen_responses = Arc::new(Mutex::new(Vec::<ProviderResponse>::new()));
+    let seen_responses_hook = seen_responses.clone();
+    let hooks = AgentHarnessHooks {
+        before_provider_payload: Some(Arc::new(move |event: BeforeProviderPayload| {
+            seen_payloads_hook
+                .lock()
+                .unwrap()
+                .push(event.payload.clone());
+            let mut steps = event.payload["steps"].as_array().unwrap().clone();
+            steps.push(serde_json::json!("hook"));
+            Box::pin(async move {
+                Ok(Some(BeforeProviderPayloadPatch {
+                    payload: serde_json::json!({ "steps": steps }),
+                }))
+            })
+        })),
+        after_provider_response: Some(Arc::new(move |event: ProviderResponse| {
+            seen_responses_hook.lock().unwrap().push(event);
+            Box::pin(async { Ok(None) })
+        })),
+        ..Default::default()
+    };
+
+    let mut config = AgentConfig::new(faux_model(api));
+    config.max_turns = 1;
+    let harness = AgentHarness::new(config).with_hooks(hooks);
+    let events = harness.prompt("start").collect::<Vec<_>>().await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentHarnessEvent::Agent(AgentEvent::AgentDone { .. })
+    )));
+
+    assert_eq!(
+        *final_payload.lock().unwrap(),
+        Some(serde_json::json!({"steps": ["provider", "hook"]}))
+    );
+    assert_eq!(
+        *seen_payloads.lock().unwrap(),
+        vec![serde_json::json!({"steps": ["provider"]})]
+    );
+    let responses = seen_responses.lock().unwrap();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].status, Some(202));
+    assert_eq!(
+        responses[0]
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get("x-provider")),
         Some(&serde_json::json!("yes"))
     );
 }

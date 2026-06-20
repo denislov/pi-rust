@@ -42,6 +42,7 @@ impl ProtocolEventAdapter {
                 events.push(ProtocolEvent::TurnStart);
                 events
             }
+            AgentEvent::BeforeProviderRequest { .. } => Vec::new(),
             AgentEvent::LlmEvent(event) => self.push_llm_event(event),
             AgentEvent::ToolCallStart {
                 tool_call_id,
