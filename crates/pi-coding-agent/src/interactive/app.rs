@@ -7,10 +7,10 @@ use std::time::{Duration, Instant};
 use pi_agent_core::{AgentResources, session::create_session_id};
 use pi_ai::types::Model;
 use pi_tui::{
-    Component, ERROR, Editor, InputEvent, KeybindingsManager, Markdown, PATH, ProcessTerminal,
-    RenderScheduler, STATUS_IDLE, STATUS_RUNNING, SYSTEM, StdinBuffer, Style, TOOL_ERROR,
-    TOOL_NAME, TUI_KEYBINDINGS, Terminal, Tui, TuiError, USER, color_enabled, is_key_release,
-    matches_key, paint_with, truncate_to_width, visible_width,
+    Component, ERROR, Editor, InputEvent, KeybindingsManager, Loader, Markdown, PATH,
+    ProcessTerminal, RenderScheduler, STATUS_IDLE, STATUS_RUNNING, SYSTEM, StdinBuffer, Style,
+    TOOL_ERROR, TOOL_NAME, TUI_KEYBINDINGS, Terminal, Tui, TuiError, USER, color_enabled,
+    is_key_release, matches_key, paint_with, truncate_to_width, visible_width,
 };
 
 use crate::interactive::key_hints::{app_key_hint, key_hint};
@@ -66,7 +66,6 @@ const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
-const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 struct InputPump {
     rx: tokio::sync::mpsc::UnboundedReceiver<String>,
@@ -484,10 +483,7 @@ impl InteractiveRoot {
         let color = color_enabled();
         let status_str = match self.status {
             InteractiveStatus::Idle => "idle".to_string(),
-            InteractiveStatus::Running => {
-                let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
-                format!("{spinner} running")
-            }
+            InteractiveStatus::Running => running_status_text(self.spinner_frame),
         };
         let status_style = match self.status {
             InteractiveStatus::Idle => STATUS_IDLE,
@@ -779,8 +775,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                 }
                 _ = tokio::time::sleep(SPINNER_INTERVAL) => {
                     if let Some(root) = tui.component_as_mut::<InteractiveRoot>(root_id) {
-                        root.spinner_frame =
-                            (root.spinner_frame + 1) % SPINNER_FRAMES.len();
+                        root.spinner_frame = root.spinner_frame.wrapping_add(1);
                     }
                     render_scheduler.request(true);
                     running = Some(task);
@@ -1297,6 +1292,14 @@ fn welcome_line(keybindings: &KeybindingsManager) -> String {
     format!("pi · {}", parts.join(" · "))
 }
 
+fn running_status_text(frame: usize) -> String {
+    let mut loader = Loader::new("running");
+    for _ in 0..frame {
+        loader.tick();
+    }
+    loader.render_text()
+}
+
 fn format_tokens(count: u32) -> String {
     if count < 1000 {
         count.to_string()
@@ -1490,6 +1493,12 @@ mod tests {
             has_spinner,
             "footer should contain a braille spinner char when Running: {footer}"
         );
+    }
+
+    #[test]
+    fn running_status_text_uses_loader_sequence() {
+        assert_eq!(running_status_text(0), "⠋ running");
+        assert_eq!(running_status_text(1), "⠙ running");
     }
 
     #[test]

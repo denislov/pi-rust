@@ -25,6 +25,7 @@
 - `Box`（padding + 背景）、`TruncatedText`、`SettingsList`（可搜索/值循环/子菜单）。
 - `Image`（依赖下方终端图像协议）。
 > 进度：`pi-tui` 已新增可复用 `Loader` / `CancellableLoader`，支持 deterministic frame tick、消息更新、自定义/隐藏 indicator、宽度裁剪和 Escape/Ctrl+C 取消回调；coding-agent 侧硬编码 spinner 迁移仍待接入。
+> 进度：`pi-coding-agent` interactive footer spinner 已迁移为复用 `pi_tui::Loader`，不再在 coding-agent 侧维护独立 spinner frame 表。
 > 进度：`pi-tui` 已新增 `Box` / `TruncatedText` 基础组件，覆盖 padding、单行截断、宽度约束和背景回调；后续 selectors/dialogs 可直接复用。
 > 进度：`pi-tui` 已新增 `SettingsList`，支持设置项渲染、描述、键盘导航、fuzzy 搜索、值循环、change/cancel 回调；TS submenu 工厂待 selector/dialog 栈补齐后接入。
 
