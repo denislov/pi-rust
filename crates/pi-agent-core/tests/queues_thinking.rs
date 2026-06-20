@@ -2,11 +2,11 @@ mod common;
 use common::faux_model;
 use futures::StreamExt;
 use pi_agent_core::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel,
+    Agent, AgentConfig, AgentEvent, AgentMessage, QueueMode, ThinkingLevel,
 };
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
+use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
-use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason, StreamOptions};
+use pi_ai::types::{Model, StopReason, StreamOptions};
 use std::sync::Arc;
 
 fn reasoning_model(api: &str) -> Model {
@@ -38,7 +38,7 @@ async fn steer_injects_user_message_before_next_model_call() {
         ])),
     );
 
-    let mut stream = agent.prompt("initial");
+    let stream = agent.prompt("initial");
     let events: Vec<_> = stream.collect().await;
 
     let texts: Vec<String> = events
@@ -86,7 +86,7 @@ async fn follow_up_continues_after_stop() {
     // Set up follow-up before first prompt
     agent.follow_up("follow up question");
 
-    let mut stream = agent.prompt("initial");
+    let stream = agent.prompt("initial");
     let events: Vec<_> = stream.collect().await;
 
     let texts: Vec<String> = events
@@ -131,7 +131,7 @@ async fn one_at_a_time_drains_one_steering_message() {
     agent.steer("steer 1");
     agent.steer("steer 2");
 
-    let mut stream = agent.prompt("initial");
+    let stream = agent.prompt("initial");
     let events: Vec<_> = stream.collect().await;
 
     let texts: Vec<String> = events
