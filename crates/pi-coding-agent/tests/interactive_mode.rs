@@ -9,8 +9,8 @@ use pi_ai::types::{
     StreamOptions,
 };
 use pi_coding_agent::interactive::test_harness::{
-    run_scripted_idle_interactive, run_scripted_interactive,
-    run_scripted_interactive_with_session_dir_size_and_waits,
+    run_scripted_idle_interactive, run_scripted_idle_interactive_with_size,
+    run_scripted_interactive, run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
 
@@ -181,7 +181,32 @@ impl ApiProvider for RecordingModelProvider {
 }
 
 #[tokio::test]
-async fn scripted_interactive_keeps_prompt_anchored_below_transcript_viewport() {
+async fn scripted_interactive_initial_render_uses_content_height() {
+    let output = run_scripted_idle_interactive_with_size("", 80, 24)
+        .await
+        .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(
+        output.rendered_lines.len() <= 5,
+        "initial render should not pad to the full terminal height: {output:?}"
+    );
+    assert!(
+        frame.contains(env!("CARGO_PKG_VERSION")),
+        "welcome line should include the binary version: {frame}"
+    );
+    assert!(
+        frame.contains("submit"),
+        "welcome line should mention submit: {frame}"
+    );
+    assert!(
+        frame.contains("/help"),
+        "welcome line should mention /help: {frame}"
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_keeps_full_transcript_in_terminal_output() {
     let temp = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response(six_line_markdown())]);
     let output = run_scripted_interactive_with_session_dir_size_and_waits(
@@ -195,21 +220,18 @@ async fn scripted_interactive_keeps_prompt_anchored_below_transcript_viewport() 
     .unwrap();
     let frame = output.rendered_lines.join("\n");
 
-    assert!(!frame.contains("one"));
+    assert!(frame.contains("one"), "{frame}");
     assert!(frame.contains("six"));
     assert!(frame.contains("> typed"));
     assert!(frame.contains("status: idle"));
-    assert_eq!(
-        output
-            .rendered_lines
-            .iter()
-            .position(|line| line.contains("> typed")),
-        Some(4)
+    assert!(
+        output.rendered_lines.len() > 6,
+        "transcript should grow beyond terminal height instead of acting as a fixed viewport: {output:?}"
     );
 }
 
 #[tokio::test]
-async fn scripted_interactive_page_up_locks_transcript_until_page_down_returns_bottom() {
+async fn scripted_interactive_page_up_does_not_window_terminal_transcript() {
     let temp = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response(six_line_markdown())]);
     let output = run_scripted_interactive_with_session_dir_size_and_waits(
@@ -224,7 +246,7 @@ async fn scripted_interactive_page_up_locks_transcript_until_page_down_returns_b
     let frame = output.rendered_lines.join("\n");
 
     assert!(frame.contains("one"));
-    assert!(!frame.contains("six"));
+    assert!(frame.contains("six"));
     assert!(frame.contains("> "));
     assert!(frame.contains("status: idle"));
 
@@ -241,14 +263,14 @@ async fn scripted_interactive_page_up_locks_transcript_until_page_down_returns_b
     .unwrap();
     let frame = output.rendered_lines.join("\n");
 
-    assert!(!frame.contains("one"));
+    assert!(frame.contains("one"));
     assert!(frame.contains("six"));
     assert!(frame.contains("> "));
     assert!(frame.contains("status: idle"));
 }
 
 #[tokio::test]
-async fn scripted_interactive_new_output_does_not_unlock_scrolled_transcript() {
+async fn scripted_interactive_new_output_remains_in_terminal_transcript_after_page_up() {
     let temp = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![
         FauxProvider::text_call(six_line_markdown(), StopReason::Stop),
@@ -270,8 +292,8 @@ async fn scripted_interactive_new_output_does_not_unlock_scrolled_transcript() {
     let frame = output.rendered_lines.join("\n");
 
     assert!(frame.contains("one"), "{frame}");
-    assert!(!frame.contains("brand new bottom"), "{frame}");
-    assert!(frame.contains("new output below"), "{frame}");
+    assert!(frame.contains("brand new bottom"), "{frame}");
+    assert!(!frame.contains("new output below"), "{frame}");
     assert!(frame.contains("> "), "{frame}");
     assert!(frame.contains("status: idle"), "{frame}");
 }
@@ -280,7 +302,11 @@ async fn scripted_interactive_new_output_does_not_unlock_scrolled_transcript() {
 async fn scripted_interactive_shows_welcome_line_on_empty_transcript() {
     let output = run_scripted_idle_interactive("").await.unwrap();
     let frame = output.rendered_lines.join("\n");
-    assert!(frame.contains("pi · "), "welcome line missing: {frame}");
+    assert!(frame.contains("pi-rust"), "welcome line missing: {frame}");
+    assert!(
+        frame.contains(env!("CARGO_PKG_VERSION")),
+        "welcome line should mention version: {frame}"
+    );
     assert!(
         frame.contains("submit"),
         "welcome line should mention submit: {frame}"

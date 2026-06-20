@@ -517,9 +517,7 @@ impl<T: Terminal> Tui<T> {
 
             let rows_to_write = lines.len().saturating_sub(first_changed_line);
             let old_rows_to_clear = self.previous_lines.len().saturating_sub(first_changed_line);
-            let visible_capacity = height
-                .saturating_sub(first_changed_line.saturating_sub(self.previous_viewport_top));
-            let rows_to_clear = rows_to_write.max(old_rows_to_clear).min(visible_capacity);
+            let rows_to_clear = rows_to_write.max(old_rows_to_clear);
             self.rewrite_rows(
                 first_changed_line,
                 &lines[first_changed_line..],

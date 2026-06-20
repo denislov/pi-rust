@@ -573,17 +573,14 @@ impl Component for InteractiveRoot {
 
         let editor_lines = self.editor.render(width.saturating_sub(2));
         let footer = fit_line(&self.footer(), width);
-        let reserved_rows = editor_lines.len().saturating_add(1);
-        let transcript_rows = self.viewport_height.saturating_sub(reserved_rows).max(1);
         let max_tool_result_lines = if self.tool_output_expanded {
             EXPANDED_TOOL_RESULT_LINES
         } else {
             MAX_TOOL_RESULT_LINES
         };
-        let mut lines = render_transcript_viewport(
+        let mut lines = render_transcript_lines(
             &self.transcript,
             width,
-            transcript_rows,
             max_tool_result_lines,
             color_enabled(),
         );
@@ -1363,38 +1360,6 @@ fn render_tool_lines(
     lines
 }
 
-fn render_transcript_viewport(
-    transcript: &Transcript,
-    width: usize,
-    viewport_rows: usize,
-    max_tool_result_lines: usize,
-    color: bool,
-) -> Vec<String> {
-    let lines = render_transcript_lines(transcript, width, max_tool_result_lines, color);
-    if lines.len() <= viewport_rows {
-        let mut padded = lines;
-        while padded.len() < viewport_rows {
-            padded.push(String::new());
-        }
-        return padded;
-    }
-
-    let max_scroll_offset = lines.len().saturating_sub(1);
-    let scroll_offset = transcript.scroll_offset().min(max_scroll_offset);
-    let bottom = lines.len().saturating_sub(scroll_offset);
-    let top = bottom.saturating_sub(viewport_rows);
-    let mut visible = lines[top..bottom].to_vec();
-    while visible.len() < viewport_rows {
-        visible.insert(0, String::new());
-    }
-    if transcript.has_new_output_below() && !visible.is_empty() {
-        let indicator = fit_line(&paint_with("... new output below", &SYSTEM, color), width);
-        let last = visible.len() - 1;
-        visible[last] = indicator;
-    }
-    visible
-}
-
 fn fit_line(line: &str, width: usize) -> String {
     if visible_width(line) <= width {
         line.to_string()
@@ -1416,16 +1381,14 @@ fn help_text() -> String {
 }
 
 fn welcome_line(keybindings: &KeybindingsManager) -> String {
-    let parts = [
+    format!(
+        "pi-rust {}\n{} · {} · /help\n{} · {}",
+        env!("CARGO_PKG_VERSION"),
         key_hint(keybindings, "tui.input.submit", "submit"),
         key_hint(keybindings, "tui.input.newLine", "newline"),
-        "/help commands".to_string(),
         app_key_hint(keybindings, "app.interrupt", "interrupt/exit"),
         app_key_hint(keybindings, "app.tools.expand", "expand tools"),
-        key_hint(keybindings, "tui.editor.pageUp", "scroll up"),
-        key_hint(keybindings, "tui.editor.pageDown", "scroll down"),
-    ];
-    format!("pi · {}", parts.join(" · "))
+    )
 }
 
 fn running_status_text(frame: usize) -> String {

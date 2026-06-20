@@ -189,6 +189,33 @@ fn second_render_updates_from_first_changed_line_without_full_clear() {
 }
 
 #[test]
+fn differential_render_writes_growth_beyond_terminal_height() {
+    let terminal = VirtualTerminal::new(20, 4);
+    let mut tui = Tui::new(terminal);
+    tui.add_child(Box::new(RawComponent::new(&["welcome", "> ", "footer"])));
+    tui.render_once().unwrap();
+    tui.terminal_mut().clear_ops();
+
+    tui.clear_children();
+    tui.add_child(Box::new(RawComponent::new(&[
+        "welcome", "one", "two", "three", "four", "five", "six", "> ", "footer",
+    ])));
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(
+        outcome.strategy,
+        RenderStrategy::Differential {
+            first_changed_line: 1
+        }
+    );
+    assert_no_global_clear(tui.terminal());
+    let written = tui.terminal().written_output();
+    assert!(written.contains("one"), "{written:?}");
+    assert!(written.contains("six"), "{written:?}");
+    assert!(written.contains("footer"), "{written:?}");
+}
+
+#[test]
 fn width_change_triggers_scoped_redraw_without_global_clear() {
     let terminal = VirtualTerminal::new(20, 5);
     let mut tui = Tui::new(terminal);
