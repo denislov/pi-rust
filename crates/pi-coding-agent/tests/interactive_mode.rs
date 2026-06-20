@@ -9,8 +9,9 @@ use pi_ai::types::{
     StreamOptions,
 };
 use pi_coding_agent::interactive::test_harness::{
-    run_scripted_idle_interactive, run_scripted_idle_interactive_with_size,
-    run_scripted_interactive, run_scripted_interactive_with_session_dir_size_and_waits,
+    run_scripted_idle_interactive, run_scripted_idle_interactive_with_delays,
+    run_scripted_idle_interactive_with_size, run_scripted_interactive,
+    run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
 
@@ -647,6 +648,39 @@ async fn scripted_interactive_settings_command_enters_settings_menu() {
         "settings should render below the input box and above the footer: {:?}",
         output.rendered_lines
     );
+}
+
+#[tokio::test]
+async fn scripted_interactive_settings_escape_closes_menu_after_idle_timeout() {
+    use std::time::Duration;
+
+    // The decisive test: send /settings, then a lone ESC, then a /help command.
+    // - With the idle-flush fix: ESC fires after ~10ms, menu closes, /help runs
+    //   and renders "Show help".
+    // - Without the fix: ESC stays buffered, the next bytes get parsed as Alt+/,
+    //   which the menu input handler ignores while selecting_settings is true,
+    //   and /help never executes -- even though stdin closure later flushes ESC.
+    let output = run_scripted_idle_interactive_with_delays(
+        vec![
+            ("/settings\r", Duration::from_millis(20)),
+            ("\x1b", Duration::from_millis(40)),
+            ("/help\r", Duration::from_millis(20)),
+        ],
+        80,
+        24,
+    )
+    .await
+    .unwrap();
+    let frame = output.rendered_lines.join("\n");
+    assert!(
+        !frame.contains("Theme:"),
+        "settings panel should be closed after Esc;\nframe:\n{frame}"
+    );
+    assert!(
+        frame.contains("show this help"),
+        "/help should run after Esc closes the settings menu;\nframe:\n{frame}"
+    );
+    assert_eq!(output.exit_code, 0);
 }
 
 #[tokio::test]

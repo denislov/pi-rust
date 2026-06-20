@@ -1165,10 +1165,28 @@ async fn run_started_interactive_loop<T: Terminal>(
         flush_render_if_ready(tui, &mut render_scheduler)?;
         if let Some(mut task) = running.take() {
             let render_delay = pending_render_delay(&render_scheduler);
+            let stdin_delay = stdin_pending_delay(&stdin_buffer);
             tokio::select! {
                 _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
                     flush_render_if_ready(tui, &mut render_scheduler)?;
                     running = Some(task);
+                }
+                _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
+                    running = Some(task);
+                    let events = stdin_buffer.tick(Instant::now());
+                    if !events.is_empty() {
+                        match process_input_events(
+                            tui,
+                            root_id,
+                            events,
+                            &mut prompt_context,
+                            &mut running,
+                            &mut render_scheduler,
+                        )? {
+                            LoopControl::Continue(_) => {}
+                            LoopControl::Exit => return Ok(0),
+                        }
+                    }
                 }
                 chunk = input.recv(), if input_open => {
                     match chunk {
@@ -1238,9 +1256,26 @@ async fn run_started_interactive_loop<T: Terminal>(
             }
 
             let render_delay = pending_render_delay(&render_scheduler);
+            let stdin_delay = stdin_pending_delay(&stdin_buffer);
             tokio::select! {
                 _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
                     flush_render_if_ready(tui, &mut render_scheduler)?;
+                }
+                _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
+                    let events = stdin_buffer.tick(Instant::now());
+                    if !events.is_empty() {
+                        match process_input_events(
+                            tui,
+                            root_id,
+                            events,
+                            &mut prompt_context,
+                            &mut running,
+                            &mut render_scheduler,
+                        )? {
+                            LoopControl::Continue(_) => {}
+                            LoopControl::Exit => return Ok(0),
+                        }
+                    }
                 }
                 chunk = input.recv() => {
                     let Some(chunk) = chunk else {
@@ -1321,6 +1356,16 @@ fn pending_render_delay(render_scheduler: &RenderScheduler) -> Option<Duration> 
 }
 
 async fn sleep_render_delay(delay: Option<Duration>) {
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
+    }
+}
+
+fn stdin_pending_delay(stdin_buffer: &StdinBuffer) -> Option<Duration> {
+    stdin_buffer.pending_timeout_at(Instant::now())
+}
+
+async fn sleep_stdin_pending(delay: Option<Duration>) {
     if let Some(delay) = delay {
         tokio::time::sleep(delay).await;
     }
@@ -2776,6 +2821,50 @@ pub mod test_harness {
         )
         .await?;
         Ok(scripted_output(result, None))
+    }
+
+    /// Drive the interactive loop with a sequence of `(chunk, post_delay)`
+    /// steps. After each chunk is sent, the harness sleeps `post_delay`
+    /// before sending the next chunk (or, on the final step, before closing
+    /// stdin and letting the loop terminate). This allows tests to exercise
+    /// the [`StdinBuffer`] idle-flush timer for stuck escape sequences.
+    pub async fn run_scripted_idle_interactive_with_delays(
+        steps: Vec<(&str, Duration)>,
+        columns: usize,
+        rows: usize,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut input = InputPump { rx, _reader: None };
+        let parsed = CliArgs::default();
+        let options = CliRunOptions {
+            register_builtins: false,
+            ..CliRunOptions::default()
+        };
+
+        let owned_steps = steps
+            .into_iter()
+            .map(|(chunk, delay)| (chunk.to_string(), delay))
+            .collect::<Vec<_>>();
+        let driver = async move {
+            for (chunk, delay) in owned_steps {
+                if tx.send(chunk).is_err() {
+                    return;
+                }
+                if delay > Duration::ZERO {
+                    tokio::time::sleep(delay).await;
+                }
+            }
+            drop(tx);
+        };
+
+        let run = run_interactive_loop(
+            parsed,
+            options,
+            VirtualTerminal::new(columns, rows),
+            &mut input,
+        );
+        let (result, ()) = tokio::join!(run, driver);
+        Ok(scripted_output(result?, None))
     }
 
     async fn run_scripted_with_provider(
