@@ -10,7 +10,8 @@ use pi_tui::{
     Component, ERROR, Editor, InputEvent, KeybindingsManager, Loader, Markdown, PATH,
     ProcessTerminal, RenderScheduler, STATUS_IDLE, STATUS_RUNNING, SYSTEM, StdinBuffer, Style,
     TOOL_ERROR, TOOL_NAME, TUI_KEYBINDINGS, Terminal, Tui, TuiError, USER, color_enabled,
-    is_key_release, matches_key, paint_with, truncate_to_width, visible_width,
+    fuzzy_filter_indices, is_key_release, matches_key, paint_with, truncate_to_width,
+    visible_width,
 };
 
 use crate::interactive::key_hints::{app_key_hint, key_hint};
@@ -68,6 +69,7 @@ static INTERACTIVE_ID: AtomicUsize = AtomicUsize::new(1);
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
+const MAX_SLASH_SUGGESTIONS: usize = 5;
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
 
 struct InputPump {
@@ -160,6 +162,10 @@ struct BuiltinSlashCommand {
 }
 
 const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
+    BuiltinSlashCommand {
+        name: "help",
+        description: "Show help",
+    },
     BuiltinSlashCommand {
         name: "settings",
         description: "Open settings menu",
@@ -271,6 +277,7 @@ fn parse_slash_command(text: &str) -> Option<ParsedSlashCommand> {
 struct InteractiveRoot {
     transcript: Transcript,
     editor: Editor,
+    keybindings: KeybindingsManager,
     submitted: Arc<Mutex<Option<String>>>,
     scroll_command: Arc<Mutex<Option<TranscriptScrollCommand>>>,
     pending_submit: Option<String>,
@@ -286,6 +293,8 @@ struct InteractiveRoot {
     usage: (u32, u32),
     tool_output_expanded: bool,
     spinner_frame: usize,
+    slash_suggestion_selected: usize,
+    slash_suggestions_dismissed_for: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -298,6 +307,8 @@ struct InteractiveRenderState {
     status: InteractiveStatus,
     tool_output_expanded: bool,
     spinner_frame: usize,
+    slash_suggestion_selected: usize,
+    slash_suggestions_dismissed_for: Option<String>,
 }
 
 impl InteractiveRoot {
@@ -307,10 +318,8 @@ impl InteractiveRoot {
         let scroll_command = Arc::new(Mutex::new(None));
         let page_up_command = Arc::clone(&scroll_command);
         let page_down_command = Arc::clone(&scroll_command);
-        let mut editor = Editor::new(KeybindingsManager::new(
-            TUI_KEYBINDINGS.clone(),
-            Default::default(),
-        ));
+        let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
+        let mut editor = Editor::new(keybindings.clone());
         editor.set_on_submit(Box::new(move |text| {
             *submitted_for_callback.lock().unwrap() = Some(text.to_string());
         }));
@@ -323,12 +332,12 @@ impl InteractiveRoot {
         editor.set_focused(true);
 
         let mut transcript = Transcript::new();
-        let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
         transcript.push(TranscriptItem::system(welcome_line(&keybindings)));
 
         Self {
             transcript,
             editor,
+            keybindings,
             submitted,
             scroll_command,
             pending_submit: None,
@@ -344,6 +353,8 @@ impl InteractiveRoot {
             usage: (0, 0),
             tool_output_expanded: false,
             spinner_frame: 0,
+            slash_suggestion_selected: 0,
+            slash_suggestions_dismissed_for: None,
         }
     }
 
@@ -561,7 +572,131 @@ impl InteractiveRoot {
             status: self.status,
             tool_output_expanded: self.tool_output_expanded,
             spinner_frame: self.spinner_frame,
+            slash_suggestion_selected: self.slash_suggestion_selected,
+            slash_suggestions_dismissed_for: self.slash_suggestions_dismissed_for.clone(),
         }
+    }
+
+    fn slash_suggestion_indices(&self) -> Option<Vec<usize>> {
+        if self.selecting_model {
+            return None;
+        }
+        let text = self.editor.text();
+        if self
+            .slash_suggestions_dismissed_for
+            .as_deref()
+            .is_some_and(|dismissed| dismissed == text)
+        {
+            return None;
+        }
+        let query = slash_completion_query(text, self.editor.cursor())?;
+        let indices = fuzzy_filter_indices(BUILTIN_SLASH_COMMANDS, query, |command| {
+            command.name.to_string()
+        });
+        (!indices.is_empty()).then_some(indices)
+    }
+
+    fn render_slash_suggestions(&mut self, width: usize) -> Vec<String> {
+        let Some(indices) = self.slash_suggestion_indices() else {
+            return Vec::new();
+        };
+        self.slash_suggestion_selected = self
+            .slash_suggestion_selected
+            .min(indices.len().saturating_sub(1));
+
+        let color = color_enabled();
+        let window_start = self
+            .slash_suggestion_selected
+            .saturating_add(1)
+            .saturating_sub(MAX_SLASH_SUGGESTIONS);
+        let mut lines = Vec::new();
+        for (visible_offset, command_index) in indices
+            .iter()
+            .copied()
+            .skip(window_start)
+            .take(MAX_SLASH_SUGGESTIONS)
+            .enumerate()
+        {
+            let absolute_index = window_start + visible_offset;
+            let command = &BUILTIN_SLASH_COMMANDS[command_index];
+            let label = format!("/{}", command.name);
+            let marker = if absolute_index == self.slash_suggestion_selected {
+                "->"
+            } else {
+                "  "
+            };
+            let line = format!(
+                "{marker} {label:<17} {}",
+                paint_with(command.description, &SYSTEM, color)
+            );
+            if absolute_index == self.slash_suggestion_selected {
+                lines.push(fit_line(&paint_with(&line, &USER, color), width));
+            } else {
+                lines.push(fit_line(&line, width));
+            }
+        }
+        lines.push(fit_line(
+            &paint_with(
+                &format!("({}/{})", self.slash_suggestion_selected + 1, indices.len()),
+                &SYSTEM,
+                color,
+            ),
+            width,
+        ));
+        lines
+    }
+
+    fn handle_slash_suggestion_input(&mut self, event: &InputEvent) -> bool {
+        let Some(indices) = self.slash_suggestion_indices() else {
+            return false;
+        };
+
+        if self.keybindings.matches(event, "tui.select.up") {
+            self.slash_suggestion_selected =
+                (self.slash_suggestion_selected + indices.len() - 1) % indices.len();
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.down") {
+            self.slash_suggestion_selected = (self.slash_suggestion_selected + 1) % indices.len();
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.pageUp") {
+            self.slash_suggestion_selected = self
+                .slash_suggestion_selected
+                .saturating_sub(MAX_SLASH_SUGGESTIONS);
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.pageDown") {
+            self.slash_suggestion_selected = (self.slash_suggestion_selected
+                + MAX_SLASH_SUGGESTIONS)
+                .min(indices.len().saturating_sub(1));
+            return true;
+        }
+        let exact_query_matches_command =
+            slash_completion_query(self.editor.text(), self.editor.cursor()).is_some_and(|query| {
+                indices
+                    .iter()
+                    .any(|index| BUILTIN_SLASH_COMMANDS[*index].name == query)
+            });
+        if self.keybindings.matches(event, "tui.select.confirm") && exact_query_matches_command {
+            return false;
+        }
+        if self.keybindings.matches(event, "tui.select.confirm")
+            || self.keybindings.matches(event, "tui.input.tab")
+        {
+            let command_index = indices[self.slash_suggestion_selected.min(indices.len() - 1)];
+            let command = &BUILTIN_SLASH_COMMANDS[command_index];
+            self.editor.set_text(format!("/{} ", command.name));
+            self.slash_suggestion_selected = 0;
+            self.slash_suggestions_dismissed_for = None;
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.cancel") {
+            self.slash_suggestions_dismissed_for = Some(self.editor.text().to_string());
+            return true;
+        }
+
+        false
     }
 }
 
@@ -587,6 +722,7 @@ impl Component for InteractiveRoot {
         for line in editor_lines {
             lines.push(fit_line(&format!("> {line}"), width));
         }
+        lines.extend(self.render_slash_suggestions(width));
         lines.push(footer);
         lines
     }
@@ -624,7 +760,15 @@ impl Component for InteractiveRoot {
         }
 
         if self.status == InteractiveStatus::Idle {
+            let before_text = self.editor.text().to_string();
+            if self.handle_slash_suggestion_input(event) {
+                return;
+            }
             self.editor.handle_input(event);
+            if self.editor.text() != before_text {
+                self.slash_suggestion_selected = 0;
+                self.slash_suggestions_dismissed_for = None;
+            }
             if let Some(command) = self.take_scroll_command() {
                 let page_rows = self.viewport_height.saturating_sub(2).max(1);
                 match command {
@@ -1360,6 +1504,17 @@ fn render_tool_lines(
     lines
 }
 
+fn slash_completion_query(text: &str, cursor: usize) -> Option<&str> {
+    if cursor != text.len() || !text.starts_with('/') || text.contains('\n') {
+        return None;
+    }
+    let query = &text[1..cursor];
+    if query.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some(query)
+}
+
 fn fit_line(line: &str, width: usize) -> String {
     if visible_width(line) <= width {
         line.to_string()
@@ -1374,6 +1529,9 @@ fn help_text() -> String {
         "  /help, /h, /? - show this help".to_string(),
     ];
     for command in BUILTIN_SLASH_COMMANDS {
+        if command.name == "help" {
+            continue;
+        }
         lines.push(format!("  /{:<13} - {}", command.name, command.description));
     }
     lines.push("  /q, /exit      - aliases for /quit".to_string());
@@ -1430,6 +1588,14 @@ fn to_cli_error(error: std::io::Error) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key_event(data: &str) -> InputEvent {
+        let mut buffer = StdinBuffer::new();
+        let mut events = buffer.process(data);
+        events.extend(buffer.flush());
+        assert_eq!(events.len(), 1, "expected exactly one input event");
+        events.remove(0)
+    }
 
     #[test]
     fn build_prompt_context_uses_config_defaults_and_auth() {
@@ -1724,6 +1890,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "help",
                 "settings",
                 "model",
                 "scoped-models",
@@ -1747,6 +1914,117 @@ mod tests {
                 "quit",
             ]
         );
+    }
+
+    #[test]
+    fn slash_suggestions_render_when_editor_starts_with_slash() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.editor.set_text("/");
+
+        let rendered = root.render(80).join("\n");
+
+        assert!(rendered.contains("/help"), "{rendered}");
+        assert!(rendered.contains("Show help"), "{rendered}");
+        assert!(rendered.contains("/settings"), "{rendered}");
+        assert!(rendered.contains("Open settings menu"), "{rendered}");
+        assert!(rendered.contains("/model"), "{rendered}");
+        assert!(rendered.contains("(1/22)"), "{rendered}");
+    }
+
+    #[test]
+    fn slash_suggestions_filter_and_hide_after_arguments() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.editor.set_text("/mo");
+        let filtered = root.render(80).join("\n");
+        assert!(filtered.contains("model"), "{filtered}");
+        assert!(!filtered.contains("settings"), "{filtered}");
+
+        root.editor.set_text("/model ");
+        let with_argument_space = root.render(80).join("\n");
+        assert!(
+            !with_argument_space.contains("Select model"),
+            "{with_argument_space}"
+        );
+        assert!(
+            !with_argument_space.contains("(1/"),
+            "{with_argument_space}"
+        );
+    }
+
+    #[test]
+    fn slash_suggestions_can_be_selected_and_accepted() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.editor.set_text("/");
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\x1b[B"));
+        let moved = root.render(80).join("\n");
+        assert!(moved.contains("(3/22)"), "{moved}");
+
+        root.handle_input(&key_event("\t"));
+
+        assert_eq!(root.editor.text(), "/model ");
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        let rendered = root.render(80).join("\n");
+        assert!(!rendered.contains("(2/21)"), "{rendered}");
+    }
+
+    #[test]
+    fn slash_suggestions_can_be_cancelled_for_current_query() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.editor.set_text("/");
+
+        root.handle_input(&key_event("\x1b"));
+        let cancelled = root.render(80).join("\n");
+        assert!(!cancelled.contains("Open settings menu"), "{cancelled}");
+
+        root.handle_input(&key_event("m"));
+        let changed = root.render(80).join("\n");
+        assert!(changed.contains("model"), "{changed}");
+    }
+
+    #[test]
+    fn render_state_changes_when_slash_suggestion_selection_changes() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.editor.set_text("/");
+
+        let before = root.render_state();
+        root.handle_input(&key_event("\x1b[B"));
+
+        assert_ne!(root.render_state(), before);
+    }
+
+    #[test]
+    fn exact_slash_command_enter_submits_instead_of_accepting_suggestion() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.editor.set_text("/quit");
+
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.take_action(), InteractiveAction::Exit);
     }
 
     #[test]

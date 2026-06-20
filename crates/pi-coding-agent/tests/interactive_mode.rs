@@ -149,6 +149,29 @@ async fn scripted_interactive_noop_key_release_does_not_render() {
     assert_eq!(prompt_cursor_moves, 1);
 }
 
+#[tokio::test]
+async fn scripted_interactive_slash_suggestions_render_after_slash() {
+    let output = run_scripted_idle_interactive("/").await.unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(frame.contains("> /"), "{frame}");
+    assert!(frame.contains("/help"), "{frame}");
+    assert!(frame.contains("Show help"), "{frame}");
+    assert!(frame.contains("/settings"), "{frame}");
+    assert!(frame.contains("Open settings menu"), "{frame}");
+    assert!(frame.contains("(1/22)"), "{frame}");
+}
+
+#[tokio::test]
+async fn scripted_interactive_slash_suggestion_tab_accepts_filtered_command() {
+    let output = run_scripted_idle_interactive("/mo\t").await.unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(frame.contains("> /model"), "{frame}");
+    assert!(!frame.contains("Select model"), "{frame}");
+    assert!(!frame.contains("(1/"), "{frame}");
+}
+
 fn sync_render_count(ops: &[TerminalOp]) -> usize {
     ops.iter()
         .filter(|op| matches!(op, TerminalOp::Write(data) if data.contains("\x1b[?2026h")))
