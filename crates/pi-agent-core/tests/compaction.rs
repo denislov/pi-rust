@@ -117,7 +117,7 @@ fn prepare_compaction_handles_compaction_summary() {
         reserve_tokens: 0,
         keep_recent_tokens: 10,
     };
-    let (to_summarize, keep) = prepare_compaction(&msgs, &settings);
+    let (_to_summarize, keep) = prepare_compaction(&msgs, &settings);
     // Should handle gracefully
     assert!(!keep.is_empty());
 }
