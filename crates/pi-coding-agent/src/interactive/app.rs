@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
@@ -70,6 +71,7 @@ const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
 const MAX_SLASH_SUGGESTIONS: usize = 5;
+const MAX_MODEL_CHOICES: usize = 12;
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
 
 struct InputPump {
@@ -134,6 +136,7 @@ struct PromptContext {
     resources: AgentResources,
     settings: crate::config::Settings,
     theme: TuiTheme,
+    model_choices: Vec<Model>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,7 +293,9 @@ struct InteractiveRoot {
     model_id: String,
     session_label: String,
     selected_model: Option<Model>,
+    available_models: Vec<Model>,
     selecting_model: bool,
+    model_selection_selected: usize,
     selecting_settings: bool,
     usage: (u32, u32),
     tool_output_expanded: bool,
@@ -313,6 +318,8 @@ struct InteractiveRenderState {
     slash_suggestion_selected: usize,
     slash_suggestions_dismissed_for: Option<String>,
     selecting_settings: bool,
+    selecting_model: bool,
+    model_selection_selected: usize,
 }
 
 impl InteractiveRoot {
@@ -321,11 +328,22 @@ impl InteractiveRoot {
         Self::new_with_theme(cwd, model_id, session_label, dark_theme())
     }
 
+    #[cfg(test)]
     fn new_with_theme(
         cwd: PathBuf,
         model_id: String,
         session_label: String,
         theme: TuiTheme,
+    ) -> Self {
+        Self::new_with_theme_and_models(cwd, model_id, session_label, theme, Vec::new())
+    }
+
+    fn new_with_theme_and_models(
+        cwd: PathBuf,
+        model_id: String,
+        session_label: String,
+        theme: TuiTheme,
+        available_models: Vec<Model>,
     ) -> Self {
         let submitted = Arc::new(Mutex::new(None));
         let submitted_for_callback = Arc::clone(&submitted);
@@ -363,7 +381,9 @@ impl InteractiveRoot {
             model_id,
             session_label,
             selected_model: None,
+            available_models,
             selecting_model: false,
+            model_selection_selected: 0,
             selecting_settings: false,
             usage: (0, 0),
             tool_output_expanded: false,
@@ -484,32 +504,38 @@ impl InteractiveRoot {
 
     fn handle_settings_command(&mut self) {
         self.selecting_settings = true;
+        self.selecting_model = false;
         self.editor.set_text("");
     }
 
     fn handle_model_command(&mut self, args: &str) {
         if args.is_empty() {
             self.selecting_model = true;
+            self.selecting_settings = false;
+            self.model_selection_selected = 0;
             self.editor.set_text("");
-            self.transcript
-                .push(TranscriptItem::system("Select model:".to_string()));
             return;
         }
 
         match pi_ai::lookup_model(args) {
-            Some(model) => {
-                self.model_id = model.id.clone();
-                self.selected_model = Some(model);
-                self.transcript.push(TranscriptItem::system(format!(
-                    "Model set: {}",
-                    self.model_id
-                )));
-            }
+            Some(model) => self.set_selected_model(model),
             None => {
                 self.transcript
                     .push(TranscriptItem::system(format!("Unknown model: {args}")));
             }
         }
+    }
+
+    fn set_selected_model(&mut self, model: Model) {
+        self.model_id = model.id.clone();
+        self.selected_model = Some(model);
+        self.selecting_model = false;
+        self.model_selection_selected = 0;
+        self.editor.set_text("");
+        self.transcript.push(TranscriptItem::system(format!(
+            "Model set: {}",
+            self.model_id
+        )));
     }
 
     fn handle_name_command(&mut self, args: &str) {
@@ -603,6 +629,8 @@ impl InteractiveRoot {
             slash_suggestion_selected: self.slash_suggestion_selected,
             slash_suggestions_dismissed_for: self.slash_suggestions_dismissed_for.clone(),
             selecting_settings: self.selecting_settings,
+            selecting_model: self.selecting_model,
+            model_selection_selected: self.model_selection_selected,
         }
     }
 
@@ -699,6 +727,82 @@ impl InteractiveRoot {
         .collect()
     }
 
+    fn model_selection_indices(&self) -> Vec<usize> {
+        fuzzy_filter_indices(&self.available_models, self.editor.text(), |model| {
+            format!("{} {} {}", model.id, model.name, model.provider)
+        })
+    }
+
+    fn render_model_selector(&mut self, width: usize) -> Vec<String> {
+        if !self.selecting_model {
+            return Vec::new();
+        }
+
+        let indices = self.model_selection_indices();
+        self.model_selection_selected = self
+            .model_selection_selected
+            .min(indices.len().saturating_sub(1));
+
+        let color = color_enabled();
+        let mut lines = vec![fit_line("Select model", width)];
+        if indices.is_empty() {
+            lines.push(fit_line(
+                &paint_with(
+                    "  No models for configured providers. Add keys in auth.toml or env.",
+                    &SYSTEM,
+                    color,
+                ),
+                width,
+            ));
+            lines.push(fit_line(&paint_with("  Esc close", &SYSTEM, color), width));
+            return lines;
+        }
+
+        let window_start = self
+            .model_selection_selected
+            .saturating_add(1)
+            .saturating_sub(MAX_MODEL_CHOICES);
+        for (visible_offset, model_index) in indices
+            .iter()
+            .copied()
+            .skip(window_start)
+            .take(MAX_MODEL_CHOICES)
+            .enumerate()
+        {
+            let absolute_index = window_start + visible_offset;
+            let model = &self.available_models[model_index];
+            let marker = if absolute_index == self.model_selection_selected {
+                "->"
+            } else {
+                "  "
+            };
+            let line = format!(
+                "{marker} {:<24} {} · {}",
+                model.id,
+                paint_with(&model.provider, &SYSTEM, color),
+                paint_with(&model.name, &SYSTEM, color)
+            );
+            if absolute_index == self.model_selection_selected {
+                lines.push(fit_line(&paint_with(&line, &USER, color), width));
+            } else {
+                lines.push(fit_line(&line, width));
+            }
+        }
+        lines.push(fit_line(
+            &paint_with(
+                &format!(
+                    "({}/{}) Enter select · Esc close",
+                    self.model_selection_selected + 1,
+                    indices.len()
+                ),
+                &SYSTEM,
+                color,
+            ),
+            width,
+        ));
+        lines
+    }
+
     fn render_editor_box(&mut self, width: usize) -> Vec<String> {
         let editor_lines = self.editor.render(width.saturating_sub(2));
         let border = editor_border_line(width, &self.editor_border_style(), color_enabled());
@@ -763,6 +867,61 @@ impl InteractiveRoot {
 
         false
     }
+
+    fn handle_model_selection_input(&mut self, event: &InputEvent) -> bool {
+        if !self.selecting_model {
+            return false;
+        }
+
+        let indices = self.model_selection_indices();
+        if self.keybindings.matches(event, "tui.select.up") {
+            if !indices.is_empty() {
+                self.model_selection_selected =
+                    (self.model_selection_selected + indices.len() - 1) % indices.len();
+            }
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.down") {
+            if !indices.is_empty() {
+                self.model_selection_selected = (self.model_selection_selected + 1) % indices.len();
+            }
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.pageUp") {
+            self.model_selection_selected = self
+                .model_selection_selected
+                .saturating_sub(MAX_MODEL_CHOICES);
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.pageDown") {
+            self.model_selection_selected = (self.model_selection_selected + MAX_MODEL_CHOICES)
+                .min(indices.len().saturating_sub(1));
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.cancel") {
+            self.selecting_model = false;
+            self.model_selection_selected = 0;
+            self.editor.set_text("");
+            self.transcript.push(TranscriptItem::system(
+                "Model selection canceled".to_string(),
+            ));
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.confirm") {
+            if let Some(model_index) = indices.get(self.model_selection_selected).copied() {
+                let model = self.available_models[model_index].clone();
+                self.set_selected_model(model);
+            }
+            return true;
+        }
+
+        let before_text = self.editor.text().to_string();
+        self.editor.handle_input(event);
+        if self.editor.text() != before_text {
+            self.model_selection_selected = 0;
+        }
+        true
+    }
 }
 
 impl Component for InteractiveRoot {
@@ -783,9 +942,14 @@ impl Component for InteractiveRoot {
             max_tool_result_lines,
             color_enabled(),
         );
-        lines.extend(self.render_settings_menu(width));
         lines.extend(self.render_editor_box(width));
-        lines.extend(self.render_slash_suggestions(width));
+        if self.selecting_model {
+            lines.extend(self.render_model_selector(width));
+        } else if self.selecting_settings {
+            lines.extend(self.render_settings_menu(width));
+        } else {
+            lines.extend(self.render_slash_suggestions(width));
+        }
         lines.push(footer);
         lines
     }
@@ -829,6 +993,10 @@ impl Component for InteractiveRoot {
         }
 
         if self.status == InteractiveStatus::Idle {
+            if self.selecting_model {
+                self.handle_model_selection_input(event);
+                return;
+            }
             if self.selecting_settings {
                 return;
             }
@@ -851,10 +1019,7 @@ impl Component for InteractiveRoot {
                 }
             }
             if let Some(text) = self.take_submitted() {
-                if self.selecting_model {
-                    self.selecting_model = false;
-                    self.handle_model_command(text.trim());
-                } else if let Some(command) = parse_slash_command(&text) {
+                if let Some(command) = parse_slash_command(&text) {
                     self.handle_slash_command(command);
                 } else {
                     self.pending_submit = Some(text);
@@ -964,11 +1129,12 @@ async fn run_interactive_loop<T: Terminal>(
 
     terminal.start().map_err(to_cli_error)?;
     let mut tui = Tui::new(terminal);
-    let root_id = tui.add_child_with_id(Box::new(InteractiveRoot::new_with_theme(
+    let root_id = tui.add_child_with_id(Box::new(InteractiveRoot::new_with_theme_and_models(
         cwd,
         prompt_context.model.id.clone(),
         session_label,
         prompt_context.theme.clone(),
+        prompt_context.model_choices.clone(),
     )));
     tui.set_focus(Some(root_id));
 
@@ -1328,6 +1494,7 @@ fn build_prompt_context(
     )?;
     let provider = model.provider.clone();
     let api_key = resolve_prompt_api_key(&provider, parsed.api_key.as_deref(), &config.auth);
+    let model_choices = configured_model_choices(&model, parsed.api_key.as_deref(), &config.auth);
     let config_paths = config::resolve_paths(&cwd);
     let loaded = resources::load_cli_resources_with_options(
         &parsed.skills,
@@ -1423,6 +1590,7 @@ fn build_prompt_context(
         resources: resources::build_agent_resources(skills, templates),
         settings: config.settings,
         theme,
+        model_choices,
     })
 }
 
@@ -1451,6 +1619,51 @@ fn resolve_prompt_api_key(
         eprint!("{key_text}");
     }
     resolved.map(|r| r.value)
+}
+
+fn configured_model_choices(
+    current_model: &Model,
+    cli_api_key: Option<&str>,
+    auth: &crate::config::AuthStore,
+) -> Vec<Model> {
+    let mut configured_providers = BTreeSet::new();
+    for provider in pi_ai::get_providers() {
+        if provider_has_configured_key(&provider, &current_model.provider, cli_api_key, auth) {
+            configured_providers.insert(provider);
+        }
+    }
+
+    let mut models = pi_ai::all_models()
+        .iter()
+        .filter(|model| configured_providers.contains(&model.provider))
+        .cloned()
+        .collect::<Vec<_>>();
+    models.sort_by(|left, right| {
+        left.provider
+            .cmp(&right.provider)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    if let Some(current_index) = models
+        .iter()
+        .position(|model| model.provider == current_model.provider && model.id == current_model.id)
+    {
+        let current = models.remove(current_index);
+        models.insert(0, current);
+    }
+    models
+}
+
+fn provider_has_configured_key(
+    provider: &str,
+    current_provider: &str,
+    cli_api_key: Option<&str>,
+    auth: &crate::config::AuthStore,
+) -> bool {
+    if provider == current_provider && cli_api_key.is_some_and(|key| !key.is_empty()) {
+        return true;
+    }
+    let mut diags = Vec::new();
+    config::auth::resolve_api_key(provider, None, auth, &mut diags).is_some()
 }
 
 fn resolve_session_target(parsed: &CliArgs) -> Option<ResolvedSessionTarget> {

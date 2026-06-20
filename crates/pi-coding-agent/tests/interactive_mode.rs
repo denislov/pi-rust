@@ -427,9 +427,34 @@ async fn scripted_interactive_model_selector_confirms_filtered_model() {
             api_keys: Arc::new(Mutex::new(Vec::new())),
         }),
     );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("auth.toml"),
+        "[anthropic]\ntype = \"api_key\"\nkey = \"anthropic-auth\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.path().join("auth.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path());
+    }
 
     let output = run_scripted_idle_interactive("/model\rclaude-haiku-4-5\r").await;
 
+    unsafe {
+        match prior_pi_rust_dir {
+            Some(value) => std::env::set_var("PI_RUST_DIR", value),
+            None => std::env::remove_var("PI_RUST_DIR"),
+        }
+    }
     match previous_provider {
         Some(provider) => registry::register(&default_model.api, provider),
         None => registry::unregister(&default_model.api),
@@ -439,6 +464,65 @@ async fn scripted_interactive_model_selector_confirms_filtered_model() {
     assert!(output.contains("Model set: claude-haiku-4-5"), "{output:?}");
     assert!(output.contains("model: claude-haiku-4-5"), "{output:?}");
     assert!(!output.contains("not implemented"), "{output:?}");
+}
+
+#[tokio::test]
+async fn scripted_interactive_model_selector_lists_configured_provider_models() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("auth.toml"),
+        "[openai]\ntype = \"api_key\"\nkey = \"openai-auth\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.path().join("auth.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+    let prior_anthropic_key = std::env::var_os("ANTHROPIC_API_KEY");
+    let prior_claude_key = std::env::var_os("CLAUDE_API_KEY");
+    let prior_anthropic_key_alt = std::env::var_os("ANTHROPIC_KEY");
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path());
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("CLAUDE_API_KEY");
+        std::env::remove_var("ANTHROPIC_KEY");
+    }
+
+    let output = run_scripted_idle_interactive("/model\r").await;
+
+    unsafe {
+        match prior_pi_rust_dir {
+            Some(value) => std::env::set_var("PI_RUST_DIR", value),
+            None => std::env::remove_var("PI_RUST_DIR"),
+        }
+        match prior_anthropic_key {
+            Some(value) => std::env::set_var("ANTHROPIC_API_KEY", value),
+            None => std::env::remove_var("ANTHROPIC_API_KEY"),
+        }
+        match prior_claude_key {
+            Some(value) => std::env::set_var("CLAUDE_API_KEY", value),
+            None => std::env::remove_var("CLAUDE_API_KEY"),
+        }
+        match prior_anthropic_key_alt {
+            Some(value) => std::env::set_var("ANTHROPIC_KEY", value),
+            None => std::env::remove_var("ANTHROPIC_KEY"),
+        }
+    }
+
+    let output = output.unwrap();
+    let frame = output.rendered_lines.join("\n");
+    assert!(frame.contains("Select model"), "{frame}");
+    assert!(frame.contains("gpt-5"), "{frame}");
+    assert!(
+        !frame.contains("claude-haiku-4-5"),
+        "model selector should exclude providers without a configured key: {frame}"
+    );
 }
 
 #[tokio::test]
@@ -543,6 +627,26 @@ async fn scripted_interactive_settings_command_enters_settings_menu() {
     assert!(frame.contains("Esc close"), "{frame}");
     assert!(frame.contains("─"), "{frame}");
     assert!(!frame.contains("not implemented"), "{frame}");
+    let editor_row = output
+        .rendered_lines
+        .iter()
+        .position(|line| line.contains("> "))
+        .expect("editor row should render");
+    let settings_row = output
+        .rendered_lines
+        .iter()
+        .position(|line| line.contains("Settings"))
+        .expect("settings panel should render");
+    let footer_row = output
+        .rendered_lines
+        .iter()
+        .position(|line| line.contains("status: idle"))
+        .expect("footer should render");
+    assert!(
+        editor_row < settings_row && settings_row < footer_row,
+        "settings should render below the input box and above the footer: {:?}",
+        output.rendered_lines
+    );
 }
 
 #[tokio::test]
