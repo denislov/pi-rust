@@ -1,6 +1,6 @@
 use crate::{
-    Component, InputEvent, Key, KeyEventKind, KeybindingsManager, fuzzy_filter_indices,
-    truncate_to_width, visible_width,
+    Component, InputEvent, Key, KeyEventKind, KeybindingsManager, SelectListTheme, color_enabled,
+    fuzzy_filter_indices, paint_with, truncate_to_width, visible_width,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +32,7 @@ pub struct SelectList {
     max_visible: usize,
     filter: String,
     keybindings: KeybindingsManager,
+    theme: SelectListTheme,
     on_confirm: Option<Box<dyn FnMut(&SelectItem)>>,
     on_cancel: Option<Box<dyn FnMut()>>,
 }
@@ -49,11 +50,25 @@ impl SelectList {
             max_visible,
             filter: String::new(),
             keybindings,
+            theme: SelectListTheme::default(),
             on_confirm: None,
             on_cancel: None,
         };
         list.rebuild_filter();
         list
+    }
+
+    pub fn with_theme(mut self, theme: SelectListTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn set_theme(&mut self, theme: SelectListTheme) {
+        self.theme = theme;
+    }
+
+    pub fn theme(&self) -> SelectListTheme {
+        self.theme
     }
 
     pub fn set_filter(&mut self, filter: impl Into<String>) {
@@ -100,6 +115,7 @@ impl Component for SelectList {
         }
 
         let mut lines = Vec::new();
+        let color = color_enabled();
         for (visible_index, item_index) in self
             .filtered_indices
             .iter()
@@ -108,20 +124,29 @@ impl Component for SelectList {
             .enumerate()
         {
             let item = &self.items[item_index];
-            let marker = if visible_index == self.selected {
-                "> "
+            let selected = visible_index == self.selected;
+            let marker = if selected {
+                paint_with("> ", &self.theme.selected_prefix, color)
             } else {
-                "  "
+                "  ".to_string()
             };
-            let mut line = format!("{marker}{}", item.label);
+            let label = if selected {
+                paint_with(&item.label, &self.theme.selected_text, color)
+            } else {
+                item.label.clone()
+            };
+            let mut line = format!("{marker}{label}");
             if let Some(description) = &item.description {
                 line.push_str(" - ");
-                line.push_str(description);
+                line.push_str(&paint_with(description, &self.theme.description, color));
             }
             lines.push(fit_line(&line, width));
         }
         if lines.is_empty() {
-            lines.push(String::new());
+            lines.push(fit_line(
+                &paint_with("No matches", &self.theme.no_match, color),
+                width,
+            ));
         }
         lines
     }

@@ -1,9 +1,11 @@
 mod box_component;
 mod editor;
+mod image;
 mod input;
 mod loader;
 mod markdown;
 mod select_list;
+mod selector_dialog;
 mod settings_list;
 mod spacer;
 mod text;
@@ -11,10 +13,12 @@ mod truncated_text;
 
 pub use box_component::{BackgroundFn, Box};
 pub use editor::Editor;
+pub use image::Image;
 pub use input::Input;
 pub use loader::{CancellableLoader, Loader, LoaderIndicatorOptions};
 pub use markdown::Markdown;
 pub use select_list::{SelectItem, SelectList};
+pub use selector_dialog::{SelectorDialog, SelectorDialogOptions};
 pub use settings_list::{SettingItem, SettingsList, SettingsListOptions};
 pub use spacer::Spacer;
 pub use text::Text;

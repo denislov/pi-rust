@@ -9,6 +9,8 @@ pub mod overlay;
 pub mod runtime;
 pub mod style;
 pub mod terminal;
+pub mod terminal_image;
+pub mod theme;
 pub mod tui;
 pub mod undo_stack;
 pub mod utils;
@@ -21,9 +23,9 @@ pub use autocomplete::{
 };
 pub use component::{Component, ComponentId, Container};
 pub use components::{
-    BackgroundFn, Box, CancellableLoader, Editor, Input, Loader, LoaderIndicatorOptions, Markdown,
-    SelectItem, SelectList, SettingItem, SettingsList, SettingsListOptions, Spacer, Text,
-    TruncatedText,
+    BackgroundFn, Box, CancellableLoader, Editor, Image, Input, Loader, LoaderIndicatorOptions,
+    Markdown, SelectItem, SelectList, SelectorDialog, SelectorDialogOptions, SettingItem,
+    SettingsList, SettingsListOptions, Spacer, Text, TruncatedText,
 };
 pub use cursor::{CURSOR_MARKER, CursorPosition, extract_cursor_marker};
 pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
@@ -40,6 +42,18 @@ pub use style::{
     paint_with_level,
 };
 pub use terminal::{ProcessTerminal, Terminal, TerminalSize};
+pub use terminal_image::{
+    CellDimensions, ImageCellSize, ImageDimensions, ImageProtocol, ImageRenderOptions,
+    RenderedImage, TerminalCapabilities, calculate_image_cell_size, delete_all_kitty_images,
+    delete_kitty_image, detect_terminal_capabilities_from_env, encode_iterm2, encode_kitty,
+    image_dimensions_from_base64, image_dimensions_from_bytes, is_image_line, render_image,
+};
+pub use theme::{
+    EditorTheme, MarkdownTheme, SelectListTheme, SettingsListTheme, ThemeMode, ThemePalette,
+    TuiTheme, dark_theme, light_theme,
+};
 pub use tui::{RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError};
-pub use utils::{truncate_to_width, visible_width};
+pub use utils::{
+    truncate_to_width, truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
+};
 pub use virtual_terminal::{TerminalOp, VirtualTerminal};

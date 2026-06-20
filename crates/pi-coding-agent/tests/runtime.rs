@@ -82,6 +82,22 @@ fn model_override_is_used_when_cli_model_is_absent() {
 }
 
 #[test]
+fn model_override_wins_over_settings_default_model() {
+    let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
+    let mut override_model = select_model(&args, None, None, None).unwrap();
+    override_model.id = "override-model".into();
+    override_model.provider = "override-provider".into();
+    let model = select_model(
+        &args,
+        Some("deepseek"),
+        Some("claude-haiku-4-5"),
+        Some(override_model),
+    )
+    .unwrap();
+    assert_eq!(model.id, "override-model");
+}
+
+#[test]
 fn selects_default_provider_when_cli_provider_is_absent() {
     let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
 

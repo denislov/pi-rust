@@ -93,10 +93,8 @@ pub fn select_model(
         return Ok(model);
     }
 
-    if let Some(model_id) = default_model {
-        let model = pi_ai::lookup_model(model_id)
-            .ok_or_else(|| CliError::UnknownModel(model_id.to_string()))?;
-        if let Some(provider) = effective_provider
+    if let Some(model) = model_override {
+        if let Some(provider) = args.provider.as_deref()
             && model.provider != provider
         {
             if let Some(model) = first_model_for_provider(provider) {
@@ -107,7 +105,9 @@ pub fn select_model(
         return Ok(model);
     }
 
-    if let Some(model) = model_override {
+    if let Some(model_id) = default_model {
+        let model = pi_ai::lookup_model(model_id)
+            .ok_or_else(|| CliError::UnknownModel(model_id.to_string()))?;
         if let Some(provider) = effective_provider
             && model.provider != provider
         {

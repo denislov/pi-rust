@@ -1,12 +1,13 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{Color, Component, Style, paint, truncate_to_width, visible_width};
+use crate::{Component, MarkdownTheme, paint, truncate_to_width, visible_width};
 
 pub struct Markdown {
     text: String,
     padding_x: usize,
     padding_y: usize,
+    theme: MarkdownTheme,
 }
 
 impl Markdown {
@@ -19,11 +20,25 @@ impl Markdown {
             text: text.into(),
             padding_x,
             padding_y,
+            theme: MarkdownTheme::default(),
         }
     }
 
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
+    }
+
+    pub fn with_theme(mut self, theme: MarkdownTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn set_theme(&mut self, theme: MarkdownTheme) {
+        self.theme = theme;
+    }
+
+    pub fn theme(&self) -> MarkdownTheme {
+        self.theme
     }
 }
 
@@ -35,7 +50,7 @@ impl Component for Markdown {
 
         let content_width = width.saturating_sub(self.padding_x.saturating_mul(2));
         let content_width = content_width.max(1);
-        let mut lines = markdown_to_lines(&self.text, content_width);
+        let mut lines = markdown_to_lines(&self.text, content_width, &self.theme);
         let prefix = " ".repeat(self.padding_x);
         if self.padding_x > 0 {
             lines = lines
@@ -59,7 +74,7 @@ impl Component for Markdown {
     }
 }
 
-fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
+fn markdown_to_lines(text: &str, width: usize, theme: &MarkdownTheme) -> Vec<String> {
     let parser = Parser::new_ext(text, Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES);
     let mut blocks = Vec::new();
     let mut current = String::new();
@@ -69,58 +84,59 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
     for event in parser {
         match event {
             Event::Start(Tag::Heading { .. }) => {
-                flush_current(&mut current, &mut blocks, &mut context);
+                flush_current(&mut current, &mut blocks, &mut context, theme);
                 context.heading = true;
             }
             Event::End(TagEnd::Heading(_)) => {
-                flush_current(&mut current, &mut blocks, &mut context);
+                flush_current(&mut current, &mut blocks, &mut context, theme);
             }
             Event::Start(Tag::Paragraph) => {}
-            Event::End(TagEnd::Paragraph) => flush_current(&mut current, &mut blocks, &mut context),
+            Event::End(TagEnd::Paragraph) => {
+                flush_current(&mut current, &mut blocks, &mut context, theme)
+            }
             Event::Start(Tag::List(_)) => {
                 list_depth += 1;
             }
             Event::End(TagEnd::List(_)) => {
                 list_depth = list_depth.saturating_sub(1);
-                flush_current(&mut current, &mut blocks, &mut context);
+                flush_current(&mut current, &mut blocks, &mut context, theme);
             }
             Event::Start(Tag::Item) => {
-                flush_current(&mut current, &mut blocks, &mut context);
+                flush_current(&mut current, &mut blocks, &mut context, theme);
                 if list_depth > 0 {
                     current.push_str("- ");
                 }
             }
-            Event::End(TagEnd::Item) => flush_current(&mut current, &mut blocks, &mut context),
+            Event::End(TagEnd::Item) => {
+                flush_current(&mut current, &mut blocks, &mut context, theme)
+            }
             Event::Start(Tag::BlockQuote(_)) => {
-                flush_current(&mut current, &mut blocks, &mut context);
+                flush_current(&mut current, &mut blocks, &mut context, theme);
                 context.in_quote = true;
                 current.push_str("> ");
             }
             Event::End(TagEnd::BlockQuote(_)) => {
-                flush_current(&mut current, &mut blocks, &mut context);
+                flush_current(&mut current, &mut blocks, &mut context, theme);
             }
             Event::Start(Tag::CodeBlock(_)) => {
-                flush_current(&mut current, &mut blocks, &mut context);
+                flush_current(&mut current, &mut blocks, &mut context, theme);
                 context.in_code_block = true;
-                blocks.push(paint("```", &Style::fg(Color::Default).dim()));
+                blocks.push(paint("```", &theme.code_block_border));
             }
             Event::End(TagEnd::CodeBlock) => {
                 // Flush accumulated code text as dim indented lines, then close fence.
                 let code = current.trim_end();
                 for source_line in code.split('\n') {
                     let line = if source_line.is_empty() {
-                        paint("   ", &Style::fg(Color::Default).dim())
+                        paint("   ", &theme.code_block)
                     } else {
-                        paint(
-                            &format!("   {source_line}"),
-                            &Style::fg(Color::Default).dim(),
-                        )
+                        paint(&format!("   {source_line}"), &theme.code_block)
                     };
                     blocks.push(line);
                 }
                 current.clear();
                 context.in_code_block = false;
-                blocks.push(paint("```", &Style::fg(Color::Default).dim()));
+                blocks.push(paint("```", &theme.code_block_border));
             }
             Event::Text(text) => {
                 if context.in_code_block {
@@ -135,18 +151,15 @@ fn markdown_to_lines(text: &str, width: usize) -> Vec<String> {
                 context.inline_code_spans.push((start, current.len()));
             }
             Event::SoftBreak => current.push(' '),
-            Event::HardBreak => flush_current(&mut current, &mut blocks, &mut context),
+            Event::HardBreak => flush_current(&mut current, &mut blocks, &mut context, theme),
             Event::Rule => {
-                flush_current(&mut current, &mut blocks, &mut context);
-                blocks.push(paint(
-                    &"-".repeat(width.min(20)),
-                    &Style::fg(Color::Default).dim(),
-                ));
+                flush_current(&mut current, &mut blocks, &mut context, theme);
+                blocks.push(paint(&"-".repeat(width.min(20)), &theme.hr));
             }
             _ => {}
         }
     }
-    flush_current(&mut current, &mut blocks, &mut context);
+    flush_current(&mut current, &mut blocks, &mut context, theme);
 
     let mut lines = Vec::new();
     for block in blocks {
@@ -192,7 +205,12 @@ fn starts_with_closing_punctuation(text: &str) -> bool {
     )
 }
 
-fn flush_current(current: &mut String, blocks: &mut Vec<String>, context: &mut BlockContext) {
+fn flush_current(
+    current: &mut String,
+    blocks: &mut Vec<String>,
+    context: &mut BlockContext,
+    theme: &MarkdownTheme,
+) {
     let block = current.trim_end();
     if block.is_empty() {
         current.clear();
@@ -202,7 +220,7 @@ fn flush_current(current: &mut String, blocks: &mut Vec<String>, context: &mut B
         return;
     }
 
-    let styled = style_block(block, context);
+    let styled = style_block(block, context, theme);
     blocks.push(styled);
 
     current.clear();
@@ -211,24 +229,23 @@ fn flush_current(current: &mut String, blocks: &mut Vec<String>, context: &mut B
     context.in_quote = false;
 }
 
-fn style_block(block: &str, context: &BlockContext) -> String {
+fn style_block(block: &str, context: &BlockContext, theme: &MarkdownTheme) -> String {
     // Code blocks are emitted directly in markdown_to_lines (fence rows + dim lines),
     // so this function only handles headings, quotes, and plain paragraphs.
-    let with_inline = apply_inline_code(block, &context.inline_code_spans);
+    let with_inline = apply_inline_code(block, &context.inline_code_spans, theme);
     if context.heading {
-        return paint(&with_inline, &Style::fg(Color::Default).bold());
+        return paint(&with_inline, &theme.heading);
     }
     if context.in_quote {
-        return paint(&with_inline, &Style::fg(Color::Default).dim());
+        return paint(&with_inline, &theme.quote);
     }
     with_inline
 }
 
-fn apply_inline_code(block: &str, spans: &[(usize, usize)]) -> String {
+fn apply_inline_code(block: &str, spans: &[(usize, usize)], theme: &MarkdownTheme) -> String {
     if spans.is_empty() {
         return block.to_string();
     }
-    let reverse_style = Style::default().reverse();
     let mut out = String::new();
     let mut cursor = 0usize;
     for &(start, end) in spans {
@@ -240,7 +257,7 @@ fn apply_inline_code(block: &str, spans: &[(usize, usize)]) -> String {
             out.push_str(&block[cursor..start]);
         }
         if end > start {
-            out.push_str(&paint(&block[start..end], &reverse_style));
+            out.push_str(&paint(&block[start..end], &theme.code));
         }
         cursor = end;
     }

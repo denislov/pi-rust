@@ -1,8 +1,14 @@
 use pi_tui::{
-    AutocompleteItem, AutocompleteOptions, Box as TuiBox, CancellableLoader, Component, Container,
-    KeybindingsManager, Loader, ProcessTerminal, SettingItem, SettingsList, SettingsListOptions,
-    SlashCommand, Spacer, TUI_KEYBINDINGS, Terminal, TerminalSize, Text, TruncatedText, Tui,
-    VirtualTerminal, color_level, detect_color_level_from_env, paint_with_level, visible_width,
+    AutocompleteItem, AutocompleteOptions, Box as TuiBox, CancellableLoader, CellDimensions,
+    Component, Container, Image, ImageDimensions, ImageProtocol, ImageRenderOptions,
+    KeybindingsManager, Loader, Markdown, ProcessTerminal, SelectItem, SelectorDialog,
+    SelectorDialogOptions, SettingItem, SettingsList, SettingsListOptions, SlashCommand, Spacer,
+    TUI_KEYBINDINGS, Terminal, TerminalCapabilities, TerminalSize, Text, ThemeMode, TruncatedText,
+    Tui, TuiTheme, VirtualTerminal, calculate_image_cell_size, color_level,
+    delete_all_kitty_images, delete_kitty_image, detect_color_level_from_env,
+    detect_terminal_capabilities_from_env, encode_iterm2, encode_kitty,
+    image_dimensions_from_bytes, is_image_line, light_theme, paint_with_level,
+    truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
 };
 
 #[test]
@@ -42,6 +48,53 @@ fn public_api_symbols_are_importable() {
         KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default()),
     );
     let _ = SettingsListOptions::default();
+
+    let theme = light_theme();
+    assert_eq!(theme.mode, ThemeMode::Light);
+    let _ = TuiTheme::dark();
+    let _ = Markdown::new("**hello**").with_theme(theme.markdown);
+
+    let _ = SelectorDialog::new(
+        "Model",
+        vec![SelectItem::new("deepseek-v4-flash", "deepseek-v4-flash")],
+        KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default()),
+        SelectorDialogOptions {
+            theme: theme.select_list,
+            ..Default::default()
+        },
+    );
+
+    let capabilities = TerminalCapabilities {
+        images: Some(ImageProtocol::Kitty),
+        true_color: true,
+        hyperlinks: true,
+    };
+    let _ = Image::new("abc", "image/png")
+        .dimensions(ImageDimensions {
+            width_px: 18,
+            height_px: 18,
+        })
+        .capabilities(capabilities);
+    let _ = ImageRenderOptions::default();
+    let _ = CellDimensions::default();
+    let _ = calculate_image_cell_size(
+        ImageDimensions {
+            width_px: 18,
+            height_px: 18,
+        },
+        10,
+        None,
+        CellDimensions::default(),
+    );
+    let _ = detect_terminal_capabilities_from_env([("KITTY_WINDOW_ID", "1")], || false);
+    let _ = encode_kitty("abc", Default::default());
+    let _ = encode_iterm2("abc", Default::default());
+    let _ = delete_kitty_image(1);
+    let _ = delete_all_kitty_images();
+    let _ = image_dimensions_from_bytes(&[], "image/png");
+    assert!(is_image_line("\x1b_Ga=T;abc\x1b\\"));
+    let _ = wrap_text_with_ansi("\x1b[31mhello world\x1b[0m", 8);
+    let _ = truncate_to_width_with_ellipsis("abcdef", 4);
 
     let provider = pi_tui::CombinedAutocompleteProvider::new(
         vec![SlashCommand::new("model")],

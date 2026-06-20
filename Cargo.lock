@@ -992,6 +992,7 @@ version = "0.1.0"
 name = "pi-tui"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "bitflags",
  "crossterm",
  "pulldown-cmark",

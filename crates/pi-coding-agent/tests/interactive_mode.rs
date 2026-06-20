@@ -462,7 +462,13 @@ async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider()
 async fn scripted_interactive_model_selector_cancel_keeps_current_model() {
     let output = run_scripted_idle_interactive("/model\r\x1b").await.unwrap();
     assert!(!output.contains("Model set:"), "{output:?}");
-    assert!(output.contains("model: claude-sonnet-4-5"), "{output:?}");
+    assert!(output.contains("Model selection canceled"), "{output:?}");
+    let model_footer_count = output
+        .rendered_lines
+        .iter()
+        .filter(|line| line.contains("model: "))
+        .count();
+    assert_eq!(model_footer_count, 1, "{output:?}");
     assert!(!output.contains("not implemented"), "{output:?}");
     assert_eq!(output.exit_code, 0);
 }

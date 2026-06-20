@@ -1,10 +1,10 @@
 # pi-tui interaction roadmap
 
-> Status: updated — TUI-0 through TUI-6 complete, TUI-8 first slice done
-> Last updated: 2026-06-19
+> Status: updated — TUI-0 through TUI-7 complete, TUI-8 theme/component slice done
+> Last updated: 2026-06-20
 > Scope: make the Rust interactive TUI feel stable and respectful of the user's terminal scrollback.
 
-## Current state (2026-06-19)
+## Current state (2026-06-20)
 
 All stability milestones (TUI-0 through TUI-6) are complete with green tests:
 - **TUI-0**: `VirtualTerminal` tracks cursor row/col/visibility/clear-screen count; tests assert no global clear on startup.
@@ -15,9 +15,11 @@ All stability milestones (TUI-0 through TUI-6) are complete with green tests:
 - **TUI-5**: Transcript viewport with scroll state, page up/down, bottom lock, "new output below" indicator, prompt anchor; Markdown via `pi-tui::Markdown`.
 - **TUI-6**: RAII terminal session guard (`ProcessTerminal::start`/`stop`), raw mode, bracketed paste, Kitty keyboard negotiation; Ctrl+C three-path tested (abort/clear/exit).
 
-**TUI-8 first slice complete** (2026-06-19): 8-color semantic styling + Markdown polish — `Style`/`paint`/`paint_with`/`color_enabled` primitive, Markdown headings (bold)/inline code (reverse)/code blocks (dim fence+content)/blockquotes (dim)/rules (dim), transcript role coloring (user/system/error/tool/footer). See `docs/superpowers/specs/2026-06-19-pi-tui-tui8-color-and-markdown-design.md`.
+**TUI-7 complete** (2026-06-20): `scripts/tui-smoke.sh` runs interactive mode in tmux, captures startup, first character, clear-text Ctrl+C, wide Unicode, narrow/wide resize, `/help`, optional real provider streaming, and exit cleanup. `docs/tui-smoke.md` contains the cross-terminal review table.
 
-**Remaining TUI-8 work**: spinner/progress animation, SelectList menus (model/session/status), theme system (256-color/dark/light).
+**TUI-8 current slice complete** (2026-06-20): 8-color semantic styling, 256/RGB SGR output, color capability detection, Markdown polish, reusable Loader/CancellableLoader, SelectList fuzzy menus, and dark/light/custom theme structures. Markdown and SelectList accept component themes; SettingsList and Editor have theme structs ready for deeper integration. See `docs/superpowers/specs/2026-06-19-pi-tui-tui8-color-and-markdown-design.md`.
+
+**Remaining polish work**: wire additional theme fields through every component render path, add more business selectors in `pi-coding-agent`, and broaden terminal smoke records across real emulators.
 
 ## Design Principles
 
@@ -63,21 +65,15 @@ Chose **C: inline owned-region renderer** — previous scrollback remains intact
 
 **Known gaps** (not blocking): panic-path raw-mode restoration not explicitly tested; exit-time input drain (`drain_input`) is a no-op stub on `ProcessTerminal`. These are low-risk but worth a follow-up pass.
 
-### TUI-7: Cross-Terminal Manual Smoke Suite — ❌ NOT STARTED
+### TUI-7: Cross-Terminal Manual Smoke Suite — ✅ COMPLETE
 
 Goal: catch terminal emulator differences that unit tests cannot model.
 
-Work:
+Done:
 
-- Add a documented smoke script that runs interactive mode in tmux and captures panes before, during, and after a prompt.
-- Include scenarios for:
-  - existing shell output above the TUI;
-  - typing first character;
-  - typing wide Unicode;
-  - resizing narrower and wider;
-  - streaming assistant output;
-  - Ctrl+C while running and idle.
-- Record known behavior for common terminals: wezterm, kitty, iTerm2, Terminal.app, GNOME Terminal, tmux, and SSH/tmux if available.
+- `scripts/tui-smoke.sh` runs interactive mode in a disposable tmux session and captures panes before, during, and after key interactions.
+- Captured scenarios include existing shell output above the TUI, first typed character, text clearing, wide Unicode, resize narrower/wider, `/help`, optional streaming provider output, and idle Ctrl+C exit.
+- `docs/tui-smoke.md` records the review checklist and table for wezterm, kitty, iTerm2, Terminal.app, GNOME Terminal, tmux, and SSH/tmux.
 
 Acceptance:
 
@@ -87,19 +83,23 @@ Acceptance:
 
 ### TUI-8: Interaction Polish After Stability — 🟡 IN PROGRESS
 
-**First slice complete** (2026-06-19): 8-color semantic styling + Markdown rendering polish.
+**Current slices complete** (2026-06-20): semantic styling, Markdown rendering polish, reusable loading/select components, and theme foundations.
 
 Done:
 - `Style`/`Color`/`paint`/`paint_with`/`color_enabled` primitive in `pi-tui/src/style.rs` with NO_COLOR/TERM=dumb support.
+- ANSI 256/RGB SGR output and injectable color capability detection.
 - Markdown: headings bold, inline code reverse, code blocks dim fence+content, blockquotes dim, rules dim.
 - Transcript: user (cyan), system (dim), error (red bold), tool name (yellow), tool status (yellow/red/dim), footer status/cwd/usage colored.
+- `Loader` / `CancellableLoader` reusable components; `pi-coding-agent` footer spinner uses `pi_tui::Loader`.
+- `SelectList` fuzzy filtering and `SelectorDialog` foundation for model/session/status style menus.
+- `TuiTheme` with dark/light/custom palette plus Markdown/SelectList/SettingsList/Editor theme structures; Markdown and SelectList accept themes.
 - Spec: `docs/superpowers/specs/2026-06-19-pi-tui-tui8-color-and-markdown-design.md`.
 - Plan: `docs/superpowers/plans/2026-06-19-pi-tui-tui8-color-and-markdown.md`.
 
 Remaining:
-- **Spinner/progress** for running agent and tools — compact animation in the footer or tool row.
-- **SelectList menus** — optional model/session/status switcher using `pi-tui::SelectList`.
-- **Theme system** — 256-color/dark/light/custom palettes with capability detection (deferred until component API stable).
+- Wire theme fields through the remaining component render paths.
+- Add business-specific model/session/status/theme selectors in `pi-coding-agent` on top of `SelectorDialog`.
+- Continue filling the manual cross-terminal smoke matrix as real terminals are checked.
 
 Acceptance (per remaining slice):
 - Polish changes do not alter terminal ownership or cursor invariants.
