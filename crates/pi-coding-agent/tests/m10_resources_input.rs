@@ -331,7 +331,7 @@ async fn multimodal_prompt_content_reaches_provider_context() {
         model: faux_model(api),
         api_key: None,
         system_prompt: None,
-        max_turns: 1,
+        max_turns: Some(1),
         tools: Vec::new(),
         register_builtins: false,
         session: None,

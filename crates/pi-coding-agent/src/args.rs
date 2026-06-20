@@ -2,8 +2,6 @@ use crate::CliError;
 use pi_agent_core::{ThinkingLevel, ToolExecutionMode};
 use std::str::FromStr;
 
-pub const DEFAULT_MAX_TURNS: u32 = 5;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliMode {
     Print,
@@ -36,7 +34,10 @@ pub struct CliArgs {
     pub api_key: Option<String>,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
-    pub max_turns: u32,
+    /// Optional turn ceiling for the agent loop. `None` (the default) keeps
+    /// the loop running until the model finishes naturally, matching the TS
+    /// `pi/packages/agent` behavior. Use `--max-turns N` to cap.
+    pub max_turns: Option<u32>,
     pub help: bool,
     pub version: bool,
     pub continue_session: bool,
@@ -79,7 +80,7 @@ impl Default for CliArgs {
             api_key: None,
             system_prompt: None,
             append_system_prompt: Vec::new(),
-            max_turns: DEFAULT_MAX_TURNS,
+            max_turns: None,
             help: false,
             version: false,
             continue_session: false,
@@ -113,7 +114,7 @@ impl Default for CliArgs {
 
 pub fn help_text() -> String {
     format!(
-        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --mode <mode>            Headless mode: print|json|rpc\n  --provider <id>          Provider preference for model selection\n  --model <id>             Model id from the built-in Rust model table\n  --models <list>          Comma-separated model rotation globs, optionally model:thinking\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --append-system-prompt <text> Append to system prompt (repeatable)\n  --max-turns <n>          Maximum agent loop turns (default: 5)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --tools, -t <names>      Comma-separated builtin tool allowlist\n  --exclude-tools, -xt <names> Comma-separated builtin tool denylist\n  --no-tools               Disable all tools\n  --no-builtin-tools       Do not register builtin tools\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --no-context-files       Disable AGENTS.md / CLAUDE.md discovery\n  --no-skills              Disable skill discovery\n  --no-prompt-templates    Disable prompt template discovery\n  --no-themes              Disable theme discovery\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  --verbose                Emit verbose diagnostics\n  --offline                Avoid network-dependent behavior where supported\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
+        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --mode <mode>            Headless mode: print|json|rpc\n  --provider <id>          Provider preference for model selection\n  --model <id>             Model id from the built-in Rust model table\n  --models <list>          Comma-separated model rotation globs, optionally model:thinking\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --append-system-prompt <text> Append to system prompt (repeatable)\n  --max-turns <n>          Optional cap on agent loop turns (default: unlimited, matches TS pi)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --tools, -t <names>      Comma-separated builtin tool allowlist\n  --exclude-tools, -xt <names> Comma-separated builtin tool denylist\n  --no-tools               Disable all tools\n  --no-builtin-tools       Do not register builtin tools\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --no-context-files       Disable AGENTS.md / CLAUDE.md discovery\n  --no-skills              Disable skill discovery\n  --no-prompt-templates    Disable prompt template discovery\n  --no-themes              Disable theme discovery\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  --verbose                Emit verbose diagnostics\n  --offline                Avoid network-dependent behavior where supported\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -186,7 +187,7 @@ where
             }
             "--max-turns" => {
                 let value = take_value(&raw, &mut i, "--max-turns")?;
-                parsed.max_turns = parse_max_turns(value)?;
+                parsed.max_turns = Some(parse_max_turns(value)?);
             }
             "-c" | "--continue" => parsed.continue_session = true,
             "-r" | "--resume" => parsed.resume = true,

@@ -12,6 +12,14 @@ fn parses_short_print_with_prompt() {
 }
 
 #[test]
+fn default_max_turns_is_none_to_match_typescript_pi() {
+    // TS `pi/packages/agent` runs `while (true)` with no turn cap. The Rust
+    // CLI must keep that behavior unless `--max-turns` is explicitly passed.
+    let args = parse(&["-p", "hello"]).unwrap();
+    assert_eq!(args.max_turns, None);
+}
+
+#[test]
 fn parses_long_print_with_prompt() {
     let args = parse(&["--print", "hello"]).unwrap();
     assert!(args.print);
@@ -37,7 +45,7 @@ fn parses_prompt_after_flags() {
     assert_eq!(args.model.as_deref(), Some("claude-haiku-4-5"));
     assert_eq!(args.api_key.as_deref(), Some("sk-test"));
     assert_eq!(args.system_prompt.as_deref(), Some("Be terse."));
-    assert_eq!(args.max_turns, 7);
+    assert_eq!(args.max_turns, Some(7));
     assert_eq!(args.prompt.as_deref(), Some("say hi"));
 }
 

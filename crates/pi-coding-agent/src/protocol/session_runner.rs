@@ -18,7 +18,7 @@ pub struct SessionPromptOptions {
     pub model: Model,
     pub api_key: Option<String>,
     pub system_prompt: Option<String>,
-    pub max_turns: u32,
+    pub max_turns: Option<u32>,
     pub tools: Vec<AgentTool>,
     pub register_builtins: bool,
     pub session: Option<SessionRunOptions>,

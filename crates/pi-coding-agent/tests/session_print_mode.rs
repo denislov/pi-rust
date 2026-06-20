@@ -46,7 +46,7 @@ async fn persists_new_print_mode_session() {
         model: faux_model(api),
         api_key: None,
         system_prompt: None,
-        max_turns: 5,
+        max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
         session: Some(SessionRunOptions {
@@ -93,7 +93,7 @@ async fn persists_session_with_name() {
         model: faux_model(api),
         api_key: None,
         system_prompt: None,
-        max_turns: 5,
+        max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
         session: Some(SessionRunOptions {
@@ -140,7 +140,7 @@ async fn persists_compaction_entry_when_continued_session_is_too_large() {
         model: faux_model(api_first),
         api_key: None,
         system_prompt: None,
-        max_turns: 5,
+        max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
         session: Some(SessionRunOptions {
@@ -175,7 +175,7 @@ async fn persists_compaction_entry_when_continued_session_is_too_large() {
         model: faux_model(api_second),
         api_key: None,
         system_prompt: None,
-        max_turns: 5,
+        max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
         session: Some(SessionRunOptions {

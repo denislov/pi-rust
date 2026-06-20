@@ -37,7 +37,7 @@ fn thinking_level_propagates_through_print_mode_options_to_agent_config() {
     let config = build_agent_config(
         model.clone(),
         None,
-        5,
+        Some(5),
         None,
         Some(ThinkingLevel::High),
         Some(ToolExecutionMode::Sequential),
@@ -54,7 +54,7 @@ fn default_thinking_level_is_off_when_not_specified() {
     let config = build_agent_config(
         model.clone(),
         None,
-        5,
+        Some(5),
         None,
         None,
         None,
@@ -117,7 +117,7 @@ async fn print_mode_runs_with_thinking_flag() {
         model: faux_model(api),
         api_key: None,
         system_prompt: None,
-        max_turns: 1,
+        max_turns: Some(1),
         tools: Vec::new(),
         register_builtins: false,
         session: None,

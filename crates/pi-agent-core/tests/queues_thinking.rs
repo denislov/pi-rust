@@ -1,9 +1,7 @@
 mod common;
 use common::faux_model;
 use futures::StreamExt;
-use pi_agent_core::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, QueueMode, ThinkingLevel,
-};
+use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage, QueueMode, ThinkingLevel};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
 use pi_ai::types::{Model, StopReason, StreamOptions};
@@ -24,7 +22,7 @@ async fn steer_injects_user_message_before_next_model_call() {
     let api = "steer-test";
     let mut config = AgentConfig::new(faux_model(api));
     config.steering_mode = QueueMode::All;
-    config.max_turns = 5;
+    config.max_turns = Some(5);
 
     let agent = Agent::new(config);
 
@@ -71,7 +69,7 @@ async fn follow_up_continues_after_stop() {
     let api = "followup-test";
     let mut config = AgentConfig::new(faux_model(api));
     config.follow_up_mode = QueueMode::All;
-    config.max_turns = 5;
+    config.max_turns = Some(5);
 
     let agent = Agent::new(config);
 
@@ -116,7 +114,7 @@ async fn one_at_a_time_drains_one_steering_message() {
     let api = "one-at-a-time";
     let mut config = AgentConfig::new(faux_model(api));
     config.steering_mode = QueueMode::OneAtATime;
-    config.max_turns = 5;
+    config.max_turns = Some(5);
 
     let agent = Agent::new(config);
 
@@ -155,7 +153,7 @@ async fn one_at_a_time_drains_one_steering_message() {
 async fn clear_queues_removes_all_queued_messages() {
     let api = "clear-queues";
     let mut config = AgentConfig::new(faux_model(api));
-    config.max_turns = 3;
+    config.max_turns = Some(3);
 
     let agent = Agent::new(config);
 

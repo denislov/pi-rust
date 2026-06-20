@@ -67,7 +67,7 @@ async fn parallel_tools_finish_faster_than_sequential_tools() {
 
     let mut config_par = AgentConfig::new(faux_model(api_par));
     config_par.tool_execution = ToolExecutionMode::Parallel;
-    config_par.max_turns = 5;
+    config_par.max_turns = Some(5);
 
     let agent_par = Agent::new(config_par);
     agent_par.add_tool(delayed_tool("slow", 100, "slow_result"));
@@ -82,7 +82,7 @@ async fn parallel_tools_finish_faster_than_sequential_tools() {
 
     let mut config_seq = AgentConfig::new(faux_model(api_seq));
     config_seq.tool_execution = ToolExecutionMode::Sequential;
-    config_seq.max_turns = 5;
+    config_seq.max_turns = Some(5);
 
     let agent_seq = Agent::new(config_seq);
     agent_seq.add_tool(delayed_tool("slow", 100, "slow_result"));
@@ -107,7 +107,7 @@ async fn parallel_tool_results_are_appended_in_assistant_order() {
     let api = "parallel-order";
     let mut config = AgentConfig::new(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
-    config.max_turns = 5;
+    config.max_turns = Some(5);
 
     let agent = Agent::new(config);
     agent.add_tool(delayed_tool("slow", 100, "slow_result"));
@@ -136,7 +136,7 @@ async fn parallel_tool_end_events_are_emitted_in_completion_order() {
     let api = "parallel-event-order";
     let mut config = AgentConfig::new(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
-    config.max_turns = 5;
+    config.max_turns = Some(5);
 
     let agent = Agent::new(config);
     agent.add_tool(delayed_tool("slow", 100, "slow_result"));
@@ -162,7 +162,7 @@ async fn per_tool_sequential_override_forces_batch_sequential() {
     let api = "parallel-override";
     let mut config = AgentConfig::new(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
-    config.max_turns = 5;
+    config.max_turns = Some(5);
 
     let agent = Agent::new(config);
     agent.add_tool(delayed_tool("slow", 100, "slow_result"));

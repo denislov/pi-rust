@@ -11,7 +11,7 @@ pub mod runtime;
 pub mod session;
 pub mod tools;
 
-pub use args::{CliArgs, CliMode, DEFAULT_MAX_TURNS, help_text, parse_args};
+pub use args::{CliArgs, CliMode, help_text, parse_args};
 pub use error::CliError;
 pub use print_mode::{PrintModeOptions, run_print_mode};
 pub use runtime::{

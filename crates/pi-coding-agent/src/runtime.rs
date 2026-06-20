@@ -143,7 +143,7 @@ fn first_model_for_provider(provider: &str) -> Option<Model> {
 pub fn build_agent_config(
     model: Model,
     system_prompt: Option<String>,
-    max_turns: u32,
+    max_turns: Option<u32>,
     api_key: Option<String>,
     thinking_level: Option<ThinkingLevel>,
     tool_execution: Option<ToolExecutionMode>,

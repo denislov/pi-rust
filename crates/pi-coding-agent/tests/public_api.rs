@@ -29,7 +29,7 @@ fn model(api: &str) -> Model {
 #[test]
 fn public_api_symbols_are_importable() {
     let args = CliArgs::default();
-    assert_eq!(args.max_turns, 5);
+    assert_eq!(args.max_turns, None);
 
     let parsed = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
     assert!(parsed.print);

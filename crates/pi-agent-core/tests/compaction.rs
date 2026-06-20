@@ -134,7 +134,7 @@ fn empty_messages_no_split() {
 async fn runtime_compaction_summarizes_before_provider_request() {
     let api = "runtime-compaction";
     let mut config = AgentConfig::new(faux_model(api));
-    config.max_turns = 3;
+    config.max_turns = Some(3);
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings {
             enabled: true,

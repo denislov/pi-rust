@@ -168,7 +168,9 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
 
             {
                 let max_turns = state.read().unwrap().config.max_turns;
-                if turn > max_turns {
+                if let Some(max_turns) = max_turns
+                    && turn > max_turns
+                {
                     yield AgentEvent::AgentError {
                         error: format!("max turns ({}) exceeded", max_turns),
                     };

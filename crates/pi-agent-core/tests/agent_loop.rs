@@ -35,7 +35,7 @@ fn test_config(api_key: &str) -> AgentConfig {
     AgentConfig {
         model: test_model(api_key),
         system_prompt: Some("Be helpful.".into()),
-        max_turns: 5,
+        max_turns: Some(5),
         stream_options: None,
         ..AgentConfig::new(test_model(api_key))
     }
@@ -179,7 +179,7 @@ async fn max_turns_exceeded_yields_error() {
     registry::register(api_key, provider);
 
     let mut config = test_config(api_key);
-    config.max_turns = 2;
+    config.max_turns = Some(2);
 
     let agent = Agent::new(config);
     let tool = AgentTool {
@@ -205,6 +205,65 @@ async fn max_turns_exceeded_yields_error() {
         .iter()
         .any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("max turns")));
     assert!(has_error, "should have max turns error");
+
+    registry::unregister(api_key);
+}
+
+#[tokio::test]
+async fn unlimited_max_turns_runs_to_natural_completion() {
+    // Parity check with TS `pi/packages/agent`: when `max_turns` is `None`,
+    // the loop must keep running until the model stops producing tool calls
+    // (or another stop condition fires), with no hard turn ceiling.
+    let api_key = "test-api-no-cap";
+    let mut turns = Vec::new();
+    for _ in 0..40 {
+        turns.push(tool_use_turn(
+            "tool_1",
+            "echo",
+            serde_json::json!({"text": "x"}),
+        ));
+    }
+    turns.push(text_turn("Done after many tool calls."));
+    let provider = Arc::new(TestProvider::new(turns));
+    registry::register(api_key, provider);
+
+    let mut config = test_config(api_key);
+    config.max_turns = None;
+
+    let agent = Agent::new(config);
+    let tool = AgentTool {
+        name: "echo".into(),
+        description: "echo".into(),
+        parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
+        execute: Arc::new(|_| {
+            Box::pin(async {
+                Ok(vec![ContentBlock::Text {
+                    text: "ok".into(),
+                    text_signature: None,
+                }])
+            })
+        }),
+    };
+    agent.add_tool(tool);
+
+    let stream = agent.prompt("go");
+    let events: Vec<_> = stream.collect().await;
+
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::AgentDone { .. }));
+    assert!(
+        has_done,
+        "AgentDone should be emitted; events without a turn cap should not be aborted"
+    );
+    let has_max_turns_error = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("max turns")));
+    assert!(
+        !has_max_turns_error,
+        "max_turns: None must not yield a max-turns error"
+    );
 
     registry::unregister(api_key);
 }

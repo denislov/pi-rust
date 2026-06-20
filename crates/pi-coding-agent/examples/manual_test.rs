@@ -65,7 +65,7 @@ async fn main() {
         model,
         api_key: None,
         system_prompt: Some("Be brief.".into()),
-        max_turns: 5,
+        max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
         session: None,

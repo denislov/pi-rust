@@ -334,7 +334,10 @@ impl AgentTool {
 pub struct AgentConfig {
     pub model: Model,
     pub system_prompt: Option<String>,
-    pub max_turns: u32,
+    /// Optional turn ceiling. `None` means no hard cap (the loop only stops
+    /// when the model finishes or an explicit hook requests it). Provided to
+    /// match the TS `pi/packages/agent` `while (true)` semantics.
+    pub max_turns: Option<u32>,
     pub stream_options: Option<StreamOptions>,
     pub thinking_level: ThinkingLevel,
     pub tool_execution: ToolExecutionMode,
@@ -350,7 +353,7 @@ impl AgentConfig {
         Self {
             model,
             system_prompt: None,
-            max_turns: 30,
+            max_turns: None,
             stream_options: None,
             thinking_level: ThinkingLevel::Off,
             tool_execution: ToolExecutionMode::Parallel,

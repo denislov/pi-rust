@@ -18,7 +18,7 @@ async fn prompt_starts_after_hydrated_messages() {
     );
     let mut config = AgentConfig::new(faux_model(api));
     config.system_prompt = Some("system".into());
-    config.max_turns = 5;
+    config.max_turns = Some(5);
     let agent = Agent::with_messages(
         config,
         vec![AgentMessage::UserText {

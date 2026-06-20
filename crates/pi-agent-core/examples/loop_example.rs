@@ -36,7 +36,7 @@ async fn main() {
 
     let mut config = AgentConfig::new(model);
     config.system_prompt = Some("You are a helpful assistant.".into());
-    config.max_turns = 5;
+    config.max_turns = Some(5);
 
     let agent = Agent::new(config);
 

@@ -125,7 +125,7 @@ struct PromptContext {
     cli_api_key: Option<String>,
     auth: crate::config::AuthStore,
     system_prompt: Option<String>,
-    max_turns: u32,
+    max_turns: Option<u32>,
     tools: Vec<pi_agent_core::AgentTool>,
     register_builtins: bool,
     session: Option<SessionRunOptions>,

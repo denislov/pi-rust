@@ -136,7 +136,7 @@ fn builds_agent_config_with_defaults() {
         None,
     );
     assert_eq!(config.system_prompt.as_deref(), Some(DEFAULT_SYSTEM_PROMPT));
-    assert_eq!(config.max_turns, 5);
+    assert_eq!(config.max_turns, None);
     assert!(config.stream_options.is_none());
 }
 
@@ -165,7 +165,7 @@ fn builds_agent_config_with_cli_overrides() {
         None,
     );
     assert_eq!(config.system_prompt.as_deref(), Some("Be brief."));
-    assert_eq!(config.max_turns, 9);
+    assert_eq!(config.max_turns, Some(9));
     assert_eq!(
         config.stream_options.unwrap().api_key.as_deref(),
         Some("sk-test")

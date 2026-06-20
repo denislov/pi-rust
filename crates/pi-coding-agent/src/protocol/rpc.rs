@@ -410,7 +410,7 @@ impl RpcState {
                 model: self.model.clone(),
                 api_key: self.api_key.clone(),
                 system_prompt: None,
-                max_turns: 5,
+                max_turns: None,
                 tools: self.options.tools.clone(),
                 register_builtins: false,
                 session: Some(self.options.session.clone()),
