@@ -2,6 +2,7 @@
 
 > 返回索引：[../../ROADMAP.md](../../ROADMAP.md) · 依赖：[M7](M7-config-auth.md)（auth 存储）· 解锁：`/login` 等
 > 定位：**核心**。补齐 `pi-ai` 的 provider 广度与 API-key 之外的认证，让模型表里的模型真正可用。
+> **状态：已完成**。Mistral、Azure、Bedrock、Codex 全部接入 registry；OAuth 工具就位；compat 强类型化。
 
 ## 目标
 把 `pi-ai` 从"5 provider + 仅 API-key"推进到对标 pi 的 provider/认证广度。
@@ -17,7 +18,7 @@ M8 已按离线可验证路径推进完成。当前落地范围：
 - `Model.compat` / `thinkingLevelMap` 已从不透明 `serde_json::Value` 收敛为强类型 Rust 结构，同时保持序列化为 TS 兼容对象形态。
 - 完整 provider 登录交互（浏览器 callback / device-code / `/login` UI）仍由后续 CLI/TUI auth flow 里程碑承接；M8 侧已提供 provider token 消费、OAuth token 存储和可复用 OAuth 工具。
 
-## 待实现项（按建议顺序）
+## 已实现项（按建议顺序）
 
 ### 1. 补 4 个 provider
 | Provider | TS 参考 | 难点 |
@@ -51,6 +52,11 @@ M8 已按离线可验证路径推进完成。当前落地范围：
 - ✅ 图像生成 API：`ai/src/images.ts` 对应 Rust types + OpenRouter 图像 request/response helper。
 - ✅ 结构化 diagnostics：`ai/src/utils/diagnostics.ts` 对应 Rust helper，`AssistantMessage` 支持结构化 diagnostics。
 - ✅ 内容签名 hash：`ai/src/utils/hash.ts` 对应 `short_hash`。
+
+## 已知缺口
+- ⚠️ **Google Vertex provider**：`models_generated.rs` 中有 google-vertex 模型引用，但无 provider 实现和注册。运行时选中会报错。
+- ⚠️ **Images API registry**：types 和 OpenRouter helper 存在，但未集成到模型选择系统。
+- ⏭️ **Provider OAuth 交互流**（Anthropic Pro/Max、GitHub Copilot device-code、OpenAI Codex 浏览器/device-code）：需要 CLI/TUI `/login` 入口、浏览器打开和回调服务编排；M8 侧已完成可复用工具、存储格式和 provider 侧 token/header 消费。
 
 ## 验收 / 测试（离线优先）
 - ✅ 每个 provider 用 **faux/fixture** 做请求体与流式解析断言，**不**用真实 key。

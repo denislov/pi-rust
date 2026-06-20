@@ -2,11 +2,12 @@
 
 > 返回索引：[../../ROADMAP.md](../../ROADMAP.md) · 依赖：[M7](M7-config-auth.md)（settings）· 解锁：[M11](M11-interactive-ux.md)
 > 定位：**核心 UX**。让 coding-agent 能自动发现上下文、接受多种输入来源。
+> **状态：已完成**。上下文文件发现、skills/prompt templates/themes 自动发现、`@file`/`@image`/stdin 输入路径、`--models` 轮换、CLI flag 补全全部落地。
 
 ## 目标
 补齐 `pi-coding-agent` 的资源自动发现与输入路径，对标 pi 的 CLI 入参体验。
 
-## 待实现项
+## 已实现项
 
 ### 1. 上下文文件发现
 - ✅ 发现并加载 `AGENTS.md` / `CLAUDE.md`：祖先目录向上遍历 + 全局 agent dir，按全局、root、leaf 优先级合并。

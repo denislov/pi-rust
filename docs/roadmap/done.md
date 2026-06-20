@@ -1,12 +1,12 @@
-# 已完成（M0–M6 + TUI-8 部分）
+# 已完成（M0–M11）
 
 > 返回索引：[../../ROADMAP.md](../../ROADMAP.md)
-> 本文件记录已落地的能力，并附 **2026-06-19 审阅修正项**。完成信号以实际代码与 git 提交为准；
+> 本文件记录已落地的能力。完成信号以实际代码与 git 提交为准；
 > `docs/superpowers/plans/*.md` 的复选框从未勾选，**不能**作为完成信号。
 
 ---
 
-## ⚠️ 2026-06-19 审阅修正项
+## ⚠️ 2026-06-20 审阅修正项
 
 对 `pi-agent-core` 重新核验代码后，旧 ROADMAP 把以下项目误列为"待实现"，实际**已实现**：
 
@@ -17,8 +17,7 @@
 | prompt templates（参数替换 `$1`/`$@`/`$ARGUMENTS`） | ❌ 待实现 | ✅ 已实现 | `pi-agent-core/src/resources/prompt_templates.rs`、`system_prompt.rs:46` |
 | thinking level | ❌ 待实现 | ✅ 已实现 | `ThinkingLevel` 枚举 + `agent_loop.rs` 映射 token 预算 |
 
-> 结论：`pi-agent-core` 的**运行时内核**比旧文档描述的更完整。其剩余缺口是更上层的
-> **harness 包装层**与**抽象层**（见 [M9](M9-agent-harness.md)），而非上述项。
+> 结论：`pi-agent-core` 的**运行时内核**比旧文档描述的更完整。
 
 ---
 
@@ -40,7 +39,7 @@
 - JSONL/内存存储、分支树、continue/resume/fork/clone、session id、cwd 关联。
 - **约束**：session JSONL 需与 pi 保持互通（见 [cross-cutting.md](cross-cutting.md) 的兼容约束）。
 
-## M4 — agent-core harness 能力 ✅
+## M4 — agent-core 运行时内核 ✅
 - `Agent`（`Arc<RwLock<AgentState>>`）：`new`/`add_tool`/`add_message`/`messages`/`prompt`/`abort`。
 - `run_loop`：工具调用循环（顺序+**并行**）、`max_turns`、取消传播、按 stop-reason 分支。
 - compaction（上下文压缩 + token 计量）、会话持久化层、钩子、steering/follow-up 队列。
@@ -54,8 +53,38 @@
 - `RenderScheduler`（~60Hz coalescing）、光标稳定（`CURSOR_MARKER`）、内联差分渲染。
 - transcript 布局/滚动、生命周期（RAII guard、Ctrl+C 三路径）。
 
-## TUI-8 — 交互 polish（部分 ✅）
-- ✅ 配色（8 色语义化、NO_COLOR/TERM=dumb 禁用、transcript 角色着色）。
-- ✅ Markdown 渲染（标题加粗、行内 code reverse、代码块/引用 dim、规则）。
-- ✅ spinner（braille 动画，目前**硬编码在 pi-coding-agent**，尚未抽成 pi-tui 公共组件 → 见 [M11](M11-interactive-ux.md)）。
-- ❌ SelectList 菜单、主题系统 → 已并入 [M11](M11-interactive-ux.md)。
+## M7 — 配置 + 认证基座（Rust 原生）✅
+- TOML `settings.toml` + `auth.toml`，全局 `~/.pi-rust/` + 项目级合并。
+- 20+ provider 环境变量解析，`$VAR` 替换，`0600` 权限。
+- 三级 API key 优先级：`--api-key` > env > `auth.toml`。
+- 全部运行路径（print/json/interactive/RPC）接线。
+- 详见 [M7-config-auth](M7-config-auth.md)。
+
+## M8 — pi-ai provider 广度 + 认证 ✅
+- 新增 4 个 provider：Mistral、Azure OpenAI Responses、AWS Bedrock（SigV4）、OpenAI Codex Responses。
+- OAuth 工具基础（PKCE + HTML pages），Cloudflare/Copilot 辅助。
+- `Model.compat` / `thinkingLevelMap` 从不透明 Value 收敛为强类型。
+- 图像生成 types + OpenRouter helper、diagnostics、content hash。
+- 详见 [M8-provider-breadth](M8-provider-breadth.md)。
+
+## M9 — agent-core harness 完备 ✅
+- `AgentHarness` 包装层，6 个 harness 钩子，`StreamOptionsPatch` with Set/Clear/Merge。
+- 自定义消息类型：`BashExecution`、`Custom`、`BranchSummary`。
+- `FileSystem` / `Shell` / `ExecutionEnv` 抽象层，支持离线测试注入。
+- 流式 proxy、branch summarization、类型化错误。
+- 详见 [M9-agent-harness](M9-agent-harness.md)。
+
+## M10 — 资源发现 + 输入路径 ✅
+- `AGENTS.md`/`CLAUDE.md` 自动发现（祖先遍历 + 全局 agent dir）。
+- skills/prompt templates/themes 自动发现，对应 `--no-*` 开关。
+- `@file`/`@image.png` 输入、stdin 管道、`--models` 模型 glob 轮换。
+- 补齐缺失 CLI flag：`--provider`/`--append-system-prompt`/`--tools`/`--exclude-tools`/`--verbose`/`--offline` 等。
+- 详见 [M10-resources-input](M10-resources-input.md)。
+
+## M11 — 交互体验补全（TUI 基础设施）✅
+- Slash command registry（23 命令），`/help`/`/quit`/`/model` 等有本地行为。
+- `pi-tui` 可复用组件：`Loader`/`CancellableLoader`、`Box`、`TruncatedText`、`SettingsList`、`Image`、`SelectorDialog`。
+- Fuzzy 搜索 + autocomplete，256/RGB 主题系统（dark/light/custom）。
+- ANSI-aware wrapping/truncation，Kitty/iTerm2 终端图像协议。
+- TUI-7 smoke suite（`scripts/tui-smoke.sh`）。
+- 详见 [M11-interactive-ux](M11-interactive-ux.md)。

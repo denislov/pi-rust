@@ -2,6 +2,7 @@
 
 > 返回索引：[../../ROADMAP.md](../../ROADMAP.md) · 依赖：无 · 解锁：M8、M10、M11
 > 定位：**核心地基**。多 provider 实际可用、其它子系统的配置来源，都依赖这一层。
+> **状态：已完成**。Rust 原生 TOML 方案，全部运行路径已接线。
 
 ## 目标
 为 pi-rust 建立 Rust 原生的配置与认证基座。**不要求**读取 pi 的 `settings.json`/`auth.json`

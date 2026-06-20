@@ -59,3 +59,12 @@
 - 新增 `AgentEvent::BeforeProviderRequest` 与 `AgentHooks::before_provider_request`，让 harness 的 provider request/auth/patch 逻辑在每次 provider call 前执行。
 - 新增 `pi-ai::ProviderStreamHooks`，作为 provider payload/response lifecycle 的跨 crate 通道。
 - 已验证：`cargo test -p pi-agent-core -- --test-threads=1` 通过。
+
+## 已知缺口
+- `transformContext` 钩子（AgentMessage[]→AgentMessage[] 变换）：TS agent-loop 有此钩子，Rust 尚未实现。
+- `agentLoopContinue`：TS 有显式从已有 context 继续的入口，Rust 缺失。
+- Harness 事件订阅模式（`on`/`off` with `*` wildcard）：TS 有，Rust 缺失。
+- `AgentHarnessPhase` 生命周期（`idle`/`running`/`aborting`）：TS 有，Rust 缺失。
+- Guided abort（`AbortResult` with `pendingSessionWrites`）：TS 有，Rust 缺失。
+- Sourced resources（`loadSourcedSkills` 等保留来源元数据）：TS 有，Rust 缺失。
+- Configurable `convertToLlm`：Rust 硬编码在 `convert.rs`；TS 可注入回调。
