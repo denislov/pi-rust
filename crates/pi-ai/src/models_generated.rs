@@ -151,7 +151,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -171,7 +171,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -191,7 +191,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -271,7 +271,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 16.5,
@@ -291,7 +291,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -451,7 +451,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.eu-central-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.5,
@@ -471,7 +471,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.eu-central-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.5,
@@ -491,7 +491,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.eu-central-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.5,
@@ -591,7 +591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -611,7 +611,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -631,7 +631,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -731,7 +731,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -751,7 +751,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -1551,7 +1551,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -1571,7 +1571,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -1591,7 +1591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "amazon-bedrock".into(),
             base_url: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -2131,7 +2131,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "anthropic".into(),
             base_url: "https://api.anthropic.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -2142,7 +2142,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "claude-opus-4-7".into(),
@@ -2151,7 +2151,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "anthropic".into(),
             base_url: "https://api.anthropic.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -2162,7 +2162,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-opus-4-8".into(),
@@ -2171,7 +2171,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "anthropic".into(),
             base_url: "https://api.anthropic.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -2182,7 +2182,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-sonnet-4-0".into(),
@@ -2282,7 +2282,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 64000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "gpt-4".into(),
@@ -2491,7 +2491,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -2511,7 +2511,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: false,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -2531,7 +2531,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -2551,7 +2551,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -2571,7 +2571,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.05,
@@ -2591,7 +2591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 15.0,
@@ -2611,7 +2611,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -2631,7 +2631,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -2651,7 +2651,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -2671,7 +2671,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -2691,7 +2691,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -2711,7 +2711,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -2731,7 +2731,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -2751,7 +2751,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -2771,7 +2771,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 21.0,
@@ -2791,7 +2791,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: false,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -2811,7 +2811,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -2831,7 +2831,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -2851,7 +2851,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -2871,7 +2871,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.75,
@@ -2891,7 +2891,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.2,
@@ -2911,7 +2911,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -2931,7 +2931,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -2951,7 +2951,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "azure-openai-responses".into(),
             base_url: "".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh","minimal":null,"low":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh","minimal":null,"low":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -3391,7 +3391,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -3402,7 +3402,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "claude-opus-4-7".into(),
@@ -3411,7 +3411,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -3422,7 +3422,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-opus-4-8".into(),
@@ -3431,7 +3431,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -3442,7 +3442,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-sonnet-4".into(),
@@ -3502,7 +3502,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 64000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "gpt-4".into(),
@@ -3591,7 +3591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -3611,7 +3611,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -3631,7 +3631,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -3651,7 +3651,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -3671,7 +3671,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -3691,7 +3691,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -3711,7 +3711,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "cloudflare-ai-gateway".into(),
             base_url: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -3842,7 +3842,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 256000,
             max_tokens: 256000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "workers-ai/@cf/moonshotai/kimi-k2.6".into(),
@@ -3862,7 +3862,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 256000,
             max_tokens: 256000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "workers-ai/@cf/nvidia/nemotron-3-120b-a12b".into(),
@@ -3882,7 +3882,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 256000,
             max_tokens: 256000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "workers-ai/@cf/zai-org/glm-4.7-flash".into(),
@@ -3902,7 +3902,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/google/gemma-4-26b-a4b-it".into(),
@@ -3922,7 +3922,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 256000,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/ibm-granite/granite-4.0-h-micro".into(),
@@ -3942,7 +3942,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131000,
             max_tokens: 131000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast".into(),
@@ -3962,7 +3962,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 24000,
             max_tokens: 24000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/meta/llama-4-scout-17b-16e-instruct".into(),
@@ -3982,7 +3982,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131000,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/mistralai/mistral-small-3.1-24b-instruct".into(),
@@ -4002,7 +4002,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 128000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/moonshotai/kimi-k2.6".into(),
@@ -4022,7 +4022,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 256000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/nvidia/nemotron-3-120b-a12b".into(),
@@ -4042,7 +4042,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 256000,
             max_tokens: 256000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/openai/gpt-oss-120b".into(),
@@ -4062,7 +4062,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 128000,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/openai/gpt-oss-20b".into(),
@@ -4082,7 +4082,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 128000,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/qwen/qwen3-30b-a3b-fp8".into(),
@@ -4102,7 +4102,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 32768,
             max_tokens: 32768,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "@cf/zai-org/glm-4.7-flash".into(),
@@ -4122,7 +4122,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true}))),
         },
         Model {
             id: "deepseek-v4-flash".into(),
@@ -4131,7 +4131,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "deepseek".into(),
             base_url: "https://api.deepseek.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.14,
@@ -4142,7 +4142,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "deepseek-v4-pro".into(),
@@ -4151,7 +4151,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "deepseek".into(),
             base_url: "https://api.deepseek.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.435,
@@ -4162,7 +4162,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "accounts/fireworks/models/deepseek-v4-flash".into(),
@@ -4182,7 +4182,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/deepseek-v4-pro".into(),
@@ -4202,7 +4202,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/glm-5p1".into(),
@@ -4222,7 +4222,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 202800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/gpt-oss-120b".into(),
@@ -4242,7 +4242,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 32768,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/gpt-oss-20b".into(),
@@ -4262,7 +4262,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 32768,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/kimi-k2p5".into(),
@@ -4282,7 +4282,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 256000,
             max_tokens: 256000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/kimi-k2p6".into(),
@@ -4302,7 +4302,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262000,
             max_tokens: 262000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/minimax-m2p5".into(),
@@ -4322,7 +4322,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 196608,
             max_tokens: 196608,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/minimax-m2p7".into(),
@@ -4342,7 +4342,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 196608,
             max_tokens: 196608,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/models/qwen3p6-plus".into(),
@@ -4362,7 +4362,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 128000,
             max_tokens: 8192,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/routers/glm-5p1-fast".into(),
@@ -4382,7 +4382,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 202800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "accounts/fireworks/routers/kimi-k2p6-turbo".into(),
@@ -4402,7 +4402,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262000,
             max_tokens: 262000,
             headers: None,
-            compat: Some(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"sendSessionAffinityHeaders":true,"supportsEagerToolInputStreaming":false,"supportsCacheControlOnTools":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "claude-haiku-4.5".into(),
@@ -4422,7 +4422,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 64000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsEagerToolInputStreaming":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsEagerToolInputStreaming":false}))),
         },
         Model {
             id: "claude-opus-4.5".into(),
@@ -4451,7 +4451,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -4462,7 +4462,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 32000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "claude-opus-4.7".into(),
@@ -4471,7 +4471,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -4482,7 +4482,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 32000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-opus-4.8".into(),
@@ -4491,7 +4491,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -4502,7 +4502,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 64000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-sonnet-4".into(),
@@ -4522,7 +4522,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 216000,
             max_tokens: 16000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsEagerToolInputStreaming":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsEagerToolInputStreaming":false}))),
         },
         Model {
             id: "claude-sonnet-4.5".into(),
@@ -4542,7 +4542,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 32000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsEagerToolInputStreaming":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsEagerToolInputStreaming":false}))),
         },
         Model {
             id: "claude-sonnet-4.6".into(),
@@ -4562,7 +4562,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 32000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "gemini-2.5-pro".into(),
@@ -4582,7 +4582,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 128000,
             max_tokens: 64000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false}))),
         },
         Model {
             id: "gemini-3-flash-preview".into(),
@@ -4602,7 +4602,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 128000,
             max_tokens: 64000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false}))),
         },
         Model {
             id: "gemini-3.1-pro-preview".into(),
@@ -4622,7 +4622,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 64000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false}))),
         },
         Model {
             id: "gemini-3.5-flash".into(),
@@ -4642,7 +4642,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 64000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false}))),
         },
         Model {
             id: "gpt-4.1".into(),
@@ -4662,7 +4662,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 128000,
             max_tokens: 16384,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false}))),
         },
         Model {
             id: "gpt-5-mini".into(),
@@ -4671,7 +4671,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -4691,7 +4691,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -4711,7 +4711,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -4731,7 +4731,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -4751,7 +4751,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -4771,7 +4771,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.75,
@@ -4791,7 +4791,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.2,
@@ -4811,7 +4811,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "github-copilot".into(),
             base_url: "https://api.individual.githubcopilot.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"low","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -4842,7 +4842,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 400000,
             max_tokens: 128000,
             headers: Some(serde_json::json!({"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"})),
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false}))),
         },
         Model {
             id: "gemini-2.0-flash".into(),
@@ -4951,7 +4951,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.5,
@@ -4971,7 +4971,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.0,
@@ -4991,7 +4991,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -5011,7 +5011,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -5031,7 +5031,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.0,
@@ -5051,7 +5051,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.0,
@@ -5071,7 +5071,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.5,
@@ -5131,7 +5131,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"MINIMAL","low":null,"medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"MINIMAL","low":null,"medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.0,
@@ -5151,7 +5151,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google".into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":"MINIMAL","low":null,"medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":"MINIMAL","low":null,"medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.0,
@@ -5351,7 +5351,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google-vertex".into(),
             base_url: "https://{location}-aiplatform.googleapis.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.5,
@@ -5371,7 +5371,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google-vertex".into(),
             base_url: "https://{location}-aiplatform.googleapis.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.0,
@@ -5391,7 +5391,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google-vertex".into(),
             base_url: "https://{location}-aiplatform.googleapis.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.0,
@@ -5411,7 +5411,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "google-vertex".into(),
             base_url: "https://{location}-aiplatform.googleapis.com".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.0,
@@ -5771,7 +5771,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "groq".into(),
             base_url: "https://api.groq.com/openai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"default"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"default"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.29,
@@ -5802,7 +5802,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 204800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "MiniMaxAI/MiniMax-M2.5".into(),
@@ -5822,7 +5822,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 204800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "MiniMaxAI/MiniMax-M2.7".into(),
@@ -5842,7 +5842,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 204800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "Qwen/Qwen3-235B-A22B-Thinking-2507".into(),
@@ -5862,7 +5862,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "Qwen/Qwen3-Coder-480B-A35B-Instruct".into(),
@@ -5882,7 +5882,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 66536,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "Qwen/Qwen3-Coder-Next".into(),
@@ -5902,7 +5902,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 65536,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "Qwen/Qwen3-Next-80B-A3B-Instruct".into(),
@@ -5922,7 +5922,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 66536,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "Qwen/Qwen3-Next-80B-A3B-Thinking".into(),
@@ -5942,7 +5942,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "Qwen/Qwen3.5-397B-A17B".into(),
@@ -5962,7 +5962,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 32768,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "XiaomiMiMo/MiMo-V2-Flash".into(),
@@ -5982,7 +5982,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 4096,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "deepseek-ai/DeepSeek-R1-0528".into(),
@@ -6002,7 +6002,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 163840,
             max_tokens: 163840,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "deepseek-ai/DeepSeek-V3.2".into(),
@@ -6022,7 +6022,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 163840,
             max_tokens: 65536,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "deepseek-ai/DeepSeek-V4-Pro".into(),
@@ -6042,7 +6042,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 393216,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "moonshotai/Kimi-K2-Instruct".into(),
@@ -6062,7 +6062,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "moonshotai/Kimi-K2-Instruct-0905".into(),
@@ -6082,7 +6082,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "moonshotai/Kimi-K2-Thinking".into(),
@@ -6102,7 +6102,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "moonshotai/Kimi-K2.5".into(),
@@ -6122,7 +6122,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "moonshotai/Kimi-K2.6".into(),
@@ -6142,7 +6142,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "zai-org/GLM-4.7".into(),
@@ -6162,7 +6162,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 204800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "zai-org/GLM-4.7-Flash".into(),
@@ -6182,7 +6182,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "zai-org/GLM-5".into(),
@@ -6202,7 +6202,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 202752,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "zai-org/GLM-5.1".into(),
@@ -6222,7 +6222,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 202752,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "kimi-for-coding".into(),
@@ -6922,7 +6922,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-0905-preview".into(),
@@ -6942,7 +6942,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-thinking".into(),
@@ -6962,7 +6962,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-thinking-turbo".into(),
@@ -6982,7 +6982,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-turbo-preview".into(),
@@ -7002,7 +7002,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2.5".into(),
@@ -7022,7 +7022,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2.6".into(),
@@ -7042,7 +7042,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-0711-preview".into(),
@@ -7062,7 +7062,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 16384,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-0905-preview".into(),
@@ -7082,7 +7082,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-thinking".into(),
@@ -7102,7 +7102,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-thinking-turbo".into(),
@@ -7122,7 +7122,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2-turbo-preview".into(),
@@ -7142,7 +7142,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2.5".into(),
@@ -7162,7 +7162,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "kimi-k2.6".into(),
@@ -7182,7 +7182,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false}))),
         },
         Model {
             id: "gpt-4".into(),
@@ -7391,7 +7391,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -7411,7 +7411,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: false,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -7431,7 +7431,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -7451,7 +7451,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -7471,7 +7471,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.05,
@@ -7491,7 +7491,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 15.0,
@@ -7511,7 +7511,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":"none"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":"none"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -7531,7 +7531,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -7551,7 +7551,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -7571,7 +7571,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -7591,7 +7591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -7611,7 +7611,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":"none","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":"none","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -7631,7 +7631,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -7651,7 +7651,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -7671,7 +7671,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 21.0,
@@ -7691,7 +7691,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: false,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -7711,7 +7711,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":"none","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":"none","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -7731,7 +7731,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -7751,7 +7751,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":"none","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":"none","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -7771,7 +7771,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":"none","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":"none","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.75,
@@ -7791,7 +7791,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":"none","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":"none","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.2,
@@ -7811,7 +7811,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -7831,7 +7831,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":"none","xhigh":"xhigh","minimal":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":"none","xhigh":"xhigh","minimal":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -7851,7 +7851,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh","minimal":null,"low":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh","minimal":null,"low":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -8031,7 +8031,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai-codex".into(),
             base_url: "https://chatgpt.com/backend-api".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","minimal":"low"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","minimal":"low"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -8051,7 +8051,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai-codex".into(),
             base_url: "https://chatgpt.com/backend-api".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","minimal":"low"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","minimal":"low"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -8071,7 +8071,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai-codex".into(),
             base_url: "https://chatgpt.com/backend-api".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","minimal":"low"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","minimal":"low"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 1.75,
@@ -8091,7 +8091,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai-codex".into(),
             base_url: "https://chatgpt.com/backend-api".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","minimal":"low"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","minimal":"low"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -8111,7 +8111,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai-codex".into(),
             base_url: "https://chatgpt.com/backend-api".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","minimal":"low"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","minimal":"low"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.75,
@@ -8131,7 +8131,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openai-codex".into(),
             base_url: "https://chatgpt.com/backend-api".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","minimal":"low"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","minimal":"low"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -8231,7 +8231,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -8242,7 +8242,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "claude-opus-4-7".into(),
@@ -8251,7 +8251,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -8262,7 +8262,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-opus-4-8".into(),
@@ -8271,7 +8271,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -8282,7 +8282,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "claude-sonnet-4".into(),
@@ -8342,7 +8342,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 64000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "deepseek-v4-flash".into(),
@@ -8351,7 +8351,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.14,
@@ -8362,7 +8362,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "deepseek-v4-flash-free".into(),
@@ -8371,7 +8371,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.0,
@@ -8382,7 +8382,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "gemini-3-flash".into(),
@@ -8391,7 +8391,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.5,
@@ -8411,7 +8411,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":"LOW","medium":null,"high":"HIGH"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.0,
@@ -8431,7 +8431,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.5,
@@ -8491,7 +8491,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.07,
@@ -8511,7 +8511,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.07,
@@ -8531,7 +8531,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.05,
@@ -8551,7 +8551,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.07,
@@ -8571,7 +8571,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.07,
@@ -8591,7 +8591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.25,
@@ -8611,7 +8611,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.25,
@@ -8631,7 +8631,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -8651,7 +8651,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -8671,7 +8671,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -8691,7 +8691,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -8711,7 +8711,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.75,
@@ -8731,7 +8731,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.2,
@@ -8751,7 +8751,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -8771,7 +8771,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -8791,7 +8791,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"xhigh":"xhigh","minimal":null,"low":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"xhigh":"xhigh","minimal":null,"low":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -8811,7 +8811,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode".into(),
             base_url: "https://opencode.ai/zen/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.0,
@@ -8822,7 +8822,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 256000,
             max_tokens: 256000,
             headers: None,
-            compat: Some(serde_json::json!({"supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsReasoningEffort":false}))),
         },
         Model {
             id: "kimi-k2.5".into(),
@@ -8862,7 +8862,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 65536,
             headers: None,
-            compat: Some(serde_json::json!({"thinkingFormat":"deepseek","supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"thinkingFormat":"deepseek","supportsReasoningEffort":false}))),
         },
         Model {
             id: "mimo-v2.5-free".into(),
@@ -9011,7 +9011,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode-go".into(),
             base_url: "https://opencode.ai/zen/go/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.14,
@@ -9022,7 +9022,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "deepseek-v4-pro".into(),
@@ -9031,7 +9031,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode-go".into(),
             base_url: "https://opencode.ai/zen/go/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 1.74,
@@ -9042,7 +9042,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "glm-5".into(),
@@ -9111,7 +9111,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "opencode-go".into(),
             base_url: "https://opencode.ai/zen/go/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.95,
@@ -9122,7 +9122,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 65536,
             headers: None,
-            compat: Some(serde_json::json!({"thinkingFormat":"deepseek","supportsReasoningEffort":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"thinkingFormat":"deepseek","supportsReasoningEffort":false}))),
         },
         Model {
             id: "mimo-v2.5".into(),
@@ -9242,7 +9242,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 65536,
             headers: None,
-            compat: Some(serde_json::json!({"thinkingFormat":"qwen"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"thinkingFormat":"qwen"}))),
         },
         Model {
             id: "qwen3.7-max".into(),
@@ -9511,7 +9511,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -9531,7 +9531,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -9551,7 +9551,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -9571,7 +9571,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -9591,7 +9591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -9611,7 +9611,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 10.0,
@@ -10071,7 +10071,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.0983,
@@ -10082,7 +10082,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true}))),
         },
         Model {
             id: "deepseek/deepseek-v4-pro".into(),
@@ -10091,7 +10091,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.435,
@@ -10102,7 +10102,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true}))),
         },
         Model {
             id: "essentialai/rnj-1-instruct".into(),
@@ -10511,7 +10511,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.25,
@@ -11282,7 +11282,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "moonshotai/kimi-k2.6:free".into(),
@@ -11302,7 +11302,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 4096,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false}))),
         },
         Model {
             id: "nex-agi/deepseek-v3.1-nex-n1".into(),
@@ -12051,7 +12051,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -12071,7 +12071,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: false,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -12091,7 +12091,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -12111,7 +12111,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 21.0,
@@ -12131,7 +12131,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: false,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -12151,7 +12151,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -12171,7 +12171,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -12191,7 +12191,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.75,
@@ -12211,7 +12211,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.19999999999999998,
@@ -12231,7 +12231,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -12251,7 +12251,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -12271,7 +12271,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","off":null,"minimal":null,"low":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","off":null,"minimal":null,"low":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -14391,7 +14391,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.3,
@@ -14402,7 +14402,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 204800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "MiniMaxAI/MiniMax-M2.7".into(),
@@ -14411,7 +14411,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.3,
@@ -14422,7 +14422,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 202752,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "Qwen/Qwen3-235B-A22B-Instruct-2507-tput".into(),
@@ -14431,7 +14431,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.2,
@@ -14442,7 +14442,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8".into(),
@@ -14462,7 +14462,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "Qwen/Qwen3-Coder-Next-FP8".into(),
@@ -14471,7 +14471,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.5,
@@ -14482,7 +14482,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "Qwen/Qwen3.5-397B-A17B".into(),
@@ -14491,7 +14491,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.6,
@@ -14502,7 +14502,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 130000,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "Qwen/Qwen3.6-Plus".into(),
@@ -14511,7 +14511,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.5,
@@ -14522,7 +14522,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 500000,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "Qwen/Qwen3.7-Max".into(),
@@ -14531,7 +14531,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 2.5,
@@ -14542,7 +14542,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 500000,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "deepseek-ai/DeepSeek-V3".into(),
@@ -14551,7 +14551,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 1.25,
@@ -14562,7 +14562,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "deepseek-ai/DeepSeek-V3-1".into(),
@@ -14571,7 +14571,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.6,
@@ -14582,7 +14582,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "deepseek-ai/DeepSeek-V4-Pro".into(),
@@ -14591,7 +14591,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null,"high":"high","xhigh":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 2.1,
@@ -14602,7 +14602,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 512000,
             max_tokens: 384000,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":true,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":true,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "essentialai/Rnj-1-Instruct".into(),
@@ -14622,7 +14622,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 32768,
             max_tokens: 32768,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "google/gemma-4-31B-it".into(),
@@ -14631,7 +14631,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.2,
@@ -14642,7 +14642,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "meta-llama/Llama-3.3-70B-Instruct-Turbo".into(),
@@ -14662,7 +14662,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false}))),
         },
         Model {
             id: "moonshotai/Kimi-K2.5".into(),
@@ -14671,7 +14671,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.5,
@@ -14682,7 +14682,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 262144,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "moonshotai/Kimi-K2.6".into(),
@@ -14691,7 +14691,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.2,
@@ -14702,7 +14702,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131000,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "openai/gpt-oss-120b".into(),
@@ -14711,7 +14711,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"off":null,"minimal":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"off":null,"minimal":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 0.15,
@@ -14722,7 +14722,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":true,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"openai"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":true,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"openai"}))),
         },
         Model {
             id: "zai-org/GLM-5.1".into(),
@@ -14731,7 +14731,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "together".into(),
             base_url: "https://api.together.ai/v1".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"minimal":null,"low":null,"medium":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"minimal":null,"low":null,"medium":null}))),
             input: vec![ModelInput::Text],
             cost: ModelCost {
                 input: 1.4,
@@ -14742,7 +14742,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 202752,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false,"thinkingFormat":"together"}))),
         },
         Model {
             id: "alibaba/qwen-3-14b".into(),
@@ -15311,7 +15311,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"max"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"max"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -15322,7 +15322,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "anthropic/claude-opus-4.7".into(),
@@ -15331,7 +15331,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -15342,7 +15342,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "anthropic/claude-opus-4.8".into(),
@@ -15351,7 +15351,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -15362,7 +15362,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true,"supportsTemperature":false}))),
         },
         Model {
             id: "anthropic/claude-sonnet-4".into(),
@@ -15422,7 +15422,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1000000,
             max_tokens: 128000,
             headers: None,
-            compat: Some(serde_json::json!({"forceAdaptiveThinking":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"forceAdaptiveThinking":true}))),
         },
         Model {
             id: "arcee-ai/trinity-large-preview".into(),
@@ -17071,7 +17071,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -17091,7 +17091,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -17111,7 +17111,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -17131,7 +17131,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 21.0,
@@ -17151,7 +17151,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -17171,7 +17171,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 1.75,
@@ -17191,7 +17191,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 2.5,
@@ -17211,7 +17211,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.75,
@@ -17231,7 +17231,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 0.19999999999999998,
@@ -17251,7 +17251,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -17271,7 +17271,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh"})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh"}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 5.0,
@@ -17291,7 +17291,7 @@ pub fn generated_models() -> Vec<Model> {
             provider: "vercel-ai-gateway".into(),
             base_url: "https://ai-gateway.vercel.sh".into(),
             reasoning: true,
-            thinking_level_map: Some(serde_json::json!({"xhigh":"xhigh","off":null,"minimal":null,"low":null})),
+            thinking_level_map: Some(crate::compat::ThinkingLevelMap::from_json(serde_json::json!({"xhigh":"xhigh","off":null,"minimal":null,"low":null}))),
             input: vec![ModelInput::Text, ModelInput::Image],
             cost: ModelCost {
                 input: 30.0,
@@ -18262,7 +18262,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 65536,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-omni".into(),
@@ -18282,7 +18282,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-pro".into(),
@@ -18302,7 +18302,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5".into(),
@@ -18322,7 +18322,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5-pro".into(),
@@ -18342,7 +18342,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-omni".into(),
@@ -18362,7 +18362,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-pro".into(),
@@ -18382,7 +18382,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5".into(),
@@ -18402,7 +18402,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5-pro".into(),
@@ -18422,7 +18422,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-omni".into(),
@@ -18442,7 +18442,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-pro".into(),
@@ -18462,7 +18462,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5".into(),
@@ -18482,7 +18482,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5-pro".into(),
@@ -18502,7 +18502,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-omni".into(),
@@ -18522,7 +18522,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 262144,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2-pro".into(),
@@ -18542,7 +18542,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5".into(),
@@ -18562,7 +18562,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "mimo-v2.5-pro".into(),
@@ -18582,7 +18582,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 1048576,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"}))),
         },
         Model {
             id: "glm-4.5-air".into(),
@@ -18602,7 +18602,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 131072,
             max_tokens: 98304,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai"})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai"}))),
         },
         Model {
             id: "glm-4.7".into(),
@@ -18622,7 +18622,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 204800,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true}))),
         },
         Model {
             id: "glm-5-turbo".into(),
@@ -18642,7 +18642,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true}))),
         },
         Model {
             id: "glm-5.1".into(),
@@ -18662,7 +18662,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true}))),
         },
         Model {
             id: "glm-5v-turbo".into(),
@@ -18682,7 +18682,7 @@ pub fn generated_models() -> Vec<Model> {
             context_window: 200000,
             max_tokens: 131072,
             headers: None,
-            compat: Some(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true})),
+            compat: Some(crate::compat::ModelCompat::from_json(serde_json::json!({"supportsDeveloperRole":false,"thinkingFormat":"zai","zaiToolStream":true}))),
         },
     ]
 }

@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::stream;
+use pi_ai::compat::{ModelCompat, OpenAICompletionsCompat};
 use pi_ai::providers::openai::completions;
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::types::{
@@ -26,10 +27,11 @@ fn test_model() -> Model {
         context_window: 128000,
         max_tokens: 8192,
         headers: None,
-        compat: Some(serde_json::json!({
-            "maxTokensField": "max_tokens",
-            "supportsUsageInStreaming": true,
-            "supportsDeveloperRole": false,
+        compat: Some(ModelCompat::OpenAICompletions(OpenAICompletionsCompat {
+            max_tokens_field: Some("max_tokens".into()),
+            supports_usage_in_streaming: Some(true),
+            supports_developer_role: Some(false),
+            ..Default::default()
         })),
     }
 }

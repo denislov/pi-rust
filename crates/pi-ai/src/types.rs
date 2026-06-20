@@ -1,3 +1,4 @@
+use crate::compat::{ModelCompat, ThinkingLevelMap};
 use serde::{Deserialize, Serialize};
 
 // ── Content blocks ──────────────────────────────────────
@@ -266,7 +267,7 @@ pub struct Model {
     pub base_url: String,
     pub reasoning: bool,
     #[serde(rename = "thinkingLevelMap", skip_serializing_if = "Option::is_none")]
-    pub thinking_level_map: Option<serde_json::Value>,
+    pub thinking_level_map: Option<ThinkingLevelMap>,
     pub input: Vec<ModelInput>,
     pub cost: ModelCost,
     #[serde(rename = "contextWindow")]
@@ -276,7 +277,7 @@ pub struct Model {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub compat: Option<serde_json::Value>,
+    pub compat: Option<ModelCompat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -7,6 +7,7 @@ pub struct CompatFlags {
 }
 
 pub fn resolve_completions_compat(model: &crate::types::Model) -> CompatFlags {
+    let compat = crate::compat::OpenAICompletionsCompat::from_model(model);
     let mut flags = CompatFlags {
         supports_developer_role: false,
         supports_usage_in_streaming: true,
@@ -14,19 +15,17 @@ pub fn resolve_completions_compat(model: &crate::types::Model) -> CompatFlags {
         max_tokens_field: "max_completion_tokens".to_string(),
     };
 
-    if let Some(ref compat) = model.compat {
-        if let Some(v) = compat.get("supportsDeveloperRole") {
-            flags.supports_developer_role = v.as_bool().unwrap_or(false);
-        }
-        if let Some(v) = compat.get("supportsUsageInStreaming") {
-            flags.supports_usage_in_streaming = v.as_bool().unwrap_or(true);
-        }
-        if let Some(v) = compat.get("supportsStrictMode") {
-            flags.supports_strict_mode = v.as_bool().unwrap_or(false);
-        }
-        if let Some(v) = compat.get("maxTokensField") {
-            flags.max_tokens_field = v.as_str().unwrap_or("max_completion_tokens").to_string();
-        }
+    if let Some(value) = compat.supports_developer_role {
+        flags.supports_developer_role = value;
+    }
+    if let Some(value) = compat.supports_usage_in_streaming {
+        flags.supports_usage_in_streaming = value;
+    }
+    if let Some(value) = compat.supports_strict_mode {
+        flags.supports_strict_mode = value;
+    }
+    if let Some(value) = compat.max_tokens_field {
+        flags.max_tokens_field = value;
     }
 
     flags

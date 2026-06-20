@@ -6,6 +6,17 @@
 ## 目标
 把 `pi-ai` 从"5 provider + 仅 API-key"推进到对标 pi 的 provider/认证广度。
 
+## 实际推进状态
+
+M8 已按离线可验证路径推进完成。当前落地范围：
+
+- Mistral、Azure OpenAI Responses、AWS Bedrock、OpenAI Codex Responses 已接入 `pi-ai` provider registry。
+- API-key、环境变量、`auth.toml` OAuth bearer token 均可进入 provider `StreamOptions.api_key` 路径。
+- Bedrock 已支持 SigV4 / bearer token 认证路径。
+- Cloudflare gateway、Copilot 动态头、PKCE/OAuth HTML 工具、diagnostics、short hash、OpenRouter images 已有 Rust 实现和测试。
+- `Model.compat` / `thinkingLevelMap` 已从不透明 `serde_json::Value` 收敛为强类型 Rust 结构，同时保持序列化为 TS 兼容对象形态。
+- 完整 provider 登录交互（浏览器 callback / device-code / `/login` UI）仍由后续 CLI/TUI auth flow 里程碑承接；M8 侧已提供 provider token 消费、OAuth token 存储和可复用 OAuth 工具。
+
 ## 待实现项（按建议顺序）
 
 ### 1. 补 4 个 provider
@@ -22,7 +33,9 @@
 - ✅ Bedrock：SigV4 + `AWS_BEARER_TOKEN_BEDROCK` + env AWS 凭证（`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`）。
 - ✅ Cloudflare 网关：baseURL `{VAR}` 占位符替换（`ai/src/providers/cloudflare.ts` 对应）。
 - ✅ Copilot 专属头：`inferCopilotInitiator` / `hasCopilotVisionInput` / 动态头（`github-copilot-headers.ts` 对应）。
-- ⚠️ Provider OAuth 交互流（Anthropic Pro/Max、GitHub Copilot device-code、OpenAI Codex 浏览器/device-code）仍需接入 M7 auth 存储与 `/login` 流程；本阶段先落地可复用工具与 provider 侧 token/header 消费。
+- ✅ `auth.toml` OAuth bearer token 消费：`type = "oauth"` 支持 `access` / `access_token`，解析优先级仍为 `--api-key` > env > `auth.toml`。
+- ✅ `auth.toml` OAuth token 持久化：支持 `AuthStore::set_oauth_access_token()` + TOML round-trip，Unix 保存权限仍为 `0600`。
+- ⏭️ Provider OAuth 交互流（Anthropic Pro/Max、GitHub Copilot device-code、OpenAI Codex 浏览器/device-code）需要 CLI/TUI `/login` 入口、浏览器打开和回调服务编排；M8 侧已完成可复用工具、存储格式和 provider 侧 token/header 消费。
 
 ### 3. 兼容 / 路由矩阵（消除不透明 `compat`）
 - ✅ 把 `Model.compat: Option<serde_json::Value>` 升级为**强类型** compat 层：
@@ -47,5 +60,6 @@
 
 ## 本轮落地
 - `pi-ai` 新增/补强：Mistral、Azure OpenAI Responses、AWS Bedrock、OpenAI Codex Responses、Cloudflare、Copilot headers、OpenRouter images。
-- 工具与类型：PKCE/OAuth pages、diagnostics、content hash、typed compat、image generation structs。
-- 已验证：`cargo test -p pi-ai` 通过。
+- `pi-coding-agent` auth 补强：OAuth bearer token 读取/写入，供 M8 provider 作为 bearer token 消费。
+- 工具与类型：PKCE/OAuth pages、diagnostics、content hash、typed compat、typed thinking level map、image generation structs。
+- 已验证：`cargo test -p pi-ai`、`cargo test -p pi-coding-agent config::auth::tests` 通过；最终 workspace 验证见提交记录。

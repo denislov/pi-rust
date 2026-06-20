@@ -139,7 +139,11 @@ fn all_builtin_apis_registered() {
         "deepseek-chat-completions",
         "openai-completions",
         "openai-responses",
+        "openai-codex-responses",
+        "azure-openai-responses",
+        "bedrock-converse-stream",
         "google-generative-ai",
+        "mistral-conversations",
     ];
     for api in apis {
         assert!(

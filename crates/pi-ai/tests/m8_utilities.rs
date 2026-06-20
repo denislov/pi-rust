@@ -1,3 +1,6 @@
+use pi_ai::compat::{
+    ModelCompat, OpenAICompletionsCompat, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue,
+};
 use pi_ai::types::{AssistantMessage, ContentBlock, Message, Model, ModelCost, ModelInput};
 
 #[test]
@@ -90,19 +93,26 @@ fn typed_compat_parses_openai_responses_and_openrouter_routing() {
         provider: "openrouter".into(),
         base_url: "https://openrouter.ai/api/v1".into(),
         reasoning: true,
-        thinking_level_map: None,
+        thinking_level_map: Some(ThinkingLevelMap {
+            low: Some(ThinkingLevelValue::String("low".into())),
+            medium: Some(ThinkingLevelValue::String("medium".into())),
+            high: Some(ThinkingLevelValue::String("high".into())),
+            ..Default::default()
+        }),
         input: vec![ModelInput::Text],
         cost: ModelCost::default(),
         context_window: 100,
         max_tokens: 10,
         headers: None,
-        compat: Some(serde_json::json!({
-            "supportsUsageInStreaming": false,
-            "thinkingFormat": "openrouter",
-            "openRouterRouting": {
-                "allowFallbacks": false,
-                "order": ["anthropic", "openai"]
-            }
+        compat: Some(ModelCompat::OpenAICompletions(OpenAICompletionsCompat {
+            supports_usage_in_streaming: Some(false),
+            thinking_format: Some(ThinkingFormat::OpenRouter),
+            open_router_routing: Some(pi_ai::compat::OpenRouterRouting {
+                allow_fallbacks: Some(false),
+                order: Some(vec!["anthropic".into(), "openai".into()]),
+                ..Default::default()
+            }),
+            ..Default::default()
         })),
     };
 
@@ -115,5 +125,9 @@ fn typed_compat_parses_openai_responses_and_openrouter_routing() {
     assert_eq!(
         compat.open_router_routing.unwrap().order,
         Some(vec!["anthropic".into(), "openai".into()])
+    );
+    assert_eq!(
+        model.thinking_level_map.unwrap().high,
+        Some(ThinkingLevelValue::String("high".into()))
     );
 }

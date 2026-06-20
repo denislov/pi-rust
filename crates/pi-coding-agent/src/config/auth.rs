@@ -80,8 +80,23 @@ pub fn resolve_config_value(raw: &str, diags: &mut Vec<ConfigDiagnostic>) -> Opt
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthEntry {
-    ApiKey { key: String },
-    Oauth(toml::Value),
+    ApiKey {
+        key: String,
+    },
+    Oauth {
+        #[serde(default)]
+        access: Option<String>,
+        #[serde(default)]
+        access_token: Option<String>,
+        #[serde(default)]
+        refresh: Option<String>,
+        #[serde(default)]
+        refresh_token: Option<String>,
+        #[serde(default)]
+        expires: Option<i64>,
+        #[serde(flatten)]
+        extra: BTreeMap<String, toml::Value>,
+    },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -116,8 +131,7 @@ impl AuthStore {
         }
     }
 
-    /// Raw `api_key` value for a provider (before `$ENV` substitution). `oauth`
-    /// entries return `None` in M7.
+    /// Raw `api_key` value for a provider (before `$ENV` substitution).
     pub fn api_key_entry(&self, provider: &str) -> Option<&str> {
         match self.entries.get(provider) {
             Some(AuthEntry::ApiKey { key }) => Some(key.as_str()),
@@ -125,9 +139,40 @@ impl AuthStore {
         }
     }
 
+    /// Raw OAuth bearer token value for a provider (before `$ENV` substitution).
+    /// Supports both pi's `access` field and OAuth's wire-style `access_token`.
+    pub fn oauth_access_entry(&self, provider: &str) -> Option<&str> {
+        match self.entries.get(provider) {
+            Some(AuthEntry::Oauth {
+                access,
+                access_token,
+                ..
+            }) => access.as_deref().or(access_token.as_deref()),
+            _ => None,
+        }
+    }
+
     pub fn set_api_key(&mut self, provider: impl Into<String>, key: impl Into<String>) {
         self.entries
             .insert(provider.into(), AuthEntry::ApiKey { key: key.into() });
+    }
+
+    pub fn set_oauth_access_token(
+        &mut self,
+        provider: impl Into<String>,
+        access: impl Into<String>,
+    ) {
+        self.entries.insert(
+            provider.into(),
+            AuthEntry::Oauth {
+                access: Some(access.into()),
+                access_token: None,
+                refresh: None,
+                refresh_token: None,
+                expires: None,
+                extra: BTreeMap::new(),
+            },
+        );
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -197,6 +242,16 @@ pub fn resolve_api_key(
         });
     }
     if let Some(raw) = store.api_key_entry(provider) {
+        if let Some(value) = resolve_config_value(raw, diags) {
+            if !value.is_empty() {
+                return Some(ResolvedKey {
+                    value,
+                    source: KeySource::AuthFile,
+                });
+            }
+        }
+    }
+    if let Some(raw) = store.oauth_access_entry(provider) {
         if let Some(value) = resolve_config_value(raw, diags) {
             if !value.is_empty() {
                 return Some(ResolvedKey {
@@ -374,6 +429,78 @@ mod tests {
         let loaded = AuthStore::load(&path, &mut d);
         assert_eq!(loaded.api_key_entry("anthropic"), Some("sk-ant"));
         assert_eq!(loaded.api_key_entry("openai"), Some("$OPENAI_API_KEY"));
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn oauth_access_token_is_used_as_auth_file_bearer_token() {
+        let text = r#"
+[openai-codex]
+type = "oauth"
+access = "oauth-access"
+refresh = "oauth-refresh"
+expires = 4102444800000
+"#;
+        let entries = toml::from_str::<BTreeMap<String, AuthEntry>>(text).unwrap();
+        let store = AuthStore { entries };
+        unsafe {
+            std::env::remove_var("OPENAI_CODEX_API_KEY");
+        }
+
+        let mut d = Vec::new();
+        let key = resolve_api_key("openai-codex", None, &store, &mut d).unwrap();
+
+        assert_eq!(key.value, "oauth-access");
+        assert_eq!(key.source, KeySource::AuthFile);
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn oauth_access_token_field_alias_is_supported() {
+        let text = r#"
+[github-copilot]
+type = "oauth"
+access_token = "$COPILOT_TEST_TOKEN"
+"#;
+        let entries = toml::from_str::<BTreeMap<String, AuthEntry>>(text).unwrap();
+        let store = AuthStore { entries };
+        unsafe {
+            std::env::set_var("COPILOT_TEST_TOKEN", "oauth-from-env-ref");
+            std::env::remove_var("COPILOT_GITHUB_TOKEN");
+        }
+
+        let mut d = Vec::new();
+        let key = resolve_api_key("github-copilot", None, &store, &mut d).unwrap();
+
+        assert_eq!(key.value, "oauth-from-env-ref");
+        assert_eq!(key.source, KeySource::AuthFile);
+        assert!(d.is_empty());
+
+        unsafe {
+            std::env::remove_var("COPILOT_TEST_TOKEN");
+        }
+    }
+
+    #[test]
+    fn saves_and_loads_oauth_access_tokens_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.toml");
+        let mut store = AuthStore::default();
+        store.set_oauth_access_token("openai-codex", "oauth-access");
+
+        store.save(&path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[openai-codex]"));
+        assert!(text.contains("type = \"oauth\""));
+        assert!(text.contains("access = \"oauth-access\""));
+
+        let mut d = Vec::new();
+        let loaded = AuthStore::load(&path, &mut d);
+        assert_eq!(
+            loaded.oauth_access_entry("openai-codex"),
+            Some("oauth-access")
+        );
         assert!(d.is_empty());
     }
 }
