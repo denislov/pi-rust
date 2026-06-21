@@ -56,6 +56,19 @@ impl ProtocolEventAdapter {
                     .cloned()
                     .unwrap_or(serde_json::Value::Null),
             }],
+            AgentEvent::ToolCallUpdate {
+                tool_call_id,
+                tool_name,
+                update,
+            } => vec![ProtocolEvent::ToolExecutionUpdate {
+                tool_call_id: tool_call_id.clone(),
+                tool_name: tool_name.clone(),
+                result: ToolExecutionResult {
+                    content: update.content.clone(),
+                    terminate: false,
+                    details: update.details.clone(),
+                },
+            }],
             AgentEvent::ToolCallEnd {
                 tool_call_id,
                 tool_name,
@@ -180,6 +193,7 @@ impl ProtocolEventAdapter {
                 result: ToolExecutionResult {
                     content: result.content.clone(),
                     terminate: result.terminate,
+                    details: result.details.clone(),
                 },
                 is_error: result.is_error,
             },

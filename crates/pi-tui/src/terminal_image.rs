@@ -167,6 +167,10 @@ pub fn is_image_line(line: &str) -> bool {
     line.contains("\x1b_G") || line.contains("\x1b]1337;File=")
 }
 
+pub fn hyperlink(text: &str, url: &str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
+}
+
 pub fn encode_kitty(base64_data: &str, options: ImageRenderOptions) -> String {
     const CHUNK_SIZE: usize = 4096;
     let mut params = vec!["a=T".to_string(), "f=100".to_string(), "q=2".to_string()];

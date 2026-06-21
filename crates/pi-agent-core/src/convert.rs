@@ -295,7 +295,9 @@ mod tests {
             description: "search the web".into(),
             parameters: serde_json::json!({"type": "object"}),
             execution_mode: None,
-            execute: std::sync::Arc::new(|_| Box::pin(async { Ok(vec![]) })),
+            execute: std::sync::Arc::new(|_, _on_update| {
+                Box::pin(async { Ok(crate::types::AgentToolOutput::new(vec![])) })
+            }),
         }];
         let ctx = convert_to_context(&None, &[], &tools, &AgentResources::default());
         let llm_tools = ctx.tools.unwrap();

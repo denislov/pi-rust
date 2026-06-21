@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 pub mod bash;
 pub mod edit;
+mod edit_diff;
+pub mod file_mutation_queue;
 pub mod find;
 pub mod grep;
 pub mod ls;

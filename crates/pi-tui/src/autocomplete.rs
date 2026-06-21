@@ -72,6 +72,34 @@ pub struct CompletionEdit {
     pub cursor_col: usize,
 }
 
+pub trait AutocompleteProvider {
+    fn get_suggestions(
+        &self,
+        lines: &[String],
+        cursor_line: usize,
+        cursor_col: usize,
+        options: AutocompleteOptions,
+    ) -> Option<AutocompleteSuggestions>;
+
+    fn apply_completion(
+        &self,
+        lines: &[String],
+        cursor_line: usize,
+        cursor_col: usize,
+        item: &AutocompleteItem,
+        prefix: &str,
+    ) -> CompletionEdit;
+
+    fn should_trigger_file_completion(
+        &self,
+        _lines: &[String],
+        _cursor_line: usize,
+        _cursor_col: usize,
+    ) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CombinedAutocompleteProvider {
     commands: Vec<SlashCommand>,
@@ -288,6 +316,50 @@ impl CombinedAutocompleteProvider {
             self.base_path.join(dir)
         };
         Some((search_dir, file))
+    }
+}
+
+impl AutocompleteProvider for CombinedAutocompleteProvider {
+    fn get_suggestions(
+        &self,
+        lines: &[String],
+        cursor_line: usize,
+        cursor_col: usize,
+        options: AutocompleteOptions,
+    ) -> Option<AutocompleteSuggestions> {
+        CombinedAutocompleteProvider::get_suggestions(self, lines, cursor_line, cursor_col, options)
+    }
+
+    fn apply_completion(
+        &self,
+        lines: &[String],
+        cursor_line: usize,
+        cursor_col: usize,
+        item: &AutocompleteItem,
+        prefix: &str,
+    ) -> CompletionEdit {
+        CombinedAutocompleteProvider::apply_completion(
+            self,
+            lines,
+            cursor_line,
+            cursor_col,
+            item,
+            prefix,
+        )
+    }
+
+    fn should_trigger_file_completion(
+        &self,
+        lines: &[String],
+        cursor_line: usize,
+        cursor_col: usize,
+    ) -> bool {
+        CombinedAutocompleteProvider::should_trigger_file_completion(
+            self,
+            lines,
+            cursor_line,
+            cursor_col,
+        )
     }
 }
 

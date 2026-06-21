@@ -3,6 +3,7 @@ pub mod error;
 pub mod id;
 pub mod jsonl;
 pub mod memory;
+mod migrations;
 pub mod repo;
 pub mod types;
 

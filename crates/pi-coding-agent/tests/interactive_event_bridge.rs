@@ -1,4 +1,4 @@
-use pi_agent_core::{AgentEvent, AgentToolResult};
+use pi_agent_core::{AgentEvent, AgentToolOutput, AgentToolResult};
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, StopReason, Usage,
 };
@@ -76,6 +76,7 @@ fn tool_events_map_to_start_and_end_rows() {
             }],
             is_error: false,
             terminate: false,
+            details: None,
         },
     });
     assert_eq!(
@@ -83,6 +84,46 @@ fn tool_events_map_to_start_and_end_rows() {
         vec![UiEvent::ToolFinished {
             call_id: "tool_1".to_string(),
             result: "ok".to_string(),
+            is_error: false,
+        }]
+    );
+}
+
+#[test]
+fn tool_update_replaces_running_tool_output() {
+    let mut bridge = InteractiveEventBridge::new();
+    let update = bridge.handle(&AgentEvent::ToolCallUpdate {
+        tool_call_id: "tool_1".to_string(),
+        tool_name: "bash".to_string(),
+        update: AgentToolOutput::new(vec![ContentBlock::Text {
+            text: "line 1".to_string(),
+            text_signature: None,
+        }]),
+    });
+
+    assert_eq!(
+        update,
+        vec![UiEvent::ToolUpdated {
+            call_id: "tool_1".to_string(),
+            result: "line 1".to_string(),
+        }]
+    );
+
+    let mut transcript = Transcript::new();
+    transcript.apply_event(UiEvent::ToolStarted {
+        call_id: "tool_1".to_string(),
+        name: "bash".to_string(),
+        args: serde_json::Value::Null,
+    });
+    transcript.apply_event(update.into_iter().next().unwrap());
+
+    assert_eq!(
+        transcript.items(),
+        &[TranscriptItem::Tool {
+            call_id: "tool_1".to_string(),
+            name: "bash".to_string(),
+            args: serde_json::Value::Null,
+            result: Some("line 1".to_string()),
             is_error: false,
         }]
     );

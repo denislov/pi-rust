@@ -38,8 +38,9 @@ pub use hooks::{
     ShouldStopAfterTurnHook, TransformContextHook,
 };
 pub use types::{
-    AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolResult,
-    CompactionConfig, CompactionSettings, PromptTemplate, ProviderRequestSnapshot, QueueMode,
-    ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic,
-    SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
+    AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolOutput,
+    AgentToolResult, CompactionConfig, CompactionSettings, PromptTemplate, ProviderRequestSnapshot,
+    QueueMode, ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate,
+    SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
+    ToolUpdateCallback,
 };

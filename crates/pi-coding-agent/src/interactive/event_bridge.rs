@@ -19,6 +19,10 @@ pub enum UiEvent {
         result: String,
         is_error: bool,
     },
+    ToolUpdated {
+        call_id: String,
+        result: String,
+    },
     AgentError {
         error: String,
     },
@@ -54,6 +58,14 @@ impl InteractiveEventBridge {
                 call_id: tool_call_id.clone(),
                 name: tool_name.clone(),
                 args: serde_json::Value::Null,
+            }],
+            AgentEvent::ToolCallUpdate {
+                tool_call_id,
+                update,
+                ..
+            } => vec![UiEvent::ToolUpdated {
+                call_id: tool_call_id.clone(),
+                result: content_blocks_to_text(&update.content),
             }],
             AgentEvent::ToolCallEnd {
                 tool_call_id,

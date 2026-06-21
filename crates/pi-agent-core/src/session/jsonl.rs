@@ -1,3 +1,4 @@
+use super::migrations::migrate_session_values;
 use crate::session::{
     JsonlSessionMetadata, SessionEntry, SessionError, SessionErrorCode, SessionHeader,
 };
@@ -114,7 +115,28 @@ impl JsonlSessionStorage {
             ));
         }
 
-        let header: SessionHeader = serde_json::from_str(&lines[0]).map_err(|e| {
+        let mut values: Vec<serde_json::Value> = Vec::with_capacity(lines.len());
+        for (line_num, line) in lines.iter().enumerate() {
+            let value = serde_json::from_str(line).map_err(|e| {
+                let message = if line_num == 0 {
+                    format!("first line is not a valid session header: {}", e)
+                } else {
+                    format!("failed to parse entry at line {}: {}", line_num + 1, e)
+                };
+                SessionError::new(
+                    if line_num == 0 {
+                        SessionErrorCode::InvalidSession
+                    } else {
+                        SessionErrorCode::InvalidEntry
+                    },
+                    message,
+                )
+            })?;
+            values.push(value);
+        }
+
+        let migrated = migrate_session_values(&mut values)?;
+        let header: SessionHeader = serde_json::from_value(values[0].clone()).map_err(|e| {
             SessionError::new(
                 SessionErrorCode::InvalidSession,
                 format!("first line is not a valid session header: {}", e),
@@ -156,8 +178,8 @@ impl JsonlSessionStorage {
         let mut by_id = HashMap::new();
         let mut leaf_id: Option<String> = None;
 
-        for (line_num, line) in lines.iter().enumerate().skip(1) {
-            let entry: SessionEntry = serde_json::from_str(line).map_err(|e| {
+        for (line_num, value) in values.iter().enumerate().skip(1) {
+            let entry: SessionEntry = serde_json::from_value(value.clone()).map_err(|e| {
                 SessionError::new(
                     SessionErrorCode::InvalidEntry,
                     format!("failed to parse entry at line {}: {}", line_num + 1, e),
@@ -182,6 +204,10 @@ impl JsonlSessionStorage {
 
             by_id.insert(entry.id.clone(), entry.clone());
             entries.push(entry);
+        }
+
+        if migrated {
+            rewrite_session_file(&path, &values)?;
         }
 
         Ok(Self {
@@ -270,6 +296,49 @@ impl JsonlSessionStorage {
     }
 }
 
+fn rewrite_session_file(path: &Path, values: &[serde_json::Value]) -> Result<(), SessionError> {
+    let mut content = String::new();
+    for value in values {
+        let line = serde_json::to_string(value).map_err(|e| {
+            SessionError::new(
+                SessionErrorCode::InvalidSession,
+                format!("failed to serialize migrated session: {}", e),
+            )
+        })?;
+        content.push_str(&line);
+        content.push('\n');
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("session.jsonl");
+    let tmp_path = path.with_file_name(format!(".{}.tmp", file_name));
+
+    fs::write(&tmp_path, content).map_err(|e| {
+        SessionError::new(
+            SessionErrorCode::Storage,
+            format!(
+                "failed to write migrated session file {}: {}",
+                tmp_path.display(),
+                e
+            ),
+        )
+    })?;
+    fs::rename(&tmp_path, path).map_err(|e| {
+        SessionError::new(
+            SessionErrorCode::Storage,
+            format!(
+                "failed to replace migrated session file {}: {}",
+                path.display(),
+                e
+            ),
+        )
+    })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,12 +420,84 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_version() {
+    fn opens_v2_sessions_and_renames_hook_message_role() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("bad_version.jsonl");
+        let file = dir.path().join("v2.jsonl");
         std::fs::write(
             &file,
-            r#"{"type":"session","version":2,"id":"s1","timestamp":"2026-06-05T00:00:00.000Z","cwd":"/tmp"}"#,
+            concat!(
+                r#"{"type":"session","version":2,"id":"s1","timestamp":"2026-06-05T00:00:00.000Z","cwd":"/tmp"}"#,
+                "\n",
+                r#"{"type":"message","id":"entry001","parentId":null,"timestamp":"2026-06-05T00:00:01.000Z","message":{"role":"hookMessage","customType":"listener","content":[{"type":"text","text":"hello"}],"display":true,"timestamp":1}}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+        let storage = JsonlSessionStorage::open(&file).unwrap();
+        assert_eq!(storage.header().version, 3);
+        let entries = storage.get_entries();
+        let message = entries[0].field("message").unwrap();
+        assert_eq!(message["role"], "custom");
+        let stored: StoredAgentMessage = serde_json::from_value(message.clone()).unwrap();
+        match stored {
+            StoredAgentMessage::Custom { custom_type, .. } => assert_eq!(custom_type, "listener"),
+            other => panic!("expected migrated custom message, got {other:?}"),
+        }
+        let rewritten = std::fs::read_to_string(&file).unwrap();
+        assert!(rewritten.contains(r#""version":3"#));
+        assert!(rewritten.contains(r#""role":"custom""#));
+        assert!(!rewritten.contains("hookMessage"));
+    }
+
+    #[test]
+    fn opens_v1_sessions_and_adds_tree_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("v1.jsonl");
+        std::fs::write(
+            &file,
+            concat!(
+                r#"{"type":"session","id":"s1","timestamp":"2026-06-05T00:00:00.000Z","cwd":"/tmp"}"#,
+                "\n",
+                r#"{"type":"message","timestamp":"2026-06-05T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"hello"}],"timestamp":1}}"#,
+                "\n",
+                r#"{"type":"compaction","timestamp":"2026-06-05T00:00:02.000Z","summary":"old summary","firstKeptEntryIndex":1,"tokensBefore":42}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+        let storage = JsonlSessionStorage::open(&file).unwrap();
+        assert_eq!(storage.header().version, 3);
+        let entries = storage.get_entries();
+        assert_eq!(entries.len(), 2);
+        assert!(!entries[0].id.is_empty());
+        assert!(!entries[1].id.is_empty());
+        assert_ne!(entries[0].id, entries[1].id);
+        assert_eq!(entries[0].parent_id, None);
+        assert_eq!(
+            entries[1].parent_id.as_deref(),
+            Some(entries[0].id.as_str())
+        );
+        assert_eq!(
+            entries[1]
+                .field("firstKeptEntryId")
+                .and_then(|value| value.as_str()),
+            Some(entries[0].id.as_str())
+        );
+        assert!(entries[1].field("firstKeptEntryIndex").is_none());
+        let rewritten = std::fs::read_to_string(&file).unwrap();
+        assert!(rewritten.contains(r#""version":3"#));
+        assert!(rewritten.contains(r#""parentId":"#));
+        assert!(rewritten.contains("firstKeptEntryId"));
+        assert!(!rewritten.contains("firstKeptEntryIndex"));
+    }
+
+    #[test]
+    fn rejects_future_session_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("future_version.jsonl");
+        std::fs::write(
+            &file,
+            r#"{"type":"session","version":4,"id":"s1","timestamp":"2026-06-05T00:00:00.000Z","cwd":"/tmp"}"#,
         )
         .unwrap();
         let error = JsonlSessionStorage::open(&file).unwrap_err();

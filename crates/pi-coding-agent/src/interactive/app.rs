@@ -5,7 +5,10 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use pi_agent_core::{AgentResources, session::create_session_id};
+use pi_agent_core::{
+    AgentResources,
+    session::{JsonlSessionMetadata, JsonlSessionRepo, JsonlSessionStorage, create_session_id},
+};
 use pi_ai::types::Model;
 use pi_tui::{
     Component, ERROR, Editor, InputEvent, KeybindingsManager, Loader, Markdown, PATH,
@@ -72,6 +75,7 @@ const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
 const MAX_SLASH_SUGGESTIONS: usize = 5;
 const MAX_MODEL_CHOICES: usize = 12;
+const MAX_SESSION_CHOICES: usize = 12;
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
 
 struct InputPump {
@@ -137,6 +141,8 @@ struct PromptContext {
     settings: crate::config::Settings,
     theme: TuiTheme,
     model_choices: Vec<Model>,
+    model_rotation: Vec<Model>,
+    session_choices: Vec<SessionChoice>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +269,40 @@ struct ParsedSlashCommand {
     original: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionChoice {
+    id: String,
+    cwd: String,
+    path: PathBuf,
+    created_at: String,
+    name: Option<String>,
+    entry_count: usize,
+}
+
+impl SessionChoice {
+    fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.id)
+    }
+
+    fn searchable_text(&self) -> String {
+        format!(
+            "{} {} {} {} {}",
+            self.id,
+            self.name.as_deref().unwrap_or_default(),
+            self.cwd,
+            self.path.display(),
+            self.created_at
+        )
+    }
+
+    fn matches_target(&self, target: &str) -> bool {
+        self.id == target
+            || self.id.starts_with(target)
+            || self.path.display().to_string() == target
+            || self.name.as_deref() == Some(target)
+    }
+}
+
 fn parse_slash_command(text: &str) -> Option<ParsedSlashCommand> {
     if !text.starts_with('/') {
         return None;
@@ -276,6 +316,18 @@ fn parse_slash_command(text: &str) -> Option<ParsedSlashCommand> {
         args,
         original: text.to_string(),
     })
+}
+
+fn parse_model_selector_arg(
+    arg: &str,
+) -> Result<(String, Option<pi_agent_core::ThinkingLevel>), String> {
+    match arg.rsplit_once(':') {
+        Some((model_id, level)) if !model_id.is_empty() && !level.is_empty() => {
+            let thinking = level.parse().map_err(|error| format!("{error}"))?;
+            Ok((model_id.to_string(), Some(thinking)))
+        }
+        _ => Ok((arg.to_string(), None)),
+    }
 }
 
 struct InteractiveRoot {
@@ -293,9 +345,15 @@ struct InteractiveRoot {
     model_id: String,
     session_label: String,
     selected_model: Option<Model>,
+    selected_thinking_level: Option<pi_agent_core::ThinkingLevel>,
     available_models: Vec<Model>,
+    model_rotation: Vec<Model>,
     selecting_model: bool,
     model_selection_selected: usize,
+    session_choices: Vec<SessionChoice>,
+    selected_session: Option<SessionChoice>,
+    selecting_session: bool,
+    session_selection_selected: usize,
     selecting_settings: bool,
     usage: (u32, u32),
     tool_output_expanded: bool,
@@ -320,6 +378,8 @@ struct InteractiveRenderState {
     selecting_settings: bool,
     selecting_model: bool,
     model_selection_selected: usize,
+    selecting_session: bool,
+    session_selection_selected: usize,
 }
 
 impl InteractiveRoot {
@@ -381,9 +441,15 @@ impl InteractiveRoot {
             model_id,
             session_label,
             selected_model: None,
+            selected_thinking_level: None,
             available_models,
+            model_rotation: Vec::new(),
             selecting_model: false,
             model_selection_selected: 0,
+            session_choices: Vec::new(),
+            selected_session: None,
+            selecting_session: false,
+            session_selection_selected: 0,
             selecting_settings: false,
             usage: (0, 0),
             tool_output_expanded: false,
@@ -406,6 +472,14 @@ impl InteractiveRoot {
 
     fn take_selected_model(&mut self) -> Option<Model> {
         self.selected_model.take()
+    }
+
+    fn take_selected_thinking_level(&mut self) -> Option<pi_agent_core::ThinkingLevel> {
+        self.selected_thinking_level.take()
+    }
+
+    fn take_selected_session(&mut self) -> Option<SessionChoice> {
+        self.selected_session.take()
     }
 
     fn take_submitted(&mut self) -> Option<String> {
@@ -477,13 +551,14 @@ impl InteractiveRoot {
                 self.transcript.push(TranscriptItem::system(help_text()));
             }
             "model" => self.handle_model_command(&command.args),
+            "resume" => self.handle_resume_command(&command.args),
             "settings" => self.handle_settings_command(),
             "name" => self.handle_name_command(&command.args),
             "session" => self.handle_session_command(),
             "hotkeys" => self.handle_hotkeys_command(),
             "changelog" => self.handle_changelog_command(),
             "scoped-models" | "export" | "import" | "share" | "copy" | "fork" | "clone"
-            | "tree" | "login" | "logout" | "new" | "compact" | "resume" | "reload" => {
+            | "tree" | "login" | "logout" | "new" | "compact" | "reload" => {
                 self.handle_pending_slash_command(&command)
             }
             _ => {
@@ -505,6 +580,7 @@ impl InteractiveRoot {
     fn handle_settings_command(&mut self) {
         self.selecting_settings = true;
         self.selecting_model = false;
+        self.selecting_session = false;
         self.editor.set_text("");
     }
 
@@ -512,29 +588,111 @@ impl InteractiveRoot {
         if args.is_empty() {
             self.selecting_model = true;
             self.selecting_settings = false;
+            self.selecting_session = false;
             self.model_selection_selected = 0;
             self.editor.set_text("");
             return;
         }
 
-        match pi_ai::lookup_model(args) {
-            Some(model) => self.set_selected_model(model),
+        let (model_id, thinking_level) = match parse_model_selector_arg(args) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                self.transcript.push(TranscriptItem::system(error));
+                return;
+            }
+        };
+
+        match pi_ai::lookup_model(&model_id) {
+            Some(model) => self.set_selected_model_with_thinking(model, thinking_level),
             None => {
                 self.transcript
-                    .push(TranscriptItem::system(format!("Unknown model: {args}")));
+                    .push(TranscriptItem::system(format!("Unknown model: {model_id}")));
             }
         }
     }
 
     fn set_selected_model(&mut self, model: Model) {
+        self.set_selected_model_with_thinking(model, None);
+    }
+
+    fn set_selected_model_with_thinking(
+        &mut self,
+        model: Model,
+        thinking_level: Option<pi_agent_core::ThinkingLevel>,
+    ) {
         self.model_id = model.id.clone();
         self.selected_model = Some(model);
+        self.selected_thinking_level = thinking_level;
         self.selecting_model = false;
         self.model_selection_selected = 0;
         self.editor.set_text("");
+        let suffix = thinking_level
+            .map(|level| format!(" (thinking: {level})"))
+            .unwrap_or_default();
         self.transcript.push(TranscriptItem::system(format!(
-            "Model set: {}",
-            self.model_id
+            "Model set: {}{}",
+            self.model_id, suffix
+        )));
+    }
+
+    fn cycle_model_rotation(&mut self, reverse: bool) {
+        if self.model_rotation.is_empty() {
+            return;
+        }
+        let len = self.model_rotation.len();
+        let next_index = match self
+            .model_rotation
+            .iter()
+            .position(|model| model.id == self.model_id)
+        {
+            Some(index) if reverse => (index + len - 1) % len,
+            Some(index) => (index + 1) % len,
+            None if reverse => len - 1,
+            None => 0,
+        };
+        let model = self.model_rotation[next_index].clone();
+        self.set_selected_model(model);
+    }
+
+    fn handle_resume_command(&mut self, args: &str) {
+        if self.session_choices.is_empty() {
+            self.transcript.push(TranscriptItem::system(
+                "No sessions found for the current workspace.".to_string(),
+            ));
+            return;
+        }
+
+        if !args.is_empty() {
+            if let Some(choice) = self
+                .session_choices
+                .iter()
+                .find(|choice| choice.matches_target(args))
+                .cloned()
+            {
+                self.set_selected_session(choice);
+            } else {
+                self.transcript
+                    .push(TranscriptItem::system(format!("Unknown session: {args}")));
+            }
+            return;
+        }
+
+        self.selecting_session = true;
+        self.selecting_model = false;
+        self.selecting_settings = false;
+        self.session_selection_selected = 0;
+        self.editor.set_text("");
+    }
+
+    fn set_selected_session(&mut self, choice: SessionChoice) {
+        self.session_label = choice.display_name().to_string();
+        self.selected_session = Some(choice.clone());
+        self.selecting_session = false;
+        self.session_selection_selected = 0;
+        self.editor.set_text("");
+        self.transcript.push(TranscriptItem::system(format!(
+            "Session selected: {}",
+            choice.display_name()
         )));
     }
 
@@ -631,11 +789,13 @@ impl InteractiveRoot {
             selecting_settings: self.selecting_settings,
             selecting_model: self.selecting_model,
             model_selection_selected: self.model_selection_selected,
+            selecting_session: self.selecting_session,
+            session_selection_selected: self.session_selection_selected,
         }
     }
 
     fn editor_border_style(&self) -> Style {
-        if self.selecting_model || self.selecting_settings {
+        if self.selecting_model || self.selecting_settings || self.selecting_session {
             self.theme.editor.menu_border
         } else {
             self.theme.editor.active_border
@@ -643,7 +803,7 @@ impl InteractiveRoot {
     }
 
     fn slash_suggestion_indices(&self) -> Option<Vec<usize>> {
-        if self.selecting_model || self.selecting_settings {
+        if self.selecting_model || self.selecting_settings || self.selecting_session {
             return None;
         }
         let text = self.editor.text();
@@ -733,6 +893,12 @@ impl InteractiveRoot {
         })
     }
 
+    fn session_selection_indices(&self) -> Vec<usize> {
+        fuzzy_filter_indices(&self.session_choices, self.editor.text(), |choice| {
+            choice.searchable_text()
+        })
+    }
+
     fn render_model_selector(&mut self, width: usize) -> Vec<String> {
         if !self.selecting_model {
             return Vec::new();
@@ -762,6 +928,7 @@ impl InteractiveRoot {
             .model_selection_selected
             .saturating_add(1)
             .saturating_sub(MAX_MODEL_CHOICES);
+        let mut previous_provider: Option<&str> = None;
         for (visible_offset, model_index) in indices
             .iter()
             .copied()
@@ -771,6 +938,13 @@ impl InteractiveRoot {
         {
             let absolute_index = window_start + visible_offset;
             let model = &self.available_models[model_index];
+            if previous_provider != Some(model.provider.as_str()) {
+                lines.push(fit_line(
+                    &paint_with(&format!("  {}", model.provider), &SYSTEM, color),
+                    width,
+                ));
+                previous_provider = Some(model.provider.as_str());
+            }
             let marker = if absolute_index == self.model_selection_selected {
                 "->"
             } else {
@@ -793,6 +967,74 @@ impl InteractiveRoot {
                 &format!(
                     "({}/{}) Enter select · Esc close",
                     self.model_selection_selected + 1,
+                    indices.len()
+                ),
+                &SYSTEM,
+                color,
+            ),
+            width,
+        ));
+        lines
+    }
+
+    fn render_session_selector(&mut self, width: usize) -> Vec<String> {
+        if !self.selecting_session {
+            return Vec::new();
+        }
+
+        let indices = self.session_selection_indices();
+        self.session_selection_selected = self
+            .session_selection_selected
+            .min(indices.len().saturating_sub(1));
+
+        let color = color_enabled();
+        let mut lines = vec![fit_line("Select session", width)];
+        if indices.is_empty() {
+            lines.push(fit_line(
+                &paint_with("  No matching sessions", &SYSTEM, color),
+                width,
+            ));
+            lines.push(fit_line(&paint_with("  Esc close", &SYSTEM, color), width));
+            return lines;
+        }
+
+        let window_start = self
+            .session_selection_selected
+            .saturating_add(1)
+            .saturating_sub(MAX_SESSION_CHOICES);
+        for (visible_offset, session_index) in indices
+            .iter()
+            .copied()
+            .skip(window_start)
+            .take(MAX_SESSION_CHOICES)
+            .enumerate()
+        {
+            let absolute_index = window_start + visible_offset;
+            let choice = &self.session_choices[session_index];
+            let marker = if absolute_index == self.session_selection_selected {
+                "->"
+            } else {
+                "  "
+            };
+            let cwd = abbreviate_cwd(Path::new(&choice.cwd));
+            let line = format!(
+                "{marker} {:<24} {} · {} · {} entries",
+                choice.display_name(),
+                paint_with(&choice.id, &SYSTEM, color),
+                paint_with(&cwd, &SYSTEM, color),
+                choice.entry_count
+            );
+            if absolute_index == self.session_selection_selected {
+                lines.push(fit_line(&paint_with(&line, &USER, color), width));
+            } else {
+                lines.push(fit_line(&line, width));
+            }
+        }
+        lines.push(fit_line(
+            &paint_with(
+                &format!(
+                    "({}/{}) Enter resume · Esc close",
+                    self.session_selection_selected + 1,
                     indices.len()
                 ),
                 &SYSTEM,
@@ -922,6 +1164,63 @@ impl InteractiveRoot {
         }
         true
     }
+
+    fn handle_session_selection_input(&mut self, event: &InputEvent) -> bool {
+        if !self.selecting_session {
+            return false;
+        }
+
+        let indices = self.session_selection_indices();
+        if self.keybindings.matches(event, "tui.select.up") {
+            if !indices.is_empty() {
+                self.session_selection_selected =
+                    (self.session_selection_selected + indices.len() - 1) % indices.len();
+            }
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.down") {
+            if !indices.is_empty() {
+                self.session_selection_selected =
+                    (self.session_selection_selected + 1) % indices.len();
+            }
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.pageUp") {
+            self.session_selection_selected = self
+                .session_selection_selected
+                .saturating_sub(MAX_SESSION_CHOICES);
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.pageDown") {
+            self.session_selection_selected = (self.session_selection_selected
+                + MAX_SESSION_CHOICES)
+                .min(indices.len().saturating_sub(1));
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.cancel") {
+            self.selecting_session = false;
+            self.session_selection_selected = 0;
+            self.editor.set_text("");
+            self.transcript.push(TranscriptItem::system(
+                "Session selection canceled".to_string(),
+            ));
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.confirm") {
+            if let Some(session_index) = indices.get(self.session_selection_selected).copied() {
+                let choice = self.session_choices[session_index].clone();
+                self.set_selected_session(choice);
+            }
+            return true;
+        }
+
+        let before_text = self.editor.text().to_string();
+        self.editor.handle_input(event);
+        if self.editor.text() != before_text {
+            self.session_selection_selected = 0;
+        }
+        true
+    }
 }
 
 impl Component for InteractiveRoot {
@@ -945,6 +1244,8 @@ impl Component for InteractiveRoot {
         lines.extend(self.render_editor_box(width));
         if self.selecting_model {
             lines.extend(self.render_model_selector(width));
+        } else if self.selecting_session {
+            lines.extend(self.render_session_selector(width));
         } else if self.selecting_settings {
             lines.extend(self.render_settings_menu(width));
         } else {
@@ -977,11 +1278,35 @@ impl Component for InteractiveRoot {
             return;
         }
 
+        if self.status == InteractiveStatus::Idle
+            && !self.selecting_model
+            && !self.selecting_session
+            && !self.selecting_settings
+        {
+            if self.keybindings.matches(event, "app.model.next") {
+                self.cycle_model_rotation(false);
+                return;
+            }
+            if self.keybindings.matches(event, "app.model.previous") {
+                self.cycle_model_rotation(true);
+                return;
+            }
+        }
+
         if self.selecting_model && matches_key(event, "escape") {
             self.selecting_model = false;
             self.editor.set_text("");
             self.transcript.push(TranscriptItem::system(
                 "Model selection canceled".to_string(),
+            ));
+            return;
+        }
+
+        if self.selecting_session && matches_key(event, "escape") {
+            self.selecting_session = false;
+            self.editor.set_text("");
+            self.transcript.push(TranscriptItem::system(
+                "Session selection canceled".to_string(),
             ));
             return;
         }
@@ -995,6 +1320,10 @@ impl Component for InteractiveRoot {
         if self.status == InteractiveStatus::Idle {
             if self.selecting_model {
                 self.handle_model_selection_input(event);
+                return;
+            }
+            if self.selecting_session {
+                self.handle_session_selection_input(event);
                 return;
             }
             if self.selecting_settings {
@@ -1022,6 +1351,7 @@ impl Component for InteractiveRoot {
                 if let Some(command) = parse_slash_command(&text) {
                     self.handle_slash_command(command);
                 } else {
+                    self.editor.add_to_history(&text);
                     self.pending_submit = Some(text);
                     self.action = InteractiveAction::Submit;
                 }
@@ -1136,6 +1466,11 @@ async fn run_interactive_loop<T: Terminal>(
         prompt_context.theme.clone(),
         prompt_context.model_choices.clone(),
     )));
+    {
+        let root = root_mut(&mut tui, root_id)?;
+        root.model_rotation = prompt_context.model_rotation.clone();
+        root.session_choices = prompt_context.session_choices.clone();
+    }
     tui.set_focus(Some(root_id));
 
     let loop_result = run_started_interactive_loop(&mut tui, root_id, input, prompt_context).await;
@@ -1405,7 +1740,7 @@ fn handle_input_event<T: Terminal>(
         return Ok(LoopControl::Continue(RenderRequest::NONE));
     }
 
-    let (action, prompt, selected_model, render_request) = {
+    let (action, prompt, selected_model, selected_thinking_level, selected_session, render_request) = {
         let root = root_mut(tui, root_id)?;
         let before = root.render_state();
         root.handle_input(&event);
@@ -1416,11 +1751,15 @@ fn handle_input_event<T: Terminal>(
             None
         };
         let selected_model = root.take_selected_model();
+        let selected_thinking_level = root.take_selected_thinking_level();
+        let selected_session = root.take_selected_session();
         let after = root.render_state();
         (
             action,
             prompt,
             selected_model,
+            selected_thinking_level,
+            selected_session,
             RenderRequest::changed(before != after),
         )
     };
@@ -1432,6 +1771,15 @@ fn handle_input_event<T: Terminal>(
             &prompt_context.auth,
         );
         prompt_context.model = model;
+    }
+    if let Some(thinking_level) = selected_thinking_level {
+        prompt_context.thinking_level = Some(thinking_level);
+    }
+    if let Some(session) = selected_session {
+        prompt_context.session_target = Some(ResolvedSessionTarget::OpenTarget(
+            session.path.display().to_string(),
+        ));
+        prompt_context.session_name = session.name.clone();
     }
 
     match action {
@@ -1537,6 +1885,13 @@ fn build_prompt_context(
         config.settings.default_model.as_deref(),
         options.model_override,
     )?;
+    let model_rotation = rotation_model_choices(
+        parsed.models.as_deref(),
+        parsed
+            .provider
+            .as_deref()
+            .or(config.settings.default_provider.as_deref()),
+    )?;
     let provider = model.provider.clone();
     let api_key = resolve_prompt_api_key(&provider, parsed.api_key.as_deref(), &config.auth);
     let model_choices = configured_model_choices(&model, parsed.api_key.as_deref(), &config.auth);
@@ -1617,6 +1972,7 @@ fn build_prompt_context(
         }
         (_, target) => target,
     };
+    let session_choices = collect_session_choices(&session);
 
     Ok(PromptContext {
         model,
@@ -1636,7 +1992,58 @@ fn build_prompt_context(
         settings: config.settings,
         theme,
         model_choices,
+        model_rotation,
+        session_choices,
     })
+}
+
+fn collect_session_choices(session: &Option<SessionRunOptions>) -> Vec<SessionChoice> {
+    let Some(session) = session else {
+        return Vec::new();
+    };
+    if !matches!(session.mode, SessionMode::Enabled) {
+        return Vec::new();
+    }
+
+    let root = match &session.session_dir {
+        Some(dir) => dir.clone(),
+        None => match crate::session::resolve_session_dir(&session.cwd, None, None) {
+            Ok(dir) => dir,
+            Err(_) => return Vec::new(),
+        },
+    };
+    let repo = JsonlSessionRepo::new(root);
+    let cwd = session.cwd.display().to_string();
+    repo.list(Some(&cwd))
+        .unwrap_or_default()
+        .into_iter()
+        .map(session_choice_from_metadata)
+        .collect()
+}
+
+fn session_choice_from_metadata(metadata: JsonlSessionMetadata) -> SessionChoice {
+    let (name, entry_count) = JsonlSessionStorage::open(&metadata.path)
+        .map(|storage| {
+            let entries = storage.get_entries();
+            let name = entries
+                .iter()
+                .rev()
+                .find(|entry| entry.entry_type == "session_info")
+                .and_then(|entry| entry.field("name"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            (name, entries.len())
+        })
+        .unwrap_or((None, 0));
+
+    SessionChoice {
+        id: metadata.id,
+        cwd: metadata.cwd,
+        path: metadata.path,
+        created_at: metadata.created_at,
+        name,
+        entry_count,
+    }
 }
 
 fn resolve_tui_theme(
@@ -1696,6 +2103,25 @@ fn configured_model_choices(
         models.insert(0, current);
     }
     models
+}
+
+fn rotation_model_choices(
+    models_arg: Option<&str>,
+    provider: Option<&str>,
+) -> Result<Vec<Model>, CliError> {
+    let Some(models_arg) = models_arg else {
+        return Ok(Vec::new());
+    };
+    let rotation = crate::models::parse_model_rotation(models_arg)?;
+    let mut candidates = pi_ai::all_models().to_vec();
+    candidates.sort_by(|left, right| left.id.cmp(&right.id));
+    if let Some(provider) = provider {
+        candidates.retain(|model| model.provider == provider);
+    }
+    Ok(candidates
+        .into_iter()
+        .filter(|model| rotation.matches(&model.id) || rotation.matches(&model.name))
+        .collect())
 }
 
 fn provider_has_configured_key(
@@ -1945,6 +2371,8 @@ fn to_cli_error(error: std::io::Error) -> CliError {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn key_event(data: &str) -> InputEvent {
         let mut buffer = StdinBuffer::new();
         let mut events = buffer.process(data);
@@ -1953,8 +2381,21 @@ mod tests {
         events.remove(0)
     }
 
+    fn ctrl_p_event(shift: bool) -> InputEvent {
+        let mut modifiers = pi_tui::KeyModifiers::CTRL;
+        if shift {
+            modifiers.insert(pi_tui::KeyModifiers::SHIFT);
+        }
+        InputEvent::Key(pi_tui::KeyEvent {
+            key: pi_tui::Key::Char(if shift { "P".into() } else { "p".into() }),
+            modifiers,
+            kind: pi_tui::KeyEventKind::Press,
+        })
+    }
+
     #[test]
     fn build_prompt_context_uses_config_defaults_and_auth() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("settings.toml"),
@@ -1991,6 +2432,7 @@ mod tests {
 
     #[test]
     fn build_prompt_context_applies_selected_theme_to_editor_borders() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let themes_dir = dir.path().join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
@@ -2470,6 +2912,135 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_p_cycles_models_from_rotation() {
+        let rotation = vec![
+            pi_ai::lookup_model("claude-haiku-4-5").unwrap(),
+            pi_ai::lookup_model("gpt-5").unwrap(),
+            pi_ai::lookup_model("gpt-5-mini").unwrap(),
+        ];
+        let mut root = InteractiveRoot::new_with_theme_and_models(
+            PathBuf::from("."),
+            "claude-haiku-4-5".to_string(),
+            "no-session".to_string(),
+            dark_theme(),
+            rotation.clone(),
+        );
+        root.model_rotation = rotation;
+
+        root.handle_input(&ctrl_p_event(false));
+        assert_eq!(root.model_id, "gpt-5");
+        assert_eq!(root.take_selected_model().unwrap().id, "gpt-5");
+
+        root.handle_input(&ctrl_p_event(false));
+        assert_eq!(root.model_id, "gpt-5-mini");
+
+        root.handle_input(&ctrl_p_event(true));
+        assert_eq!(root.model_id, "gpt-5");
+    }
+
+    #[test]
+    fn resume_command_opens_session_selector_and_selects_session() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/tmp/project"),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.session_choices = vec![SessionChoice {
+            id: "session-alpha".to_string(),
+            cwd: "/tmp/project".to_string(),
+            path: PathBuf::from("/tmp/sessions/session-alpha.jsonl"),
+            created_at: "2026-06-20T00:00:00Z".to_string(),
+            name: Some("Project Alpha".to_string()),
+            entry_count: 3,
+        }];
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "resume".to_string(),
+            args: String::new(),
+            original: "/resume".to_string(),
+        });
+
+        assert!(root.selecting_session);
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Select session"), "{rendered}");
+        assert!(rendered.contains("Project Alpha"), "{rendered}");
+        assert!(rendered.contains("session-alpha"), "{rendered}");
+
+        root.handle_input(&key_event("\r"));
+
+        let selected = root
+            .take_selected_session()
+            .expect("session selection should be returned to loop");
+        assert_eq!(selected.id, "session-alpha");
+        assert_eq!(
+            selected.path,
+            PathBuf::from("/tmp/sessions/session-alpha.jsonl")
+        );
+        assert!(!root.selecting_session);
+    }
+
+    #[test]
+    fn session_selector_filters_by_name_and_cwd() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/tmp/project"),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.session_choices = vec![
+            SessionChoice {
+                id: "session-alpha".to_string(),
+                cwd: "/tmp/project".to_string(),
+                path: PathBuf::from("/tmp/sessions/session-alpha.jsonl"),
+                created_at: "2026-06-20T00:00:00Z".to_string(),
+                name: Some("Project Alpha".to_string()),
+                entry_count: 3,
+            },
+            SessionChoice {
+                id: "session-beta".to_string(),
+                cwd: "/tmp/other".to_string(),
+                path: PathBuf::from("/tmp/sessions/session-beta.jsonl"),
+                created_at: "2026-06-21T00:00:00Z".to_string(),
+                name: Some("Beta Tools".to_string()),
+                entry_count: 8,
+            },
+        ];
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "resume".to_string(),
+            args: String::new(),
+            original: "/resume".to_string(),
+        });
+
+        root.handle_input(&key_event("B"));
+
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Beta Tools"), "{rendered}");
+        assert!(rendered.contains("/tmp/other"), "{rendered}");
+        assert!(!rendered.contains("Project Alpha"), "{rendered}");
+    }
+
+    #[test]
+    fn model_command_accepts_thinking_suffix() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "claude-haiku-4-5".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "model".to_string(),
+            args: "gpt-5:high".to_string(),
+            original: "/model gpt-5:high".to_string(),
+        });
+
+        assert_eq!(root.model_id, "gpt-5");
+        assert_eq!(root.take_selected_model().unwrap().id, "gpt-5");
+        assert_eq!(
+            root.take_selected_thinking_level(),
+            Some(pi_agent_core::ThinkingLevel::High)
+        );
+    }
+
+    #[test]
     fn render_state_changes_when_slash_suggestion_selection_changes() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
@@ -2496,6 +3067,24 @@ mod tests {
         root.handle_input(&key_event("\r"));
 
         assert_eq!(root.take_action(), InteractiveAction::Exit);
+    }
+
+    #[test]
+    fn submitted_prompt_is_added_to_editor_history() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.editor.set_text("hello history");
+
+        root.handle_input(&key_event("\r"));
+        assert_eq!(root.take_action(), InteractiveAction::Submit);
+        assert_eq!(root.take_pending_submit().as_deref(), Some("hello history"));
+
+        root.handle_input(&key_event("\x1b[A"));
+
+        assert_eq!(root.editor.text(), "hello history");
     }
 
     #[test]

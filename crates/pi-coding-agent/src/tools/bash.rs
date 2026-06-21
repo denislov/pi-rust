@@ -1,5 +1,7 @@
-use pi_agent_core::{AgentTool, ToolFn};
+use futures::future::{BoxFuture, FutureExt};
+use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn, ToolUpdateCallback};
 use pi_ai::types::ContentBlock;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -11,6 +13,47 @@ const DESCRIPTION: &str = "Execute a bash command in the working directory. Retu
 const BUFFER_KEEP: usize = 65536;
 const DRAIN_GRACE_MS: u64 = 500;
 
+#[derive(Clone)]
+pub struct BashSpawnContext {
+    pub command: String,
+    pub cwd: PathBuf,
+    pub env: HashMap<String, String>,
+}
+
+pub type BashSpawnHook = Arc<dyn Fn(BashSpawnContext) -> BashSpawnContext + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct BashOptions {
+    pub shell_path: Option<String>,
+    pub command_prefix: Option<String>,
+    pub spawn_hook: Option<BashSpawnHook>,
+}
+
+pub trait BashOperations: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        cwd: &'a Path,
+        args: serde_json::Value,
+        options: &'a BashOptions,
+        on_update: Option<ToolUpdateCallback>,
+    ) -> BoxFuture<'a, Result<Vec<ContentBlock>, String>>;
+}
+
+#[derive(Debug, Default)]
+pub struct RealBashOperations;
+
+impl BashOperations for RealBashOperations {
+    fn execute<'a>(
+        &'a self,
+        cwd: &'a Path,
+        args: serde_json::Value,
+        options: &'a BashOptions,
+        on_update: Option<ToolUpdateCallback>,
+    ) -> BoxFuture<'a, Result<Vec<ContentBlock>, String>> {
+        async move { bash_execute_real(cwd, args, options, on_update).await }.boxed()
+    }
+}
+
 fn schema() -> serde_json::Value {
     serde_json::json!({
         "type":"object",
@@ -20,6 +63,37 @@ fn schema() -> serde_json::Value {
         },
         "required":["command"]
     })
+}
+
+async fn resolve_shell_path(custom_shell_path: Option<&str>) -> Result<String, String> {
+    if let Some(shell_path) = custom_shell_path {
+        if tokio::fs::try_exists(shell_path).await.unwrap_or(false) {
+            return Ok(shell_path.to_string());
+        }
+        return Err(format!("Custom shell path not found: {shell_path}"));
+    }
+
+    if tokio::fs::try_exists("/bin/bash").await.unwrap_or(false) {
+        Ok("/bin/bash".into())
+    } else {
+        Ok("bash".into())
+    }
+}
+
+fn resolve_spawn_context(
+    command: String,
+    cwd: PathBuf,
+    spawn_hook: Option<&BashSpawnHook>,
+) -> BashSpawnContext {
+    let context = BashSpawnContext {
+        command,
+        cwd,
+        env: std::env::vars().collect(),
+    };
+    match spawn_hook {
+        Some(hook) => hook(context),
+        None => context,
+    }
 }
 
 fn drain_byte(buf: &mut Vec<u8>, keep: usize) {
@@ -123,6 +197,7 @@ async fn drain_pipes(
     mut stdout: tokio::process::ChildStdout,
     mut stderr: tokio::process::ChildStderr,
     tail: &mut OutputTail,
+    on_update: Option<&ToolUpdateCallback>,
 ) {
     let mut stdout_open = true;
     let mut stderr_open = true;
@@ -133,14 +208,14 @@ async fn drain_pipes(
             read = stdout.read(&mut stdout_buf), if stdout_open => {
                 match read {
                     Ok(0) => stdout_open = false,
-                    Ok(n) => tail.push(&stdout_buf[..n]),
+                    Ok(n) => push_output(tail, &stdout_buf[..n], on_update),
                     Err(_) => stdout_open = false,
                 }
             }
             read = stderr.read(&mut stderr_buf), if stderr_open => {
                 match read {
                     Ok(0) => stderr_open = false,
-                    Ok(n) => tail.push(&stderr_buf[..n]),
+                    Ok(n) => push_output(tail, &stderr_buf[..n], on_update),
                     Err(_) => stderr_open = false,
                 }
             }
@@ -152,17 +227,65 @@ async fn drain_with_grace(
     stdout: tokio::process::ChildStdout,
     stderr: tokio::process::ChildStderr,
     tail: &mut OutputTail,
+    on_update: Option<&ToolUpdateCallback>,
 ) {
     let grace = std::time::Duration::from_millis(DRAIN_GRACE_MS);
-    match tokio::time::timeout(grace, drain_pipes(stdout, stderr, tail)).await {
+    match tokio::time::timeout(grace, drain_pipes(stdout, stderr, tail, on_update)).await {
         Ok(()) => {}
         Err(_) => {}
+    }
+}
+
+fn push_output(tail: &mut OutputTail, data: &[u8], on_update: Option<&ToolUpdateCallback>) {
+    tail.push(data);
+    if let Some(on_update) = on_update {
+        let text = apply_truncation(&tail.buf_to_string(), tail.total_lines, tail.overflowed);
+        on_update(AgentToolOutput::new(vec![ContentBlock::Text {
+            text,
+            text_signature: None,
+        }]));
     }
 }
 
 pub async fn bash_execute(
     cwd: &Path,
     args: serde_json::Value,
+) -> Result<Vec<ContentBlock>, String> {
+    bash_execute_with_options(cwd, args, &BashOptions::default()).await
+}
+
+pub async fn bash_execute_with_options(
+    cwd: &Path,
+    args: serde_json::Value,
+    options: &BashOptions,
+) -> Result<Vec<ContentBlock>, String> {
+    bash_execute_with_options_and_update(cwd, args, options, None).await
+}
+
+pub async fn bash_execute_with_options_and_update(
+    cwd: &Path,
+    args: serde_json::Value,
+    options: &BashOptions,
+    on_update: Option<ToolUpdateCallback>,
+) -> Result<Vec<ContentBlock>, String> {
+    bash_execute_with_operations(cwd, args, options, on_update, Arc::new(RealBashOperations)).await
+}
+
+pub async fn bash_execute_with_operations(
+    cwd: &Path,
+    args: serde_json::Value,
+    options: &BashOptions,
+    on_update: Option<ToolUpdateCallback>,
+    ops: Arc<dyn BashOperations>,
+) -> Result<Vec<ContentBlock>, String> {
+    ops.execute(cwd, args, options, on_update).await
+}
+
+async fn bash_execute_real(
+    cwd: &Path,
+    args: serde_json::Value,
+    options: &BashOptions,
+    on_update: Option<ToolUpdateCallback>,
 ) -> Result<Vec<ContentBlock>, String> {
     let command = args
         .get("command")
@@ -171,29 +294,45 @@ pub async fn bash_execute(
         .to_string();
     let timeout_secs = args.get("timeout").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let workdir = cwd.to_path_buf();
-    if !tokio::fs::try_exists(&workdir).await.unwrap_or(false) {
+    let resolved_command = match options.command_prefix.as_deref() {
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}\n{command}"),
+        _ => command,
+    };
+    let spawn_context =
+        resolve_spawn_context(resolved_command, workdir, options.spawn_hook.as_ref());
+    if !tokio::fs::try_exists(&spawn_context.cwd)
+        .await
+        .unwrap_or(false)
+    {
         return Err(format!(
             "Working directory does not exist: {}\nCannot execute bash commands.",
-            workdir.display()
+            spawn_context.cwd.display()
         ));
     }
+    let shell_path = resolve_shell_path(options.shell_path.as_deref()).await?;
 
-    let mut cmd = tokio::process::Command::new("bash");
+    let mut cmd = tokio::process::Command::new(shell_path);
     cmd.arg("-c")
-        .arg(&command)
-        .current_dir(&workdir)
+        .arg(&spawn_context.command)
+        .current_dir(&spawn_context.cwd)
+        .env_clear()
+        .envs(&spawn_context.env)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("bash: failed to spawn: {e}"))?;
 
-    let stdout = child
+    let mut stdout = child
         .stdout
         .take()
         .ok_or_else(|| "bash: failed to capture stdout".to_string())?;
-    let stderr = child
+    let mut stderr = child
         .stderr
         .take()
         .ok_or_else(|| "bash: failed to capture stderr".to_string())?;
@@ -202,37 +341,82 @@ pub async fn bash_execute(
 
     let mut timed_out = false;
     let mut exit_code: Option<i32> = None;
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+    let mut stdout_buf = vec![0u8; 8192];
+    let mut stderr_buf = vec![0u8; 8192];
 
     if timeout_secs > 0.0 && timeout_secs.is_finite() {
         let dur = std::time::Duration::from_secs_f64(timeout_secs);
-        match tokio::time::timeout(dur, child.wait()).await {
-            Ok(Ok(status)) => {
-                exit_code = status.code();
-            }
-            Ok(Err(e)) => {
-                let _ = child.kill().await;
-                drain_with_grace(stdout, stderr, &mut tail).await;
-                return Err(format!("bash: wait failed: {e}"));
-            }
-            Err(_) => {
-                let _ = child.kill().await;
-                timed_out = true;
+        let timeout = tokio::time::sleep(dur);
+        tokio::pin!(timeout);
+        loop {
+            tokio::select! {
+                status = child.wait() => {
+                    match status {
+                        Ok(status) => exit_code = status.code(),
+                        Err(e) => {
+                            terminate_child_process_tree(&mut child).await;
+                            drain_with_grace(stdout, stderr, &mut tail, on_update.as_ref()).await;
+                            return Err(format!("bash: wait failed: {e}"));
+                        }
+                    }
+                    break;
+                }
+                _ = &mut timeout => {
+                    terminate_child_process_tree(&mut child).await;
+                    timed_out = true;
+                    break;
+                }
+                read = stdout.read(&mut stdout_buf), if stdout_open => {
+                    match read {
+                        Ok(0) => stdout_open = false,
+                        Ok(n) => push_output(&mut tail, &stdout_buf[..n], on_update.as_ref()),
+                        Err(_) => stdout_open = false,
+                    }
+                }
+                read = stderr.read(&mut stderr_buf), if stderr_open => {
+                    match read {
+                        Ok(0) => stderr_open = false,
+                        Ok(n) => push_output(&mut tail, &stderr_buf[..n], on_update.as_ref()),
+                        Err(_) => stderr_open = false,
+                    }
+                }
             }
         }
     } else {
-        match child.wait().await {
-            Ok(status) => {
-                exit_code = status.code();
-            }
-            Err(e) => {
-                let _ = child.kill().await;
-                drain_with_grace(stdout, stderr, &mut tail).await;
-                return Err(format!("bash: wait failed: {e}"));
+        loop {
+            tokio::select! {
+                status = child.wait() => {
+                    match status {
+                        Ok(status) => exit_code = status.code(),
+                        Err(e) => {
+                            terminate_child_process_tree(&mut child).await;
+                            drain_with_grace(stdout, stderr, &mut tail, on_update.as_ref()).await;
+                            return Err(format!("bash: wait failed: {e}"));
+                        }
+                    }
+                    break;
+                }
+                read = stdout.read(&mut stdout_buf), if stdout_open => {
+                    match read {
+                        Ok(0) => stdout_open = false,
+                        Ok(n) => push_output(&mut tail, &stdout_buf[..n], on_update.as_ref()),
+                        Err(_) => stdout_open = false,
+                    }
+                }
+                read = stderr.read(&mut stderr_buf), if stderr_open => {
+                    match read {
+                        Ok(0) => stderr_open = false,
+                        Ok(n) => push_output(&mut tail, &stderr_buf[..n], on_update.as_ref()),
+                        Err(_) => stderr_open = false,
+                    }
+                }
             }
         }
     }
 
-    drain_with_grace(stdout, stderr, &mut tail).await;
+    drain_with_grace(stdout, stderr, &mut tail, on_update.as_ref()).await;
     let text = apply_truncation(&tail.buf_to_string(), tail.total_lines, tail.overflowed);
 
     if timed_out {
@@ -267,6 +451,45 @@ pub async fn bash_execute(
     }
 }
 
+async fn terminate_child_process_tree(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        if kill_process_group(pid).await {
+            let _ = child.wait().await;
+            return;
+        }
+    }
+
+    let _ = child.kill().await;
+}
+
+#[cfg(unix)]
+async fn kill_process_group(pid: u32) -> bool {
+    let group = format!("-{pid}");
+    if tokio::process::Command::new("kill")
+        .arg("-KILL")
+        .arg(&group)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+    {
+        return true;
+    }
+
+    tokio::process::Command::new("kill")
+        .arg("-KILL")
+        .arg(pid.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
 impl OutputTail {
     fn buf_to_string(&self) -> String {
         String::from_utf8_lossy(&self.buf).into_owned()
@@ -274,15 +497,24 @@ impl OutputTail {
 }
 
 pub fn bash_tool(cwd: PathBuf) -> AgentTool {
-    let execute: ToolFn = Arc::new(move |args| {
+    bash_tool_with_operations(cwd, Arc::new(RealBashOperations))
+}
+
+pub fn bash_tool_with_operations(cwd: PathBuf, ops: Arc<dyn BashOperations>) -> AgentTool {
+    let execute: ToolFn = Arc::new(move |args, on_update| {
         let cwd = cwd.clone();
-        Box::pin(async move { bash_execute(&cwd, args).await })
+        let ops = ops.clone();
+        Box::pin(async move {
+            bash_execute_with_operations(&cwd, args, &BashOptions::default(), on_update, ops)
+                .await
+                .map(AgentToolOutput::new)
+        })
     });
     AgentTool {
         name: "bash".into(),
         description: DESCRIPTION.into(),
         parameters: schema(),
-        execution_mode: None,
+        execution_mode: Some(pi_agent_core::ToolExecutionMode::Sequential),
         execute,
     }
 }

@@ -19,7 +19,7 @@ pub use loader::{CancellableLoader, Loader, LoaderIndicatorOptions};
 pub use markdown::Markdown;
 pub use select_list::{SelectItem, SelectList};
 pub use selector_dialog::{SelectorDialog, SelectorDialogOptions};
-pub use settings_list::{SettingItem, SettingsList, SettingsListOptions};
+pub use settings_list::{SettingItem, SettingsList, SettingsListOptions, SettingsSubmenuDone};
 pub use spacer::Spacer;
 pub use text::Text;
 pub use truncated_text::TruncatedText;

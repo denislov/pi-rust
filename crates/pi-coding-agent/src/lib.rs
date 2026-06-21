@@ -3,6 +3,7 @@ pub mod config;
 pub mod error;
 pub mod input;
 pub mod interactive;
+mod list_models;
 pub mod models;
 pub mod print_mode;
 pub mod protocol;
@@ -95,6 +96,17 @@ pub async fn run_cli_with_options_and_stdin(
 
     if parsed.version {
         return CliOutput::success(format!("{}\n", env!("CARGO_PKG_VERSION")));
+    }
+
+    if let Some(search) = parsed.list_models.as_ref() {
+        return match list_models::list_models_output(
+            search.as_deref(),
+            parsed.provider.as_deref(),
+            parsed.json,
+        ) {
+            Ok(stdout) => CliOutput::success(stdout),
+            Err(error) => CliOutput::failure(error),
+        };
     }
 
     if !parsed.print && !parsed.mode_explicit {

@@ -2,7 +2,7 @@ use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
 use globset::{GlobBuilder, GlobMatcher};
 use ignore::{DirEntry, WalkBuilder};
-use pi_agent_core::{AgentTool, ToolFn};
+use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
 use regex::RegexBuilder;
 use std::path::{Path, PathBuf};
@@ -316,9 +316,9 @@ pub async fn grep_execute(
 }
 
 pub fn grep_tool(cwd: PathBuf) -> AgentTool {
-    let execute: ToolFn = Arc::new(move |args| {
+    let execute: ToolFn = Arc::new(move |args, _on_update| {
         let cwd = cwd.clone();
-        Box::pin(async move { grep_execute(&cwd, args).await })
+        Box::pin(async move { grep_execute(&cwd, args).await.map(AgentToolOutput::new) })
     });
     AgentTool {
         name: "grep".into(),

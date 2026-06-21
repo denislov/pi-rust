@@ -2,7 +2,8 @@ use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{
     DEFAULT_MAX_BYTES, TruncatedBy, TruncationOptions, format_size, truncate_head,
 };
-use pi_agent_core::{AgentTool, ToolFn};
+use futures::future::{BoxFuture, FutureExt};
+use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,9 +43,35 @@ fn text_block(t: String) -> Vec<ContentBlock> {
     }]
 }
 
+pub trait ReadOperations: Send + Sync {
+    fn read_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>>;
+}
+
+#[derive(Debug, Default)]
+pub struct RealReadOperations;
+
+impl ReadOperations for RealReadOperations {
+    fn read_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>> {
+        async move {
+            tokio::fs::read(path)
+                .await
+                .map_err(|e| format!("read: cannot read {}: {e}", path.display()))
+        }
+        .boxed()
+    }
+}
+
 pub async fn read_execute(
     cwd: &Path,
     args: serde_json::Value,
+) -> Result<Vec<ContentBlock>, String> {
+    read_execute_with_operations(cwd, args, Arc::new(RealReadOperations)).await
+}
+
+pub async fn read_execute_with_operations(
+    cwd: &Path,
+    args: serde_json::Value,
+    ops: Arc<dyn ReadOperations>,
 ) -> Result<Vec<ContentBlock>, String> {
     let path = args
         .get("path")
@@ -61,18 +88,13 @@ pub async fn read_execute(
         .map(|n| n as usize);
     let abs = resolve_to_cwd(&path, cwd);
 
-    let _readable = tokio::fs::File::open(&abs)
-        .await
-        .map_err(|e| format!("read: cannot read {}: {e}", abs.display()))?;
+    let raw = ops.read_file(&abs).await?;
     if let Some(mime) = image_mime(&abs) {
         return Ok(text_block(format!(
             "Read image file [{mime}]\n[Image content is not supported in headless mode yet; omitted.]"
         )));
     }
 
-    let raw = tokio::fs::read(&abs)
-        .await
-        .map_err(|e| format!("read: cannot read {}: {e}", abs.display()))?;
     let content = String::from_utf8_lossy(&raw).into_owned();
     let all: Vec<&str> = content.split('\n').collect();
     let total = all.len();
@@ -137,9 +159,18 @@ pub async fn read_execute(
 }
 
 pub fn read_tool(cwd: PathBuf) -> AgentTool {
-    let execute: ToolFn = Arc::new(move |args| {
+    read_tool_with_operations(cwd, Arc::new(RealReadOperations))
+}
+
+pub fn read_tool_with_operations(cwd: PathBuf, ops: Arc<dyn ReadOperations>) -> AgentTool {
+    let execute: ToolFn = Arc::new(move |args, _on_update| {
         let cwd = cwd.clone();
-        Box::pin(async move { read_execute(&cwd, args).await })
+        let ops = ops.clone();
+        Box::pin(async move {
+            read_execute_with_operations(&cwd, args, ops)
+                .await
+                .map(AgentToolOutput::new)
+        })
     });
     AgentTool {
         name: "read".into(),

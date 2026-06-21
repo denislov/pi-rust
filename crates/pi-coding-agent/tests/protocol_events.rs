@@ -1,4 +1,4 @@
-use pi_agent_core::{AgentToolResult, session::StoredAgentMessage};
+use pi_agent_core::{AgentToolOutput, AgentToolResult, session::StoredAgentMessage};
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
 use pi_coding_agent::protocol::events::ProtocolEventAdapter;
 use pi_coding_agent::protocol::types::ProtocolEvent;
@@ -90,6 +90,7 @@ fn adapter_maps_tool_events_with_content_result() {
             }],
             is_error: false,
             terminate: false,
+            details: None,
         },
     });
     assert!(matches!(
@@ -99,6 +100,69 @@ fn adapter_maps_tool_events_with_content_result() {
             ..
         }
     ));
+}
+
+#[test]
+fn adapter_includes_tool_result_details() {
+    let mut adapter = ProtocolEventAdapter::new("faux".into(), "faux-model".into());
+    let events = adapter.push(&pi_agent_core::AgentEvent::ToolCallEnd {
+        tool_call_id: "tool_1".into(),
+        tool_name: "edit".into(),
+        result: AgentToolResult {
+            content: vec![ContentBlock::Text {
+                text: "edited".into(),
+                text_signature: None,
+            }],
+            is_error: false,
+            terminate: false,
+            details: Some(serde_json::json!({
+                "diff": "-1 old\n+1 new",
+                "firstChangedLine": 1
+            })),
+        },
+    });
+
+    match &events[0] {
+        ProtocolEvent::ToolExecutionEnd { result, .. } => {
+            assert_eq!(result.details.as_ref().unwrap()["firstChangedLine"], 1);
+            assert_eq!(result.details.as_ref().unwrap()["diff"], "-1 old\n+1 new");
+        }
+        other => panic!("expected tool execution end, got {other:?}"),
+    }
+}
+
+#[test]
+fn adapter_maps_tool_update_event() {
+    let mut adapter = ProtocolEventAdapter::new("faux".into(), "faux-model".into());
+    let events = adapter.push(&pi_agent_core::AgentEvent::ToolCallUpdate {
+        tool_call_id: "tool_1".into(),
+        tool_name: "bash".into(),
+        update: AgentToolOutput::new(vec![ContentBlock::Text {
+            text: "partial output".into(),
+            text_signature: None,
+        }])
+        .with_details(serde_json::json!({"stream": "stdout"})),
+    });
+
+    match &events[0] {
+        ProtocolEvent::ToolExecutionUpdate {
+            tool_call_id,
+            tool_name,
+            result,
+        } => {
+            assert_eq!(tool_call_id, "tool_1");
+            assert_eq!(tool_name, "bash");
+            assert_eq!(result.details.as_ref().unwrap()["stream"], "stdout");
+            assert_eq!(
+                result.content,
+                vec![ContentBlock::Text {
+                    text: "partial output".into(),
+                    text_signature: None,
+                }]
+            );
+        }
+        other => panic!("expected tool execution update, got {other:?}"),
+    }
 }
 
 #[test]

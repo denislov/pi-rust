@@ -1,6 +1,11 @@
 use pi_ai::types::ContentBlock;
-use pi_coding_agent::tools::bash::bash_execute;
+use pi_coding_agent::tools::bash::{
+    BashOptions, BashSpawnContext, bash_execute, bash_execute_with_options,
+    bash_execute_with_options_and_update,
+};
+use std::sync::Arc;
 use tempfile::tempdir;
+use tokio::sync::mpsc;
 
 fn text(b: &[ContentBlock]) -> String {
     b.iter()
@@ -19,6 +24,69 @@ async fn captures_stdout() {
         .await
         .unwrap();
     assert!(text(&r).contains("hello"));
+}
+
+#[tokio::test]
+async fn supports_shell_options_prefix_and_spawn_hook() {
+    let d = tempdir().unwrap();
+    let options = BashOptions {
+        shell_path: Some("/bin/sh".into()),
+        command_prefix: Some("echo prefix".into()),
+        spawn_hook: Some(Arc::new(|mut context: BashSpawnContext| {
+            context.command = format!("{}\necho \"$PI_BASH_HOOK\"", context.command);
+            context.env.insert("PI_BASH_HOOK".into(), "hooked".into());
+            context
+        })),
+    };
+
+    let r = bash_execute_with_options(
+        d.path(),
+        serde_json::json!({"command":"echo body"}),
+        &options,
+    )
+    .await
+    .unwrap();
+    let t = text(&r);
+    assert!(t.contains("prefix"), "{t}");
+    assert!(t.contains("body"), "{t}");
+    assert!(t.contains("hooked"), "{t}");
+}
+
+#[tokio::test]
+async fn streams_output_update_before_process_exits() {
+    let d = tempdir().unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let on_update = Arc::new(move |update: pi_agent_core::AgentToolOutput| {
+        let text = update
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = tx.send(text);
+    });
+
+    let options = BashOptions::default();
+    let fut = bash_execute_with_options_and_update(
+        d.path(),
+        serde_json::json!({"command":"printf 'first\\n'; sleep 0.5; printf 'second\\n'"}),
+        &options,
+        Some(on_update),
+    );
+    tokio::pin!(fut);
+
+    let update = tokio::select! {
+        update = rx.recv() => update.expect("expected streamed update"),
+        result = &mut fut => panic!("bash completed before first streamed update: {result:?}"),
+    };
+
+    assert!(update.contains("first"), "{update}");
+    let final_blocks = fut.await.unwrap();
+    let final_text = text(&final_blocks);
+    assert!(final_text.contains("second"), "{final_text}");
 }
 
 #[tokio::test]
@@ -50,6 +118,27 @@ async fn timeout_errors() {
     .await
     .unwrap_err();
     assert!(e.contains("Command timed out after 1 seconds"));
+}
+
+#[tokio::test]
+async fn timeout_kills_background_child_process() {
+    let d = tempdir().unwrap();
+    let marker = d.path().join("child-survived");
+    let command = format!("sh -c 'sleep 1; touch {}' & wait", marker.display());
+
+    let e = bash_execute(
+        d.path(),
+        serde_json::json!({"command": command, "timeout": 0.1}),
+    )
+    .await
+    .unwrap_err();
+    assert!(e.contains("Command timed out after 0.1 seconds"), "{e}");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+    assert!(
+        !marker.exists(),
+        "background child should be killed on timeout"
+    );
 }
 
 #[tokio::test]

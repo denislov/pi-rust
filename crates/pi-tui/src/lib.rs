@@ -18,14 +18,14 @@ pub mod virtual_terminal;
 pub mod word_navigation;
 
 pub use autocomplete::{
-    AutocompleteItem, AutocompleteOptions, AutocompleteSuggestions, CombinedAutocompleteProvider,
-    CompletionEdit, SlashCommand,
+    AutocompleteItem, AutocompleteOptions, AutocompleteProvider, AutocompleteSuggestions,
+    CombinedAutocompleteProvider, CompletionEdit, SlashCommand,
 };
 pub use component::{Component, ComponentId, Container};
 pub use components::{
     BackgroundFn, Box, CancellableLoader, Editor, Image, Input, Loader, LoaderIndicatorOptions,
     Markdown, SelectItem, SelectList, SelectorDialog, SelectorDialogOptions, SettingItem,
-    SettingsList, SettingsListOptions, Spacer, Text, TruncatedText,
+    SettingsList, SettingsListOptions, SettingsSubmenuDone, Spacer, Text, TruncatedText,
 };
 pub use cursor::{CURSOR_MARKER, CursorPosition, extract_cursor_marker};
 pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
@@ -46,7 +46,8 @@ pub use terminal_image::{
     CellDimensions, ImageCellSize, ImageDimensions, ImageProtocol, ImageRenderOptions,
     RenderedImage, TerminalCapabilities, calculate_image_cell_size, delete_all_kitty_images,
     delete_kitty_image, detect_terminal_capabilities_from_env, encode_iterm2, encode_kitty,
-    image_dimensions_from_base64, image_dimensions_from_bytes, is_image_line, render_image,
+    hyperlink, image_dimensions_from_base64, image_dimensions_from_bytes, is_image_line,
+    render_image,
 };
 pub use theme::{
     EditorTheme, MarkdownTheme, SelectListTheme, SettingsListTheme, ThemeMode, ThemePalette,

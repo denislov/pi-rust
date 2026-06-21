@@ -1,9 +1,12 @@
+use pi_agent_core::AgentToolOutput;
 use pi_ai::types::ContentBlock;
 use pi_coding_agent::tools::edit::edit_execute;
 use tempfile::tempdir;
 
-fn text(b: &[ContentBlock]) -> String {
-    b.iter()
+fn text(output: &AgentToolOutput) -> String {
+    output
+        .content
+        .iter()
         .filter_map(|x| match x {
             ContentBlock::Text { text, .. } => Some(text.clone()),
             _ => None,
@@ -25,6 +28,28 @@ async fn exact_replace() {
     .unwrap();
     assert_eq!(std::fs::read_to_string(&p).unwrap(), "hello rust");
     assert!(text(&r).contains("Successfully replaced 1 block(s) in f.txt."));
+}
+
+#[tokio::test]
+async fn returns_diff_details_for_full_file_change() {
+    let d = tempdir().unwrap();
+    let p = d.path().join("f.txt");
+    std::fs::write(&p, "one\ntwo\nthree\n").unwrap();
+    let r = edit_execute(
+        d.path(),
+        serde_json::json!({"path":"f.txt","edits":[{"oldText":"two","newText":"TWO"}]}),
+    )
+    .await
+    .unwrap();
+
+    let details = r.details.expect("edit result should include details");
+    assert_eq!(details["firstChangedLine"], 2);
+    assert!(details["diff"].as_str().unwrap().contains("-2 two"));
+    assert!(details["diff"].as_str().unwrap().contains("+2 TWO"));
+    assert!(details["patch"].as_str().unwrap().contains("--- f.txt"));
+    assert!(details["patch"].as_str().unwrap().contains("+++ f.txt"));
+    assert!(details["patch"].as_str().unwrap().contains("-two"));
+    assert!(details["patch"].as_str().unwrap().contains("+TWO"));
 }
 
 #[tokio::test]

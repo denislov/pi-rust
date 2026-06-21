@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pi_tui::{
-    Component, KeybindingsManager, SettingItem, SettingsList, SettingsListOptions, StdinBuffer,
-    TUI_KEYBINDINGS, visible_width,
+    Component, InputEvent, KeybindingsManager, SettingItem, SettingsList, SettingsListOptions,
+    SettingsSubmenuDone, StdinBuffer, TUI_KEYBINDINGS, matches_key, visible_width,
 };
 
 fn keybindings() -> KeybindingsManager {
@@ -117,4 +117,56 @@ fn settings_list_escape_invokes_cancel_each_time() {
     feed(&mut list, "\x1b");
 
     assert_eq!(*count.borrow(), 2);
+}
+
+struct DoneSubmenu {
+    done: Option<SettingsSubmenuDone>,
+}
+
+impl Component for DoneSubmenu {
+    fn render(&mut self, width: usize) -> Vec<String> {
+        vec![format!("submenu{}", " ".repeat(width.saturating_sub(7)))]
+    }
+
+    fn handle_input(&mut self, event: &InputEvent) {
+        if matches_key(event, "enter") {
+            if let Some(mut done) = self.done.take() {
+                done(Some("light".to_string()));
+            }
+        }
+    }
+}
+
+#[test]
+fn settings_list_opens_submenu_and_applies_done_value() {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let changes_for_callback = Rc::clone(&changes);
+    let mut list = SettingsList::new(
+        vec![SettingItem::new("theme", "Theme", "dark")],
+        5,
+        keybindings(),
+    );
+    list.set_on_change(Box::new(move |id, value| {
+        changes_for_callback
+            .borrow_mut()
+            .push((id.to_string(), value.to_string()));
+    }));
+    list.set_submenu_factory(
+        "theme",
+        Box::new(|current_value, done| {
+            assert_eq!(current_value, "dark");
+            Box::new(DoneSubmenu { done: Some(done) })
+        }),
+    );
+
+    feed(&mut list, "\r");
+    assert_eq!(list.render(12), vec!["submenu     ".to_string()]);
+
+    feed(&mut list, "\r");
+
+    assert_eq!(list.selected_item().unwrap().current_value, "light");
+    assert_eq!(
+        changes.borrow().as_slice(),
+        &[("theme".to_string(), "light".to_string())]
+    );
 }

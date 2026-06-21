@@ -1,6 +1,7 @@
 use async_stream::stream;
-use futures::StreamExt;
+use futures::channel::mpsc;
 use futures::stream::FuturesUnordered;
+use futures::{FutureExt, StreamExt};
 use std::sync::{Arc, RwLock};
 
 use crate::agent::AgentState;
@@ -14,8 +15,8 @@ use crate::hooks::{
 };
 use crate::queues::drain_queue;
 use crate::types::{
-    AgentEvent, AgentMessage, AgentStream, AgentToolResult, ProviderRequestSnapshot, ThinkingLevel,
-    ToolExecutionMode,
+    AgentEvent, AgentMessage, AgentStream, AgentToolOutput, AgentToolResult,
+    ProviderRequestSnapshot, ThinkingLevel, ToolExecutionMode, ToolUpdateCallback,
 };
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, ThinkingConfig,
@@ -559,15 +560,62 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                             }
 
                             //--- execute ---
-                            let mut result = match &tool {
-                                Some(t) => {
-                                    match (t.execute)(tool_args.clone()).await {
-                                        Ok(blocks) => AgentToolResult::ok(blocks),
-                                        Err(e) => AgentToolResult::error(e),
+                            let (update_tx, mut update_rx) = mpsc::unbounded::<AgentToolOutput>();
+                            let update_callback: ToolUpdateCallback = Arc::new(move |update| {
+                                let _ = update_tx.unbounded_send(update);
+                            });
+                            let mut execute_future = Box::pin({
+                                let tool = tool.clone();
+                                let tool_args = tool_args.clone();
+                                let tool_name = tool_name.clone();
+                                async move {
+                                    match tool {
+                                        Some(t) => match (t.execute)(
+                                            tool_args,
+                                            Some(update_callback),
+                                        )
+                                        .await
+                                        {
+                                            Ok(output) => AgentToolResult::from_output(output),
+                                            Err(e) => AgentToolResult::error(e),
+                                        },
+                                        None => AgentToolResult::error(format!(
+                                            "unknown tool: {}",
+                                            tool_name
+                                        )),
                                     }
                                 }
-                                None => AgentToolResult::error(format!("unknown tool: {}", tool_name)),
+                            })
+                            .fuse();
+                            let mut update_open = true;
+                            let mut result = loop {
+                                if !update_open {
+                                    break execute_future.await;
+                                }
+                                futures::select! {
+                                    maybe_update = update_rx.next().fuse() => {
+                                        if let Some(update) = maybe_update {
+                                            yield AgentEvent::ToolCallUpdate {
+                                                tool_call_id: tool_id.clone(),
+                                                tool_name: tool_name.clone(),
+                                                update,
+                                            };
+                                        } else {
+                                            update_open = false;
+                                        }
+                                    }
+                                    completed = &mut execute_future => {
+                                        break completed;
+                                    }
+                                }
                             };
+                            while let Some(Some(update)) = update_rx.next().now_or_never() {
+                                yield AgentEvent::ToolCallUpdate {
+                                    tool_call_id: tool_id.clone(),
+                                    tool_name: tool_name.clone(),
+                                    update,
+                                };
+                            }
 
                             //--- after hook ---
                             let after_hook = {
@@ -706,8 +754,8 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                         Some(r) => r,
                                         None => match &p.tool {
                                             Some(t) => {
-                                                match (t.execute)(tool_args).await {
-                                                    Ok(blocks) => AgentToolResult::ok(blocks),
+                                                match (t.execute)(tool_args, None).await {
+                                                    Ok(output) => AgentToolResult::from_output(output),
                                                     Err(e) => AgentToolResult::error(e),
                                                 }
                                             }

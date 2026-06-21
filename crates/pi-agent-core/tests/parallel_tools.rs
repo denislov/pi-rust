@@ -1,7 +1,7 @@
 mod common;
 use common::faux_model;
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentConfig, AgentTool, ToolExecutionMode};
+use pi_agent_core::{Agent, AgentConfig, AgentTool, AgentToolOutput, ToolExecutionMode};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
 use pi_ai::types::{ContentBlock, StopReason};
@@ -16,14 +16,14 @@ fn delayed_tool(name: &str, delay_ms: u64, output_text: &str) -> AgentTool {
         description: format!("delayed {}ms", delay_ms),
         parameters: serde_json::json!({"type": "object"}),
         execution_mode: None,
-        execute: Arc::new(move |_| {
+        execute: Arc::new(move |_, _on_update| {
             let text = text.clone();
             Box::pin(async move {
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                Ok(vec![ContentBlock::Text {
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text,
                     text_signature: None,
-                }])
+                }]))
             })
         }),
     }

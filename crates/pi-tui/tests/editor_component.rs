@@ -1,6 +1,6 @@
 use pi_tui::{
-    CURSOR_MARKER, Component, Editor, KeybindingsManager, StdinBuffer, TUI_KEYBINDINGS,
-    extract_cursor_marker,
+    CURSOR_MARKER, Component, Editor, KeybindingsManager, SlashCommand, StdinBuffer,
+    TUI_KEYBINDINGS, extract_cursor_marker,
 };
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +9,13 @@ fn feed(editor: &mut Editor, data: &str) {
     for event in buffer.process(data) {
         editor.handle_input(&event);
     }
+}
+
+fn editor() -> Editor {
+    Editor::new(KeybindingsManager::new(
+        TUI_KEYBINDINGS.clone(),
+        Default::default(),
+    ))
 }
 
 #[test]
@@ -282,4 +289,159 @@ fn editor_set_text_resets_stale_undo_history() {
     feed(&mut editor, "\x1b[45;5u");
     assert_eq!(editor.text(), "");
     assert_eq!(editor.cursor(), 0);
+}
+
+#[test]
+fn editor_on_change_fires_for_text_changes_and_disable_submit_blocks_enter() {
+    let mut editor = editor();
+    let changes = Arc::new(Mutex::new(Vec::new()));
+    let changes_for_callback = Arc::clone(&changes);
+    editor.set_on_change(Box::new(move |text| {
+        changes_for_callback.lock().unwrap().push(text.to_string());
+    }));
+
+    feed(&mut editor, "a");
+    feed(&mut editor, "\x7f");
+    editor.set_text("ready");
+
+    editor.set_disable_submit(true);
+    let submitted = Arc::new(Mutex::new(Vec::new()));
+    let submitted_for_callback = Arc::clone(&submitted);
+    editor.set_on_submit(Box::new(move |text| {
+        submitted_for_callback
+            .lock()
+            .unwrap()
+            .push(text.to_string());
+    }));
+    feed(&mut editor, "\r");
+
+    assert_eq!(editor.text(), "ready");
+    assert!(submitted.lock().unwrap().is_empty());
+
+    editor.set_disable_submit(false);
+    feed(&mut editor, "\r");
+
+    assert_eq!(submitted.lock().unwrap().as_slice(), &["ready".to_string()]);
+    assert_eq!(
+        changes.lock().unwrap().as_slice(),
+        &[
+            "a".to_string(),
+            "".to_string(),
+            "ready".to_string(),
+            "".to_string()
+        ]
+    );
+}
+
+#[test]
+fn editor_prompt_history_skips_empty_and_consecutive_duplicates() {
+    let mut editor = editor();
+    editor.add_to_history("");
+    editor.add_to_history("  ");
+    editor.add_to_history("first");
+    editor.add_to_history("second");
+    editor.add_to_history("second");
+
+    feed(&mut editor, "\x1b[A");
+    assert_eq!(editor.text(), "second");
+    feed(&mut editor, "\x1b[A");
+    assert_eq!(editor.text(), "first");
+    feed(&mut editor, "\x1b[B");
+    assert_eq!(editor.text(), "second");
+    feed(&mut editor, "\x1b[B");
+    assert_eq!(editor.text(), "");
+}
+
+#[test]
+fn editor_jump_forward_and_backward_to_requested_character() {
+    let mut editor = editor();
+    feed(&mut editor, "abcαabc");
+    feed(&mut editor, "\x01");
+
+    feed(&mut editor, "\x1d");
+    feed(&mut editor, "α");
+    assert_eq!(editor.cursor(), "abc".len());
+
+    feed(&mut editor, "\x05");
+    feed(&mut editor, "\x1b[93;7u");
+    feed(&mut editor, "a");
+    assert_eq!(editor.cursor(), "abcα".len());
+}
+
+#[test]
+fn editor_repeating_jump_hotkey_cancels_jump_mode() {
+    let mut editor = editor();
+    feed(&mut editor, "abc");
+    feed(&mut editor, "\x1d");
+    feed(&mut editor, "\x1d");
+    feed(&mut editor, "x");
+
+    assert_eq!(editor.text(), "abcx");
+    assert_eq!(editor.cursor(), "abcx".len());
+}
+
+#[test]
+fn editor_large_paste_uses_marker_but_submit_expands_content() {
+    let mut editor = editor();
+    let pasted = (0..12)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    feed(&mut editor, &format!("\x1b[200~{pasted}\x1b[201~"));
+
+    assert_eq!(editor.text(), "[paste #1 +12 lines]");
+    assert_eq!(editor.expanded_text(), pasted);
+
+    let submitted = Arc::new(Mutex::new(None));
+    let submitted_for_callback = Arc::clone(&submitted);
+    editor.set_on_submit(Box::new(move |text| {
+        *submitted_for_callback.lock().unwrap() = Some(text.to_string());
+    }));
+    feed(&mut editor, "\r");
+
+    assert_eq!(submitted.lock().unwrap().as_deref(), Some(pasted.as_str()));
+    assert_eq!(editor.text(), "");
+}
+
+#[test]
+fn editor_scrolls_long_input_and_shows_more_indicators() {
+    let mut editor = editor();
+    editor.set_viewport_size(20, 10);
+    editor.set_text(
+        (0..10)
+            .map(|index| format!("line{index}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
+    let lines = editor.render(20);
+
+    assert!(
+        lines.len() < 10,
+        "expected editor to render a visible window: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("↑")),
+        "expected top scroll indicator: {lines:?}"
+    );
+}
+
+#[test]
+fn editor_tab_completion_renders_and_applies_slash_suggestions() {
+    let mut editor = editor();
+    editor.set_autocomplete_provider(Box::new(pi_tui::CombinedAutocompleteProvider::new(
+        vec![SlashCommand::new("model"), SlashCommand::new("session")],
+        std::env::temp_dir(),
+    )));
+
+    feed(&mut editor, "/mo");
+    feed(&mut editor, "\t");
+    let rendered = editor.render(40).join("\n");
+    assert!(
+        rendered.contains("model"),
+        "expected autocomplete row in {rendered:?}"
+    );
+
+    feed(&mut editor, "\t");
+    assert_eq!(editor.text(), "/model ");
 }

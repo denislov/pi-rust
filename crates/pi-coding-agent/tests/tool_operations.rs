@@ -1,0 +1,245 @@
+use futures::future::{BoxFuture, FutureExt};
+use pi_ai::types::ContentBlock;
+use pi_coding_agent::tools::bash::{BashOperations, BashOptions};
+use pi_coding_agent::tools::bash::{bash_execute_with_operations, bash_tool_with_operations};
+use pi_coding_agent::tools::edit::{EditOperations, edit_execute_with_operations};
+use pi_coding_agent::tools::read::{ReadOperations, read_execute_with_operations};
+use pi_coding_agent::tools::write::{WriteOperations, write_execute_with_operations};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tempfile::tempdir;
+
+fn text(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[derive(Default)]
+struct FakeReadOps {
+    paths: Mutex<Vec<PathBuf>>,
+}
+
+impl ReadOperations for FakeReadOps {
+    fn read_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>> {
+        async move {
+            self.paths.lock().unwrap().push(path.to_path_buf());
+            Ok(b"from fake read ops\n".to_vec())
+        }
+        .boxed()
+    }
+}
+
+#[tokio::test]
+async fn read_can_use_injected_operations() {
+    let cwd = tempdir().unwrap();
+    let ops = Arc::new(FakeReadOps::default());
+
+    let blocks = read_execute_with_operations(
+        cwd.path(),
+        serde_json::json!({"path": "file.txt"}),
+        ops.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert!(text(&blocks).contains("from fake read ops"));
+    assert_eq!(ops.paths.lock().unwrap()[0], cwd.path().join("file.txt"));
+}
+
+#[derive(Default)]
+struct FakeWriteOps {
+    writes: Mutex<Vec<(PathBuf, Vec<u8>)>>,
+}
+
+impl WriteOperations for FakeWriteOps {
+    fn write_file<'a>(
+        &'a self,
+        path: &'a Path,
+        content: &'a [u8],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        async move {
+            self.writes
+                .lock()
+                .unwrap()
+                .push((path.to_path_buf(), content.to_vec()));
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+#[tokio::test]
+async fn write_can_use_injected_operations() {
+    let cwd = tempdir().unwrap();
+    let ops = Arc::new(FakeWriteOps::default());
+
+    let blocks = write_execute_with_operations(
+        cwd.path(),
+        serde_json::json!({"path": "out.txt", "content": "fake content"}),
+        ops.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert!(text(&blocks).contains("Successfully wrote 12 bytes to out.txt"));
+    let writes = ops.writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, cwd.path().join("out.txt"));
+    assert_eq!(writes[0].1, b"fake content");
+    assert!(!cwd.path().join("out.txt").exists());
+}
+
+#[derive(Default)]
+struct FakeEditOps {
+    content: Mutex<Vec<u8>>,
+    writes: Mutex<Vec<(PathBuf, Vec<u8>)>>,
+}
+
+impl FakeEditOps {
+    fn with_content(content: &str) -> Self {
+        Self {
+            content: Mutex::new(content.as_bytes().to_vec()),
+            writes: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl EditOperations for FakeEditOps {
+    fn read_file<'a>(&'a self, _path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>> {
+        async move { Ok(self.content.lock().unwrap().clone()) }.boxed()
+    }
+
+    fn write_file<'a>(
+        &'a self,
+        path: &'a Path,
+        content: &'a [u8],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        async move {
+            self.writes
+                .lock()
+                .unwrap()
+                .push((path.to_path_buf(), content.to_vec()));
+            *self.content.lock().unwrap() = content.to_vec();
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+#[tokio::test]
+async fn edit_can_use_injected_operations() {
+    let cwd = tempdir().unwrap();
+    let ops = Arc::new(FakeEditOps::with_content("one\ntwo\n"));
+
+    let output = edit_execute_with_operations(
+        cwd.path(),
+        serde_json::json!({
+            "path": "edit.txt",
+            "edits": [{"oldText": "two", "newText": "deux"}]
+        }),
+        ops.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert!(text(&output.content).contains("Successfully replaced 1 block"));
+    let writes = ops.writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, cwd.path().join("edit.txt"));
+    assert_eq!(writes[0].1, b"one\ndeux\n");
+    let details = output.details.expect("edit output should include details");
+    assert_eq!(details["firstChangedLine"], serde_json::json!(2));
+}
+
+#[derive(Default)]
+struct FakeBashOps {
+    calls: Mutex<Vec<(PathBuf, String)>>,
+}
+
+impl BashOperations for FakeBashOps {
+    fn execute<'a>(
+        &'a self,
+        cwd: &'a Path,
+        args: serde_json::Value,
+        _options: &'a BashOptions,
+        on_update: Option<pi_agent_core::ToolUpdateCallback>,
+    ) -> BoxFuture<'a, Result<Vec<ContentBlock>, String>> {
+        async move {
+            let command = args
+                .get("command")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            self.calls
+                .lock()
+                .unwrap()
+                .push((cwd.to_path_buf(), command));
+            if let Some(on_update) = on_update {
+                on_update(pi_agent_core::AgentToolOutput::new(vec![
+                    ContentBlock::Text {
+                        text: "fake update".into(),
+                        text_signature: None,
+                    },
+                ]));
+            }
+            Ok(vec![ContentBlock::Text {
+                text: "fake final".into(),
+                text_signature: None,
+            }])
+        }
+        .boxed()
+    }
+}
+
+#[tokio::test]
+async fn bash_can_use_injected_operations_and_stream_updates() {
+    let cwd = tempdir().unwrap();
+    let ops = Arc::new(FakeBashOps::default());
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let update_sink = {
+        let updates = updates.clone();
+        Arc::new(move |output: pi_agent_core::AgentToolOutput| {
+            updates.lock().unwrap().push(text(&output.content));
+        })
+    };
+
+    let blocks = bash_execute_with_operations(
+        cwd.path(),
+        serde_json::json!({"command": "echo real shell should not run"}),
+        &BashOptions::default(),
+        Some(update_sink),
+        ops.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(text(&blocks), "fake final");
+    assert_eq!(updates.lock().unwrap().as_slice(), ["fake update"]);
+    assert_eq!(
+        ops.calls.lock().unwrap()[0],
+        (
+            cwd.path().to_path_buf(),
+            "echo real shell should not run".to_string()
+        )
+    );
+}
+
+#[tokio::test]
+async fn bash_tool_accepts_injected_operations() {
+    let cwd = tempdir().unwrap();
+    let ops = Arc::new(FakeBashOps::default());
+    let tool = bash_tool_with_operations(cwd.path().to_path_buf(), ops.clone());
+
+    let output = (tool.execute)(serde_json::json!({"command": "from tool"}), None)
+        .await
+        .unwrap();
+
+    assert_eq!(text(&output.content), "fake final");
+    assert_eq!(ops.calls.lock().unwrap()[0].1, "from tool");
+}

@@ -1,4 +1,4 @@
-use pi_tui::{Color, Component, Markdown, Style, paint_with, visible_width};
+use pi_tui::{Color, Component, Markdown, Style, color_enabled, paint_with, visible_width};
 
 fn bold() -> Style {
     Style::fg(Color::Default).bold()
@@ -39,7 +39,7 @@ fn markdown_lines_do_not_exceed_width() {
 fn markdown_heading_is_bold_when_color_enabled() {
     let mut markdown = Markdown::new("# Title");
     let lines = markdown.render(40);
-    let expected = paint_with("Title", &bold(), true);
+    let expected = paint_with("Title", &bold(), color_enabled());
     assert_eq!(lines, vec![expected]);
 }
 
@@ -49,9 +49,51 @@ fn markdown_inline_code_is_reverse_when_color_enabled() {
     let lines = markdown.render(40);
     let joined = lines.join("\n");
     assert!(
-        joined.contains(&paint_with("code", &reverse(), true)),
+        joined.contains(&paint_with("code", &reverse(), color_enabled())),
         "expected reverse-styled inline code in: {joined:?}"
     );
+}
+
+#[test]
+fn markdown_strong_text_is_bold_when_color_enabled() {
+    let mut markdown = Markdown::new("A **bold** word");
+    let lines = markdown.render(40);
+    let joined = lines.join("\n");
+
+    assert!(
+        joined.contains(&paint_with("bold", &bold(), color_enabled())),
+        "expected bold-styled strong text in: {joined:?}"
+    );
+}
+
+#[test]
+fn markdown_link_uses_osc8_when_hyperlinks_are_enabled() {
+    let mut markdown = Markdown::new("Open [docs](https://example.com/docs).");
+    markdown.set_hyperlinks_enabled(true);
+
+    let joined = markdown.render(80).join("\n");
+
+    assert!(
+        joined.contains("\x1b]8;;https://example.com/docs\x1b\\"),
+        "expected OSC 8 opener in: {joined:?}"
+    );
+    assert!(
+        joined.contains("\x1b]8;;\x1b\\"),
+        "expected OSC 8 closer after link text in: {joined:?}"
+    );
+    assert_eq!(visible_width(&joined), "Open docs.".len());
+}
+
+#[test]
+fn markdown_link_falls_back_to_url_when_hyperlinks_are_disabled() {
+    let mut markdown = Markdown::new("Open [docs](https://example.com/docs).");
+    markdown.set_hyperlinks_enabled(false);
+
+    let joined = markdown.render(80).join("\n");
+
+    assert!(joined.contains("docs"));
+    assert!(joined.contains("(https://example.com/docs)"));
+    assert!(!joined.contains("\x1b]8;;"));
 }
 
 #[test]
@@ -60,7 +102,7 @@ fn markdown_blockquote_is_dim_when_color_enabled() {
     let lines = markdown.render(40);
     let joined = lines.join("\n");
     assert!(
-        joined.contains(&paint_with("> quoted text", &dim(), true)),
+        joined.contains(&paint_with("> quoted text", &dim(), color_enabled())),
         "expected dim-styled blockquote in: {joined:?}"
     );
 }
@@ -70,7 +112,7 @@ fn markdown_rule_is_dim_when_color_enabled() {
     let mut markdown = Markdown::new("---");
     let lines = markdown.render(40);
     let joined = lines.join("\n");
-    let dim_rule = paint_with(&"-".repeat(20), &dim(), true);
+    let dim_rule = paint_with(&"-".repeat(20), &dim(), color_enabled());
     assert!(
         joined.contains(&dim_rule),
         "expected dim-styled rule in: {joined:?}"
@@ -83,8 +125,10 @@ fn markdown_preserves_inline_punctuation_spacing() {
     let lines = markdown.render(80);
     let joined = lines.join("\n");
     // The visible text (ignoring ANSI) must still read correctly.
-    assert!(joined.contains("A paragraph with bold text and"));
-    assert!(joined.contains(&paint_with("code", &reverse(), true)));
+    assert!(joined.contains("A paragraph with "));
+    assert!(joined.contains("bold"));
+    assert!(joined.contains(" text and"));
+    assert!(joined.contains(&paint_with("code", &reverse(), color_enabled())));
 }
 
 #[test]
@@ -93,8 +137,8 @@ fn markdown_code_block_has_dim_fence_rows_and_dim_content() {
     let lines = markdown.render(40);
     let joined = lines.join("\n");
 
-    let dim_fence = paint_with("```", &dim(), true);
-    let dim_content = paint_with("   fn main() {}", &dim(), true);
+    let dim_fence = paint_with("```", &dim(), color_enabled());
+    let dim_content = paint_with("   fn main() {}", &dim(), color_enabled());
 
     assert!(
         joined.contains(&dim_fence),
@@ -118,11 +162,11 @@ fn markdown_code_block_multiline_content_each_line_indented_and_dim() {
     let lines = markdown.render(40);
     let joined = lines.join("\n");
     assert!(
-        joined.contains(&paint_with("   let a = 1;", &dim(), true)),
+        joined.contains(&paint_with("   let a = 1;", &dim(), color_enabled())),
         "expected dim indented first line in: {joined:?}"
     );
     assert!(
-        joined.contains(&paint_with("   let b = 2;", &dim(), true)),
+        joined.contains(&paint_with("   let b = 2;", &dim(), color_enabled())),
         "expected dim indented second line in: {joined:?}"
     );
 }

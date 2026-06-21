@@ -1,5 +1,8 @@
+use crate::tools::edit_diff::{generate_diff_string, generate_unified_patch};
+use crate::tools::file_mutation_queue::with_file_mutation_queue;
 use crate::tools::path::resolve_to_cwd;
-use pi_agent_core::{AgentTool, ToolFn};
+use futures::future::{BoxFuture, FutureExt};
+use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -224,10 +227,51 @@ fn parse_edits(args: &serde_json::Value) -> Result<Vec<Edit>, String> {
     Ok(out)
 }
 
-pub async fn edit_execute(
+pub trait EditOperations: Send + Sync {
+    fn read_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>>;
+    fn write_file<'a>(
+        &'a self,
+        path: &'a Path,
+        content: &'a [u8],
+    ) -> BoxFuture<'a, Result<(), String>>;
+}
+
+#[derive(Debug, Default)]
+pub struct RealEditOperations;
+
+impl EditOperations for RealEditOperations {
+    fn read_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>> {
+        async move {
+            tokio::fs::read(path)
+                .await
+                .map_err(|e| format!("Could not edit file: {}. {e}.", path.display()))
+        }
+        .boxed()
+    }
+
+    fn write_file<'a>(
+        &'a self,
+        path: &'a Path,
+        content: &'a [u8],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        async move {
+            tokio::fs::write(path, content)
+                .await
+                .map_err(|e| format!("edit: failed to write {}: {e}", path.display()))
+        }
+        .boxed()
+    }
+}
+
+pub async fn edit_execute(cwd: &Path, args: serde_json::Value) -> Result<AgentToolOutput, String> {
+    edit_execute_with_operations(cwd, args, Arc::new(RealEditOperations)).await
+}
+
+pub async fn edit_execute_with_operations(
     cwd: &Path,
     args: serde_json::Value,
-) -> Result<Vec<ContentBlock>, String> {
+    ops: Arc<dyn EditOperations>,
+) -> Result<AgentToolOutput, String> {
     let path = args
         .get("path")
         .and_then(|v| v.as_str())
@@ -235,28 +279,44 @@ pub async fn edit_execute(
         .to_string();
     let edits = parse_edits(&args)?;
     let abs = resolve_to_cwd(&path, cwd);
-    let raw = tokio::fs::read(&abs)
-        .await
-        .map_err(|e| format!("Could not edit file: {path}. {e}."))?;
-    let content = String::from_utf8_lossy(&raw).into_owned();
-    let (bom, body) = strip_bom(&content);
-    let crlf = detect_crlf(body);
-    let normalized = normalize_to_lf(body);
-    let (_base, new_content) = apply_edits(&normalized, &edits, &path)?;
-    let final_content = format!("{bom}{}", restore_crlf(&new_content, crlf));
-    tokio::fs::write(&abs, final_content)
-        .await
-        .map_err(|e| format!("edit: failed to write {}: {e}", abs.display()))?;
-    Ok(vec![ContentBlock::Text {
-        text: format!("Successfully replaced {} block(s) in {path}.", edits.len()),
-        text_signature: None,
-    }])
+    let target = abs.clone();
+    let ops = ops.clone();
+    with_file_mutation_queue(&abs, move || async move {
+        let raw = ops.read_file(&target).await?;
+        let content = String::from_utf8_lossy(&raw).into_owned();
+        let (bom, body) = strip_bom(&content);
+        let crlf = detect_crlf(body);
+        let normalized = normalize_to_lf(body);
+        let (base, new_content) = apply_edits(&normalized, &edits, &path)?;
+        let final_content = format!("{bom}{}", restore_crlf(&new_content, crlf));
+        ops.write_file(&target, final_content.as_bytes()).await?;
+        let diff = generate_diff_string(&base, &new_content, 4);
+        let patch = generate_unified_patch(&path, &base, &new_content);
+        let mut details = serde_json::json!({
+            "diff": diff.diff,
+            "patch": patch,
+        });
+        if let Some(first_changed_line) = diff.first_changed_line {
+            details["firstChangedLine"] = serde_json::json!(first_changed_line);
+        }
+        Ok(AgentToolOutput::new(vec![ContentBlock::Text {
+            text: format!("Successfully replaced {} block(s) in {path}.", edits.len()),
+            text_signature: None,
+        }])
+        .with_details(details))
+    })
+    .await
 }
 
 pub fn edit_tool(cwd: PathBuf) -> AgentTool {
-    let execute: ToolFn = Arc::new(move |args| {
+    edit_tool_with_operations(cwd, Arc::new(RealEditOperations))
+}
+
+pub fn edit_tool_with_operations(cwd: PathBuf, ops: Arc<dyn EditOperations>) -> AgentTool {
+    let execute: ToolFn = Arc::new(move |args, _on_update| {
         let cwd = cwd.clone();
-        Box::pin(async move { edit_execute(&cwd, args).await })
+        let ops = ops.clone();
+        Box::pin(async move { edit_execute_with_operations(&cwd, args, ops).await })
     });
     AgentTool {
         name: "edit".into(),

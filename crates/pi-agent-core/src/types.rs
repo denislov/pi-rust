@@ -116,10 +116,39 @@ impl FromStr for QueueMode {
 // ── AgentToolResult ────────────────────────────────
 
 #[derive(Debug, Clone)]
+pub struct AgentToolOutput {
+    pub content: Vec<ContentBlock>,
+    pub details: Option<serde_json::Value>,
+}
+
+impl AgentToolOutput {
+    pub fn new(content: Vec<ContentBlock>) -> Self {
+        Self {
+            content,
+            details: None,
+        }
+    }
+
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+}
+
+impl From<Vec<ContentBlock>> for AgentToolOutput {
+    fn from(content: Vec<ContentBlock>) -> Self {
+        Self::new(content)
+    }
+}
+
+// ── AgentToolResult ────────────────────────────────
+
+#[derive(Debug, Clone)]
 pub struct AgentToolResult {
     pub content: Vec<ContentBlock>,
     pub is_error: bool,
     pub terminate: bool,
+    pub details: Option<serde_json::Value>,
 }
 
 impl AgentToolResult {
@@ -128,6 +157,16 @@ impl AgentToolResult {
             content,
             is_error: false,
             terminate: false,
+            details: None,
+        }
+    }
+
+    pub fn from_output(output: AgentToolOutput) -> Self {
+        Self {
+            content: output.content,
+            is_error: false,
+            terminate: false,
+            details: output.details,
         }
     }
 
@@ -139,6 +178,7 @@ impl AgentToolResult {
             }],
             is_error: true,
             terminate: false,
+            details: None,
         }
     }
 }
@@ -317,10 +357,12 @@ pub enum AgentMessage {
 pub type ToolFn = Arc<
     dyn Fn(
             serde_json::Value,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<ContentBlock>, String>> + Send>>
+            Option<ToolUpdateCallback>,
+        ) -> Pin<Box<dyn Future<Output = Result<AgentToolOutput, String>> + Send>>
         + Send
         + Sync,
 >;
+pub type ToolUpdateCallback = Arc<dyn Fn(AgentToolOutput) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct AgentTool {
@@ -347,14 +389,14 @@ impl AgentTool {
             description: description.into(),
             parameters,
             execution_mode: None,
-            execute: Arc::new(move |args| {
+            execute: Arc::new(move |args, _on_update| {
                 let fut = f(args);
                 Box::pin(async move {
                     fut.await.map(|text| {
-                        vec![ContentBlock::Text {
+                        AgentToolOutput::new(vec![ContentBlock::Text {
                             text,
                             text_signature: None,
-                        }]
+                        }])
                     })
                 })
             }),
@@ -424,6 +466,11 @@ pub enum AgentEvent {
         tool_call_id: String,
         tool_name: String,
     },
+    ToolCallUpdate {
+        tool_call_id: String,
+        tool_name: String,
+        update: AgentToolOutput,
+    },
     ToolCallEnd {
         tool_call_id: String,
         tool_name: String,
@@ -459,7 +506,7 @@ mod tests {
             description: "echoes input".into(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
             execution_mode: None,
-            execute: Arc::new(|args| {
+            execute: Arc::new(|args, _on_update| {
                 let text = args
                     .get("text")
                     .and_then(|v| v.as_str())
@@ -468,7 +515,7 @@ mod tests {
                     text: text.to_string(),
                     text_signature: None,
                 }];
-                Box::pin(async move { Ok(result) })
+                Box::pin(async move { Ok(AgentToolOutput::new(result)) })
             }),
         }
     }
@@ -495,10 +542,11 @@ mod tests {
     #[tokio::test]
     async fn tool_fn_executes() {
         let tool = make_text_tool();
-        let result = (tool.execute)(serde_json::json!({"text": "hi"})).await;
+        let result = (tool.execute)(serde_json::json!({"text": "hi"}), None).await;
         assert!(result.is_ok());
-        let blocks = result.unwrap();
-        assert_eq!(blocks.len(), 1);
+        let output = result.unwrap();
+        assert_eq!(output.content.len(), 1);
+        assert_eq!(output.details, None);
     }
 
     #[test]
@@ -593,6 +641,7 @@ mod tests {
         }]);
         assert!(!result.is_error);
         assert!(!result.terminate);
+        assert_eq!(result.details, None);
         assert_eq!(result.content.len(), 1);
     }
 
@@ -601,6 +650,7 @@ mod tests {
         let result = AgentToolResult::error("something went wrong");
         assert!(result.is_error);
         assert!(!result.terminate);
+        assert_eq!(result.details, None);
         assert_eq!(result.content.len(), 1);
     }
 }

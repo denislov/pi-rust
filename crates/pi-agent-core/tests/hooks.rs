@@ -2,7 +2,7 @@ mod common;
 use common::{TestProvider, faux_model, tool_use_turn};
 use futures::StreamExt;
 use pi_agent_core::{
-    AfterToolCallResult, Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool,
+    AfterToolCallResult, Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput,
     BeforeToolCallResult, QueueMode,
 };
 use pi_ai::providers::faux::FauxProvider;
@@ -21,13 +21,13 @@ fn simple_text_tool(name: &str, text: &str) -> AgentTool {
         description: "simple".into(),
         parameters: serde_json::json!({"type": "object"}),
         execution_mode: None,
-        execute: Arc::new(move |_| {
+        execute: Arc::new(move |_, _on_update| {
             let text = text.clone();
             Box::pin(async move {
-                Ok(vec![ContentBlock::Text {
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text,
                     text_signature: None,
-                }])
+                }]))
             })
         }),
     }
@@ -79,13 +79,13 @@ async fn before_hook_blocks_tool_execution() {
         description: "echo".into(),
         parameters: serde_json::json!({"type": "object"}),
         execution_mode: None,
-        execute: Arc::new(move |_| {
+        execute: Arc::new(move |_, _on_update| {
             calls_for_tool.fetch_add(1, Ordering::SeqCst);
             Box::pin(async {
-                Ok(vec![ContentBlock::Text {
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text: "executed".into(),
                     text_signature: None,
-                }])
+                }]))
             })
         }),
     });

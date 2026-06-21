@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentTool};
+use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
 use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
@@ -45,12 +45,12 @@ async fn main() {
         description: "Search the web".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
         execution_mode: None,
-        execute: Arc::new(|_args| {
+        execute: Arc::new(|_args, _on_update| {
             Box::pin(async move {
-                Ok(vec![ContentBlock::Text {
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text: "search results: 42 is the answer".into(),
                     text_signature: None,
-                }])
+                }]))
             })
         }),
     });
@@ -71,6 +71,9 @@ async fn main() {
             }
             AgentEvent::ToolCallStart { tool_name, .. } => {
                 println!("\n[tool call: {}]", tool_name);
+            }
+            AgentEvent::ToolCallUpdate { update, .. } => {
+                println!("[tool update: {:?}]", update.content);
             }
             AgentEvent::ToolCallEnd { result, .. } => {
                 if result.is_error {

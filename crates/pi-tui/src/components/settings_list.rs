@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use crate::{
     Component, InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager,
     fuzzy_filter_indices, truncate_to_width, visible_width,
@@ -49,6 +53,8 @@ pub struct SettingsListOptions {
 
 type OnChange = Box<dyn FnMut(&str, &str)>;
 type OnCancel = Box<dyn FnMut()>;
+pub type SettingsSubmenuDone = Box<dyn FnMut(Option<String>)>;
+type SubmenuFactory = Box<dyn FnMut(&str, SettingsSubmenuDone) -> Box<dyn Component>>;
 
 pub struct SettingsList {
     items: Vec<SettingItem>,
@@ -60,6 +66,11 @@ pub struct SettingsList {
     options: SettingsListOptions,
     on_change: Option<OnChange>,
     on_cancel: Option<OnCancel>,
+    submenu_factories: HashMap<String, SubmenuFactory>,
+    active_submenu: Option<Box<dyn Component>>,
+    active_submenu_item_id: Option<String>,
+    active_submenu_selected: usize,
+    submenu_result: Rc<RefCell<Option<Option<String>>>>,
 }
 
 impl SettingsList {
@@ -92,6 +103,11 @@ impl SettingsList {
             options,
             on_change: None,
             on_cancel: None,
+            submenu_factories: HashMap::new(),
+            active_submenu: None,
+            active_submenu_item_id: None,
+            active_submenu_selected: 0,
+            submenu_result: Rc::new(RefCell::new(None)),
         };
         list.rebuild_filter();
         list
@@ -119,6 +135,10 @@ impl SettingsList {
         self.on_cancel = Some(callback);
     }
 
+    pub fn set_submenu_factory(&mut self, id: impl Into<String>, factory: SubmenuFactory) {
+        self.submenu_factories.insert(id.into(), factory);
+    }
+
     fn rebuild_filter(&mut self) {
         self.filtered_indices = if self.options.enable_search {
             fuzzy_filter_indices(&self.items, &self.search, searchable_text)
@@ -143,6 +163,20 @@ impl SettingsList {
         let Some(item_index) = self.filtered_indices.get(self.selected).copied() else {
             return;
         };
+        let item_id = self.items[item_index].id.clone();
+        let current_value = self.items[item_index].current_value.clone();
+        if let Some(factory) = self.submenu_factories.get_mut(&item_id) {
+            *self.submenu_result.borrow_mut() = None;
+            let result = Rc::clone(&self.submenu_result);
+            let done: SettingsSubmenuDone = Box::new(move |selected_value| {
+                *result.borrow_mut() = Some(selected_value);
+            });
+            self.active_submenu = Some(factory(&current_value, done));
+            self.active_submenu_item_id = Some(item_id);
+            self.active_submenu_selected = self.selected;
+            return;
+        }
+
         let item = &mut self.items[item_index];
         if item.values.is_empty() {
             return;
@@ -160,6 +194,28 @@ impl SettingsList {
             callback(&id, &value);
         }
         self.rebuild_filter();
+    }
+
+    fn apply_submenu_result(&mut self) {
+        let Some(selected_value) = self.submenu_result.borrow_mut().take() else {
+            return;
+        };
+        let item_id = self.active_submenu_item_id.take();
+        self.active_submenu = None;
+        self.selected = self.active_submenu_selected;
+
+        let Some(item_id) = item_id else {
+            return;
+        };
+        if let Some(value) = selected_value {
+            if let Some(item) = self.items.iter_mut().find(|item| item.id == item_id) {
+                item.current_value = value.clone();
+            }
+            if let Some(callback) = &mut self.on_change {
+                callback(&item_id, &value);
+            }
+            self.rebuild_filter();
+        }
     }
 
     fn handle_search_key(&mut self, key: &Key) {
@@ -183,6 +239,9 @@ impl Component for SettingsList {
     fn render(&mut self, width: usize) -> Vec<String> {
         if width == 0 {
             return Vec::new();
+        }
+        if let Some(submenu) = &mut self.active_submenu {
+            return submenu.render(width);
         }
 
         let mut lines = Vec::new();
@@ -253,6 +312,12 @@ impl Component for SettingsList {
     }
 
     fn handle_input(&mut self, event: &InputEvent) {
+        if let Some(submenu) = &mut self.active_submenu {
+            submenu.handle_input(event);
+            self.apply_submenu_result();
+            return;
+        }
+
         match event {
             InputEvent::Key(key_event) if key_event.kind != KeyEventKind::Release => {
                 if self.keybindings.matches(event, "tui.select.up") {
@@ -302,6 +367,12 @@ impl Component for SettingsList {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+
+    fn invalidate(&mut self) {
+        if let Some(submenu) = &mut self.active_submenu {
+            submenu.invalidate();
+        }
     }
 }
 

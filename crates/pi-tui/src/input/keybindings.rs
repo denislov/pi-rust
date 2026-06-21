@@ -298,6 +298,18 @@ fn default_keybindings() -> BTreeMap<String, KeybindingDefinition> {
         &["escape", "ctrl+c"],
         "Cancel selection",
     );
+    insert(
+        &mut definitions,
+        "app.model.next",
+        &["ctrl+p"],
+        "Cycle to next model",
+    );
+    insert(
+        &mut definitions,
+        "app.model.previous",
+        &["ctrl+shift+p"],
+        "Cycle to previous model",
+    );
 
     definitions
 }

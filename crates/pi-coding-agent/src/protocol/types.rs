@@ -40,6 +40,14 @@ pub enum ProtocolEvent {
         #[serde(rename = "isError")]
         is_error: bool,
     },
+    #[serde(rename = "tool_execution_update")]
+    ToolExecutionUpdate {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        result: ToolExecutionResult,
+    },
     #[serde(rename = "turn_end")]
     TurnEnd {
         message: StoredAgentMessage,
@@ -72,6 +80,8 @@ pub enum ProtocolEvent {
 pub struct ToolExecutionResult {
     pub content: Vec<ContentBlock>,
     pub terminate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

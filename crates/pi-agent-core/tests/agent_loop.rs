@@ -1,7 +1,9 @@
 mod common;
 use common::{ScriptedTurn, TestProvider, text_turn, tool_use_turn};
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool};
+use pi_agent_core::{
+    Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput, ToolExecutionMode,
+};
 use pi_ai::registry;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Model, ModelCost, ModelInput, StopReason,
@@ -89,7 +91,7 @@ async fn tool_use_turn_executes_tool() {
         description: "echoes input".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
         execution_mode: None,
-        execute: Arc::new(|args| {
+        execute: Arc::new(|args, _on_update| {
             let text = args
                 .get("text")
                 .and_then(|v| v.as_str())
@@ -98,7 +100,7 @@ async fn tool_use_turn_executes_tool() {
                 text: format!("echo: {}", text),
                 text_signature: None,
             }];
-            Box::pin(async move { Ok(result) })
+            Box::pin(async move { Ok(AgentToolOutput::new(result)) })
         }),
     };
     agent.add_tool(tool);
@@ -124,6 +126,67 @@ async fn tool_use_turn_executes_tool() {
     assert_eq!(msgs.len(), 4); // UserText, Assistant(tool_use), ToolResult, Assistant(text)
     assert!(matches!(&msgs[2], AgentMessage::ToolResult { .. }));
 
+    registry::unregister(api_key);
+}
+
+#[tokio::test]
+async fn tool_update_events_stream_before_tool_end() {
+    let api_key = "test-api-tool-updates";
+    let provider = Arc::new(TestProvider::new(vec![
+        tool_use_turn("tool_1", "streaming", serde_json::json!({})),
+        text_turn("done"),
+    ]));
+    registry::register(api_key, provider);
+
+    let mut config = test_config(api_key);
+    config.tool_execution = ToolExecutionMode::Sequential;
+    let agent = Agent::new(config);
+    agent.add_tool(AgentTool {
+        name: "streaming".into(),
+        description: "streams updates".into(),
+        parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
+        execute: Arc::new(|_, on_update| {
+            Box::pin(async move {
+                if let Some(on_update) = on_update {
+                    on_update(AgentToolOutput::new(vec![ContentBlock::Text {
+                        text: "partial".into(),
+                        text_signature: None,
+                    }]));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
+                    text: "final".into(),
+                    text_signature: None,
+                }]))
+            })
+        }),
+    });
+
+    let events: Vec<_> = agent.prompt("go").collect().await;
+    let update_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                AgentEvent::ToolCallUpdate {
+                    tool_call_id,
+                    update,
+                    ..
+                } if tool_call_id == "tool_1"
+                    && matches!(
+                        update.content.first(),
+                        Some(ContentBlock::Text { text, .. }) if text == "partial"
+                    )
+            )
+        })
+        .expect("expected tool update event");
+    let end_index = events
+        .iter()
+        .position(|event| matches!(event, AgentEvent::ToolCallEnd { tool_call_id, .. } if tool_call_id == "tool_1"))
+        .expect("expected tool end event");
+
+    assert!(update_index < end_index);
     registry::unregister(api_key);
 }
 
@@ -187,12 +250,12 @@ async fn max_turns_exceeded_yields_error() {
         description: "echo".into(),
         parameters: serde_json::json!({"type": "object"}),
         execution_mode: None,
-        execute: Arc::new(|_| {
+        execute: Arc::new(|_, _on_update| {
             Box::pin(async {
-                Ok(vec![ContentBlock::Text {
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text: "ok".into(),
                     text_signature: None,
-                }])
+                }]))
             })
         }),
     };
@@ -236,12 +299,12 @@ async fn unlimited_max_turns_runs_to_natural_completion() {
         description: "echo".into(),
         parameters: serde_json::json!({"type": "object"}),
         execution_mode: None,
-        execute: Arc::new(|_| {
+        execute: Arc::new(|_, _on_update| {
             Box::pin(async {
-                Ok(vec![ContentBlock::Text {
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text: "ok".into(),
                     text_signature: None,
-                }])
+                }]))
             })
         }),
     };

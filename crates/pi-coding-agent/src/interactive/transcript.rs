@@ -123,6 +123,7 @@ impl Transcript {
                 result,
                 is_error,
             } => self.finish_tool(&call_id, result, is_error),
+            UiEvent::ToolUpdated { call_id, result } => self.update_tool(&call_id, result),
             UiEvent::AgentError { error } => self.push(TranscriptItem::Error { text: error }),
             UiEvent::CompactionNotice { summary } => self.push(TranscriptItem::Assistant {
                 id: format!("compaction_{}", self.items.len()),
@@ -194,6 +195,23 @@ impl Transcript {
         }) {
             *existing = Some(result);
             *existing_error = is_error;
+            self.record_output_below();
+        }
+    }
+
+    fn update_tool(&mut self, call_id: &str, result: String) {
+        if let Some(TranscriptItem::Tool {
+            result: existing, ..
+        }) = self.items.iter_mut().find(|item| {
+            matches!(
+                item,
+                TranscriptItem::Tool {
+                    call_id: existing,
+                    ..
+                } if existing == call_id
+            )
+        }) {
+            *existing = Some(result);
             self.record_output_below();
         }
     }

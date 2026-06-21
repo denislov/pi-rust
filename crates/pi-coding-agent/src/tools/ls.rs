@@ -1,6 +1,6 @@
 use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
-use pi_agent_core::{AgentTool, ToolFn};
+use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -113,9 +113,9 @@ pub async fn ls_execute(cwd: &Path, args: serde_json::Value) -> Result<Vec<Conte
 }
 
 pub fn ls_tool(cwd: PathBuf) -> AgentTool {
-    let execute: ToolFn = Arc::new(move |args| {
+    let execute: ToolFn = Arc::new(move |args, _on_update| {
         let cwd = cwd.clone();
-        Box::pin(async move { ls_execute(&cwd, args).await })
+        Box::pin(async move { ls_execute(&cwd, args).await.map(AgentToolOutput::new) })
     });
     AgentTool {
         name: "ls".into(),

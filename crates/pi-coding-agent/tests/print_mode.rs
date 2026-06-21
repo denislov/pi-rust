@@ -1,4 +1,4 @@
-use pi_agent_core::AgentTool;
+use pi_agent_core::{AgentTool, AgentToolOutput};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::registry;
 use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
@@ -42,7 +42,7 @@ fn echo_tool() -> AgentTool {
         description: "echoes input".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
         execution_mode: None,
-        execute: Arc::new(|args| {
+        execute: Arc::new(|args, _on_update| {
             let text = args
                 .get("text")
                 .and_then(|value| value.as_str())
@@ -51,7 +51,7 @@ fn echo_tool() -> AgentTool {
                 text: format!("echo: {text}"),
                 text_signature: None,
             }];
-            Box::pin(async move { Ok(result) })
+            Box::pin(async move { Ok(AgentToolOutput::new(result)) })
         }),
     }
 }

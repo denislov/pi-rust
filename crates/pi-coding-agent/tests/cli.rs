@@ -1,6 +1,7 @@
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput};
+use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
 use pi_coding_agent::{CliRunOptions, run_cli_with_options};
 use std::sync::Arc;
 
@@ -57,6 +58,85 @@ async fn version_returns_success_with_package_version() {
     assert_eq!(output.exit_code, 0);
     assert_eq!(output.stdout, format!("{}\n", env!("CARGO_PKG_VERSION")));
     assert!(output.stderr.is_empty());
+}
+
+#[tokio::test]
+async fn list_models_returns_success_without_prompt() {
+    let output = run_cli_with_options(
+        vec!["--list-models".to_string(), "claude".to_string()],
+        CliRunOptions {
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 0);
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.contains("provider"));
+    assert!(output.stdout.contains("model"));
+    assert!(output.stdout.contains("claude"));
+}
+
+#[tokio::test]
+async fn list_models_supports_provider_filter_and_json_output() {
+    let output = run_cli_with_options(
+        vec![
+            "--list-models".to_string(),
+            "--provider".to_string(),
+            "anthropic".to_string(),
+            "--json".to_string(),
+        ],
+        CliRunOptions {
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 0);
+    assert!(output.stderr.is_empty());
+    let rows: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    let rows = rows
+        .as_array()
+        .expect("list models JSON should be an array");
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|row| row["provider"] == "anthropic"));
+    assert!(rows.iter().all(|row| row.get("model").is_some()));
+}
+
+#[tokio::test]
+async fn list_models_is_read_only_for_session_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let sessions = dir.path().join("sessions");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let output = run_cli_with_options(
+        vec![
+            "--session-id".to_string(),
+            "read-only-models".to_string(),
+            "--list-models".to_string(),
+            "--provider".to_string(),
+            "anthropic".to_string(),
+        ],
+        CliRunOptions {
+            register_builtins: false,
+            session: SessionRunOptions {
+                mode: SessionMode::Enabled,
+                cwd: project,
+                session_dir: Some(sessions.clone()),
+            },
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 0);
+    assert!(
+        !sessions.exists(),
+        "--list-models must not create or reserve session files"
+    );
 }
 
 #[tokio::test]

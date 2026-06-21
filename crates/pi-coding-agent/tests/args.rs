@@ -79,6 +79,37 @@ fn parses_help_and_version() {
 }
 
 #[test]
+fn parses_list_models_flag_with_optional_search_and_json() {
+    let args = parse(&["--list-models"]).unwrap();
+    assert_eq!(args.list_models, Some(None));
+    assert!(!args.json);
+
+    let args = parse(&[
+        "--list-models",
+        "claude",
+        "--provider",
+        "anthropic",
+        "--json",
+    ])
+    .unwrap();
+    assert_eq!(args.list_models, Some(Some("claude".to_string())));
+    assert_eq!(args.provider.as_deref(), Some("anthropic"));
+    assert!(args.json);
+    assert!(args.prompt.is_none());
+}
+
+#[test]
+fn list_models_does_not_consume_flags_or_file_args_as_search() {
+    let args = parse(&["--list-models", "--provider", "openai"]).unwrap();
+    assert_eq!(args.list_models, Some(None));
+    assert_eq!(args.provider.as_deref(), Some("openai"));
+
+    let args = parse(&["--list-models", "@prompt.md"]).unwrap();
+    assert_eq!(args.list_models, Some(None));
+    assert_eq!(args.prompt.as_deref(), Some("@prompt.md"));
+}
+
+#[test]
 fn rejects_missing_flag_values() {
     assert_eq!(
         parse(&["--model"]).unwrap_err(),
@@ -113,8 +144,8 @@ fn rejects_invalid_max_turns() {
 #[test]
 fn rejects_unknown_flags() {
     assert_eq!(
-        parse(&["--json"]).unwrap_err(),
-        CliError::UnknownFlag("--json".into())
+        parse(&["--definitely-unknown"]).unwrap_err(),
+        CliError::UnknownFlag("--definitely-unknown".into())
     );
     assert_eq!(
         parse(&["-x"]).unwrap_err(),
