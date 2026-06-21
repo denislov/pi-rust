@@ -2,9 +2,6 @@ use crate::types::{Model, Usage};
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
-#[path = "models_generated.rs"]
-mod models_generated;
-
 /// Static model lookup by id. Searches deterministic priority then lexical.
 pub fn lookup_model(id: &str) -> Option<Model> {
     const PRIORITY: &[&str] = &["anthropic", "openai", "google", "deepseek"];
@@ -40,7 +37,10 @@ pub fn get_providers() -> Vec<String> {
 }
 
 pub fn all_models() -> &'static [Model] {
-    static MODELS: LazyLock<Vec<Model>> = LazyLock::new(models_generated::generated_models);
+    static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
+        serde_json::from_str(include_str!("models_generated.json"))
+            .expect("generated model registry JSON should be valid")
+    });
     &MODELS
 }
 

@@ -49,8 +49,8 @@ mod tests {
     #[test]
     fn tilde_expands_or_keeps() {
         let r = resolve_to_cwd("~/x", &PathBuf::from("/work"));
-        match std::env::var("HOME") {
-            Ok(h) if !h.is_empty() => assert_eq!(r, PathBuf::from(h).join("x")),
+        match home_dir() {
+            Some(h) => assert_eq!(r, h.join("x")),
             _ => assert_eq!(r, PathBuf::from("~/x")),
         }
     }

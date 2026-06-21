@@ -132,6 +132,20 @@ fn generated_registry_has_unique_provider_id_pairs() {
 }
 
 #[test]
+fn generated_registry_is_loaded_from_json_asset() {
+    let raw = include_str!("../src/models_generated.json");
+    let models: Vec<Model> = serde_json::from_str(raw).unwrap();
+
+    assert_eq!(models.len(), 934);
+    assert_eq!(models.len(), all_models().len());
+    assert!(
+        models
+            .iter()
+            .any(|model| { model.provider == "anthropic" && model.id == "claude-sonnet-4-5" })
+    );
+}
+
+#[test]
 fn all_builtin_apis_registered() {
     pi_ai::providers::register_builtins();
     let apis = [
