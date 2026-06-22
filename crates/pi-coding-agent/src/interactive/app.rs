@@ -54,8 +54,7 @@ pub async fn run_interactive_mode(parsed: CliArgs, options: CliRunOptions) -> Cl
     }
 
     let terminal = ProcessTerminal::new();
-    let mut input = InputPump::from_stdin();
-    match run_interactive_loop(parsed, options, terminal, &mut input).await {
+    match run_interactive_loop_with_input(parsed, options, terminal, InputPump::from_stdin).await {
         Ok(result) => CliOutput {
             exit_code: result.exit_code,
             stdout: String::new(),
@@ -1450,14 +1449,55 @@ async fn run_interactive_loop<T: Terminal>(
     input: &mut InputPump,
 ) -> Result<LoopResult<T>, CliError> {
     let prompt_context = build_prompt_context(&parsed, options)?;
+
+    terminal.start().map_err(to_cli_error)?;
+    let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
+
+    let loop_result = run_started_interactive_loop(&mut tui, root_id, input, prompt_context).await;
+    let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
+    match (loop_result, stop_result) {
+        (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+async fn run_interactive_loop_with_input<T, F>(
+    parsed: CliArgs,
+    options: CliRunOptions,
+    mut terminal: T,
+    make_input: F,
+) -> Result<LoopResult<T>, CliError>
+where
+    T: Terminal,
+    F: FnOnce() -> InputPump,
+{
+    let prompt_context = build_prompt_context(&parsed, options)?;
+
+    terminal.start().map_err(to_cli_error)?;
+    let mut input = make_input();
+    let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
+
+    let loop_result =
+        run_started_interactive_loop(&mut tui, root_id, &mut input, prompt_context).await;
+    let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
+    match (loop_result, stop_result) {
+        (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+fn initialize_started_tui<T: Terminal>(
+    terminal: T,
+    prompt_context: &PromptContext,
+) -> Result<(Tui<T>, usize), CliError> {
     let cwd = prompt_context
         .session
         .as_ref()
         .map(|session| session.cwd.clone())
         .unwrap_or_else(|| PathBuf::from("."));
     let session_label = session_label(&prompt_context.session);
-
-    terminal.start().map_err(to_cli_error)?;
     let mut tui = Tui::new(terminal);
     let root_id = tui.add_child_with_id(Box::new(InteractiveRoot::new_with_theme_and_models(
         cwd,
@@ -1472,14 +1512,7 @@ async fn run_interactive_loop<T: Terminal>(
         root.session_choices = prompt_context.session_choices.clone();
     }
     tui.set_focus(Some(root_id));
-
-    let loop_result = run_started_interactive_loop(&mut tui, root_id, input, prompt_context).await;
-    let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
-    match (loop_result, stop_result) {
-        (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-    }
+    Ok((tui, root_id))
 }
 
 async fn run_started_interactive_loop<T: Terminal>(
@@ -3282,6 +3315,85 @@ mod tests {
         assert!(text.contains("Navigation"), "{text}");
         assert!(text.contains("Ctrl+C"), "{text}");
         assert!(text.contains("Ctrl+O"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn real_stdin_reader_is_created_after_terminal_start() {
+        #[derive(Default)]
+        struct OrderingTerminal {
+            events: Arc<Mutex<Vec<&'static str>>>,
+        }
+
+        impl Terminal for OrderingTerminal {
+            fn size(&self) -> pi_tui::TerminalSize {
+                pi_tui::TerminalSize {
+                    columns: 80,
+                    rows: 24,
+                }
+            }
+
+            fn write(&mut self, _data: &str) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn move_by(&mut self, _rows: i16) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn move_to_column(&mut self, _column: usize) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn hide_cursor(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn show_cursor(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn clear_line(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn clear_from_cursor(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn clear_screen(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn start(&mut self) -> std::io::Result<()> {
+                self.events.lock().unwrap().push("start");
+                Ok(())
+            }
+        }
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let terminal = OrderingTerminal {
+            events: Arc::clone(&events),
+        };
+        let parsed = CliArgs::default();
+        let options = CliRunOptions {
+            register_builtins: false,
+            ..CliRunOptions::default()
+        };
+
+        let result = run_interactive_loop_with_input(parsed, options, terminal, || {
+            events.lock().unwrap().push("input");
+            InputPump::from_chunks(Vec::new())
+        })
+        .await;
+
+        if let Err(error) = result {
+            panic!("interactive loop should complete: {error}");
+        }
+        assert_eq!(&*events.lock().unwrap(), &["start", "input"]);
     }
 
     fn last_system_text(root: &InteractiveRoot) -> String {
