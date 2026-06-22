@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn faux_model(api: &str) -> Model {
     Model {
         id: "faux-model".into(),
@@ -107,6 +109,7 @@ async fn rpc_parse_error_keeps_process_alive_for_next_command() {
 
 #[tokio::test]
 async fn rpc_uses_settings_default_model_when_no_override_is_provided() {
+    let _guard = ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("settings.toml"),

@@ -1,4 +1,13 @@
 use pi_coding_agent::config;
+use std::sync::{Mutex, MutexGuard};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[test]
 fn select_model_uses_default_model_when_no_flag() {
@@ -11,6 +20,7 @@ fn select_model_uses_default_model_when_no_flag() {
 
 #[test]
 fn load_config_from_temp_pi_rust_dir() {
+    let _guard = env_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("settings.toml"),
@@ -34,6 +44,7 @@ fn load_config_from_temp_pi_rust_dir() {
 
 #[test]
 fn config_auth_resolution_prefers_env_over_auth_file() {
+    let _guard = env_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("auth.toml"),

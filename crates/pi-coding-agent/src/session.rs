@@ -143,6 +143,7 @@ mod tests {
 
     #[test]
     fn default_sessions_root_uses_pi_rust_dir() {
+        let _guard = crate::test_support::env_lock();
         let dir = tempfile::tempdir().unwrap();
         let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
         unsafe {
@@ -168,6 +169,7 @@ mod tests {
 
     #[test]
     fn resolve_session_dir_ignores_legacy_pi_agent_dir() {
+        let _guard = crate::test_support::env_lock();
         let global = tempfile::tempdir().unwrap();
         let legacy = tempfile::tempdir().unwrap();
         let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");

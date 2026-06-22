@@ -46,6 +46,7 @@ mod tests {
 
     #[test]
     fn pi_rust_dir_env_overrides_global() {
+        let _guard = crate::test_support::env_lock();
         // SAFETY: single-threaded test; var removed at end.
         unsafe {
             std::env::set_var("PI_RUST_DIR", "/custom/cfg");

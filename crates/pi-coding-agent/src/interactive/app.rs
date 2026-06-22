@@ -1,15 +1,21 @@
 use std::collections::BTreeSet;
-use std::io::{IsTerminal, Read};
+use std::collections::HashSet;
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use pi_agent_core::{
     AgentResources,
-    session::{JsonlSessionMetadata, JsonlSessionRepo, JsonlSessionStorage, create_session_id},
+    session::{
+        JsonlSessionMetadata, JsonlSessionRepo, JsonlSessionStorage, SessionEntry, SessionHeader,
+        StoredAgentMessage, StoredUsage, create_session_id, create_timestamp, generate_entry_id,
+    },
 };
 use pi_ai::types::Model;
+use pi_ai::types::{ContentBlock, StopReason};
 use pi_tui::{
     Component, ERROR, Editor, InputEvent, KeybindingsManager, Loader, Markdown, PATH,
     ProcessTerminal, RenderScheduler, STATUS_IDLE, STATUS_RUNNING, SYSTEM, StdinBuffer, Style,
@@ -149,6 +155,8 @@ enum InteractiveAction {
     None,
     Submit,
     AbortRunning,
+    NewSession,
+    ReloadResources,
     Exit,
 }
 
@@ -268,6 +276,19 @@ struct ParsedSlashCommand {
     original: String,
 }
 
+trait ClipboardSink: Send + Sync {
+    fn copy_text(&self, text: &str) -> Result<(), String>;
+}
+
+#[derive(Debug)]
+struct SystemClipboard;
+
+impl ClipboardSink for SystemClipboard {
+    fn copy_text(&self, text: &str) -> Result<(), String> {
+        system_copy_to_clipboard(text)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionChoice {
     id: String,
@@ -329,6 +350,114 @@ fn parse_model_selector_arg(
     }
 }
 
+fn export_path_arg(args: &str) -> Option<String> {
+    let args = args.trim_start();
+    if args.is_empty() {
+        return None;
+    }
+
+    let first = args.chars().next()?;
+    if first == '"' || first == '\'' {
+        let closing = args[1..].find(first)?;
+        return Some(args[1..1 + closing].to_string());
+    }
+
+    let end = args.find(char::is_whitespace).unwrap_or(args.len());
+    Some(args[..end].to_string())
+}
+
+fn default_export_path(cwd: &Path) -> PathBuf {
+    let stamp = create_timestamp()
+        .replace(':', "-")
+        .replace('.', "-")
+        .replace('Z', "");
+    cwd.join(format!("session-{stamp}.html"))
+}
+
+fn timestamp_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn html_escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn system_copy_to_clipboard(text: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        copy_with_command("pbcopy", &[], text)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        copy_with_command(
+            "powershell",
+            &["-NoProfile", "-Command", "Set-Clipboard"],
+            text,
+        )
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        let attempts: &[(&str, &[&str])] = &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+            ("termux-clipboard-set", &[]),
+        ];
+        let mut errors = Vec::new();
+        for (program, args) in attempts {
+            match copy_with_command(program, args, text) {
+                Ok(()) => return Ok(()),
+                Err(error) => errors.push(error),
+            }
+        }
+        Err(format!(
+            "Failed to copy to clipboard: {}",
+            errors.join("; ")
+        ))
+    }
+}
+
+fn copy_with_command(program: &str, args: &[&str], text: &str) -> Result<(), String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("{program}: {error}"))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|error| format!("{program}: {error}"))?;
+    }
+
+    let status = child
+        .wait()
+        .map_err(|error| format!("{program}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program}: exited with status {status}"))
+    }
+}
+
 struct InteractiveRoot {
     transcript: Transcript,
     editor: Editor,
@@ -360,6 +489,7 @@ struct InteractiveRoot {
     slash_suggestion_selected: usize,
     slash_suggestions_dismissed_for: Option<String>,
     theme: TuiTheme,
+    clipboard: Arc<dyn ClipboardSink>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -456,12 +586,19 @@ impl InteractiveRoot {
             slash_suggestion_selected: 0,
             slash_suggestions_dismissed_for: None,
             theme,
+            clipboard: Arc::new(SystemClipboard),
         }
     }
 
     #[cfg(test)]
     fn with_theme(mut self, theme: TuiTheme) -> Self {
         self.theme = theme;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_clipboard(mut self, clipboard: Arc<dyn ClipboardSink>) -> Self {
+        self.clipboard = clipboard;
         self
     }
 
@@ -491,6 +628,19 @@ impl InteractiveRoot {
 
     fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
         self.scroll_command.lock().unwrap().take()
+    }
+
+    fn apply_prompt_context(&mut self, prompt_context: &PromptContext) {
+        self.cwd = prompt_context
+            .session
+            .as_ref()
+            .map(|session| session.cwd.clone())
+            .unwrap_or_else(|| PathBuf::from("."));
+        self.model_id = prompt_context.model.id.clone();
+        self.available_models = prompt_context.model_choices.clone();
+        self.model_rotation = prompt_context.model_rotation.clone();
+        self.session_choices = prompt_context.session_choices.clone();
+        self.theme = prompt_context.theme.clone();
     }
 
     fn push_user(&mut self, prompt: String) {
@@ -551,15 +701,17 @@ impl InteractiveRoot {
             }
             "model" => self.handle_model_command(&command.args),
             "resume" => self.handle_resume_command(&command.args),
+            "export" => self.handle_export_command(&command.args),
+            "copy" => self.handle_copy_command(),
+            "new" => self.handle_new_command(),
+            "reload" => self.handle_reload_command(),
             "settings" => self.handle_settings_command(),
             "name" => self.handle_name_command(&command.args),
             "session" => self.handle_session_command(),
             "hotkeys" => self.handle_hotkeys_command(),
             "changelog" => self.handle_changelog_command(),
-            "scoped-models" | "export" | "import" | "share" | "copy" | "fork" | "clone"
-            | "tree" | "login" | "logout" | "new" | "compact" | "reload" => {
-                self.handle_pending_slash_command(&command)
-            }
+            "scoped-models" | "import" | "share" | "fork" | "clone" | "tree" | "login"
+            | "logout" | "compact" => self.handle_pending_slash_command(&command),
             _ => {
                 self.transcript.push(TranscriptItem::system(format!(
                     "unknown command: {} - type /help for available commands",
@@ -574,6 +726,222 @@ impl InteractiveRoot {
             "/{} is recognized but not implemented in the Rust interactive UI yet.",
             command.name
         )));
+    }
+
+    fn handle_export_command(&mut self, args: &str) {
+        match self.export_transcript(args) {
+            Ok(path) => self.transcript.push(TranscriptItem::system(format!(
+                "Session exported to: {}",
+                path.display()
+            ))),
+            Err(error) => self.transcript.push(TranscriptItem::system(format!(
+                "Failed to export session: {error}"
+            ))),
+        }
+    }
+
+    fn handle_copy_command(&mut self) {
+        let Some(text) = self.last_assistant_text() else {
+            self.transcript
+                .push(TranscriptItem::system("No agent messages to copy yet."));
+            return;
+        };
+
+        match self.clipboard.copy_text(&text) {
+            Ok(()) => self.transcript.push(TranscriptItem::system(
+                "Copied last agent message to clipboard",
+            )),
+            Err(error) => self.transcript.push(TranscriptItem::system(error)),
+        }
+    }
+
+    fn handle_new_command(&mut self) {
+        self.transcript = Transcript::new();
+        self.transcript
+            .push(TranscriptItem::system(welcome_line(&self.keybindings)));
+        self.transcript
+            .push(TranscriptItem::system("New session started"));
+        self.editor.set_text("");
+        self.selecting_model = false;
+        self.selecting_session = false;
+        self.selecting_settings = false;
+        self.model_selection_selected = 0;
+        self.session_selection_selected = 0;
+        self.usage = (0, 0);
+        self.session_label = "session".to_string();
+        self.action = InteractiveAction::NewSession;
+    }
+
+    fn handle_reload_command(&mut self) {
+        self.transcript.push(TranscriptItem::system(
+            "Reloading keybindings and resources...",
+        ));
+        self.action = InteractiveAction::ReloadResources;
+    }
+
+    fn last_assistant_text(&self) -> Option<String> {
+        self.transcript.items().iter().rev().find_map(|item| {
+            if let TranscriptItem::Assistant { markdown, .. } = item {
+                let text = markdown.trim();
+                if !text.is_empty() {
+                    return Some(markdown.clone());
+                }
+            }
+            None
+        })
+    }
+
+    fn export_transcript(&self, args: &str) -> Result<PathBuf, String> {
+        let path = export_path_arg(args)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_export_path(&self.cwd));
+        let path = if path.is_absolute() {
+            path
+        } else {
+            self.cwd.join(path)
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+
+        if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            self.export_transcript_jsonl(&path)?;
+        } else {
+            self.export_transcript_html(&path)?;
+        }
+        Ok(path)
+    }
+
+    fn export_transcript_jsonl(&self, path: &Path) -> Result<(), String> {
+        let timestamp = create_timestamp();
+        let header = SessionHeader {
+            entry_type: "session".to_string(),
+            version: 3,
+            id: create_session_id(),
+            timestamp: timestamp.clone(),
+            cwd: self.cwd.display().to_string(),
+            parent_session: None,
+        };
+        let mut lines = vec![serde_json::to_string(&header).map_err(|error| error.to_string())?];
+        let mut existing = HashSet::new();
+        let mut parent_id = None;
+
+        for message in self.exportable_messages() {
+            let id = generate_entry_id(&existing);
+            existing.insert(id.clone());
+            let entry =
+                SessionEntry::message(id.clone(), parent_id.clone(), timestamp.clone(), message);
+            lines.push(serde_json::to_string(&entry).map_err(|error| error.to_string())?);
+            parent_id = Some(id);
+        }
+
+        let mut text = lines.join("\n");
+        text.push('\n');
+        std::fs::write(path, text).map_err(|error| error.to_string())
+    }
+
+    fn export_transcript_html(&self, path: &Path) -> Result<(), String> {
+        let mut body = String::new();
+        for item in self.transcript.items() {
+            match item {
+                TranscriptItem::User { text } => body.push_str(&format!(
+                    "<section class=\"message user\"><h2>User</h2><pre>{}</pre></section>",
+                    html_escape(text)
+                )),
+                TranscriptItem::Assistant { markdown, .. } => body.push_str(&format!(
+                    "<section class=\"message assistant\"><h2>Assistant</h2><pre>{}</pre></section>",
+                    html_escape(markdown)
+                )),
+                TranscriptItem::Tool {
+                    name,
+                    result,
+                    is_error,
+                    ..
+                } => body.push_str(&format!(
+                    "<section class=\"message tool{}\"><h2>Tool: {}</h2><pre>{}</pre></section>",
+                    if *is_error { " error" } else { "" },
+                    html_escape(name),
+                    html_escape(result.as_deref().unwrap_or(""))
+                )),
+                TranscriptItem::Error { text } => body.push_str(&format!(
+                    "<section class=\"message error\"><h2>Error</h2><pre>{}</pre></section>",
+                    html_escape(text)
+                )),
+                TranscriptItem::System { .. } => {}
+            }
+        }
+
+        let html = format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>{}</style></head><body><main><h1>{}</h1>{}</main></body></html>",
+            html_escape(&self.session_label),
+            "body{font-family:system-ui,sans-serif;margin:2rem;background:#101010;color:#f4f4f4}main{max-width:900px;margin:auto}.message{border:1px solid #444;padding:1rem;margin:1rem 0;border-radius:6px}pre{white-space:pre-wrap;font-family:ui-monospace,monospace}.user{border-color:#3b82f6}.assistant{border-color:#10b981}.tool{border-color:#a78bfa}.error{border-color:#ef4444;color:#fecaca}",
+            html_escape(&self.session_label),
+            body
+        );
+        std::fs::write(path, html).map_err(|error| error.to_string())
+    }
+
+    fn exportable_messages(&self) -> Vec<StoredAgentMessage> {
+        let timestamp_ms = timestamp_millis();
+        let mut messages = Vec::new();
+        for item in self.transcript.items() {
+            match item {
+                TranscriptItem::User { text } => messages.push(StoredAgentMessage::User {
+                    content: vec![ContentBlock::Text {
+                        text: text.clone(),
+                        text_signature: None,
+                    }],
+                    timestamp: timestamp_ms,
+                }),
+                TranscriptItem::Assistant { markdown, .. } => {
+                    if !markdown.trim().is_empty() {
+                        messages.push(StoredAgentMessage::Assistant {
+                            content: vec![ContentBlock::Text {
+                                text: markdown.clone(),
+                                text_signature: None,
+                            }],
+                            api: "interactive".to_string(),
+                            provider: "interactive".to_string(),
+                            model: self.model_id.clone(),
+                            response_model: None,
+                            response_id: None,
+                            usage: StoredUsage::default(),
+                            stop_reason: StopReason::Stop,
+                            error_message: None,
+                            timestamp: timestamp_ms,
+                        });
+                    }
+                }
+                TranscriptItem::Tool {
+                    call_id,
+                    name,
+                    result,
+                    is_error,
+                    ..
+                } => messages.push(StoredAgentMessage::ToolResult {
+                    tool_call_id: call_id.clone(),
+                    tool_name: name.clone(),
+                    content: vec![ContentBlock::Text {
+                        text: result.clone().unwrap_or_default(),
+                        text_signature: None,
+                    }],
+                    is_error: *is_error,
+                    timestamp: timestamp_ms,
+                }),
+                TranscriptItem::Error { text } => messages.push(StoredAgentMessage::Custom {
+                    custom_type: "error".to_string(),
+                    content: vec![ContentBlock::Text {
+                        text: text.clone(),
+                        text_signature: None,
+                    }],
+                    display: true,
+                    details: None,
+                    timestamp: timestamp_ms,
+                }),
+                TranscriptItem::System { .. } => {}
+            }
+        }
+        messages
     }
 
     fn handle_settings_command(&mut self) {
@@ -1448,12 +1816,14 @@ async fn run_interactive_loop<T: Terminal>(
     mut terminal: T,
     input: &mut InputPump,
 ) -> Result<LoopResult<T>, CliError> {
-    let prompt_context = build_prompt_context(&parsed, options)?;
+    let prompt_context = build_prompt_context(&parsed, options.clone())?;
 
     terminal.start().map_err(to_cli_error)?;
     let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
 
-    let loop_result = run_started_interactive_loop(&mut tui, root_id, input, prompt_context).await;
+    let loop_result =
+        run_started_interactive_loop(&mut tui, root_id, input, prompt_context, &parsed, &options)
+            .await;
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
     match (loop_result, stop_result) {
         (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
@@ -1472,14 +1842,21 @@ where
     T: Terminal,
     F: FnOnce() -> InputPump,
 {
-    let prompt_context = build_prompt_context(&parsed, options)?;
+    let prompt_context = build_prompt_context(&parsed, options.clone())?;
 
     terminal.start().map_err(to_cli_error)?;
     let mut input = make_input();
     let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
 
-    let loop_result =
-        run_started_interactive_loop(&mut tui, root_id, &mut input, prompt_context).await;
+    let loop_result = run_started_interactive_loop(
+        &mut tui,
+        root_id,
+        &mut input,
+        prompt_context,
+        &parsed,
+        &options,
+    )
+    .await;
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
     match (loop_result, stop_result) {
         (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
@@ -1520,6 +1897,8 @@ async fn run_started_interactive_loop<T: Terminal>(
     root_id: usize,
     input: &mut InputPump,
     mut prompt_context: PromptContext,
+    parsed: &CliArgs,
+    options: &CliRunOptions,
 ) -> Result<i32, CliError> {
     let mut stdin_buffer = StdinBuffer::new();
     let mut running: Option<PromptTask> = None;
@@ -1550,6 +1929,8 @@ async fn run_started_interactive_loop<T: Terminal>(
                             &mut prompt_context,
                             &mut running,
                             &mut render_scheduler,
+                            parsed,
+                            options,
                         )? {
                             LoopControl::Continue(_) => {}
                             LoopControl::Exit => return Ok(0),
@@ -1567,6 +1948,8 @@ async fn run_started_interactive_loop<T: Terminal>(
                                 &mut prompt_context,
                                 &mut running,
                                 &mut render_scheduler,
+                                parsed,
+                                options,
                             )? {
                                 LoopControl::Continue(_) => {}
                                 LoopControl::Exit => return Ok(0),
@@ -1639,6 +2022,8 @@ async fn run_started_interactive_loop<T: Terminal>(
                             &mut prompt_context,
                             &mut running,
                             &mut render_scheduler,
+                            parsed,
+                            options,
                         )? {
                             LoopControl::Continue(_) => {}
                             LoopControl::Exit => return Ok(0),
@@ -1655,6 +2040,8 @@ async fn run_started_interactive_loop<T: Terminal>(
                             &mut prompt_context,
                             &mut running,
                             &mut render_scheduler,
+                            parsed,
+                            options,
                         )? {
                             LoopControl::Continue(_) => {}
                             LoopControl::Exit => return Ok(0),
@@ -1674,6 +2061,8 @@ async fn run_started_interactive_loop<T: Terminal>(
                         &mut prompt_context,
                         &mut running,
                         &mut render_scheduler,
+                        parsed,
+                        options,
                     )? {
                         LoopControl::Continue(_) => {}
                         LoopControl::Exit => return Ok(0),
@@ -1694,9 +2083,19 @@ fn process_input_events<T: Terminal>(
     prompt_context: &mut PromptContext,
     running: &mut Option<PromptTask>,
     render_scheduler: &mut RenderScheduler,
+    parsed: &CliArgs,
+    options: &CliRunOptions,
 ) -> Result<LoopControl, CliError> {
     for event in events {
-        match handle_input_event(tui, root_id, event, prompt_context, running)? {
+        match handle_input_event(
+            tui,
+            root_id,
+            event,
+            prompt_context,
+            running,
+            parsed,
+            options,
+        )? {
             LoopControl::Continue(request) => {
                 schedule_render(render_scheduler, request);
                 flush_render_if_ready(tui, render_scheduler)?;
@@ -1768,6 +2167,8 @@ fn handle_input_event<T: Terminal>(
     event: InputEvent,
     prompt_context: &mut PromptContext,
     running: &mut Option<PromptTask>,
+    parsed: &CliArgs,
+    options: &CliRunOptions,
 ) -> Result<LoopControl, CliError> {
     if is_key_release(&event) {
         return Ok(LoopControl::Continue(RenderRequest::NONE));
@@ -1821,6 +2222,35 @@ fn handle_input_event<T: Terminal>(
         InteractiveAction::AbortRunning => {
             if let Some(task) = running.as_mut() {
                 task.abort_once();
+            }
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
+        InteractiveAction::NewSession => {
+            if prompt_context
+                .session
+                .as_ref()
+                .is_some_and(|session| matches!(session.mode, SessionMode::Enabled))
+            {
+                prompt_context.session_target =
+                    Some(ResolvedSessionTarget::OpenOrCreateId(create_session_id()));
+                prompt_context.session_name = None;
+            }
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
+        InteractiveAction::ReloadResources => {
+            match build_prompt_context(parsed, options.clone()) {
+                Ok(reloaded) => {
+                    *prompt_context = reloaded;
+                    let root = root_mut(tui, root_id)?;
+                    root.apply_prompt_context(prompt_context);
+                    root.transcript
+                        .push(TranscriptItem::system("Reloaded keybindings and resources"));
+                }
+                Err(error) => {
+                    let root = root_mut(tui, root_id)?;
+                    root.transcript
+                        .push(TranscriptItem::system(format!("Reload failed: {error}")));
+                }
             }
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
@@ -2404,8 +2834,6 @@ fn to_cli_error(error: std::io::Error) -> CliError {
 mod tests {
     use super::*;
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn key_event(data: &str) -> InputEvent {
         let mut buffer = StdinBuffer::new();
         let mut events = buffer.process(data);
@@ -2428,7 +2856,7 @@ mod tests {
 
     #[test]
     fn build_prompt_context_uses_config_defaults_and_auth() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_support::env_lock();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("settings.toml"),
@@ -2465,7 +2893,7 @@ mod tests {
 
     #[test]
     fn build_prompt_context_applies_selected_theme_to_editor_borders() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_support::env_lock();
         let dir = tempfile::tempdir().unwrap();
         let themes_dir = dir.path().join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
@@ -3228,6 +3656,185 @@ mod tests {
     }
 
     #[test]
+    fn copy_command_copies_last_assistant_message_to_clipboard() {
+        let clipboard = Arc::new(TestClipboard::default());
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        )
+        .with_clipboard(clipboard.clone());
+        root.apply_events(vec![
+            UiEvent::AssistantDelta {
+                text: "first answer".to_string(),
+            },
+            UiEvent::AssistantDone,
+            UiEvent::AssistantDelta {
+                text: "second answer".to_string(),
+            },
+            UiEvent::AssistantDone,
+        ]);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "copy".to_string(),
+            args: String::new(),
+            original: "/copy".to_string(),
+        });
+
+        assert_eq!(clipboard.last_text(), Some("second answer".to_string()));
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Copied last agent message to clipboard"),
+            "{text}"
+        );
+        assert!(!text.contains("not implemented"), "{text}");
+        assert_ne!(root.action, InteractiveAction::Submit);
+    }
+
+    #[test]
+    fn copy_command_reports_error_when_no_assistant_message_exists() {
+        let clipboard = Arc::new(TestClipboard::default());
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        )
+        .with_clipboard(clipboard.clone());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "copy".to_string(),
+            args: String::new(),
+            original: "/copy".to_string(),
+        });
+
+        assert_eq!(clipboard.last_text(), None);
+        let text = last_system_text(&root);
+        assert!(text.contains("No agent messages to copy yet."), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn export_command_writes_current_transcript_to_jsonl_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("session-export.jsonl");
+        let mut root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.push_user("hello".to_string());
+        root.apply_events(vec![
+            UiEvent::AssistantDelta {
+                text: "world".to_string(),
+            },
+            UiEvent::AssistantDone,
+        ]);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "export".to_string(),
+            args: output.display().to_string(),
+            original: format!("/export {}", output.display()),
+        });
+
+        let text = std::fs::read_to_string(&output).unwrap();
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert!(lines[0].contains(r#""type":"session""#), "{text}");
+        assert!(lines[0].contains(r#""version":3"#), "{text}");
+        assert!(lines[1].contains(r#""role":"user""#), "{text}");
+        assert!(lines[1].contains("hello"), "{text}");
+        assert!(lines[2].contains(r#""role":"assistant""#), "{text}");
+        assert!(lines[2].contains("world"), "{text}");
+        let status = last_system_text(&root);
+        assert!(status.contains("Session exported to:"), "{status}");
+        assert!(!status.contains("not implemented"), "{status}");
+    }
+
+    #[test]
+    fn export_command_writes_html_when_path_ends_with_html() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("session-export.html");
+        let mut root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.push_user("hello <user>".to_string());
+        root.apply_events(vec![
+            UiEvent::AssistantDelta {
+                text: "world <assistant>".to_string(),
+            },
+            UiEvent::AssistantDone,
+        ]);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "export".to_string(),
+            args: output.display().to_string(),
+            original: format!("/export {}", output.display()),
+        });
+
+        let text = std::fs::read_to_string(&output).unwrap();
+        assert!(text.contains("<!doctype html>"), "{text}");
+        assert!(text.contains("hello &lt;user&gt;"), "{text}");
+        assert!(text.contains("world &lt;assistant&gt;"), "{text}");
+        let status = last_system_text(&root);
+        assert!(status.contains("Session exported to:"), "{status}");
+    }
+
+    #[test]
+    fn new_command_clears_ui_state_and_requests_new_session() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.usage = (123, 456);
+        root.push_user("old prompt".to_string());
+        root.apply_events(vec![
+            UiEvent::AssistantDelta {
+                text: "old response".to_string(),
+            },
+            UiEvent::AssistantDone,
+        ]);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "new".to_string(),
+            args: String::new(),
+            original: "/new".to_string(),
+        });
+
+        assert_eq!(root.action, InteractiveAction::NewSession);
+        assert_eq!(root.usage, (0, 0));
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("New session started"), "{rendered}");
+        assert!(!rendered.contains("old prompt"), "{rendered}");
+        assert!(!rendered.contains("old response"), "{rendered}");
+    }
+
+    #[test]
+    fn reload_command_requests_resource_reload() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "reload".to_string(),
+            args: String::new(),
+            original: "/reload".to_string(),
+        });
+
+        assert_eq!(root.action, InteractiveAction::ReloadResources);
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Reloading keybindings and resources"),
+            "{text}"
+        );
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
     fn handle_unknown_slash_command_reports_error_without_submit() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
@@ -3400,6 +4007,24 @@ mod tests {
         match root.transcript.items().last() {
             Some(TranscriptItem::System { text }) => text.clone(),
             other => panic!("expected last transcript item to be System, got {other:?}"),
+        }
+    }
+
+    #[derive(Default)]
+    struct TestClipboard {
+        text: Mutex<Option<String>>,
+    }
+
+    impl ClipboardSink for TestClipboard {
+        fn copy_text(&self, text: &str) -> Result<(), String> {
+            *self.text.lock().unwrap() = Some(text.to_string());
+            Ok(())
+        }
+    }
+
+    impl TestClipboard {
+        fn last_text(&self) -> Option<String> {
+            self.text.lock().unwrap().clone()
         }
     }
 }

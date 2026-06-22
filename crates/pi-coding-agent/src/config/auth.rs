@@ -280,6 +280,7 @@ mod tests {
 
     #[test]
     fn dollar_var_and_braced_var() {
+        let _guard = crate::test_support::env_lock();
         unsafe {
             std::env::set_var("PI_TEST_KEY", "secret");
         }
@@ -309,6 +310,7 @@ mod tests {
 
     #[test]
     fn unset_var_returns_none_with_diag() {
+        let _guard = crate::test_support::env_lock();
         unsafe {
             std::env::remove_var("PI_TEST_MISSING");
         }
@@ -368,6 +370,7 @@ mod tests {
 
     #[test]
     fn cli_key_wins() {
+        let _guard = crate::test_support::env_lock();
         let store = store_with("anthropic", "from-file");
         unsafe {
             std::env::set_var("ANTHROPIC_API_KEY", "from-env");
@@ -383,6 +386,7 @@ mod tests {
 
     #[test]
     fn env_beats_auth_file() {
+        let _guard = crate::test_support::env_lock();
         let store = store_with("anthropic", "from-file");
         unsafe {
             std::env::set_var("ANTHROPIC_API_KEY", "from-env");
@@ -398,6 +402,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_env_then_none() {
+        let _guard = crate::test_support::env_lock();
         let store = AuthStore::default();
         unsafe {
             std::env::set_var("ANTHROPIC_API_KEY", "from-env");
@@ -434,6 +439,7 @@ mod tests {
 
     #[test]
     fn oauth_access_token_is_used_as_auth_file_bearer_token() {
+        let _guard = crate::test_support::env_lock();
         let text = r#"
 [openai-codex]
 type = "oauth"
@@ -457,6 +463,7 @@ expires = 4102444800000
 
     #[test]
     fn oauth_access_token_field_alias_is_supported() {
+        let _guard = crate::test_support::env_lock();
         let text = r#"
 [github-copilot]
 type = "oauth"

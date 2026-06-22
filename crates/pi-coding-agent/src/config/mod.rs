@@ -78,6 +78,7 @@ mod tests {
 
     #[test]
     fn load_config_reads_settings_and_auth_from_pi_rust_dir() {
+        let _guard = crate::test_support::env_lock();
         let dir = tempfile::tempdir().unwrap();
         let global = dir.path().join("global");
         std::fs::create_dir_all(&global).unwrap();

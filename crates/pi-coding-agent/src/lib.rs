@@ -23,6 +23,19 @@ pub use runtime::{
 pub use session::{ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session};
 pub use tools::builtin_tools;
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliOutput {
     pub exit_code: i32,

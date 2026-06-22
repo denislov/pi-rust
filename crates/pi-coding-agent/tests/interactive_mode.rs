@@ -15,6 +15,8 @@ use pi_coding_agent::interactive::test_harness::{
 };
 use pi_tui::TerminalOp;
 
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn text_response(text: &str) -> FauxResponse {
     FauxResponse {
         text_deltas: vec![text.to_string()],
@@ -419,6 +421,7 @@ async fn scripted_interactive_model_command_changes_next_prompt_model() {
 
 #[tokio::test]
 async fn scripted_interactive_model_selector_confirms_filtered_model() {
+    let _guard = ENV_LOCK.lock().await;
     let default_model = pi_ai::lookup_model("claude-sonnet-4-5").expect("known default model");
     let previous_provider = registry::lookup(&default_model.api);
     registry::register(
@@ -469,6 +472,7 @@ async fn scripted_interactive_model_selector_confirms_filtered_model() {
 
 #[tokio::test]
 async fn scripted_interactive_model_selector_lists_configured_provider_models() {
+    let _guard = ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("auth.toml"),
@@ -528,6 +532,7 @@ async fn scripted_interactive_model_selector_lists_configured_provider_models() 
 
 #[tokio::test]
 async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider() {
+    let _guard = ENV_LOCK.lock().await;
     let target_model = pi_ai::lookup_model("gpt-5").expect("known model");
     let previous_provider = registry::lookup(&target_model.api);
     let model_ids = Arc::new(Mutex::new(Vec::new()));

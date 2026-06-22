@@ -61,10 +61,6 @@
 - 已验证：`cargo test -p pi-agent-core -- --test-threads=1` 通过。
 
 ## 已知缺口
-- `transformContext` 钩子（AgentMessage[]→AgentMessage[] 变换）：TS agent-loop 有此钩子，Rust 尚未实现。
-- `agentLoopContinue`：TS 有显式从已有 context 继续的入口，Rust 缺失。
-- Harness 事件订阅模式（`on`/`off` with `*` wildcard）：TS 有，Rust 缺失。
-- `AgentHarnessPhase` 生命周期（`idle`/`running`/`aborting`）：TS 有，Rust 缺失。
-- Guided abort（`AbortResult` with `pendingSessionWrites`）：TS 有，Rust 缺失。
-- Sourced resources（`loadSourcedSkills` 等保留来源元数据）：TS 有，Rust 缺失。
-- Configurable `convertToLlm`：Rust 硬编码在 `convert.rs`；TS 可注入回调。
+- `AbortResult.pendingSessionWrites`：TS abort result 暴露 session pending writes；Rust core harness 不持有 CLI session storage，当前只返回清空的 steer/follow-up 队列，session 写入仍由 `pi-coding-agent` 编排。
+- `on("*")` wildcard 便利 API：Rust 已有 `subscribe()` 全量事件观察和 typed `on_*` handler，尚未提供 TS 风格 wildcard `on("*")` 别名。
+- Provider-internal hooks coverage：公共 `ProviderStreamHooks` 通道已落地，后续仍可逐 provider 补内部 payload/response observability 覆盖。
