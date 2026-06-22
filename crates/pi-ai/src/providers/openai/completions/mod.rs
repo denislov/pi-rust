@@ -3,15 +3,14 @@ pub mod process;
 pub mod wire;
 
 use async_stream::stream;
-use futures::StreamExt;
 
 use crate::registry::ApiProvider;
 use crate::stream::EventStream;
+use crate::transport::http::send_json_stream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
 use crate::util::env_keys::env_api_key;
-use crate::util::http::RetryConfig;
 use convert::build_request;
 
 pub struct OpenAICompletionsProvider {
@@ -38,7 +37,6 @@ impl ApiProvider for OpenAICompletionsProvider {
             .as_ref()
             .and_then(|o| o.api_key.clone())
             .or_else(|| self.resolve_key(&model.provider));
-        let cancel = opts.as_ref().and_then(|o| o.cancel.clone());
 
         let Some(api_key) = key else {
             let model_id = model.id.clone();
@@ -60,7 +58,6 @@ impl ApiProvider for OpenAICompletionsProvider {
 
         let req_body = build_request(model, &ctx, &opts);
         let base_url = model.base_url.trim_end_matches('/');
-
         let url = if base_url.ends_with("/v1") {
             format!("{}/chat/completions", base_url)
         } else {
@@ -72,8 +69,7 @@ impl ApiProvider for OpenAICompletionsProvider {
             .post(&url)
             .bearer_auth(api_key)
             .header("content-type", "application/json")
-            .header("accept", "text/event-stream")
-            .json(&req_body);
+            .header("accept", "text/event-stream");
 
         if let Some(opts) = &opts {
             if let Some(ref headers) = opts.headers {
@@ -87,70 +83,14 @@ impl ApiProvider for OpenAICompletionsProvider {
             }
         }
 
-        let model = model.clone();
-        let model_id = model.id.clone();
-        let retry_cfg = RetryConfig::from_options(opts.as_ref());
-        Box::pin(stream! {
-            let send_future = request.send();
-            let response = match retry_cfg.timeout_ms {
-                Some(ms) => {
-                    match tokio::time::timeout(std::time::Duration::from_millis(ms), send_future).await {
-                        Ok(Ok(r)) => r,
-                        Ok(Err(e)) => {
-                            let mut msg = AssistantMessage::empty("openai-completions", &model_id);
-                            msg.provider = Some(model.provider.clone());
-                            msg.error_message = Some(format!("HTTP request failed: {}", e));
-                            msg.stop_reason = StopReason::Error;
-                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                            return;
-                        }
-                        Err(_) => {
-                            let mut msg = AssistantMessage::empty("openai-completions", &model_id);
-                            msg.provider = Some(model.provider.clone());
-                            msg.error_message = Some(format!("Request timed out after {}ms", ms));
-                            msg.stop_reason = StopReason::Error;
-                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                            return;
-                        }
-                    }
-                }
-                None => {
-                    match send_future.await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            let mut msg = AssistantMessage::empty("openai-completions", &model_id);
-                            msg.provider = Some(model.provider.clone());
-                            msg.error_message = Some(format!("HTTP request failed: {}", e));
-                            msg.stop_reason = StopReason::Error;
-                            yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                            return;
-                        }
-                    }
-                }
-            };
-
-            if !response.status().is_success() {
-                let status = response.status().as_u16();
-                let body = response.text().await.unwrap_or_default();
-                let mut msg = AssistantMessage::empty("openai-completions", &model_id);
-                msg.provider = Some(model.provider.clone());
-                msg.error_message = Some(format!("HTTP {} : {}", status, body));
-                msg.stop_reason = StopReason::Error;
-                yield AssistantMessageEvent::Error {
-                    reason: StopReason::Error,
-                    message: msg,
-                };
-                return;
-            }
-
-            let body_stream = response
-                .bytes_stream()
-                .map(|r| r.map_err(|e| e.to_string()));
-
-            let mut event_stream = process::process(body_stream, model, cancel);
-            while let Some(event) = event_stream.next().await {
-                yield event;
-            }
-        })
+        send_json_stream(
+            &self.client,
+            model,
+            opts.as_ref(),
+            "openai-completions",
+            request,
+            serde_json::to_value(&req_body).unwrap_or_default(),
+            |body_stream, model, cancel| process::process(body_stream, model, cancel),
+        )
     }
 }
