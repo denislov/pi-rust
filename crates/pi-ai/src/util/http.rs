@@ -7,7 +7,7 @@ pub struct RetryConfig {
 
 impl RetryConfig {
     pub fn from_options(opts: Option<&crate::types::StreamOptions>) -> Self {
-        let default_max_retries = 2;
+        let default_max_retries = 0;
         let default_max_retry_delay_ms = 10_000;
         match opts {
             Some(o) => Self {

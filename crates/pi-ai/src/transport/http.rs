@@ -71,7 +71,16 @@ where
                 }
             }
 
-            let send_future = request.try_clone().expect("reqwest request must be cloneable").send();
+            let Some(request) = request.try_clone() else {
+                last_error = Some(ProviderError::network(
+                    &api_name,
+                    &model_id,
+                    &provider,
+                    "request could not be cloned for retryable send",
+                ));
+                break;
+            };
+            let send_future = request.send();
             let response = match retry_cfg.timeout_ms {
                 Some(ms) => {
                     match tokio::time::timeout(Duration::from_millis(ms), send_future).await {
@@ -107,11 +116,12 @@ where
             };
 
             let status = response.status().as_u16();
+            let response_headers = headers_to_json(response.headers());
 
             if let Some(hooks) = hooks.as_ref() {
                 let response_info = crate::types::ProviderResponseInfo {
                     status: Some(status),
-                    headers: Some(serde_json::json!({})),
+                    headers: Some(response_headers.clone()),
                 };
                 if let Err(e) = hooks.emit_response(response_info).await {
                     let mut msg = AssistantMessage::empty(&api_name, &model_id);
@@ -127,14 +137,38 @@ where
             }
 
             if !response.status().is_success() {
+                if crate::util::http::is_retryable_status(status) && attempt < retry_cfg.max_retries {
+                    let retry_delay = match retry_delay_ms(response.headers(), &retry_cfg) {
+                        Ok(ms) => ms,
+                        Err(e) => {
+                            last_error = Some(ProviderError::retry_after_too_long(
+                                &api_name,
+                                &model_id,
+                                &provider,
+                                e,
+                            ));
+                            break;
+                        }
+                    };
+                    drop(response);
+                    if wait_before_retry(retry_delay, cancel.as_ref()).await {
+                        continue;
+                    }
+                    let err = ProviderError::cancelled(&api_name, &model_id, &provider);
+                    let mut msg = error_event(&api_name, &model_id, &provider, &err);
+                    msg.stop_reason = StopReason::Aborted;
+                    yield AssistantMessageEvent::Error {
+                        reason: StopReason::Aborted,
+                        message: msg,
+                    };
+                    return;
+                }
+
                 let body = response.text().await.unwrap_or_default();
                 last_error = Some(ProviderError::http_status(
                     &api_name, &model_id, &provider, status, body,
                 ));
-                if !should_retry(&last_error, &retry_cfg, attempt) {
-                    break;
-                }
-                continue;
+                break;
             }
 
             let body_stream: Box<dyn futures::Stream<Item = Result<bytes::Bytes, String>> + Send + Unpin> =
@@ -175,6 +209,59 @@ fn should_retry(error: &Option<ProviderError>, cfg: &RetryConfig, attempt: u32) 
             _ => false,
         },
         None => false,
+    }
+}
+
+fn headers_to_json(headers: &reqwest::header::HeaderMap) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    for (name, value) in headers {
+        if let Ok(value) = value.to_str() {
+            object.insert(name.as_str().to_string(), serde_json::json!(value));
+        }
+    }
+    serde_json::Value::Object(object)
+}
+
+fn retry_delay_ms(headers: &reqwest::header::HeaderMap, cfg: &RetryConfig) -> Result<u64, String> {
+    if let Some(value) = headers
+        .get("retry-after-ms")
+        .and_then(|value| value.to_str().ok())
+    {
+        let ms = value
+            .trim()
+            .parse::<u64>()
+            .map_err(|e| format!("Retry-After-MS header is not a valid number: {}", e))?;
+        if ms > cfg.max_retry_delay_ms {
+            return Err(format!(
+                "Retry-After {}ms exceeds max_retry_delay_ms {}ms",
+                ms, cfg.max_retry_delay_ms
+            ));
+        }
+        return Ok(ms);
+    }
+
+    let retry_after = headers
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok());
+    crate::util::http::parse_retry_after_ms(retry_after, cfg)
+}
+
+async fn wait_before_retry(delay_ms: u64, cancel: Option<&CancellationToken>) -> bool {
+    if delay_ms == 0 {
+        return true;
+    }
+
+    match cancel {
+        Some(token) => {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => true,
+                _ = token.cancelled() => false,
+            }
+        }
+        None => {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            true
+        }
     }
 }
 

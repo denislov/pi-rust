@@ -101,6 +101,24 @@ impl ProviderError {
             retry_after_ms: None,
         }
     }
+
+    pub fn retry_after_too_long(
+        api: &str,
+        model_id: &str,
+        provider: &str,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderErrorKind::RetryAfterTooLong,
+            api: api.to_string(),
+            provider: Some(provider.to_string()),
+            model: Some(model_id.to_string()),
+            status: None,
+            message: message.into(),
+            body: None,
+            retry_after_ms: None,
+        }
+    }
 }
 
 impl std::fmt::Display for ProviderError {

@@ -6,6 +6,7 @@ use async_stream::stream;
 
 use crate::registry::ApiProvider;
 use crate::stream::EventStream;
+use crate::transport::headers::merge_headers;
 use crate::transport::http::send_json_stream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
@@ -64,23 +65,17 @@ impl ApiProvider for OpenAICompletionsProvider {
             format!("{}/v1/chat/completions", base_url)
         };
 
-        let mut request = self
-            .client
-            .post(&url)
-            .bearer_auth(api_key)
-            .header("content-type", "application/json")
-            .header("accept", "text/event-stream");
+        let mut request = self.client.post(&url).bearer_auth(api_key);
 
-        if let Some(opts) = &opts {
-            if let Some(ref headers) = opts.headers {
-                if let Some(obj) = headers.as_object() {
-                    for (k, v) in obj {
-                        if let Some(val) = v.as_str() {
-                            request = request.header(k.as_str(), val);
-                        }
-                    }
-                }
-            }
+        for (key, value) in merge_headers(
+            model.headers.as_ref(),
+            opts.as_ref().and_then(|opts| opts.headers.as_ref()),
+            [
+                ("content-type".into(), "application/json".into()),
+                ("accept".into(), "text/event-stream".into()),
+            ],
+        ) {
+            request = request.header(key, value);
         }
 
         send_json_stream(
