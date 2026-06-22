@@ -1,5 +1,4 @@
-use std::collections::BTreeSet;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -374,6 +373,15 @@ fn default_export_path(cwd: &Path) -> PathBuf {
     cwd.join(format!("session-{stamp}.html"))
 }
 
+fn resolve_command_path(cwd: &Path, path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    }
+}
+
 fn timestamp_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -458,6 +466,59 @@ fn copy_with_command(program: &str, args: &[&str], text: &str) -> Result<(), Str
     }
 }
 
+fn clone_session_to_sibling(
+    source_path: &Path,
+    target_cwd: &Path,
+    leaf_id: &str,
+) -> Result<JsonlSessionStorage, String> {
+    let source = JsonlSessionStorage::open(source_path).map_err(|error| error.message)?;
+    let entries = source.get_entries();
+    let by_id: HashMap<&str, &SessionEntry> = entries
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry))
+        .collect();
+    if !by_id.contains_key(leaf_id) {
+        return Err(format!("entry id not found in source session: {leaf_id}"));
+    }
+
+    let parent = source_path
+        .parent()
+        .ok_or_else(|| "source session has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let session_id = create_session_id();
+    let timestamp = create_timestamp();
+    let filename = format!(
+        "{}_{}.jsonl",
+        timestamp.replace(':', "_").replace('.', "_"),
+        session_id
+    );
+    let clone_path = parent.join(filename);
+    let mut target = JsonlSessionStorage::create(
+        &clone_path,
+        target_cwd.display().to_string(),
+        &session_id,
+        timestamp,
+        Some(source_path.to_path_buf()),
+    )
+    .map_err(|error| error.message)?;
+
+    let mut branch = Vec::new();
+    let mut current = by_id.get(leaf_id).copied();
+    while let Some(entry) = current {
+        branch.push(entry.clone());
+        current = entry
+            .parent_id
+            .as_deref()
+            .and_then(|parent_id| by_id.get(parent_id).copied());
+    }
+    branch.reverse();
+    for entry in branch {
+        target.append_entry(entry).map_err(|error| error.message)?;
+    }
+
+    Ok(target)
+}
+
 struct InteractiveRoot {
     transcript: Transcript,
     editor: Editor,
@@ -480,6 +541,8 @@ struct InteractiveRoot {
     model_selection_selected: usize,
     session_choices: Vec<SessionChoice>,
     selected_session: Option<SessionChoice>,
+    active_session_path: Option<PathBuf>,
+    active_leaf_id: Option<String>,
     selecting_session: bool,
     session_selection_selected: usize,
     selecting_settings: bool,
@@ -577,6 +640,8 @@ impl InteractiveRoot {
             model_selection_selected: 0,
             session_choices: Vec::new(),
             selected_session: None,
+            active_session_path: None,
+            active_leaf_id: None,
             selecting_session: false,
             session_selection_selected: 0,
             selecting_settings: false,
@@ -702,16 +767,19 @@ impl InteractiveRoot {
             "model" => self.handle_model_command(&command.args),
             "resume" => self.handle_resume_command(&command.args),
             "export" => self.handle_export_command(&command.args),
+            "import" => self.handle_import_command(&command.args),
             "copy" => self.handle_copy_command(),
             "new" => self.handle_new_command(),
+            "clone" => self.handle_clone_command(),
             "reload" => self.handle_reload_command(),
             "settings" => self.handle_settings_command(),
             "name" => self.handle_name_command(&command.args),
             "session" => self.handle_session_command(),
             "hotkeys" => self.handle_hotkeys_command(),
             "changelog" => self.handle_changelog_command(),
-            "scoped-models" | "import" | "share" | "fork" | "clone" | "tree" | "login"
-            | "logout" | "compact" => self.handle_pending_slash_command(&command),
+            "scoped-models" | "share" | "fork" | "tree" | "login" | "logout" | "compact" => {
+                self.handle_pending_slash_command(&command)
+            }
             _ => {
                 self.transcript.push(TranscriptItem::system(format!(
                     "unknown command: {} - type /help for available commands",
@@ -737,6 +805,39 @@ impl InteractiveRoot {
             Err(error) => self.transcript.push(TranscriptItem::system(format!(
                 "Failed to export session: {error}"
             ))),
+        }
+    }
+
+    fn handle_import_command(&mut self, args: &str) {
+        let Some(input_path) = export_path_arg(args) else {
+            self.transcript
+                .push(TranscriptItem::system("Usage: /import <path.jsonl>"));
+            return;
+        };
+        let path = resolve_command_path(&self.cwd, &input_path);
+
+        match JsonlSessionStorage::open(&path) {
+            Ok(storage) => {
+                let leaf_id = storage.get_leaf_id().unwrap_or(None);
+                let choice = session_choice_from_metadata(storage.metadata());
+                self.session_label = choice.display_name().to_string();
+                self.selected_session = Some(choice);
+                self.active_session_path = Some(path.clone());
+                self.active_leaf_id = leaf_id;
+                self.selecting_session = false;
+                self.session_selection_selected = 0;
+                self.editor.set_text("");
+                self.transcript.push(TranscriptItem::system(format!(
+                    "Session imported from: {}",
+                    path.display()
+                )));
+            }
+            Err(error) => {
+                self.transcript.push(TranscriptItem::system(format!(
+                    "Failed to import session: {}",
+                    error.message
+                )));
+            }
         }
     }
 
@@ -769,7 +870,39 @@ impl InteractiveRoot {
         self.session_selection_selected = 0;
         self.usage = (0, 0);
         self.session_label = "session".to_string();
+        self.active_session_path = None;
+        self.active_leaf_id = None;
         self.action = InteractiveAction::NewSession;
+    }
+
+    fn handle_clone_command(&mut self) {
+        let Some(source_path) = self.active_session_path.clone() else {
+            self.transcript
+                .push(TranscriptItem::system("Nothing to clone yet"));
+            return;
+        };
+        let Some(leaf_id) = self.active_leaf_id.clone() else {
+            self.transcript
+                .push(TranscriptItem::system("Nothing to clone yet"));
+            return;
+        };
+
+        match clone_session_to_sibling(&source_path, &self.cwd, &leaf_id) {
+            Ok(storage) => {
+                let leaf_id = storage.get_leaf_id().unwrap_or(None);
+                let choice = session_choice_from_metadata(storage.metadata());
+                self.session_label = choice.display_name().to_string();
+                self.selected_session = Some(choice.clone());
+                self.active_session_path = Some(choice.path);
+                self.active_leaf_id = leaf_id;
+                self.editor.set_text("");
+                self.transcript
+                    .push(TranscriptItem::system("Cloned to new session"));
+            }
+            Err(error) => {
+                self.transcript.push(TranscriptItem::system(error));
+            }
+        }
     }
 
     fn handle_reload_command(&mut self) {
@@ -1054,6 +1187,11 @@ impl InteractiveRoot {
     fn set_selected_session(&mut self, choice: SessionChoice) {
         self.session_label = choice.display_name().to_string();
         self.selected_session = Some(choice.clone());
+        self.active_session_path = Some(choice.path.clone());
+        self.active_leaf_id = JsonlSessionStorage::open(&choice.path)
+            .ok()
+            .and_then(|storage| storage.get_leaf_id().ok())
+            .flatten();
         self.selecting_session = false;
         self.session_selection_selected = 0;
         self.editor.set_text("");
@@ -2323,10 +2461,16 @@ fn finish_prompt<T: Terminal>(
     result: Result<SessionPromptResult, CliError>,
 ) -> Result<(), CliError> {
     let root = root_mut(tui, root_id)?;
-    if let Err(error) = result {
-        root.apply_events(vec![UiEvent::AgentError {
-            error: error.to_string(),
-        }]);
+    match result {
+        Ok(result) => {
+            root.active_session_path = result.session_path;
+            root.active_leaf_id = result.leaf_id;
+        }
+        Err(error) => {
+            root.apply_events(vec![UiEvent::AgentError {
+                error: error.to_string(),
+            }]);
+        }
     }
     root.set_status(InteractiveStatus::Idle);
     Ok(())
@@ -3835,6 +3979,114 @@ mod tests {
     }
 
     #[test]
+    fn import_command_opens_jsonl_and_selects_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_test_session(dir.path(), dir.path(), "hello import");
+        let mut root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "import".to_string(),
+            args: format!("\"{}\"", source.display()),
+            original: format!("/import \"{}\"", source.display()),
+        });
+
+        let selected = root
+            .take_selected_session()
+            .expect("/import should select imported session");
+        assert_eq!(selected.path, source);
+        assert_eq!(
+            root.active_session_path.as_deref(),
+            Some(selected.path.as_path())
+        );
+        assert!(root.active_leaf_id.is_some());
+        let text = last_system_text(&root);
+        assert!(text.contains("Session imported from:"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn import_command_reports_usage_without_path() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "import".to_string(),
+            args: String::new(),
+            original: "/import".to_string(),
+        });
+
+        assert!(root.take_selected_session().is_none());
+        let text = last_system_text(&root);
+        assert!(text.contains("Usage: /import <path.jsonl>"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn clone_command_forks_active_session_and_selects_clone() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_test_session(dir.path(), dir.path(), "hello clone");
+        let mut root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.active_session_path = Some(source.clone());
+        root.active_leaf_id = JsonlSessionStorage::open(&source)
+            .unwrap()
+            .get_leaf_id()
+            .unwrap();
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "clone".to_string(),
+            args: String::new(),
+            original: "/clone".to_string(),
+        });
+
+        let selected = root
+            .take_selected_session()
+            .expect("/clone should select cloned session");
+        assert_ne!(selected.path, source);
+        assert!(selected.path.exists(), "clone should create a session file");
+        let cloned = std::fs::read_to_string(&selected.path).unwrap();
+        assert!(cloned.contains("hello clone"), "{cloned}");
+        assert!(cloned.contains("parentSession"), "{cloned}");
+        assert_eq!(
+            root.active_session_path.as_deref(),
+            Some(selected.path.as_path())
+        );
+        let text = last_system_text(&root);
+        assert!(text.contains("Cloned to new session"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn clone_command_reports_status_when_no_active_session_exists() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "clone".to_string(),
+            args: String::new(),
+            original: "/clone".to_string(),
+        });
+
+        assert!(root.take_selected_session().is_none());
+        let text = last_system_text(&root);
+        assert!(text.contains("Nothing to clone yet"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
     fn handle_unknown_slash_command_reports_error_without_submit() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
@@ -4008,6 +4260,56 @@ mod tests {
             Some(TranscriptItem::System { text }) => text.clone(),
             other => panic!("expected last transcript item to be System, got {other:?}"),
         }
+    }
+
+    fn write_test_session(root: &Path, cwd: &Path, text: &str) -> PathBuf {
+        let path = root.join(format!("{}.jsonl", create_session_id()));
+        let timestamp = create_timestamp();
+        let mut storage = JsonlSessionStorage::create(
+            &path,
+            cwd.display().to_string(),
+            "test-session",
+            timestamp.clone(),
+            None,
+        )
+        .unwrap();
+        storage
+            .append_entry(SessionEntry::message(
+                "entry-user".to_string(),
+                None,
+                timestamp.clone(),
+                StoredAgentMessage::User {
+                    content: vec![ContentBlock::Text {
+                        text: text.to_string(),
+                        text_signature: None,
+                    }],
+                    timestamp: 0,
+                },
+            ))
+            .unwrap();
+        storage
+            .append_entry(SessionEntry::message(
+                "entry-assistant".to_string(),
+                Some("entry-user".to_string()),
+                timestamp,
+                StoredAgentMessage::Assistant {
+                    content: vec![ContentBlock::Text {
+                        text: format!("response to {text}"),
+                        text_signature: None,
+                    }],
+                    api: "test".to_string(),
+                    provider: "test".to_string(),
+                    model: "faux-model".to_string(),
+                    response_model: None,
+                    response_id: None,
+                    usage: StoredUsage::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: 0,
+                },
+            ))
+            .unwrap();
+        path
     }
 
     #[derive(Default)]

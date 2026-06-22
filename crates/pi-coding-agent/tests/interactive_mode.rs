@@ -42,6 +42,39 @@ async fn scripted_interactive_prompt_renders_assistant_text() {
 }
 
 #[tokio::test]
+async fn scripted_interactive_clone_after_prompt_forks_current_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("assistant reply")]);
+
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        dir.path(),
+        vec![
+            ("hello\r", "assistant reply"),
+            ("/clone\r", "parentSession"),
+        ],
+        80,
+        24,
+    )
+    .await
+    .unwrap();
+
+    let files = collect_jsonl_files(dir.path());
+    assert_eq!(files.len(), 2, "{files:?}");
+    assert!(
+        output.contains("Cloned to new session"),
+        "{}",
+        output.rendered
+    );
+    assert!(
+        files.iter().any(|path| std::fs::read_to_string(path)
+            .map(|text| text.contains("parentSession"))
+            .unwrap_or(false)),
+        "{files:?}"
+    );
+}
+
+#[tokio::test]
 async fn scripted_interactive_renders_assistant_markdown() {
     let provider = FauxProvider::new(vec![text_response(
         "# Title\n\nA paragraph with **bold** text and `code`.\n\n- one",
@@ -179,6 +212,27 @@ fn sync_render_count(ops: &[TerminalOp]) -> usize {
     ops.iter()
         .filter(|op| matches!(op, TerminalOp::Write(data) if data.contains("\x1b[?2026h")))
         .count()
+}
+
+fn collect_jsonl_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    collect_jsonl_files_recursive(root, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_jsonl_files_recursive(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_jsonl_files_recursive(&path, out);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            out.push(path);
+        }
+    }
 }
 
 struct RecordingModelProvider {
@@ -394,6 +448,7 @@ async fn scripted_interactive_model_command_switches_footer_model() {
 
 #[tokio::test]
 async fn scripted_interactive_model_command_changes_next_prompt_model() {
+    let _guard = ENV_LOCK.lock().await;
     let target_model = pi_ai::lookup_model("claude-haiku-4-5").expect("known model");
     let previous_provider = registry::lookup(&target_model.api);
     let model_ids = Arc::new(Mutex::new(Vec::new()));

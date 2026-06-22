@@ -11,6 +11,7 @@ use pi_agent_core::{
 };
 use pi_ai::types::{AssistantMessage, ContentBlock, Model};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
 
 pub struct SessionPromptOptions {
@@ -34,6 +35,8 @@ pub struct SessionPromptOptions {
 pub struct SessionPromptResult {
     pub final_message: AssistantMessage,
     pub messages: Vec<AgentMessage>,
+    pub session_path: Option<PathBuf>,
+    pub leaf_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -319,9 +322,22 @@ async fn drive_started_session_prompt(
         &pending_compactions,
     )?;
 
+    let (session_path, leaf_id) = match &started.active_session {
+        Some(active) => (
+            Some(active.storage.path().to_path_buf()),
+            active
+                .storage
+                .get_leaf_id()
+                .map_err(|error| CliError::SessionFailure(error.message))?,
+        ),
+        None => (None, None),
+    };
+
     Ok(SessionPromptResult {
         final_message,
         messages: started.agent.messages(),
+        session_path,
+        leaf_id,
     })
 }
 

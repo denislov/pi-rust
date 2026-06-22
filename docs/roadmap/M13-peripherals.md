@@ -11,9 +11,10 @@
 ### 1. 导出 / 分享
 - ✅ **`/export` 基础导出**：Rust interactive 已支持将当前 transcript 导出为 JSONL 或 HTML；JSONL 使用 session v3 header + 线性 message entries，HTML 为轻量离线可读页面。
 - **HTML 导出 parity**：TS 的完整 HTML 查看器仍未移植。TS：`coding-agent/src/core/export-html/`（8 文件，含 template.html/css/js）。
-- **JSONL 导入**：`/import`。
+- ✅ **JSONL 导入**：`/import` 可打开指定 JSONL 并切换后续 prompt target；路径参数支持引号。
 - **gist 分享**：`/share` 经 GitHub gist 分享会话。TS：`modes/interactive/interactive-mode.ts`。
 - ✅ **`/copy`**：复制最后一条 assistant 消息到剪贴板；已抽象 `ClipboardSink`，测试用内存实现，不依赖系统剪贴板。
+- ✅ **`/clone` 基础克隆**：可基于当前 active session leaf 生成带 `parentSession` 的克隆 JSONL，并切换后续 prompt target。
 
 ### 2. 包管理 CLI（需先决策）
 - pi 的 `pi install/remove/update/list/config`（npm/git 安装扩展）。TS：`coding-agent/src/package-manager-cli.ts`。
