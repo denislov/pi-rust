@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: build_system
+title: Rust Cargo 工作区构建体系
+scope: []
+source_files:
+    - Cargo.toml
+    - Cargo.lock
+    - scripts/tui-smoke.sh
+    - crates/pi-coding-agent/Cargo.toml
+    - crates/pi-ai/Cargo.toml
+depends_on: []
+related_to: []

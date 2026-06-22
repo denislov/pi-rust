@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: frontend_style
+title: TUI 主题系统与 ANSI 样式架构
+scope: []
+source_files:
+    - crates/pi-tui/src/theme.rs
+    - crates/pi-tui/src/style.rs
+    - crates/pi-tui/src/components/markdown.rs
+    - crates/pi-tui/src/components/editor.rs
+    - crates/pi-tui/src/lib.rs
+    - crates/pi-coding-agent/src/interactive/app.rs
+depends_on: []
+related_to: []

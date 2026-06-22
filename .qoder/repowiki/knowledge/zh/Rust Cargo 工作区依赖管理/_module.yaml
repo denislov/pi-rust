@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: dependency_management
+title: Rust Cargo 工作区依赖管理
+scope: []
+source_files:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/pi-agent-core/Cargo.toml
+    - crates/pi-ai/Cargo.toml
+    - crates/pi-coding-agent/Cargo.toml
+    - crates/pi-tui/Cargo.toml
+depends_on: []
+related_to: []

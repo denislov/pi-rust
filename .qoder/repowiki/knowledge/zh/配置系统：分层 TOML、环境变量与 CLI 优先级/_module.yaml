@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: configuration_system
+title: 配置系统：分层 TOML、环境变量与 CLI 优先级
+scope: []
+source_files:
+    - crates/pi-coding-agent/src/config/mod.rs
+    - crates/pi-coding-agent/src/config/settings.rs
+    - crates/pi-coding-agent/src/config/auth.rs
+    - crates/pi-coding-agent/src/config/paths.rs
+    - crates/pi-ai/src/util/env_keys.rs
+    - crates/pi-coding-agent/src/args.rs
+    - crates/pi-coding-agent/src/runtime.rs
+depends_on: []
+related_to: []

@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: logging_system
+title: 日志系统现状：基于标准输出的简易日志
+scope: []
+source_files:
+    - crates/pi-coding-agent/src/main.rs
+    - crates/pi-ai/src/providers/openai/responses/process.rs
+    - crates/pi-coding-agent/src/resources.rs
+depends_on: []
+related_to: []
