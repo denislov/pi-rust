@@ -10,6 +10,7 @@ pub mod images;
 pub mod mistral;
 pub mod openai;
 pub mod openai_codex_responses;
+pub mod process_framework;
 
 use crate::registry;
 use std::sync::Arc;

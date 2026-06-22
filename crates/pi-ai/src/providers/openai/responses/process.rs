@@ -1,237 +1,231 @@
-use async_stream::stream;
-use bytes::Bytes;
-use futures::{Stream, StreamExt};
-use tokio_util::sync::CancellationToken;
-
 use super::wire;
 use crate::models::calculate_cost;
+use crate::providers::process_framework::{SseEventHandler, SseEventResult, process_sse};
+use crate::stream::EventStream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, Model, StopReason, Usage,
 };
 use crate::util::json_repair::parse_streaming_json;
-use crate::util::sse::iterate_sse;
+use bytes::Bytes;
+use futures::Stream;
+use tokio_util::sync::CancellationToken;
 
 pub fn process<E>(
     body: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     model: Model,
     cancel: Option<CancellationToken>,
-) -> crate::stream::EventStream
+) -> EventStream
 where
     E: std::fmt::Display + Send + 'static,
 {
-    Box::pin(stream! {
-        let mut partial = AssistantMessage::empty(&model.api, &model.id);
-        partial.provider = Some(model.provider.clone());
-        let mut text_content_index: Option<u32> = None;
-        let mut tool_content_index: Option<u32> = None;
-        let mut accumulated_tool_args: String = String::new();
-        let mut first_event = true;
-        let mut response_id: Option<String> = None;
-        let mut usage: Option<wire::ResponseUsage> = None;
+    process_with_api_name(body, model, cancel, "openai-responses")
+}
 
-        let sse = iterate_sse(body);
-        futures::pin_mut!(sse);
+pub fn process_with_api_name<E>(
+    body: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    model: Model,
+    cancel: Option<CancellationToken>,
+    api_name: &str,
+) -> EventStream
+where
+    E: std::fmt::Display + Send + 'static,
+{
+    process_sse(body, model, cancel, ResponsesHandler::default(), api_name)
+}
 
-        loop {
-            if let Some(ref token) = cancel {
-                if token.is_cancelled() {
-                    partial.stop_reason = StopReason::Aborted;
-                    partial.error_message = Some("cancelled".into());
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Aborted,
-                        message: partial.clone(),
-                    };
-                    return;
+#[derive(Default)]
+struct ResponsesHandler {
+    first_event: bool,
+    text_content_index: Option<u32>,
+    tool_content_index: Option<u32>,
+    accumulated_tool_args: String,
+    response_id: Option<String>,
+    usage: Option<wire::ResponseUsage>,
+}
+
+impl SseEventHandler for ResponsesHandler {
+    fn handle_event(
+        &mut self,
+        data: &str,
+        partial: &mut AssistantMessage,
+        _model: &Model,
+    ) -> Result<SseEventResult, String> {
+        let event: wire::ResponseStreamEvent =
+            serde_json::from_str(data).map_err(|e| format!("SSE parse error: {}", e))?;
+
+        let mut events = Vec::new();
+
+        match event {
+            wire::ResponseStreamEvent::ResponseCreated { response } => {
+                self.response_id = Some(response.id);
+                if !self.first_event {
+                    partial.response_id = self.response_id.clone();
+                    partial.timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    events.push(AssistantMessageEvent::Start {
+                        content_index: None,
+                        partial: partial.clone(),
+                    });
+                    self.first_event = true;
                 }
             }
 
-            let sse_event = match sse.next().await {
-                Some(Ok(e)) => e,
-                Some(Err(e)) => {
-                    partial.stop_reason = StopReason::Error;
-                    partial.error_message = Some(e.clone());
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Error,
-                        message: partial.clone(),
-                    };
-                    return;
-                }
-                None => break,
-            };
-
-            let event: wire::ResponseStreamEvent = match serde_json::from_str(&sse_event.data) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("SSE parse error for data: {}", sse_event.data);
-                    partial.stop_reason = StopReason::Error;
-                    partial.error_message = Some(format!("SSE parse error: {}", e));
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Error,
-                        message: partial.clone(),
-                    };
-                    return;
-                }
-            };
-
-            match event {
-                wire::ResponseStreamEvent::ResponseCreated { response } => {
-                    response_id = Some(response.id);
-                    if first_event {
-                        partial.response_id = response_id.clone();
-                        partial.timestamp = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
-                        yield AssistantMessageEvent::Start { content_index: None, partial: partial.clone() };
-                        first_event = false;
-                    }
-                }
-
-                wire::ResponseStreamEvent::OutputItemAdded { item } => match item.item_type.as_str() {
-                    "function_call" => {
-                        if let Some(ci) = tool_content_index {
-                            let parsed = parse_streaming_json(&accumulated_tool_args);
-                            if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                                partial.content.get_mut(ci as usize)
-                            {
-                                *arguments = parsed;
-                            }
-                            yield AssistantMessageEvent::ToolcallEnd {
-                                content_index: ci,
-                                partial: partial.clone(),
-                            };
-                        }
-                        tool_content_index = Some(partial.content.len() as u32);
-                        let call_id = item.call_id.unwrap_or(item.id.clone());
-                        let call_name = item.name.unwrap_or_default();
-                        accumulated_tool_args.clear();
-                        partial.content.push(ContentBlock::ToolCall {
-                            id: call_id,
-                            name: call_name,
-                            arguments: serde_json::json!({}),
-                            thought_signature: None,
-                        });
-                        yield AssistantMessageEvent::ToolcallStart {
-                            content_index: tool_content_index.unwrap(),
-                            partial: partial.clone(),
-                        };
-                    }
-                    _ => {}
-                },
-
-                wire::ResponseStreamEvent::ContentPartAdded { .. } => {
-                    text_content_index = Some(partial.content.len() as u32);
-                    partial.content.push(ContentBlock::Text {
-                        text: String::new(),
-                        text_signature: None,
-                    });
-                    yield AssistantMessageEvent::TextStart {
-                        content_index: text_content_index.unwrap(),
-                        partial: partial.clone(),
-                    };
-                }
-
-                wire::ResponseStreamEvent::OutputTextDelta { delta } => {
-                    if let Some(ci) = text_content_index {
-                        if let Some(ContentBlock::Text { text, .. }) = partial.content.get_mut(ci as usize) {
-                            text.push_str(&delta);
-                        }
-                        yield AssistantMessageEvent::TextDelta {
-                            content_index: ci,
-                            delta: delta.clone(),
-                            partial: partial.clone(),
-                        };
-                    }
-                }
-
-                wire::ResponseStreamEvent::FunctionCallArgumentsDelta { delta } => {
-                    accumulated_tool_args.push_str(&delta);
-                    let parsed = parse_streaming_json(&accumulated_tool_args);
-                    if let Some(ci) = tool_content_index {
+            wire::ResponseStreamEvent::OutputItemAdded { item } => match item.item_type.as_str() {
+                "function_call" => {
+                    if let Some(ci) = self.tool_content_index {
+                        let parsed = parse_streaming_json(&self.accumulated_tool_args);
                         if let Some(ContentBlock::ToolCall { arguments, .. }) =
                             partial.content.get_mut(ci as usize)
                         {
                             *arguments = parsed;
                         }
-                        yield AssistantMessageEvent::ToolcallDelta {
+                        events.push(AssistantMessageEvent::ToolcallEnd {
                             content_index: ci,
-                            delta: delta.clone(),
                             partial: partial.clone(),
-                        };
+                        });
+                    }
+                    self.tool_content_index = Some(partial.content.len() as u32);
+                    let call_id = item.call_id.unwrap_or(item.id.clone());
+                    let call_name = item.name.unwrap_or_default();
+                    self.accumulated_tool_args.clear();
+                    partial.content.push(ContentBlock::ToolCall {
+                        id: call_id,
+                        name: call_name,
+                        arguments: serde_json::json!({}),
+                        thought_signature: None,
+                    });
+                    events.push(AssistantMessageEvent::ToolcallStart {
+                        content_index: self.tool_content_index.unwrap(),
+                        partial: partial.clone(),
+                    });
+                }
+                _ => {}
+            },
+
+            wire::ResponseStreamEvent::ContentPartAdded { .. } => {
+                self.text_content_index = Some(partial.content.len() as u32);
+                partial.content.push(ContentBlock::Text {
+                    text: String::new(),
+                    text_signature: None,
+                });
+                events.push(AssistantMessageEvent::TextStart {
+                    content_index: self.text_content_index.unwrap(),
+                    partial: partial.clone(),
+                });
+            }
+
+            wire::ResponseStreamEvent::OutputTextDelta { delta } => {
+                if let Some(ci) = self.text_content_index {
+                    if let Some(ContentBlock::Text { text, .. }) =
+                        partial.content.get_mut(ci as usize)
+                    {
+                        text.push_str(&delta);
+                    }
+                    events.push(AssistantMessageEvent::TextDelta {
+                        content_index: ci,
+                        delta: delta.clone(),
+                        partial: partial.clone(),
+                    });
+                }
+            }
+
+            wire::ResponseStreamEvent::FunctionCallArgumentsDelta { delta } => {
+                self.accumulated_tool_args.push_str(&delta);
+                let parsed = parse_streaming_json(&self.accumulated_tool_args);
+                if let Some(ci) = self.tool_content_index {
+                    if let Some(ContentBlock::ToolCall { arguments, .. }) =
+                        partial.content.get_mut(ci as usize)
+                    {
+                        *arguments = parsed;
+                    }
+                    events.push(AssistantMessageEvent::ToolcallDelta {
+                        content_index: ci,
+                        delta: delta.clone(),
+                        partial: partial.clone(),
+                    });
+                }
+            }
+
+            wire::ResponseStreamEvent::OutputItemDone { item } => match item.item_type.as_str() {
+                "message" => {
+                    if let Some(ci) = self.text_content_index {
+                        events.push(AssistantMessageEvent::TextEnd {
+                            content_index: ci,
+                            partial: partial.clone(),
+                        });
+                        self.text_content_index = None;
                     }
                 }
-
-                wire::ResponseStreamEvent::OutputItemDone { item } => {
-                    match item.item_type.as_str() {
-                        "message" => {
-                            if let Some(ci) = text_content_index {
-                                yield AssistantMessageEvent::TextEnd {
-                                    content_index: ci,
-                                    partial: partial.clone(),
-                                };
-                                text_content_index = None;
-                            }
+                "function_call" => {
+                    if let Some(ci) = self.tool_content_index {
+                        let parsed = parse_streaming_json(&self.accumulated_tool_args);
+                        if let Some(ContentBlock::ToolCall { arguments, .. }) =
+                            partial.content.get_mut(ci as usize)
+                        {
+                            *arguments = parsed;
                         }
-                        "function_call" => {
-                            if let Some(ci) = tool_content_index {
-                                let parsed = parse_streaming_json(&accumulated_tool_args);
-                                if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                                    partial.content.get_mut(ci as usize)
-                                {
-                                    *arguments = parsed;
-                                }
-                                yield AssistantMessageEvent::ToolcallEnd {
-                                    content_index: ci,
-                                    partial: partial.clone(),
-                                };
-                                tool_content_index = None;
-                            }
-                        }
-                        _ => {}
+                        events.push(AssistantMessageEvent::ToolcallEnd {
+                            content_index: ci,
+                            partial: partial.clone(),
+                        });
+                        self.tool_content_index = None;
                     }
                 }
+                _ => {}
+            },
 
-                wire::ResponseStreamEvent::ResponseCompleted { response } => {
-                    partial.response_id = response_id.clone();
-                    usage = response.usage;
-                }
+            wire::ResponseStreamEvent::ResponseCompleted { response } => {
+                partial.response_id = self.response_id.clone();
+                self.usage = response.usage;
             }
         }
 
-        if let Some(ci) = text_content_index {
-            yield AssistantMessageEvent::TextEnd {
+        Ok(SseEventResult::Continue(events))
+    }
+
+    fn finalize(
+        &self,
+        partial: &mut AssistantMessage,
+        model: &Model,
+    ) -> Vec<AssistantMessageEvent> {
+        let mut events = Vec::new();
+
+        if let Some(ci) = self.text_content_index {
+            events.push(AssistantMessageEvent::TextEnd {
                 content_index: ci,
                 partial: partial.clone(),
-            };
+            });
         }
-        if let Some(ci) = tool_content_index {
-            let parsed = parse_streaming_json(&accumulated_tool_args);
-            if let Some(ContentBlock::ToolCall { arguments, .. }) = partial.content.get_mut(ci as usize) {
+        if let Some(ci) = self.tool_content_index {
+            let parsed = parse_streaming_json(&self.accumulated_tool_args);
+            if let Some(ContentBlock::ToolCall { arguments, .. }) =
+                partial.content.get_mut(ci as usize)
+            {
                 *arguments = parsed;
             }
-            yield AssistantMessageEvent::ToolcallEnd {
+            events.push(AssistantMessageEvent::ToolcallEnd {
                 content_index: ci,
                 partial: partial.clone(),
-            };
+            });
         }
 
-        if let Some(u) = usage {
-            partial.usage = map_usage(&u, &model);
+        if let Some(u) = &self.usage {
+            partial.usage = map_usage(u, model);
         }
-        let has_tool_calls = partial.content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolCall { .. })
-        });
+        let has_tool_calls = partial
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolCall { .. }));
         partial.stop_reason = if has_tool_calls {
             StopReason::ToolUse
         } else {
             StopReason::Stop
         };
 
-        yield AssistantMessageEvent::Done {
-            reason: partial.stop_reason.clone(),
-            message: partial.clone(),
-        };
-    })
+        events
+    }
 }
 
 fn map_usage(u: &wire::ResponseUsage, model: &Model) -> Usage {

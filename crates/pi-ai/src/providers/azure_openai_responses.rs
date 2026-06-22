@@ -271,7 +271,7 @@ impl ApiProvider for AzureOpenAIResponsesProvider {
                 .bytes_stream()
                 .map(|r| r.map_err(|e| e.to_string()));
 
-            let mut event_stream = process::process(body_stream, model, cancel);
+            let mut event_stream = process::process_with_api_name(body_stream, model, cancel, "azure-openai-responses");
             while let Some(event) = event_stream.next().await {
                 yield event;
             }

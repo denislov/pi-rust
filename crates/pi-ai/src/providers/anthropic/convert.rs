@@ -1,29 +1,6 @@
 use super::wire;
 use crate::types::{ContentBlock, Context, Message, Model, StreamOptions};
-
-/// Normalize a tool-call id to match Anthropic's `^[a-zA-Z0-9_-]{1,64}$`.
-/// If the id is already valid, return as-is. Otherwise sanitize and truncate.
-pub fn normalize_tool_call_id(id: &str) -> String {
-    let is_valid = !id.is_empty()
-        && id.len() <= 64
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    if is_valid {
-        return id.to_string();
-    }
-    let sanitized: String = id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-        .collect();
-    if sanitized.len() > 64 {
-        sanitized[..64].to_string()
-    } else if sanitized.is_empty() {
-        "tool_0".to_string()
-    } else {
-        sanitized
-    }
-}
+use crate::util::tool_call_id::normalize_tool_call_id;
 
 /// Map pi stop-reason string to our StopReason enum.
 pub fn map_stop_reason(s: &str) -> crate::types::StopReason {
@@ -123,7 +100,7 @@ fn convert_messages(messages: &[Message]) -> Vec<wire::RequestMessage> {
             } => {
                 let tool_content = serde_json::json!({
                     "type": "tool_result",
-                    "tool_use_id": normalize_tool_call_id(tool_call_id),
+                    "tool_use_id": normalize_tool_call_id(tool_call_id, None),
                     "content": convert_content(content),
                 });
 
@@ -177,7 +154,7 @@ fn convert_content(blocks: &[ContentBlock]) -> serde_json::Value {
             } => {
                 serde_json::json!({
                     "type": "tool_use",
-                    "id": normalize_tool_call_id(id),
+                    "id": normalize_tool_call_id(id, None),
                     "name": name,
                     "input": arguments,
                 })
@@ -194,13 +171,13 @@ mod tests {
 
     #[test]
     fn normalize_valid_id_passes_through() {
-        assert_eq!(normalize_tool_call_id("toolu_01"), "toolu_01");
-        assert_eq!(normalize_tool_call_id("call-abc-123"), "call-abc-123");
+        assert_eq!(normalize_tool_call_id("toolu_01", None), "toolu_01");
+        assert_eq!(normalize_tool_call_id("call-abc-123", None), "call-abc-123");
     }
 
     #[test]
     fn normalize_invalid_id_sanitized() {
-        let result = normalize_tool_call_id("tool*use!001");
+        let result = normalize_tool_call_id("tool*use!001", None);
         assert!(!result.contains('*'));
         assert!(!result.contains('!'));
     }

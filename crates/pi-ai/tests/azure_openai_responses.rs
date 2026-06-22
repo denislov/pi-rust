@@ -91,7 +91,12 @@ async fn azure_reuses_responses_stream_parser_with_azure_api_name() {
             .map(Ok::<_, String>),
     );
     let model = test_model();
-    let event_stream = pi_ai::providers::openai::responses::process::process(body, model, None);
+    let event_stream = pi_ai::providers::openai::responses::process::process_with_api_name(
+        body,
+        model,
+        None,
+        "azure-openai-responses",
+    );
     use futures::StreamExt;
 
     let events: Vec<_> = event_stream.collect().await;

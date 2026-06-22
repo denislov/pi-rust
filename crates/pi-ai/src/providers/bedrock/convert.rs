@@ -1,5 +1,6 @@
 use super::wire;
 use crate::types::{ContentBlock, Context, Message, Model, StreamOptions, Tool};
+use crate::util::tool_call_id::normalize_tool_call_id;
 
 const EMPTY_TEXT_PLACEHOLDER: &str = "<empty>";
 
@@ -115,7 +116,7 @@ fn convert_messages(
                         break;
                     };
                     content.push(wire::ContentBlock::ToolResult(wire::ToolResultBlock {
-                        tool_use_id: normalize_tool_call_id(tool_call_id),
+                        tool_use_id: normalize_tool_call_id(tool_call_id, Some('_')),
                         content: convert_tool_result_content(result_content, model),
                         status: if is_error.unwrap_or(false) {
                             "error".into()
@@ -168,7 +169,7 @@ fn convert_content(blocks: &[ContentBlock], model: &Model) -> Vec<wire::ContentB
                 arguments,
                 ..
             } => converted.push(wire::ContentBlock::ToolUse(wire::ToolUseBlock {
-                tool_use_id: normalize_tool_call_id(id),
+                tool_use_id: normalize_tool_call_id(id, Some('_')),
                 name: name.clone(),
                 input: arguments.clone(),
             })),
@@ -268,26 +269,6 @@ fn map_tool_choice(choice: Option<&serde_json::Value>) -> Option<serde_json::Val
             Some(serde_json::json!({"tool": {"name": name}}))
         }
         _ => None,
-    }
-}
-
-pub fn normalize_tool_call_id(id: &str) -> String {
-    let sanitized: String = id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if sanitized.len() > 64 {
-        sanitized[..64].to_string()
-    } else if sanitized.is_empty() {
-        "tool_0".into()
-    } else {
-        sanitized
     }
 }
 
