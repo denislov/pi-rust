@@ -4,7 +4,6 @@ use pi_agent_core::resources::{
     load_prompt_templates, load_skills, parse_frontmatter,
 };
 use std::io::Write;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]

@@ -8,19 +8,20 @@ use crate::agent::AgentState;
 use crate::compaction::estimate::estimate_tokens;
 use crate::compaction::prepare::prepare_compaction;
 use crate::compaction::summarize::summarize;
-use crate::convert::{assemble_context, convert_to_context, default_convert_to_llm};
 use crate::hooks::{
     AfterToolCallContext, BeforeProviderRequestContext, BeforeToolCallContext,
     PrepareNextTurnContext, ShouldStopAfterTurnContext,
 };
+use crate::loop_runtime::context::prepare_provider_request;
+use crate::loop_runtime::tools::{
+    ToolCallExecution, append_tool_result_messages, extract_tool_calls, should_use_sequential_tools,
+};
 use crate::queues::drain_queue;
 use crate::types::{
     AgentEvent, AgentMessage, AgentStream, AgentToolOutput, AgentToolResult,
-    ProviderRequestSnapshot, ThinkingLevel, ToolExecutionMode, ToolUpdateCallback,
+    ProviderRequestSnapshot, ToolUpdateCallback,
 };
-use pi_ai::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, ThinkingConfig,
-};
+use pi_ai::types::{AssistantMessage, AssistantMessageEvent, StopReason};
 
 struct PreparedToolCall {
     index: usize,
@@ -248,72 +249,18 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 None
             };
 
-            let (mut ctx, model, mut opts, provider_request_override) = {
-                let mut s = state.write().unwrap();
-                let messages_for_ctx = transformed_messages.as_ref().unwrap_or(&s.messages);
-                let ctx = if let Some(llm_messages) = llm_messages_override {
-                    assemble_context(
-                        &s.config.system_prompt,
-                        messages_for_ctx,
-                        llm_messages,
-                        &s.tools,
-                        &s.config.resources,
-                    )
-                } else if transformed_messages.is_some() {
-                    let llm_messages =
-                        default_convert_to_llm(messages_for_ctx, &s.config.resources);
-                    assemble_context(
-                        &s.config.system_prompt,
-                        messages_for_ctx,
-                        llm_messages,
-                        &s.tools,
-                        &s.config.resources,
-                    )
-                } else {
-                    convert_to_context(
-                        &s.config.system_prompt,
-                        &s.messages,
-                        &s.tools,
-                        &s.config.resources,
-                    )
-                };
-                let mut opts = s.config.stream_options.clone().unwrap_or_default();
-                opts.cancel = Some(cancel.clone());
-                // Apply thinking level
-                if s.config.model.reasoning {
-                    match s.config.thinking_level {
-                        ThinkingLevel::Off => {
-                            opts.thinking = None;
-                        }
-                        _ => {
-                            let budget_tokens = match s.config.thinking_level {
-                                ThinkingLevel::Minimal => Some(1024u32),
-                                ThinkingLevel::Low => Some(2048u32),
-                                ThinkingLevel::Medium => Some(4096u32),
-                                ThinkingLevel::High => Some(8192u32),
-                                ThinkingLevel::XHigh => Some(16384u32),
-                                ThinkingLevel::Off => None,
-                            };
-                            opts.thinking = Some(ThinkingConfig {
-                                enabled: true,
-                                budget_tokens,
-                                effort: Some(s.config.thinking_level.to_string()),
-                            });
-                        }
-                    }
-                } else {
-                    opts.thinking = None;
+            let mut request = match prepare_provider_request(
+                &state,
+                cancel.clone(),
+                transformed_messages,
+                llm_messages_override,
+            ) {
+                Ok(request) => request,
+                Err(error) => {
+                    yield AgentEvent::AgentError { error };
+                    return;
                 }
-                (ctx, s.config.model.clone(), opts, s.provider_request_override.take())
             };
-
-            if let Some(override_request) = provider_request_override {
-                ctx = override_request.context;
-                if let Some(override_options) = override_request.stream_options {
-                    opts = override_options;
-                }
-                opts.cancel = Some(cancel.clone());
-            }
 
             let provider_hook = {
                 let s = state.read().unwrap();
@@ -321,19 +268,19 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
             };
             if let Some(hook) = provider_hook {
                 let snapshot = ProviderRequestSnapshot {
-                    model: model.clone(),
-                    context: ctx.clone(),
-                    stream_options: opts.clone(),
+                    model: request.model.clone(),
+                    context: request.context.clone(),
+                    stream_options: request.stream_options.clone(),
                 };
                 match hook(BeforeProviderRequestContext::from(snapshot)).await {
                     Ok(Some(update)) => {
                         if let Some(updated_context) = update.context {
-                            ctx = updated_context;
+                            request.context = updated_context;
                         }
                         if let Some(updated_options) = update.stream_options {
-                            opts = updated_options;
+                            request.stream_options = updated_options;
                         }
-                        opts.cancel = Some(cancel.clone());
+                        request.stream_options.cancel = Some(cancel.clone());
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -345,13 +292,14 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
 
             yield AgentEvent::BeforeProviderRequest {
                 request: ProviderRequestSnapshot {
-                    model: model.clone(),
-                    context: ctx.clone(),
-                    stream_options: opts.clone(),
+                    model: request.model.clone(),
+                    context: request.context.clone(),
+                    stream_options: request.stream_options.clone(),
                 },
             };
 
-            let mut llm_stream = pi_ai::stream_model(&model, ctx, Some(opts));
+            let mut llm_stream =
+                pi_ai::stream_model(&request.model, request.context, Some(request.stream_options));
             let mut assistant_message: Option<pi_ai::types::AssistantMessage> = None;
             let mut stream_error: Option<String> = None;
 
@@ -447,16 +395,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                     return;
                 }
                 StopReason::ToolUse => {
-                    let tool_calls: Vec<_> = assistant
-                        .content
-                        .iter()
-                        .filter_map(|block| match block {
-                            ContentBlock::ToolCall { id, name, arguments, .. } => {
-                                Some((id.clone(), name.clone(), arguments.clone()))
-                            }
-                            _ => None,
-                        })
-                        .collect();
+                    let tool_calls = extract_tool_calls(&assistant);
 
                     if tool_calls.is_empty() {
                         continue;
@@ -466,21 +405,17 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                         let s = state.read().unwrap();
                         s.config.tool_execution
                     };
-                    let has_sequential_override = {
+                    let use_sequential = {
                         let s = state.read().unwrap();
-                        tool_calls.iter().any(|(_, name, _)| {
-                            s.tools
-                                .iter()
-                                .find(|t| t.name == *name)
-                                .and_then(|t| t.execution_mode)
-                                == Some(ToolExecutionMode::Sequential)
-                        })
+                        should_use_sequential_tools(global_mode, &tool_calls, &s.tools)
                     };
-                    let use_sequential = global_mode == ToolExecutionMode::Sequential || has_sequential_override;
                     let mut batch_results: Vec<AgentToolResult> = Vec::new();
 
                     if use_sequential {
-                        for (tool_id, tool_name, tool_args) in &tool_calls {
+                        for call in &tool_calls {
+                            let tool_id = &call.tool_call_id;
+                            let tool_name = &call.tool_name;
+                            let tool_args = &call.arguments;
                             let tool = {
                                 let s = state.read().unwrap();
                                 s.tools.iter().find(|t| t.name == *tool_name).cloned()
@@ -521,13 +456,15 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                         };
                                         {
                                             let mut s = state.write().unwrap();
-                                            s.messages.push(AgentMessage::ToolResult {
-                                                message_id: tool_id.clone(),
-                                                tool_call_id: tool_id.clone(),
-                                                tool_name: tool_name.clone(),
-                                                is_error: blocked_result.is_error,
-                                                content: blocked_result.content.clone(),
-                                            });
+                                            append_tool_result_messages(
+                                                &mut s.messages,
+                                                &[ToolCallExecution {
+                                                    index: call.index,
+                                                    tool_call_id: tool_id.clone(),
+                                                    tool_name: tool_name.clone(),
+                                                    result: blocked_result.clone(),
+                                                }],
+                                            );
                                         }
                                         batch_results.push(blocked_result);
                                         blocked = true;
@@ -541,13 +478,15 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                         };
                                         {
                                             let mut s = state.write().unwrap();
-                                            s.messages.push(AgentMessage::ToolResult {
-                                                message_id: tool_id.clone(),
-                                                tool_call_id: tool_id.clone(),
-                                                tool_name: tool_name.clone(),
-                                                is_error: err.is_error,
-                                                content: err.content.clone(),
-                                            });
+                                            append_tool_result_messages(
+                                                &mut s.messages,
+                                                &[ToolCallExecution {
+                                                    index: call.index,
+                                                    tool_call_id: tool_id.clone(),
+                                                    tool_name: tool_name.clone(),
+                                                    result: err.clone(),
+                                                }],
+                                            );
                                         }
                                         batch_results.push(err);
                                         blocked = true;
@@ -662,29 +601,34 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
 
                             {
                                 let mut s = state.write().unwrap();
-                                s.messages.push(AgentMessage::ToolResult {
-                                    message_id: tool_id.clone(),
-                                    tool_call_id: tool_id.clone(),
-                                    tool_name: tool_name.clone(),
-                                    is_error: result.is_error,
-                                    content: result.content.clone(),
-                                });
+                                append_tool_result_messages(
+                                    &mut s.messages,
+                                    &[ToolCallExecution {
+                                        index: call.index,
+                                        tool_call_id: tool_id.clone(),
+                                        tool_name: tool_name.clone(),
+                                        result: result.clone(),
+                                    }],
+                                );
                             }
                             batch_results.push(result);
                         }
                     } else {
                         //--- Parallel path ---
                         // 1. Emit ToolCallStart for all calls
-                        for (tool_id, tool_name, _) in &tool_calls {
+                        for call in &tool_calls {
                             yield AgentEvent::ToolCallStart {
-                                tool_call_id: tool_id.clone(),
-                                tool_name: tool_name.clone(),
+                                tool_call_id: call.tool_call_id.clone(),
+                                tool_name: call.tool_name.clone(),
                             };
                         }
 
                         // 2. Prepare all calls (before hooks run sequentially)
                         let mut prepared = Vec::new();
-                        for (index, (tool_id, tool_name, tool_args)) in tool_calls.iter().enumerate() {
+                        for call in &tool_calls {
+                            let tool_id = &call.tool_call_id;
+                            let tool_name = &call.tool_name;
+                            let tool_args = &call.arguments;
                             let tool = {
                                 let s = state.read().unwrap();
                                 s.tools.iter().find(|t| t.name == *tool_name).cloned()
@@ -720,7 +664,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                 }
                             }
                             prepared.push(PreparedToolCall {
-                                index,
+                                index: call.index,
                                 tool_id: tool_id.clone(),
                                 tool_name: tool_name.clone(),
                                 tool_args: tool_args.clone(),
@@ -792,41 +736,36 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                             }
                                         }
                                     }
-                                    (p.index, result, p.tool_id, p.tool_name)
+                                    ToolCallExecution {
+                                        index: p.index,
+                                        tool_call_id: p.tool_id,
+                                        tool_name: p.tool_name,
+                                        result,
+                                    }
                                 }
                             })
                             .collect();
 
-                        let mut sorted_results: Vec<(usize, AgentToolResult, String, String)> = Vec::new();
-                        while let Some(r) = futures.next().await {
-                            let (_, result, tool_id, tool_name) = &r;
+                        let mut sorted_results: Vec<ToolCallExecution> = Vec::new();
+                        while let Some(execution) = futures.next().await {
                             yield AgentEvent::ToolCallEnd {
-                                tool_call_id: tool_id.clone(),
-                                tool_name: tool_name.clone(),
-                                result: result.clone(),
+                                tool_call_id: execution.tool_call_id.clone(),
+                                tool_name: execution.tool_name.clone(),
+                                result: execution.result.clone(),
                             };
-                            sorted_results.push(r);
+                            sorted_results.push(execution);
                         }
-                        sorted_results.sort_by_key(|(idx, _, _, _)| *idx);
-
-                        let results: Vec<(AgentToolResult, String, String)> = sorted_results
-                            .into_iter()
-                            .map(|(_, result, id, name)| (result, id, name))
-                            .collect();
+                        sorted_results.sort_by_key(|execution| execution.index);
 
                         {
                             let mut s = state.write().unwrap();
-                            for (result, tool_id, tool_name) in &results {
-                                s.messages.push(AgentMessage::ToolResult {
-                                    message_id: tool_id.clone(),
-                                    tool_call_id: tool_id.clone(),
-                                    tool_name: tool_name.clone(),
-                                    is_error: result.is_error,
-                                    content: result.content.clone(),
-                                });
-                            }
+                            append_tool_result_messages(&mut s.messages, &sorted_results);
                         }
-                        batch_results.extend(results.into_iter().map(|(result, _, _)| result));
+                        batch_results.extend(
+                            sorted_results
+                                .into_iter()
+                                .map(|execution| execution.result),
+                        );
                     }
 
                     match should_stop_after_turn(&state, &assistant).await {

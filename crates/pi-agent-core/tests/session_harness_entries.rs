@@ -1,6 +1,5 @@
 use pi_agent_core::ThinkingLevel;
 use pi_agent_core::session::types::SessionEntry;
-use serde_json::Value;
 
 #[test]
 fn compaction_entry_serializes_as_typescript_shape() {
