@@ -3,6 +3,10 @@ name = "pi-coding-agent"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+test-harness = []
+
 [dependencies]
 dirs = "6"
 base64 = "0.22"

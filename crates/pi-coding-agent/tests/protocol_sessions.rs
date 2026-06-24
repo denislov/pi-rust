@@ -3,7 +3,9 @@ use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::{CliRunOptions, SessionRunOptions, protocol::rpc::run_rpc_mode_for_io};
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile::tempdir;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -58,6 +60,88 @@ async fn rpc_prompt_persists_session_messages() {
     assert!(contents.contains("\"type\":\"session_info\""));
     assert!(contents.contains("\"role\":\"user\""));
     assert!(contents.contains("\"role\":\"assistant\""));
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_state_reports_persisted_session_path_after_prompt() {
+    let dir = tempdir().unwrap();
+    let cwd = dir.path().join("project");
+    let sessions = dir.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-session-state";
+    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let mut session_options = SessionRunOptions::enabled(cwd);
+    session_options.session_dir = Some(sessions);
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(512);
+    let (output_writer, output_reader) = tokio::io::duplex(4096);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                session: session_options,
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    input_writer
+        .write_all(b"{\"id\":\"p1\",\"type\":\"prompt\",\"message\":\"hello\"}\n")
+        .await
+        .unwrap();
+
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+    tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before agent_end");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "agent_end" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("agent_end after prompt");
+
+    input_writer
+        .write_all(b"{\"id\":\"s1\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+
+    let state = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before get_state response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "get_state" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("state response after prompt");
+
+    drop(input_writer);
+    task.await.unwrap();
+
+    assert_eq!(state["data"]["isStreaming"], false);
+    assert_ne!(state["data"]["sessionId"], "in-memory");
+    assert!(
+        state["data"]["sessionFile"]
+            .as_str()
+            .unwrap()
+            .ends_with(".jsonl")
+    );
     registry::unregister(api);
 }
 

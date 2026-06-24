@@ -1,17 +1,21 @@
 use crate::protocol::events::ProtocolEventAdapter;
 use crate::protocol::jsonl::{JsonlLineReader, serialize_json_line};
-use crate::protocol::session_runner::{SessionPromptOptions, run_session_prompt};
+use crate::protocol::session_runner::{
+    SessionPromptAbortHandle, SessionPromptOptions, SessionPromptResult, spawn_session_prompt,
+};
 use crate::protocol::types::{
     ProtocolEvent, RpcCommand, RpcResponse, RpcSessionState, StreamingBehavior,
 };
 use crate::runtime::PromptInvocation;
 use crate::{CliArgs, CliError, CliRunOptions, config, select_model};
 use pi_agent_core::session::StoredAgentMessage;
-use pi_agent_core::{AgentResources, QueueMode, ThinkingLevel};
+use pi_agent_core::{AgentEvent, AgentResources, QueueMode, ThinkingLevel};
 use pi_ai::types::Model;
 use serde::Serialize;
 use serde_json::Value;
+use std::path::PathBuf;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::sync::{mpsc, oneshot};
 
 pub async fn write_rpc_response<W>(writer: &mut W, response: RpcResponse) -> Result<(), CliError>
 where
@@ -47,54 +51,116 @@ where
 {
     let mut state = RpcState::new(options)?;
     let mut lines = JsonlLineReader::new(reader);
+    let mut input_closed = false;
 
-    while let Some(line) = lines
-        .read_next_line()
-        .await
-        .map_err(|e| CliError::AgentFailure(e.to_string()))?
-    {
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(value) => value,
-            Err(error) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(None, "parse", format!("Failed to parse command: {error}")),
-                )
-                .await?;
-                continue;
-            }
-        };
-
-        let command_name = command_type(&value);
-        if !is_supported_m5_command(&command_name) {
-            write_rpc_response(
-                writer,
-                RpcResponse::error(
-                    command_id(&value),
-                    command_name.clone(),
-                    format!("unsupported command in Rust M5: {command_name}"),
-                ),
-            )
-            .await?;
-            continue;
+    loop {
+        if input_closed && !state.is_streaming() {
+            break;
         }
 
-        let command: RpcCommand = match serde_json::from_value(value) {
-            Ok(command) => command,
-            Err(error) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(None, command_name, format!("Invalid command: {error}")),
-                )
-                .await?;
-                continue;
+        let event = match (input_closed, state.running.as_mut()) {
+            (false, Some(running)) if !running.events_closed => {
+                tokio::select! {
+                    line = lines.read_next_line() => RpcLoopEvent::Input(line),
+                    event = running.events.recv() => RpcLoopEvent::AgentEvent(event),
+                    done = &mut running.done => RpcLoopEvent::PromptDone(done),
+                }
             }
+            (false, Some(running)) => {
+                tokio::select! {
+                    line = lines.read_next_line() => RpcLoopEvent::Input(line),
+                    done = &mut running.done => RpcLoopEvent::PromptDone(done),
+                }
+            }
+            (true, Some(running)) if !running.events_closed => {
+                tokio::select! {
+                    event = running.events.recv() => RpcLoopEvent::AgentEvent(event),
+                    done = &mut running.done => RpcLoopEvent::PromptDone(done),
+                }
+            }
+            (true, Some(running)) => RpcLoopEvent::PromptDone((&mut running.done).await),
+            (false, None) => RpcLoopEvent::Input(lines.read_next_line().await),
+            (true, None) => break,
         };
 
-        state.handle_command(command, writer).await?;
+        match event {
+            RpcLoopEvent::Input(line) => {
+                let Some(line) = line.map_err(|e| CliError::AgentFailure(e.to_string()))? else {
+                    input_closed = true;
+                    continue;
+                };
+                handle_input_line(&mut state, &line, writer).await?;
+            }
+            RpcLoopEvent::AgentEvent(Some(event)) => {
+                state.write_agent_event(event, writer).await?;
+            }
+            RpcLoopEvent::AgentEvent(None) => {
+                if let Some(running) = state.running.as_mut() {
+                    running.events_closed = true;
+                }
+            }
+            RpcLoopEvent::PromptDone(result) => {
+                state.finish_running_prompt(result, writer).await?;
+            }
+        }
     }
 
     Ok(())
+}
+
+enum RpcLoopEvent {
+    Input(Result<Option<String>, std::io::Error>),
+    AgentEvent(Option<AgentEvent>),
+    PromptDone(Result<Result<SessionPromptResult, CliError>, oneshot::error::RecvError>),
+}
+
+async fn handle_input_line<W>(
+    state: &mut RpcState,
+    line: &str,
+    writer: &mut W,
+) -> Result<(), CliError>
+where
+    W: AsyncWrite + Unpin,
+{
+    let value: Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(error) => {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(None, "parse", format!("Failed to parse command: {error}")),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let command_name = command_type(&value);
+    if !is_supported_m5_command(&command_name) {
+        write_rpc_response(
+            writer,
+            RpcResponse::error(
+                command_id(&value),
+                command_name.clone(),
+                format!("unsupported command in Rust M5: {command_name}"),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let command: RpcCommand = match serde_json::from_value(value) {
+        Ok(command) => command,
+        Err(error) => {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(None, command_name, format!("Invalid command: {error}")),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    state.handle_command(command, writer).await
 }
 
 pub async fn run_rpc_mode_stdio(options: CliRunOptions) -> Result<(), CliError> {
@@ -113,11 +179,22 @@ struct RpcState {
     follow_up_mode: QueueMode,
     auto_compaction_enabled: bool,
     session_name: Option<String>,
+    active_session_path: Option<PathBuf>,
+    active_leaf_id: Option<String>,
     messages: Vec<StoredAgentMessage>,
-    is_streaming: bool,
+    running: Option<RunningPrompt>,
     is_compacting: bool,
     steering: Vec<String>,
     follow_up: Vec<String>,
+}
+
+struct RunningPrompt {
+    control: SessionPromptAbortHandle,
+    events: mpsc::UnboundedReceiver<AgentEvent>,
+    done: oneshot::Receiver<Result<SessionPromptResult, CliError>>,
+    adapter: ProtocolEventAdapter,
+    abort_requested: bool,
+    events_closed: bool,
 }
 
 impl RpcState {
@@ -159,12 +236,18 @@ impl RpcState {
             follow_up_mode: QueueMode::OneAtATime,
             auto_compaction_enabled: true,
             session_name: None,
+            active_session_path: None,
+            active_leaf_id: None,
             messages: Vec::new(),
-            is_streaming: false,
+            running: None,
             is_compacting: false,
             steering: Vec::new(),
             follow_up: Vec::new(),
         })
+    }
+
+    fn is_streaming(&self) -> bool {
+        self.running.is_some()
     }
 
     async fn handle_command<W>(
@@ -202,7 +285,7 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
-                self.steering.push(message);
+                self.enqueue_steer(message);
                 write_rpc_response(writer, RpcResponse::success(id, "steer", None)).await?;
                 self.emit_queue_update(writer).await
             }
@@ -223,19 +306,49 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
-                self.follow_up.push(message);
+                self.enqueue_follow_up(message);
                 write_rpc_response(writer, RpcResponse::success(id, "follow_up", None)).await?;
                 self.emit_queue_update(writer).await
             }
             RpcCommand::Abort { id } => {
-                self.is_streaming = false;
-                write_rpc_response(writer, RpcResponse::success(id, "abort", None)).await
+                let cancelled = if let Some(running) = self.running.as_mut() {
+                    if !running.abort_requested {
+                        running.control.abort();
+                        running.abort_requested = true;
+                    }
+                    true
+                } else {
+                    false
+                };
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "abort",
+                        Some(serde_json::json!({ "cancelled": cancelled })),
+                    ),
+                )
+                .await
             }
             RpcCommand::NewSession { id, .. } => {
+                if self.is_streaming() {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(
+                            id,
+                            "new_session",
+                            "cannot start new session while agent is streaming",
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 self.messages.clear();
                 self.steering.clear();
                 self.follow_up.clear();
                 self.session_name = None;
+                self.active_session_path = None;
+                self.active_leaf_id = None;
                 write_rpc_response(
                     writer,
                     RpcResponse::success(
@@ -363,15 +476,15 @@ impl RpcState {
             return Ok(());
         }
 
-        if self.is_streaming {
+        if self.is_streaming() {
             match streaming_behavior {
                 Some(StreamingBehavior::Steer) => {
-                    self.steering.push(message);
+                    self.enqueue_steer(message);
                     write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await?;
                     return self.emit_queue_update(writer).await;
                 }
                 Some(StreamingBehavior::FollowUp) => {
-                    self.follow_up.push(message);
+                    self.enqueue_follow_up(message);
                     write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await?;
                     return self.emit_queue_update(writer).await;
                 }
@@ -392,64 +505,123 @@ impl RpcState {
 
         write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await?;
 
-        let mut event_lines = Vec::new();
-        event_lines.push(
-            serialize_json_line(&ProtocolEvent::AgentStart)
-                .map_err(|e| CliError::AgentFailure(e.to_string()))?,
-        );
+        write_json_line(writer, &ProtocolEvent::AgentStart).await?;
+
         let mut adapter = ProtocolEventAdapter::new_with_provider(
             self.model.api.clone(),
             self.model.provider.clone(),
             self.model.id.clone(),
         );
 
-        self.is_streaming = true;
-        let run = run_session_prompt(
-            SessionPromptOptions {
-                prompt: message.clone(),
-                model: self.model.clone(),
-                api_key: self.api_key.clone(),
-                system_prompt: None,
-                max_turns: None,
-                tools: self.options.tools.clone(),
-                register_builtins: false,
-                session: Some(self.options.session.clone()),
-                session_target: None,
-                session_name: self.session_name.clone(),
-                thinking_level: Some(self.thinking_level),
-                tool_execution: None,
-                resources: AgentResources::default(),
-                settings: Some(self.settings.clone()),
-                invocation: PromptInvocation::Text(message),
-            },
-            Some(&mut |event| {
-                for protocol_event in adapter.push(event) {
-                    event_lines.push(
-                        serialize_json_line(&protocol_event)
-                            .map_err(|e| CliError::AgentFailure(e.to_string()))?,
-                    );
+        let spawned = match spawn_session_prompt(SessionPromptOptions {
+            prompt: message.clone(),
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            system_prompt: None,
+            max_turns: None,
+            tools: self.options.tools.clone(),
+            register_builtins: false,
+            session: Some(self.options.session.clone()),
+            session_target: None,
+            session_name: self.session_name.clone(),
+            thinking_level: Some(self.thinking_level),
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: Some(self.settings.clone()),
+            invocation: PromptInvocation::Text(message),
+        }) {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                for protocol_event in adapter.push(&AgentEvent::AgentError {
+                    error: error.to_string(),
+                }) {
+                    write_json_line(writer, &protocol_event).await?;
                 }
-                Ok(())
-            }),
-        )
-        .await;
-        self.is_streaming = false;
+                return Ok(());
+            }
+        };
 
-        for line in event_lines {
-            writer
-                .write_all(line.as_bytes())
-                .await
-                .map_err(|e| CliError::AgentFailure(e.to_string()))?;
+        self.running = Some(RunningPrompt {
+            control: spawned.abort,
+            events: spawned.events,
+            done: spawned.done,
+            adapter,
+            abort_requested: false,
+            events_closed: false,
+        });
+
+        Ok(())
+    }
+
+    fn enqueue_steer(&mut self, message: String) {
+        if let Some(running) = self.running.as_ref() {
+            running.control.steer(message.clone());
+        }
+        self.steering.push(message);
+    }
+
+    fn enqueue_follow_up(&mut self, message: String) {
+        if let Some(running) = self.running.as_ref() {
+            running.control.follow_up(message.clone());
+        }
+        self.follow_up.push(message);
+    }
+
+    async fn write_agent_event<W>(
+        &mut self,
+        event: AgentEvent,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let Some(running) = self.running.as_mut() else {
+            return Ok(());
+        };
+        for protocol_event in running.adapter.push(&event) {
+            write_json_line(writer, &protocol_event).await?;
+        }
+        Ok(())
+    }
+
+    async fn finish_running_prompt<W>(
+        &mut self,
+        result: Result<Result<SessionPromptResult, CliError>, oneshot::error::RecvError>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let Some(mut running) = self.running.take() else {
+            return Ok(());
+        };
+
+        while let Ok(event) = running.events.try_recv() {
+            for protocol_event in running.adapter.push(&event) {
+                write_json_line(writer, &protocol_event).await?;
+            }
         }
 
-        if let Ok(result) = run {
-            self.messages = result
-                .messages
-                .iter()
-                .filter_map(crate::session::agent_message_to_stored)
-                .collect();
+        match result {
+            Ok(Ok(result)) => {
+                self.active_session_path = result.session_path;
+                self.active_leaf_id = result.leaf_id;
+                self.messages = result
+                    .messages
+                    .iter()
+                    .filter_map(crate::session::agent_message_to_stored)
+                    .collect();
+            }
+            Ok(Err(_error)) => {}
+            Err(error) => {
+                return Err(CliError::AgentFailure(format!(
+                    "agent task ended before reporting completion: {error}"
+                )));
+            }
         }
 
+        self.steering.clear();
+        self.follow_up.clear();
         Ok(())
     }
 
@@ -471,12 +643,25 @@ impl RpcState {
         RpcSessionState {
             model: Some(self.model.clone()),
             thinking_level: self.thinking_level,
-            is_streaming: self.is_streaming,
+            is_streaming: self.is_streaming(),
             is_compacting: self.is_compacting,
             steering_mode: self.steering_mode,
             follow_up_mode: self.follow_up_mode,
-            session_file: None,
-            session_id: "in-memory".into(),
+            session_file: self
+                .active_session_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            session_id: self
+                .active_leaf_id
+                .clone()
+                .or_else(|| {
+                    self.active_session_path
+                        .as_ref()
+                        .and_then(|path| path.file_stem())
+                        .and_then(|stem| stem.to_str())
+                        .map(ToString::to_string)
+                })
+                .unwrap_or_else(|| "in-memory".into()),
             session_name: self.session_name.clone(),
             auto_compaction_enabled: self.auto_compaction_enabled,
             message_count: self.messages.len(),
@@ -498,9 +683,26 @@ impl RpcState {
                 | StoredAgentMessage::BranchSummary { .. } => user_messages += 1,
             }
         }
+        let session_file = self
+            .active_session_path
+            .as_ref()
+            .map(|path| Value::String(path.display().to_string()))
+            .unwrap_or(Value::Null);
+        let session_id = self
+            .active_leaf_id
+            .clone()
+            .or_else(|| {
+                self.active_session_path
+                    .as_ref()
+                    .and_then(|path| path.file_stem())
+                    .and_then(|stem| stem.to_str())
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| "in-memory".into());
+
         serde_json::json!({
-            "sessionFile": Value::Null,
-            "sessionId": "in-memory",
+            "sessionFile": session_file,
+            "sessionId": session_id,
             "userMessages": user_messages,
             "assistantMessages": assistant_messages,
             "toolCalls": 0,

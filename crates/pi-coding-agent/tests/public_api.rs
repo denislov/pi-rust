@@ -1,6 +1,7 @@
 use pi_ai::types::{Model, ModelCost, ModelInput};
-use pi_coding_agent::{
-    CliArgs, CliError, CliOutput, CliRunOptions, PrintModeOptions, help_text, parse_args,
+use pi_coding_agent::api::{
+    CliArgs, CliError, CliOutput, CliRunOptions, PrintModeOptions, PromptInvocation, SessionMode,
+    SessionPromptOptions, ToolFilter, builtin_tools, filter_tools, help_text, parse_args,
 };
 
 fn model(api: &str) -> Model {
@@ -48,6 +49,24 @@ fn public_api_symbols_are_importable() {
 
     let runtime_options = CliRunOptions::default();
     assert!(runtime_options.register_builtins);
+    let mode = SessionMode::Enabled;
+    assert!(matches!(mode, SessionMode::Enabled));
+
+    let invocation = PromptInvocation::Text("hello".into());
+    assert!(matches!(invocation, PromptInvocation::Text(_)));
+
+    let tools = builtin_tools(std::env::current_dir().unwrap());
+    let read_only = filter_tools(
+        tools,
+        &ToolFilter {
+            allow: vec!["read".into()],
+            ..ToolFilter::default()
+        },
+    );
+    assert_eq!(read_only.len(), 1);
+    assert_eq!(read_only[0].name, "read");
+
+    let _session_prompt_type_name = std::any::type_name::<SessionPromptOptions>();
 
     let err = CliError::MissingPrompt;
     assert_eq!(err.to_string(), "missing prompt");

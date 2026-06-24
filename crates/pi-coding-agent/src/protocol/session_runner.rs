@@ -40,15 +40,25 @@ pub struct SessionPromptResult {
 }
 
 #[derive(Clone)]
-pub struct SessionPromptAbortHandle {
+pub struct SessionPromptControlHandle {
     agent: Agent,
 }
 
-impl SessionPromptAbortHandle {
+impl SessionPromptControlHandle {
     pub fn abort(&self) {
         self.agent.abort();
     }
+
+    pub fn steer(&self, text: impl Into<String>) {
+        self.agent.steer(text);
+    }
+
+    pub fn follow_up(&self, text: impl Into<String>) {
+        self.agent.follow_up(text);
+    }
 }
+
+pub type SessionPromptAbortHandle = SessionPromptControlHandle;
 
 pub struct SpawnedSessionPrompt {
     pub abort: SessionPromptAbortHandle,
@@ -104,7 +114,7 @@ pub fn spawn_session_prompt(
     options: SessionPromptOptions,
 ) -> Result<SpawnedSessionPrompt, CliError> {
     let prepared = prepare_session_prompt(options)?;
-    let abort = SessionPromptAbortHandle {
+    let abort = SessionPromptControlHandle {
         agent: prepared.agent.clone(),
     };
     let started = start_prepared_session_prompt(prepared)?;

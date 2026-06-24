@@ -7,6 +7,7 @@ mod list_models;
 pub mod models;
 pub mod print_mode;
 pub mod protocol;
+pub mod request;
 pub mod resources;
 pub mod runtime;
 pub mod session;
@@ -22,6 +23,34 @@ pub use runtime::{
 };
 pub use session::{ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session};
 pub use tools::builtin_tools;
+
+/// Stable library facade for embedding or scripting `pi-coding-agent`.
+///
+/// The root modules remain public during the migration, but downstream crates
+/// should prefer this module for APIs that are intended to stay stable.
+pub mod api {
+    pub use crate::args::{CliArgs, CliMode, help_text, parse_args};
+    pub use crate::error::CliError;
+    pub use crate::print_mode::{PrintModeOptions, run_print_mode};
+    pub use crate::protocol::session_runner::{
+        SessionPromptAbortHandle, SessionPromptControlHandle, SessionPromptOptions,
+        SessionPromptResult, SpawnedSessionPrompt, run_session_prompt, spawn_session_prompt,
+    };
+    pub use crate::request::{
+        ResolvedCliContext, ResolvedPromptRequest, resolve_cli_context, resolve_prompt_request,
+        resolve_session_target,
+    };
+    pub use crate::runtime::{
+        CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, PromptInvocation, SessionMode,
+        SessionRunOptions, build_agent_config, effective_no_context_files, effective_session_dir,
+        select_model,
+    };
+    pub use crate::session::{
+        ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session,
+    };
+    pub use crate::tools::{ToolFilter, builtin_tools, filter_tools};
+    pub use crate::{CliOutput, run_cli, run_cli_with_options, run_cli_with_options_and_stdin};
+}
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -94,7 +123,7 @@ pub async fn run_cli_with_options(
 
 pub async fn run_cli_with_options_and_stdin(
     args: impl IntoIterator<Item = String>,
-    mut options: CliRunOptions,
+    options: CliRunOptions,
     stdin: Option<String>,
 ) -> CliOutput {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -138,186 +167,18 @@ pub async fn run_cli_with_options_and_stdin(
         return CliOutput::failure(error);
     }
 
-    let prompt = match parsed.prompt.clone() {
-        Some(prompt) if !prompt.trim().is_empty() => prompt,
-        _ if stdin
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty()) =>
-        {
-            String::new()
-        }
-        _ => return CliOutput::failure(CliError::MissingPrompt),
-    };
-    let prompt = input::merge_stdin_prompt(&prompt, stdin.as_deref());
-    let processed_prompt = match input::process_at_file_references(&prompt, &cwd) {
-        Ok(processed) => processed,
-        Err(error) => return CliOutput::failure(error),
-    };
-
-    let (config, config_diags) = config::load_config(&cwd);
-    let diag_text = config::drain_diagnostics(&config_diags);
-    if !diag_text.is_empty() {
-        eprint!("{diag_text}");
-    }
-
-    let model = match select_model(
-        &parsed,
-        config.settings.default_provider.as_deref(),
-        config.settings.default_model.as_deref(),
-        options.model_override,
-    ) {
-        Ok(model) => model,
-        Err(error) => return CliOutput::failure(error),
-    };
-
-    let provider = model.provider.clone();
-    let resolved_api_key = {
-        let mut key_diags = Vec::new();
-        let resolved = config::auth::resolve_api_key(
-            &provider,
-            parsed.api_key.as_deref(),
-            &config.auth,
-            &mut key_diags,
-        );
-        let key_text = config::drain_diagnostics(&key_diags);
-        if !key_text.is_empty() {
-            eprint!("{key_text}");
-        }
-        resolved.map(|r| r.value)
-    };
-
     let config_paths = config::resolve_paths(&cwd);
-    let loaded = match resources::load_cli_resources_with_options(
-        &parsed.skills,
-        &parsed.prompt_templates,
-        &cwd,
-        &config_paths.global_dir,
-        resources::ResourceLoadOptions {
-            no_skills: parsed.no_skills,
-            no_prompt_templates: parsed.no_prompt_templates,
-            no_themes: parsed.no_themes,
-            skill_paths: config.settings.skills.clone(),
-            prompt_paths: config.settings.prompts.clone(),
-            theme_paths: config.settings.themes.clone(),
-            theme: config.settings.theme.clone(),
-        },
+    let resolved = match request::resolve_prompt_request(
+        parsed.clone(),
+        options,
+        stdin,
+        cwd,
+        config_paths.global_dir,
     ) {
-        Ok(loaded) => loaded,
+        Ok(resolved) => resolved,
         Err(error) => return CliOutput::failure(error),
     };
-    let (skills, templates, diags) = (loaded.skills, loaded.prompt_templates, loaded.diagnostics);
-    resources::print_diagnostics(&diags);
-
-    let context_files = resources::discover_context_files(
-        &cwd,
-        &config_paths.global_dir,
-        effective_no_context_files(&parsed, &config.settings),
-    );
-    let mut system_prompt = parsed.system_prompt.clone();
-    if !context_files.is_empty() || !parsed.append_system_prompt.is_empty() {
-        let mut parts = Vec::new();
-        if let Some(base) = system_prompt.take() {
-            parts.push(base);
-        }
-        for file in context_files {
-            parts.push(format!(
-                "# Context file: {}\n{}",
-                file.path.display(),
-                file.content
-            ));
-        }
-        parts.extend(parsed.append_system_prompt.clone());
-        system_prompt = Some(parts.join("\n\n"));
-    }
-
-    options.tools = tools::filter_tools(
-        options.tools,
-        &tools::ToolFilter {
-            allow: parsed.tools.clone(),
-            deny: parsed.exclude_tools.clone(),
-            no_tools: parsed.no_tools,
-            no_builtin_tools: parsed.no_builtin_tools,
-        },
-    );
-
-    let invocation = if let Some(ref skill_name) = parsed.skill {
-        if resources::find_skill(&skills, skill_name).is_none() {
-            return CliOutput::failure(CliError::InvalidInput(format!(
-                "skill '{skill_name}' not found in loaded skills"
-            )));
-        }
-        PromptInvocation::Skill {
-            name: skill_name.clone(),
-            additional_instructions: None,
-        }
-    } else if let Some(ref template_name) = parsed.prompt_template {
-        if resources::find_template(&templates, template_name).is_none() {
-            return CliOutput::failure(CliError::InvalidInput(format!(
-                "prompt template '{template_name}' not found in loaded templates"
-            )));
-        }
-        PromptInvocation::PromptTemplate {
-            name: template_name.clone(),
-            args: parsed.template_args.clone(),
-        }
-    } else {
-        if processed_prompt.images.is_empty() {
-            PromptInvocation::Text(processed_prompt.text.clone())
-        } else {
-            PromptInvocation::Content(processed_prompt.content.clone())
-        }
-    };
-
-    let agent_resources = resources::build_agent_resources(skills.to_vec(), templates.to_vec());
-
-    let session_enabled = !parsed.no_session;
-    let session = if session_enabled {
-        let mut session_opts = options.session.clone();
-        if let Some(dir) = effective_session_dir(&parsed, &config.settings) {
-            session_opts.session_dir = Some(dir);
-        }
-        Some(session_opts)
-    } else {
-        None
-    };
-
-    let session_target = if parsed.no_session {
-        None
-    } else if let Some(ref fork_target) = parsed.fork {
-        Some(ResolvedSessionTarget::ForkTarget(fork_target.clone()))
-    } else if let Some(ref session_target) = parsed.session {
-        Some(ResolvedSessionTarget::OpenTarget(session_target.clone()))
-    } else if let Some(ref session_id) = parsed.session_id {
-        Some(ResolvedSessionTarget::OpenOrCreateId(session_id.clone()))
-    } else if parsed.continue_session || parsed.resume {
-        Some(ResolvedSessionTarget::ContinueMostRecent)
-    } else {
-        None
-    };
-
-    let session_name = parsed.name.clone();
-
-    let session_prompt_options = protocol::session_runner::SessionPromptOptions {
-        prompt: match &invocation {
-            PromptInvocation::Text(t) => t.clone(),
-            PromptInvocation::Content(_) => processed_prompt.text.clone(),
-            _ => String::new(),
-        },
-        model,
-        api_key: resolved_api_key,
-        system_prompt,
-        max_turns: parsed.max_turns,
-        tools: options.tools,
-        register_builtins: options.register_builtins,
-        session,
-        session_target,
-        session_name,
-        thinking_level: parsed.thinking,
-        tool_execution: parsed.tool_execution,
-        resources: agent_resources,
-        settings: Some(config.settings.clone()),
-        invocation,
-    };
+    let session_prompt_options = resolved.session_options;
 
     match parsed.mode {
         CliMode::Print => {
