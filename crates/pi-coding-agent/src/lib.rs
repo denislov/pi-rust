@@ -37,8 +37,8 @@ pub mod api {
         SessionPromptResult, SpawnedSessionPrompt, run_session_prompt, spawn_session_prompt,
     };
     pub use crate::request::{
-        ResolvedCliContext, ResolvedPromptRequest, resolve_cli_context, resolve_prompt_request,
-        resolve_session_target,
+        CliDiagnostic, CliDiagnosticSeverity, ResolvedCliContext, ResolvedPromptRequest,
+        render_diagnostics, resolve_cli_context, resolve_prompt_request, resolve_session_target,
     };
     pub use crate::runtime::{
         CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, PromptInvocation, SessionMode,
@@ -87,6 +87,13 @@ impl CliOutput {
             stdout: String::new(),
             stderr: format!("{error}\n"),
         }
+    }
+
+    fn with_stderr(mut self, stderr: String) -> Self {
+        if !stderr.is_empty() {
+            self.stderr = format!("{stderr}{}", self.stderr);
+        }
+        self
     }
 }
 
@@ -179,15 +186,19 @@ pub async fn run_cli_with_options_and_stdin(
         Err(error) => return CliOutput::failure(error),
     };
     let session_prompt_options = resolved.session_options;
+    let diagnostic_text = request::render_diagnostics(&resolved.context.diagnostics);
 
     match parsed.mode {
         CliMode::Print => {
             match run_print_mode(PrintModeOptions::from(session_prompt_options)).await {
-                Ok(text) => CliOutput::success(stdout_with_trailing_newline(text)),
-                Err(error) => CliOutput::failure(error),
+                Ok(text) => CliOutput::success(stdout_with_trailing_newline(text))
+                    .with_stderr(diagnostic_text),
+                Err(error) => CliOutput::failure(error).with_stderr(diagnostic_text),
             }
         }
-        CliMode::Json => protocol::json_mode::run_json_mode(session_prompt_options).await,
+        CliMode::Json => protocol::json_mode::run_json_mode(session_prompt_options)
+            .await
+            .with_stderr(diagnostic_text),
         CliMode::Rpc => CliOutput::failure(CliError::UnsupportedMode(
             "rpc requires the streaming binary entry point".into(),
         )),

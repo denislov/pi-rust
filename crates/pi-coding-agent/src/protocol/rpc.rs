@@ -204,7 +204,11 @@ impl RpcState {
         }
         let cwd = options.session.cwd.clone();
         let (config, config_diags) = config::load_config(&cwd);
-        let diag_text = config::drain_diagnostics(&config_diags);
+        let diagnostics = config_diags
+            .iter()
+            .map(crate::request::CliDiagnostic::from_config)
+            .collect::<Vec<_>>();
+        let diag_text = crate::request::render_diagnostics(&diagnostics);
         if !diag_text.is_empty() {
             eprint!("{diag_text}");
         }
@@ -219,7 +223,11 @@ impl RpcState {
             let mut key_diags = Vec::new();
             let resolved =
                 config::auth::resolve_api_key(&model.provider, None, &config.auth, &mut key_diags);
-            let key_text = config::drain_diagnostics(&key_diags);
+            let key_diagnostics = key_diags
+                .iter()
+                .map(crate::request::CliDiagnostic::from_config)
+                .collect::<Vec<_>>();
+            let key_text = crate::request::render_diagnostics(&key_diagnostics);
             if !key_text.is_empty() {
                 eprint!("{key_text}");
             }

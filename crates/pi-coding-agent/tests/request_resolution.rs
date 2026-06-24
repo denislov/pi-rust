@@ -106,3 +106,60 @@ fn resolve_cli_context_validates_loaded_skill_names_without_prompt() {
         "skill 'missing' not found in loaded skills"
     );
 }
+
+#[test]
+fn resolve_cli_context_returns_config_and_resource_diagnostics() {
+    let temp = tempfile::tempdir().unwrap();
+    let global = temp.path().join("global");
+    let cwd = temp.path().join("work");
+    let theme_dir = temp.path().join("themes");
+    std::fs::create_dir_all(&global).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(&theme_dir).unwrap();
+    std::fs::write(
+        global.join("settings.toml"),
+        format!("themes = [\"{}\"]\n", theme_dir.display()),
+    )
+    .unwrap();
+    std::fs::write(global.join("auth.toml"), "not valid toml").unwrap();
+    std::fs::write(theme_dir.join("bad.json"), "{not json").unwrap();
+
+    let parsed = parse_args(vec!["-p".into(), "hello".into()]).unwrap();
+
+    let resolved = resolve_prompt_request(
+        parsed,
+        CliRunOptions {
+            tools: builtin_tools(cwd.clone()),
+            register_builtins: false,
+            session: SessionRunOptions::enabled(cwd.clone()),
+            ..CliRunOptions::default()
+        },
+        None,
+        cwd,
+        global,
+    )
+    .unwrap();
+
+    let messages: Vec<&str> = resolved
+        .context
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("failed to parse auth")),
+        "{messages:?}"
+    );
+    assert!(
+        resolved
+            .context
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("theme_parse_error")),
+        "{:?}",
+        resolved.context.diagnostics
+    );
+}

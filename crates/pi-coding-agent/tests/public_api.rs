@@ -1,7 +1,8 @@
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
-    CliArgs, CliError, CliOutput, CliRunOptions, PrintModeOptions, PromptInvocation, SessionMode,
-    SessionPromptOptions, ToolFilter, builtin_tools, filter_tools, help_text, parse_args,
+    CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput, CliRunOptions,
+    PrintModeOptions, PromptInvocation, SessionMode, SessionPromptOptions, ToolFilter,
+    builtin_tools, filter_tools, help_text, parse_args, render_diagnostics,
 };
 
 fn model(api: &str) -> Model {
@@ -67,6 +68,14 @@ fn public_api_symbols_are_importable() {
     assert_eq!(read_only[0].name, "read");
 
     let _session_prompt_type_name = std::any::type_name::<SessionPromptOptions>();
+
+    let diagnostic_text = render_diagnostics(&[CliDiagnostic {
+        severity: CliDiagnosticSeverity::Warning,
+        message: "heads up".into(),
+        source: None,
+        code: None,
+    }]);
+    assert_eq!(diagnostic_text, "warning: heads up\n");
 
     let err = CliError::MissingPrompt;
     assert_eq!(err.to_string(), "missing prompt");

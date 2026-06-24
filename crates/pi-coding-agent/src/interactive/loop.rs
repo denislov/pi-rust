@@ -450,11 +450,16 @@ fn handle_input_event<T: Terminal>(
     };
 
     if let Some(model) = selected_model {
-        prompt_context.api_key = resolve_prompt_api_key(
+        let (api_key, diagnostics) = resolve_prompt_api_key(
             &model.provider,
             prompt_context.cli_api_key.as_deref(),
             &prompt_context.auth,
         );
+        let diagnostic_text = crate::request::render_diagnostics(&diagnostics);
+        if !diagnostic_text.is_empty() {
+            eprint!("{diagnostic_text}");
+        }
+        prompt_context.api_key = api_key;
         prompt_context.model = model;
     }
     if let Some(thinking_level) = selected_thinking_level {

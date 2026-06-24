@@ -115,6 +115,10 @@ pub(super) fn build_prompt_context(
         cwd,
         config_paths.global_dir.clone(),
     )?;
+    let diagnostic_text = crate::request::render_diagnostics(&resolved.diagnostics);
+    if !diagnostic_text.is_empty() {
+        eprint!("{diagnostic_text}");
+    }
     let model_rotation = rotation_model_choices(
         parsed.models.as_deref(),
         parsed
@@ -180,14 +184,14 @@ pub(super) fn resolve_prompt_api_key(
     provider: &str,
     cli_api_key: Option<&str>,
     auth: &crate::config::AuthStore,
-) -> Option<String> {
+) -> (Option<String>, Vec<crate::request::CliDiagnostic>) {
     let mut key_diags = Vec::new();
     let resolved = config::auth::resolve_api_key(provider, cli_api_key, auth, &mut key_diags);
-    let key_text = config::drain_diagnostics(&key_diags);
-    if !key_text.is_empty() {
-        eprint!("{key_text}");
-    }
-    resolved.map(|r| r.value)
+    let diagnostics = key_diags
+        .iter()
+        .map(crate::request::CliDiagnostic::from_config)
+        .collect();
+    (resolved.map(|r| r.value), diagnostics)
 }
 
 fn configured_model_choices(

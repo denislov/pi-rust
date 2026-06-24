@@ -9,9 +9,25 @@ use crate::runtime::{
 use crate::session::ResolvedSessionTarget;
 use crate::tools::{self, ToolFilter};
 use crate::{CliArgs, CliError};
-use pi_agent_core::AgentResources;
+use pi_agent_core::types::DiagnosticSeverity as ResourceDiagnosticSeverity;
+use pi_agent_core::{AgentResources, ResourceDiagnostic};
 use pi_ai::types::Model;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliDiagnosticSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliDiagnostic {
+    pub severity: CliDiagnosticSeverity,
+    pub message: String,
+    pub source: Option<PathBuf>,
+    pub code: Option<String>,
+}
 
 pub struct ResolvedCliContext {
     pub cwd: PathBuf,
@@ -28,6 +44,7 @@ pub struct ResolvedCliContext {
     pub session_target: Option<ResolvedSessionTarget>,
     pub session_name: Option<String>,
     pub agent_resources: AgentResources,
+    pub diagnostics: Vec<CliDiagnostic>,
 }
 
 pub struct ResolvedPromptRequest {
@@ -52,10 +69,10 @@ pub fn resolve_cli_context(
         settings: config::settings::load_settings(&config_paths, &mut config_diags),
         auth: config::auth::AuthStore::load(&config_paths.global_auth(), &mut config_diags),
     };
-    let diag_text = config::drain_diagnostics(&config_diags);
-    if !diag_text.is_empty() {
-        eprint!("{diag_text}");
-    }
+    let mut diagnostics = config_diags
+        .iter()
+        .map(CliDiagnostic::from_config)
+        .collect::<Vec<_>>();
 
     let model = select_model(
         &parsed,
@@ -65,7 +82,12 @@ pub fn resolve_cli_context(
     )?;
 
     let provider = model.provider.clone();
-    let api_key = resolve_api_key(&provider, parsed.api_key.as_deref(), &config);
+    let api_key = resolve_api_key(
+        &provider,
+        parsed.api_key.as_deref(),
+        &config,
+        &mut diagnostics,
+    );
     let loaded_resources = resources::load_cli_resources_with_options(
         &parsed.skills,
         &parsed.prompt_templates,
@@ -81,7 +103,12 @@ pub fn resolve_cli_context(
             theme: config.settings.theme.clone(),
         },
     )?;
-    resources::print_diagnostics(&loaded_resources.diagnostics);
+    diagnostics.extend(
+        loaded_resources
+            .diagnostics
+            .iter()
+            .map(CliDiagnostic::from_resource),
+    );
 
     validate_selected_resources(&parsed, &loaded_resources)?;
 
@@ -119,6 +146,7 @@ pub fn resolve_cli_context(
         session_target,
         session_name,
         agent_resources,
+        diagnostics,
     })
 }
 
@@ -190,15 +218,88 @@ pub fn resolve_session_target(parsed: &CliArgs) -> Option<ResolvedSessionTarget>
     }
 }
 
-fn resolve_api_key(provider: &str, cli_api_key: Option<&str>, config: &Config) -> Option<String> {
+fn resolve_api_key(
+    provider: &str,
+    cli_api_key: Option<&str>,
+    config: &Config,
+    diagnostics: &mut Vec<CliDiagnostic>,
+) -> Option<String> {
     let mut key_diags = Vec::new();
     let resolved =
         config::auth::resolve_api_key(provider, cli_api_key, &config.auth, &mut key_diags);
-    let key_text = config::drain_diagnostics(&key_diags);
-    if !key_text.is_empty() {
-        eprint!("{key_text}");
-    }
+    diagnostics.extend(key_diags.iter().map(CliDiagnostic::from_config));
     resolved.map(|resolved| resolved.value)
+}
+
+impl CliDiagnostic {
+    pub fn from_config(diagnostic: &config::ConfigDiagnostic) -> Self {
+        let severity = match diagnostic.severity {
+            config::DiagnosticSeverity::Warn => CliDiagnosticSeverity::Warning,
+            config::DiagnosticSeverity::Error => CliDiagnosticSeverity::Error,
+        };
+        Self {
+            severity,
+            message: diagnostic.message.clone(),
+            source: diagnostic.source.clone(),
+            code: Some("config".to_string()),
+        }
+    }
+
+    pub fn from_resource(diagnostic: &ResourceDiagnostic) -> Self {
+        let severity = match diagnostic.severity {
+            ResourceDiagnosticSeverity::Info => CliDiagnosticSeverity::Info,
+            ResourceDiagnosticSeverity::Warning => CliDiagnosticSeverity::Warning,
+            ResourceDiagnosticSeverity::Error => CliDiagnosticSeverity::Error,
+        };
+        Self {
+            severity,
+            message: diagnostic.message.clone(),
+            source: Some(diagnostic.path.clone()),
+            code: Some(diagnostic.code.clone()),
+        }
+    }
+}
+
+pub fn render_diagnostics(diagnostics: &[CliDiagnostic]) -> String {
+    let mut out = String::new();
+    for diagnostic in diagnostics {
+        let label = match diagnostic.severity {
+            CliDiagnosticSeverity::Info => "info",
+            CliDiagnosticSeverity::Warning => "warning",
+            CliDiagnosticSeverity::Error => "error",
+        };
+        match diagnostic.code.as_deref() {
+            Some("config") => match &diagnostic.source {
+                Some(path) => out.push_str(&format!(
+                    "config {label}: {} ({})\n",
+                    diagnostic.message,
+                    path.display()
+                )),
+                None => out.push_str(&format!("config {label}: {}\n", diagnostic.message)),
+            },
+            Some(code) => match &diagnostic.source {
+                Some(path) => out.push_str(&format!(
+                    "resource {}: {} (code: {})\n",
+                    path.display(),
+                    diagnostic.message,
+                    code
+                )),
+                None => out.push_str(&format!(
+                    "resource {label}: {} (code: {})\n",
+                    diagnostic.message, code
+                )),
+            },
+            None => match &diagnostic.source {
+                Some(path) => out.push_str(&format!(
+                    "{label}: {} ({})\n",
+                    diagnostic.message,
+                    path.display()
+                )),
+                None => out.push_str(&format!("{label}: {}\n", diagnostic.message)),
+            },
+        }
+    }
+    out
 }
 
 fn validate_selected_resources(parsed: &CliArgs, loaded: &LoadedResources) -> Result<(), CliError> {
