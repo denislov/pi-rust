@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
 #[cfg(test)]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -101,6 +102,9 @@ pub(super) struct PromptContext {
     pub(super) settings: crate::config::Settings,
     pub(super) theme: TuiTheme,
     pub(super) resolved_theme: crate::theme::ResolvedTheme,
+    /// Custom themes directory (global `<agent_dir>/themes`), used to start
+    /// the hot-reload watcher. Mirrors TS `getCustomThemesDir`.
+    pub(super) themes_dir: PathBuf,
     pub(super) model_choices: Vec<Model>,
     pub(super) model_rotation: Vec<Model>,
     pub(super) session_choices: Vec<SessionChoice>,
@@ -169,6 +173,7 @@ pub(super) fn build_prompt_context(
         settings: resolved.config.settings,
         theme,
         resolved_theme,
+        themes_dir: config_paths.global_dir.join("themes"),
         model_choices,
         model_rotation,
         session_choices,

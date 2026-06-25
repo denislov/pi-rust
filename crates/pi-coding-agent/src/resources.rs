@@ -52,11 +52,20 @@ pub struct ThemeResource {
 /// `border`, accents/status from their namesake tokens. A theme with invalid
 /// `vars` falls back to the dark palette, mirroring TS `setTheme` behavior.
 pub fn tui_theme_from_resource(resource: &ThemeResource) -> TuiTheme {
-    let palette = match resource.theme.resolve_colors() {
+    tui_theme_from_resolved_json(&resource.name, &resource.theme)
+}
+
+/// Build a `pi_tui::TuiTheme` from a theme name + parsed [`ThemeJson`].
+/// Used by hot reload (which has no `ThemeResource`).
+pub(crate) fn tui_theme_from_resolved_json(
+    name: &str,
+    theme: &crate::theme::ThemeJson,
+) -> TuiTheme {
+    let palette = match theme.resolve_colors() {
         Ok(resolved) => palette_from_resolved(&resolved),
         Err(_) => dark_theme().palette,
     };
-    TuiTheme::custom(resource.name.clone(), palette)
+    TuiTheme::custom(name.to_string(), palette)
 }
 
 fn palette_from_resolved(resolved: &crate::theme::ResolvedTheme) -> ThemePalette {

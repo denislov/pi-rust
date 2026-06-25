@@ -287,3 +287,111 @@ fn classifies_rgb_colors_by_luminance() {
         TerminalTheme::Light
     );
 }
+
+// --- Theme hot reload (mirrors startThemeWatcher) ---
+
+use pi_coding_agent::theme::ThemeWatcher;
+use std::path::PathBuf;
+use std::time::Duration;
+
+#[test]
+fn watcher_skips_builtin_themes() {
+    // Built-in dark/light are never watched (TS startThemeWatcher returns early).
+    assert!(ThemeWatcher::should_watch("dark").is_none());
+    assert!(ThemeWatcher::should_watch("light").is_none());
+    // A custom theme name resolves to a `<name>.json` watch target.
+    assert_eq!(
+        ThemeWatcher::should_watch("ocean"),
+        Some(PathBuf::from("ocean.json"))
+    );
+}
+
+#[tokio::test]
+async fn watcher_reloads_custom_theme_on_file_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let themes_dir = dir.path().join("themes");
+    std::fs::create_dir_all(&themes_dir).unwrap();
+    let theme_file = themes_dir.join("hot.json");
+    // Start with a valid complete theme (built-in dark, renamed).
+    std::fs::write(
+        &theme_file,
+        pi_coding_agent::theme::DARK_JSON.replace("\"dark\"", "\"hot\""),
+    )
+    .unwrap();
+
+    let (watcher, mut signal) = ThemeWatcher::start(
+        themes_dir.clone(),
+        "hot".to_string(),
+        Duration::from_millis(50),
+    )
+    .expect("watcher starts");
+
+    // Edit the theme file; expect a reload signal within a generous window.
+    std::fs::write(
+        &theme_file,
+        pi_coding_agent::theme::LIGHT_JSON.replace("\"light\"", "\"hot\""),
+    )
+    .unwrap();
+
+    let reloaded = tokio::time::timeout(Duration::from_secs(2), signal.recv())
+        .await
+        .expect("reload signal received within 2s")
+        .expect("channel not closed");
+
+    // The watcher returns the reparsed theme name + resolved tokens.
+    assert_eq!(reloaded.name, "hot");
+    // light theme accent -> "teal" var -> "#5a8080"
+    let resolved = reloaded.theme.resolve_colors().unwrap();
+    assert_eq!(
+        resolved.fg(pi_coding_agent::theme::ThemeColor::Accent),
+        pi_coding_agent::theme::ResolvedColor::Hex(0x5a, 0x80, 0x80)
+    );
+
+    drop(watcher);
+}
+
+#[tokio::test]
+async fn watcher_debounces_rapid_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let themes_dir = dir.path().join("themes");
+    std::fs::create_dir_all(&themes_dir).unwrap();
+    let theme_file = themes_dir.join("debounce.json");
+    std::fs::write(
+        &theme_file,
+        pi_coding_agent::theme::DARK_JSON.replace("\"dark\"", "\"debounce\""),
+    )
+    .unwrap();
+
+    let (watcher, mut signal) = ThemeWatcher::start(
+        themes_dir,
+        "debounce".to_string(),
+        Duration::from_millis(80),
+    )
+    .unwrap();
+
+    // Three rapid edits within the debounce window.
+    for _ in 0..3 {
+        std::fs::write(
+            &theme_file,
+            pi_coding_agent::theme::DARK_JSON.replace("\"dark\"", "\"debounce\""),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // Coalesce into a single signal after the debounce window.
+    let first = tokio::time::timeout(Duration::from_secs(2), signal.recv())
+        .await
+        .expect("first signal")
+        .expect("channel open");
+    assert_eq!(first.name, "debounce");
+
+    // No second signal should arrive quickly (debounced).
+    let result = tokio::time::timeout(Duration::from_millis(150), signal.recv()).await;
+    assert!(
+        result.is_err(),
+        "rapid edits should coalesce into one signal"
+    );
+
+    drop(watcher);
+}

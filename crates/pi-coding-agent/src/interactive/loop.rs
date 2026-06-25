@@ -175,6 +175,16 @@ async fn run_started_interactive_loop<T: Terminal>(
     render_scheduler.request(true);
     flush_render_if_ready(tui, &mut render_scheduler)?;
 
+    // Start the theme hot-reload watcher. Only custom themes (a name other
+    // than dark/light) are watched; built-in themes return an idle watcher.
+    let active_theme_name = prompt_context.settings.theme.as_deref().unwrap_or("dark");
+    let (_theme_watcher, mut theme_reload) = crate::theme::ThemeWatcher::start(
+        prompt_context.themes_dir.clone(),
+        active_theme_name.to_string(),
+        Duration::from_millis(100),
+    )
+    .map_err(to_cli_error)?;
+
     loop {
         flush_render_if_ready(tui, &mut render_scheduler)?;
         if let Some(mut task) = running.take() {
@@ -266,6 +276,11 @@ async fn run_started_interactive_loop<T: Terminal>(
                     flush_render_if_ready(tui, &mut render_scheduler)?;
                     running = None;
                 }
+                Some(reload) = theme_reload.recv() => {
+                    apply_theme_reload(tui, root_id, reload);
+                    render_scheduler.request(true);
+                    running = Some(task);
+                }
             }
         } else {
             if !input_open {
@@ -337,6 +352,10 @@ async fn run_started_interactive_loop<T: Terminal>(
                     if running.is_some() {
                         tokio::task::yield_now().await;
                     }
+                }
+                Some(reload) = theme_reload.recv() => {
+                    apply_theme_reload(tui, root_id, reload);
+                    render_scheduler.request(true);
                 }
             }
         }
@@ -729,6 +748,18 @@ fn root_mut<T: Terminal>(
 
 fn tui_error(error: TuiError) -> CliError {
     CliError::AgentFailure(error.to_string())
+}
+
+/// Apply a hot-reloaded theme to the root component, mirroring TS
+/// `setGlobalTheme(reloadedTheme)` + `onThemeChange` (UI invalidate).
+fn apply_theme_reload<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    reload: crate::theme::ThemeReloadSignal,
+) {
+    if let Some(root) = tui.component_as_mut::<InteractiveRoot>(root_id) {
+        root.apply_theme_reload(reload.name, reload.theme);
+    }
 }
 
 fn to_cli_error(error: std::io::Error) -> CliError {

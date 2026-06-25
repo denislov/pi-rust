@@ -10,6 +10,7 @@ mod builtin;
 mod color_value;
 mod detection;
 mod json;
+mod reload;
 mod resolve;
 mod runtime;
 mod tokens;
@@ -22,6 +23,7 @@ pub use detection::{
     parse_osc11_background_color,
 };
 pub use json::{ExportSection, ThemeJson};
+pub use reload::{ThemeReloadSignal, ThemeWatcher, should_watch_target};
 pub use resolve::{ResolveError, ResolvedColor, resolve};
 pub use runtime::ResolvedTheme;
 pub use tokens::{REQUIRED_TOKEN_KEYS, ThemeBg, ThemeColor};

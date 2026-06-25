@@ -754,10 +754,7 @@ impl InteractiveRoot {
         match id {
             "theme" => {
                 self.settings.theme = Some(value.to_string());
-                self.theme = match value {
-                    "light" => light_theme(),
-                    _ => dark_theme(),
-                };
+                self.apply_builtin_theme(value);
             }
             "auto_compaction" => {
                 self.settings.compaction.enabled = value == "on";
@@ -765,6 +762,32 @@ impl InteractiveRoot {
             _ => return,
         }
         self.settings_update = Some(self.settings.clone());
+    }
+
+    /// Apply a built-in theme by name ("dark"/"light"), updating both the
+    /// `pi-tui` palette theme and the resolved 51-token theme.
+    fn apply_builtin_theme(&mut self, name: &str) {
+        self.theme = match name {
+            "light" => light_theme(),
+            _ => dark_theme(),
+        };
+        let json = match name {
+            "light" => crate::theme::builtin_light(),
+            _ => crate::theme::builtin_dark(),
+        };
+        self.resolved_theme = Some(json.resolve_colors().expect("built-in theme resolves"));
+    }
+
+    /// Apply a hot-reloaded custom theme: update the resolved 51-token theme
+    /// and the `pi-tui` palette bridge. Mirrors TS `startThemeWatcher`'s
+    /// `setGlobalTheme(reloadedTheme)` + `onThemeChange` callback.
+    pub(super) fn apply_theme_reload(&mut self, name: String, theme: crate::theme::ThemeJson) {
+        if let Ok(resolved) = theme.resolve_colors() {
+            self.resolved_theme = Some(resolved);
+            // Refresh the palette bridge so non-thinking borders also track
+            // the reloaded theme.
+            self.theme = crate::resources::tui_theme_from_resolved_json(&name, &theme);
+        }
     }
 
     pub(super) fn handle_settings_input(&mut self, event: &InputEvent) -> bool {
