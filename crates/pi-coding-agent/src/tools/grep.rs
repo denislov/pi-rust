@@ -11,6 +11,7 @@ use std::sync::Arc;
 const DESCRIPTION: &str = "Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars.";
 const DEFAULT_LIMIT: usize = 100;
 const MAX_LINE_CHARS: usize = 500;
+const MAX_GREP_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 struct Candidate {
     path: PathBuf,
@@ -241,6 +242,7 @@ pub async fn grep_execute(
     let mut match_count = 0usize;
     let mut match_limit_reached = false;
     let mut lines_truncated = false;
+    let mut skipped_large_files = 0usize;
 
     for candidate in candidates_for_path(&abs, &metadata) {
         if let Some(matcher) = &glob_matcher {
@@ -252,6 +254,14 @@ pub async fn grep_execute(
             if !matcher.is_match(target) {
                 continue;
             }
+        }
+
+        let Ok(file_metadata) = tokio::fs::metadata(&candidate.path).await else {
+            continue;
+        };
+        if file_metadata.len() > MAX_GREP_FILE_BYTES {
+            skipped_large_files += 1;
+            continue;
         }
 
         let raw = match tokio::fs::read(&candidate.path).await {
@@ -280,7 +290,14 @@ pub async fn grep_execute(
     }
 
     if match_count == 0 {
-        return Ok(text_block("No matches found".to_string()));
+        let mut message = "No matches found".to_string();
+        if skipped_large_files > 0 {
+            message.push_str(&format!(
+                "\n\n[{skipped_large_files} file(s) skipped because they exceeded the {} safety limit]",
+                format_size(MAX_GREP_FILE_BYTES as usize)
+            ));
+        }
+        return Ok(text_block(message));
     }
 
     let output = output_lines.join("\n");
@@ -306,6 +323,12 @@ pub async fn grep_execute(
     if lines_truncated {
         notices.push(format!(
             "Some lines truncated to {MAX_LINE_CHARS} chars. Use read tool to see full lines"
+        ));
+    }
+    if skipped_large_files > 0 {
+        notices.push(format!(
+            "{skipped_large_files} file(s) skipped because they exceeded the {} safety limit",
+            format_size(MAX_GREP_FILE_BYTES as usize)
         ));
     }
     if !notices.is_empty() {
