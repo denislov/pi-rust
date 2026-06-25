@@ -339,9 +339,16 @@ async fn drive_manual_compaction(
         } => custom_instructions.as_deref(),
         _ => None,
     };
-    let summary = summarize(&prepared.model, to_summarize, custom_instructions, None)
-        .await
-        .map_err(|error| CliError::AgentFailure(error.to_string()))?;
+    let stream_options = prepared.agent.provider_request_snapshot().1;
+    let summary = summarize(
+        &prepared.model,
+        to_summarize,
+        custom_instructions,
+        stream_options,
+        None,
+    )
+    .await
+    .map_err(|error| CliError::AgentFailure(error.to_string()))?;
 
     if let Some(sink) = on_event.as_mut() {
         sink(&AgentEvent::SessionCompacted {

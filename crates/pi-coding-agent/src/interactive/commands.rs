@@ -153,7 +153,7 @@ fn handle_new_command(root: &mut InteractiveRoot) {
     root.selecting_settings = false;
     root.model_selection_selected = 0;
     root.session_selection_selected = 0;
-    root.usage = (0, 0);
+    root.stats = Default::default();
     root.session_label = "session".to_string();
     root.active_session_path = None;
     root.active_leaf_id = None;
@@ -348,8 +348,8 @@ fn handle_session_command(root: &mut InteractiveRoot) {
         root.session_label,
         root.model_id,
         cwd,
-        format_tokens(root.usage.0),
-        format_tokens(root.usage.1)
+        format_tokens(root.stats.input),
+        format_tokens(root.stats.output)
     )));
 }
 

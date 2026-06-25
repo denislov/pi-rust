@@ -1,5 +1,5 @@
 use pi_agent_core::AgentEvent;
-use pi_ai::types::{AssistantMessageEvent, ContentBlock};
+use pi_ai::types::{AssistantMessageEvent, ContentBlock, Usage};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
@@ -32,6 +32,12 @@ pub enum UiEvent {
     UsageUpdate {
         input: u32,
         output: u32,
+        cache_read: u32,
+        cache_write: u32,
+        cost: f64,
+        /// Estimated context tokens from the last assistant usage;
+        /// `None` means unknown (e.g. right after compaction).
+        context_tokens: Option<u32>,
     },
 }
 
@@ -39,6 +45,10 @@ pub enum UiEvent {
 pub struct InteractiveEventBridge {
     total_input: u32,
     total_output: u32,
+    total_cache_read: u32,
+    total_cache_write: u32,
+    total_cost: f64,
+    last_context_tokens: Option<u32>,
 }
 
 impl InteractiveEventBridge {
@@ -78,22 +88,51 @@ impl InteractiveEventBridge {
                 is_error: result.is_error,
             }],
             AgentEvent::AgentDone { message } => {
-                self.total_input = self.total_input.saturating_add(message.usage.input);
-                self.total_output = self.total_output.saturating_add(message.usage.output);
+                let usage = &message.usage;
+                self.total_input = self.total_input.saturating_add(usage.input);
+                self.total_output = self.total_output.saturating_add(usage.output);
+                self.total_cache_read = self.total_cache_read.saturating_add(usage.cache_read);
+                self.total_cache_write = self.total_cache_write.saturating_add(usage.cache_write);
+                self.total_cost += usage.cost.input
+                    + usage.cost.output
+                    + usage.cost.cache_read
+                    + usage.cost.cache_write;
+                let context_tokens = calculate_context_tokens(usage);
+                self.last_context_tokens = Some(context_tokens);
                 vec![
                     UiEvent::AssistantDone,
                     UiEvent::UsageUpdate {
                         input: self.total_input,
                         output: self.total_output,
+                        cache_read: self.total_cache_read,
+                        cache_write: self.total_cache_write,
+                        cost: self.total_cost,
+                        context_tokens: Some(context_tokens),
                     },
                 ]
             }
             AgentEvent::AgentError { error } => vec![UiEvent::AgentError {
                 error: error.clone(),
             }],
-            AgentEvent::SessionCompacted { summary, .. } => vec![UiEvent::CompactionNotice {
-                summary: summary.clone(),
-            }],
+            AgentEvent::SessionCompacted { summary, .. } => {
+                // After compaction the context size is unknown until the next
+                // LLM response; mirror TS `getContextUsage` returning a null
+                // percent so the footer shows "?" until then.
+                self.last_context_tokens = None;
+                vec![
+                    UiEvent::CompactionNotice {
+                        summary: summary.clone(),
+                    },
+                    UiEvent::UsageUpdate {
+                        input: self.total_input,
+                        output: self.total_output,
+                        cache_read: self.total_cache_read,
+                        cache_write: self.total_cache_write,
+                        cost: self.total_cost,
+                        context_tokens: None,
+                    },
+                ]
+            }
         }
     }
 
@@ -126,4 +165,21 @@ fn content_blocks_to_text(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Total context tokens reflected by a usage block.
+///
+/// Mirrors `calculateContextTokens` in
+/// `pi/packages/coding-agent/src/core/compaction/compaction.ts`: prefer the
+/// provider-reported `totalTokens`, falling back to the component sum.
+fn calculate_context_tokens(usage: &Usage) -> u32 {
+    if usage.total_tokens > 0 {
+        usage.total_tokens
+    } else {
+        usage
+            .input
+            .saturating_add(usage.output)
+            .saturating_add(usage.cache_read)
+            .saturating_add(usage.cache_write)
+    }
 }

@@ -145,6 +145,8 @@ fn initialize_started_tui<T: Terminal>(
         let root = root_mut(&mut tui, root_id)?;
         root.model_rotation = prompt_context.model_rotation.clone();
         root.session_choices = prompt_context.session_choices.clone();
+        root.model = Some(prompt_context.model.clone());
+        root.thinking_level = prompt_context.thinking_level.unwrap_or_default();
         if let Some(hydrated) = hydrate_existing_session_target(
             &prompt_context.session,
             prompt_context.session_target.as_ref(),

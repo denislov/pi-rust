@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use pi_tui::{
-    Component, ERROR, Loader, Markdown, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR,
-    TOOL_NAME, USER, paint_with, truncate_to_width, visible_width,
+    Color, Component, ERROR, Loader, Markdown, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style,
+    TOOL_ERROR, TOOL_NAME, USER, paint_with, truncate_to_width, visible_width,
 };
 
 use crate::interactive::transcript::{Transcript, TranscriptItem};
@@ -186,12 +186,20 @@ pub(super) fn running_status_text(frame: usize) -> String {
 pub(super) fn format_tokens(count: u32) -> String {
     if count < 1000 {
         count.to_string()
+    } else if count < 10000 {
+        format!("{:.1}k", count as f64 / 1000.0)
     } else if count < 1000000 {
         format!("{}k", count / 1000)
+    } else if count < 10000000 {
+        format!("{:.1}M", count as f64 / 1000000.0)
     } else {
         format!("{}M", count / 1000000)
     }
 }
+
+/// Warning style for the context-usage percentage (70–90% band), matching
+/// the TypeScript footer's `theme.fg("warning", ...)`.
+pub(super) const WARNING: Style = Style::fg(Color::Yellow);
 
 pub(super) fn abbreviate_cwd(cwd: &Path) -> String {
     let display = cwd.display().to_string();

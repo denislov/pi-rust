@@ -170,7 +170,11 @@ fn agent_done_emits_usage_update_with_cumulative_totals() {
     assert!(first.contains(&UiEvent::AssistantDone));
     assert!(first.contains(&UiEvent::UsageUpdate {
         input: 100,
-        output: 40
+        output: 40,
+        cache_read: 0,
+        cache_write: 0,
+        cost: 0.0,
+        context_tokens: Some(140),
     }));
 
     let second = bridge.handle(&AgentEvent::AgentDone {
@@ -178,6 +182,10 @@ fn agent_done_emits_usage_update_with_cumulative_totals() {
     });
     assert!(second.contains(&UiEvent::UsageUpdate {
         input: 350,
-        output: 100
+        output: 100,
+        cache_read: 0,
+        cache_write: 0,
+        cost: 0.0,
+        context_tokens: Some(310),
     }));
 }

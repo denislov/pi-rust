@@ -341,7 +341,7 @@ async fn scripted_interactive_initial_render_uses_content_height() {
     let frame = output.rendered_lines.join("\n");
 
     assert!(
-        output.rendered_lines.len() <= 7,
+        output.rendered_lines.len() <= 9,
         "initial render should not pad to the full terminal height: {output:?}"
     );
     assert!(
@@ -515,7 +515,10 @@ async fn scripted_interactive_model_command_switches_footer_model() {
         .await
         .unwrap();
     assert!(output.contains("Model set: claude-haiku-4-5"), "{output:?}");
-    assert!(output.contains("model: claude-haiku-4-5"), "{output:?}");
+    assert!(
+        output.contains("claude-haiku-4-5 • thinking off"),
+        "{output:?}"
+    );
     assert_eq!(output.exit_code, 0);
 }
 
@@ -594,7 +597,10 @@ async fn scripted_interactive_model_selector_confirms_filtered_model() {
 
     let output = output.unwrap();
     assert!(output.contains("Model set: claude-haiku-4-5"), "{output:?}");
-    assert!(output.contains("model: claude-haiku-4-5"), "{output:?}");
+    assert!(
+        output.contains("claude-haiku-4-5 • thinking off"),
+        "{output:?}"
+    );
     assert!(!output.contains("not implemented"), "{output:?}");
 }
 
@@ -731,12 +737,10 @@ async fn scripted_interactive_model_selector_cancel_keeps_current_model() {
     let output = run_scripted_idle_interactive("/model\r\x1b").await.unwrap();
     assert!(!output.contains("Model set:"), "{output:?}");
     assert!(output.contains("Model selection canceled"), "{output:?}");
-    let model_footer_count = output
-        .rendered_lines
-        .iter()
-        .filter(|line| line.contains("model: "))
-        .count();
-    assert_eq!(model_footer_count, 1, "{output:?}");
+    assert!(
+        !output.contains("no-model"),
+        "footer should show the kept model: {output:?}"
+    );
     assert!(!output.contains("not implemented"), "{output:?}");
     assert_eq!(output.exit_code, 0);
 }
@@ -838,6 +842,6 @@ async fn scripted_interactive_name_updates_footer_session_label() {
         output.contains("Session name set: Project Phoenix"),
         "{output:?}"
     );
-    assert!(output.contains("session: Project Phoenix"), "{output:?}");
+    assert!(output.contains("• Project Phoenix"), "{output:?}");
     assert_eq!(output.exit_code, 0);
 }

@@ -4,19 +4,21 @@ use std::sync::{Arc, Mutex};
 use pi_agent_core::session::JsonlSessionStorage;
 use pi_ai::types::Model;
 use pi_tui::{
-    Component, Editor, InputEvent, KeybindingsManager, PATH, STATUS_IDLE, STATUS_RUNNING, SYSTEM,
+    Component, ERROR, Editor, InputEvent, KeybindingsManager, STATUS_IDLE, STATUS_RUNNING, SYSTEM,
     SettingItem, SettingsList, SettingsListOptions, Style, TUI_KEYBINDINGS, TuiTheme,
-    color_enabled, dark_theme, light_theme, paint_with,
+    color_enabled, dark_theme, light_theme, paint_with, truncate_to_width,
+    truncate_to_width_with_ellipsis, visible_width,
 };
 
 use crate::config::{AuthStore, Settings};
 use crate::interactive::app::{PromptContext, welcome_line};
 use crate::interactive::clipboard::{ClipboardSink, SystemClipboard};
 use crate::interactive::commands;
+use crate::interactive::git_branch::GitBranchProvider;
 use crate::interactive::input;
 use crate::interactive::model_selector;
 use crate::interactive::render::{
-    abbreviate_cwd, editor_border_line, fit_line, format_tokens, render_transcript_lines,
+    WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens, render_transcript_lines,
     running_status_text,
 };
 use crate::interactive::session_actions::{HydratedSession, SessionChoice};
@@ -49,6 +51,22 @@ pub(super) enum TranscriptScrollCommand {
     PageDown,
 }
 
+/// Cumulative token/cost statistics and live context estimate for the footer.
+///
+/// Mirrors the values the TypeScript `FooterComponent.render` computes by
+/// iterating session entries, plus the context estimate from `getContextUsage`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(super) struct FooterStats {
+    pub input: u32,
+    pub output: u32,
+    pub cache_read: u32,
+    pub cache_write: u32,
+    pub cost: f64,
+    /// Estimated context tokens from the last assistant usage. `None` means
+    /// unknown (e.g. right after compaction, before the next LLM response).
+    pub context_tokens: Option<u32>,
+}
+
 pub(super) struct InteractiveRoot {
     pub(super) transcript: Transcript,
     pub(super) editor: Editor,
@@ -66,6 +84,11 @@ pub(super) struct InteractiveRoot {
     pub(super) session_label: String,
     pub(super) selected_model: Option<Model>,
     pub(super) selected_thinking_level: Option<pi_agent_core::ThinkingLevel>,
+    /// Currently active model for footer display. Distinct from
+    /// `selected_model`, which is consumed to apply pending changes.
+    pub(super) model: Option<Model>,
+    /// Currently active thinking level (never consumed by `take_*`).
+    pub(super) thinking_level: pi_agent_core::ThinkingLevel,
     pub(super) available_models: Vec<Model>,
     pub(super) model_rotation: Vec<Model>,
     pub(super) selecting_model: bool,
@@ -83,7 +106,8 @@ pub(super) struct InteractiveRoot {
     settings_update: Option<Settings>,
     pub(super) auth: AuthStore,
     auth_update: Option<AuthStore>,
-    pub(super) usage: (u32, u32),
+    pub(super) git_branch: GitBranchProvider,
+    pub(super) stats: FooterStats,
     pub(super) tool_output_expanded: bool,
     pub(super) spinner_frame: usize,
     pub(super) slash_suggestion_selected: usize,
@@ -193,11 +217,14 @@ impl InteractiveRoot {
             status: InteractiveStatus::Idle,
             viewport_width: 80,
             viewport_height: 24,
+            git_branch: GitBranchProvider::new(&cwd),
             cwd,
             model_id,
             session_label,
             selected_model: None,
             selected_thinking_level: None,
+            model: None,
+            thinking_level: pi_agent_core::ThinkingLevel::default(),
             available_models,
             model_rotation: Vec::new(),
             selecting_model: false,
@@ -215,7 +242,7 @@ impl InteractiveRoot {
             settings_update: None,
             auth,
             auth_update: None,
-            usage: (0, 0),
+            stats: FooterStats::default(),
             tool_output_expanded: false,
             spinner_frame: 0,
             slash_suggestion_selected: 0,
@@ -288,6 +315,8 @@ impl InteractiveRoot {
             .map(|session| session.cwd.clone())
             .unwrap_or_else(|| PathBuf::from("."));
         self.model_id = prompt_context.model.id.clone();
+        self.model = Some(prompt_context.model.clone());
+        self.thinking_level = prompt_context.thinking_level.unwrap_or_default();
         self.available_models = prompt_context.model_choices.clone();
         self.model_rotation = prompt_context.model_rotation.clone();
         self.session_choices = prompt_context.session_choices.clone();
@@ -296,6 +325,7 @@ impl InteractiveRoot {
         self.settings_list =
             build_settings_list(self.settings.clone(), &self.theme, self.keybindings.clone());
         self.auth = prompt_context.auth.clone();
+        self.git_branch.set_cwd(&self.cwd);
     }
 
     pub(super) fn push_user(&mut self, prompt: String) {
@@ -317,8 +347,22 @@ impl InteractiveRoot {
         };
         for event in events {
             match event {
-                UiEvent::UsageUpdate { input, output } => {
-                    self.usage = (input, output);
+                UiEvent::UsageUpdate {
+                    input,
+                    output,
+                    cache_read,
+                    cache_write,
+                    cost,
+                    context_tokens,
+                } => {
+                    self.stats = FooterStats {
+                        input,
+                        output,
+                        cache_read,
+                        cache_write,
+                        cost,
+                        context_tokens,
+                    };
                 }
                 other => self.transcript.apply_event(other),
             }
@@ -359,6 +403,8 @@ impl InteractiveRoot {
         thinking_level: Option<pi_agent_core::ThinkingLevel>,
     ) {
         self.model_id = model.id.clone();
+        self.model = Some(model.clone());
+        self.thinking_level = thinking_level.unwrap_or_default();
         self.selected_model = Some(model);
         self.selected_thinking_level = thinking_level;
         self.selecting_model = false;
@@ -432,35 +478,188 @@ impl InteractiveRoot {
         self.transcript = transcript;
     }
 
-    pub(super) fn footer(&self) -> String {
+    pub(super) fn footer(&self, width: usize) -> Vec<String> {
         let color = color_enabled();
-        let status_str = match self.status {
-            InteractiveStatus::Idle => "idle".to_string(),
-            InteractiveStatus::Running => running_status_text(self.spinner_frame),
+        let width = width.max(1);
+
+        // Line 1: status (Rust-specific; preserves the spinner indicator that
+        // the TypeScript footer surfaces via a separate status container).
+        let (status_str, status_style) = match self.status {
+            InteractiveStatus::Idle => ("idle".to_string(), STATUS_IDLE),
+            InteractiveStatus::Running => (running_status_text(self.spinner_frame), STATUS_RUNNING),
         };
-        let status_style = match self.status {
-            InteractiveStatus::Idle => STATUS_IDLE,
-            InteractiveStatus::Running => STATUS_RUNNING,
+        let status_line = fit_line(
+            &paint_with(&format!("status: {status_str}"), &status_style, color),
+            width,
+        );
+
+        // Line 2: pwd line — `cwd (branch) • session-name`, dimmed. Mirrors the
+        // TypeScript footer's first render line.
+        let mut pwd = abbreviate_cwd(&self.cwd);
+        if let Some(branch) = self.git_branch.branch() {
+            pwd = format!("{pwd} ({branch})");
+        }
+        let session_name = self.session_label.trim();
+        if !session_name.is_empty() && session_name != "session" {
+            pwd = format!("{pwd} • {session_name}");
+        }
+        let pwd_line = paint_with(
+            &truncate_to_width_with_ellipsis(&pwd, width),
+            &SYSTEM,
+            color,
+        );
+
+        // Line 3: cumulative stats (left) + model info (right-aligned).
+        vec![status_line, pwd_line, self.render_stats_line(width, color)]
+    }
+
+    /// The currently active model for footer display (context window,
+    /// reasoning, provider). Distinct from `selected_model`, which is consumed
+    /// by `take_selected_model` to apply a pending change to the agent.
+    fn current_model(&self) -> Option<&Model> {
+        self.model.as_ref()
+    }
+
+    /// Number of distinct providers among the available models plus the active
+    /// model's provider, mirroring the TypeScript `getAvailableProviderCount`.
+    fn available_provider_count(&self) -> usize {
+        let mut providers: Vec<&str> = self
+            .available_models
+            .iter()
+            .map(|m| m.provider.as_str())
+            .collect();
+        if let Some(model) = &self.model {
+            providers.push(model.provider.as_str());
+        }
+        providers.sort_unstable();
+        providers.dedup();
+        providers.len()
+    }
+
+    /// Whether the active model's provider is authenticated via an OAuth
+    /// subscription token, mirroring `modelRegistry.isUsingOAuth(model)`.
+    fn using_subscription(&self) -> bool {
+        self.current_model()
+            .map(|m| self.auth.oauth_access_entry(&m.provider).is_some())
+            .unwrap_or(false)
+    }
+
+    /// `(context_window, auto_indicator)` for the active model.
+    fn context_window_and_indicator(&self) -> (u32, &'static str) {
+        let window = self.current_model().map(|m| m.context_window).unwrap_or(0);
+        let auto = if self.settings.compaction.enabled {
+            " (auto)"
+        } else {
+            ""
         };
-        let cwd = abbreviate_cwd(&self.cwd);
-        let mut parts = vec![
-            paint_with(&format!("status: {status_str}"), &status_style, color),
-            format!("cwd: {}", paint_with(&cwd, &PATH, color)),
-            format!("model: {}", self.model_id),
-            format!("session: {}", self.session_label),
-        ];
-        if self.usage != (0, 0) {
-            parts.push(paint_with(
-                &format!(
-                    "↑{} ↓{}",
-                    format_tokens(self.usage.0),
-                    format_tokens(self.usage.1)
-                ),
-                &SYSTEM,
-                color,
+        (window, auto)
+    }
+
+    /// Stats line: token/cost/context on the left, model info right-aligned.
+    /// Mirrors the TypeScript footer's second render line, including the
+    /// right-align padding and graceful right-side truncation on narrow widths.
+    fn render_stats_line(&self, width: usize, color: bool) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.stats.input > 0 {
+            parts.push(format!("↑{}", format_tokens(self.stats.input)));
+        }
+        if self.stats.output > 0 {
+            parts.push(format!("↓{}", format_tokens(self.stats.output)));
+        }
+        if self.stats.cache_read > 0 {
+            parts.push(format!("R{}", format_tokens(self.stats.cache_read)));
+        }
+        if self.stats.cache_write > 0 {
+            parts.push(format!("W{}", format_tokens(self.stats.cache_write)));
+        }
+
+        let using_sub = self.using_subscription();
+        if self.stats.cost > 0.0 || using_sub {
+            parts.push(format!(
+                "${:.3}{}",
+                self.stats.cost,
+                if using_sub { " (sub)" } else { "" }
             ));
         }
-        parts.join(" | ")
+
+        // Context usage: `percent/contextWindow (auto)`, or `?` when unknown
+        // (right after compaction, before the next LLM response).
+        let (context_window, auto_indicator) = self.context_window_and_indicator();
+        let (percent_value, context_display) = match (self.stats.context_tokens, context_window) {
+            (Some(tokens), window) if window > 0 => {
+                let pct = (tokens as f64 / window as f64) * 100.0;
+                (
+                    pct,
+                    format!("{:.1}%/{}{}", pct, format_tokens(window), auto_indicator),
+                )
+            }
+            _ => (
+                0.0,
+                format!("?/{}{}", format_tokens(context_window), auto_indicator),
+            ),
+        };
+        let context_style = if percent_value > 90.0 {
+            ERROR
+        } else if percent_value > 70.0 {
+            WARNING
+        } else {
+            Style::default()
+        };
+        parts.push(paint_with(&context_display, &context_style, color));
+
+        let mut stats_left = paint_with(&parts.join(" "), &SYSTEM, color);
+        if visible_width(&stats_left) > width {
+            stats_left = truncate_to_width_with_ellipsis(&stats_left, width);
+        }
+        let stats_left_width = visible_width(&stats_left);
+
+        // Right side: optional `(provider)` prefix + model name + thinking.
+        let model_name = self
+            .current_model()
+            .map(|m| m.id.as_str())
+            .unwrap_or("no-model")
+            .to_string();
+        let mut right_side = if self.current_model().map(|m| m.reasoning).unwrap_or(false) {
+            let level = self.thinking_level;
+            if level == pi_agent_core::ThinkingLevel::Off {
+                format!("{model_name} • thinking off")
+            } else {
+                format!("{model_name} • {level}")
+            }
+        } else {
+            model_name
+        };
+        let min_padding = 2;
+        if self.available_provider_count() > 1 && self.current_model().is_some() {
+            let prefixed = format!(
+                "({}) {right_side}",
+                self.current_model()
+                    .map(|m| m.provider.as_str())
+                    .unwrap_or(""),
+            );
+            if stats_left_width + min_padding + visible_width(&prefixed) <= width {
+                right_side = prefixed;
+            }
+        }
+
+        let right_width = visible_width(&right_side);
+        if stats_left_width + min_padding + right_width <= width {
+            let padding = " ".repeat(width - stats_left_width - right_width);
+            let remainder = format!("{padding}{right_side}");
+            format!("{}{}", stats_left, paint_with(&remainder, &SYSTEM, color))
+        } else {
+            let available_for_right = width.saturating_sub(stats_left_width + min_padding);
+            if available_for_right > 0 {
+                let truncated_right = truncate_to_width(&right_side, available_for_right);
+                let padding = " ".repeat(
+                    width.saturating_sub(stats_left_width + visible_width(&truncated_right)),
+                );
+                let remainder = format!("{padding}{truncated_right}");
+                format!("{}{}", stats_left, paint_with(&remainder, &SYSTEM, color))
+            } else {
+                stats_left
+            }
+        }
     }
 
     pub(super) fn render_state(&self) -> InteractiveRenderState {
@@ -682,7 +881,6 @@ impl Component for InteractiveRoot {
             return Vec::new();
         }
 
-        let footer = fit_line(&self.footer(), width);
         let max_tool_result_lines = if self.tool_output_expanded {
             EXPANDED_TOOL_RESULT_LINES
         } else {
@@ -704,7 +902,7 @@ impl Component for InteractiveRoot {
         } else {
             lines.extend(self.render_slash_suggestions(width));
         }
-        lines.push(footer);
+        lines.extend(self.footer(width));
         lines
     }
 

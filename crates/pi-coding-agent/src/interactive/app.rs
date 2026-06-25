@@ -15,7 +15,7 @@ use pi_ai::types::Model;
 #[cfg(test)]
 use pi_ai::types::{ContentBlock, StopReason};
 #[cfg(test)]
-use pi_tui::{Component, InputEvent, Terminal};
+use pi_tui::{Component, InputEvent, Terminal, visible_width};
 use pi_tui::{KeybindingsManager, ProcessTerminal, TuiTheme, dark_theme, light_theme};
 
 #[cfg(test)]
@@ -26,9 +26,11 @@ use crate::interactive::r#loop::{
     LoopResult, run_interactive_loop, run_interactive_loop_with_input,
 };
 #[cfg(test)]
-use crate::interactive::render::{render_transcript_lines, running_status_text};
+use crate::interactive::render::{format_tokens, render_transcript_lines, running_status_text};
 #[cfg(test)]
-use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
+use crate::interactive::root::{
+    FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus,
+};
 use crate::interactive::session_actions::{SessionChoice, collect_session_choices};
 #[cfg(test)]
 use crate::interactive::slash::{
@@ -597,7 +599,7 @@ mod tests {
             "no-session".to_string(),
         );
         root.set_status(InteractiveStatus::Running);
-        let footer = root.footer();
+        let footer = root.footer(80).join("\n");
         assert!(
             footer.contains("running"),
             "footer should contain 'running' when status is Running: {footer}"
@@ -625,7 +627,7 @@ mod tests {
             "no-session".to_string(),
         );
         root.set_status(InteractiveStatus::Idle);
-        let footer = root.footer();
+        let footer = root.footer(80).join("\n");
         assert!(
             footer.contains("status: idle"),
             "footer should contain 'status: idle' when Idle: {footer}"
@@ -649,18 +651,181 @@ mod tests {
         root.set_status(InteractiveStatus::Running);
 
         root.spinner_frame = 3;
-        let footer_at_3 = root.footer();
+        let footer_at_3 = root.footer(80).join("\n");
         assert!(
             footer_at_3.contains("⠸"),
             "footer at frame 3 should contain '⠸': {footer_at_3}"
         );
 
         root.spinner_frame = 4;
-        let footer_at_4 = root.footer();
+        let footer_at_4 = root.footer(80).join("\n");
         assert!(
             footer_at_4.contains("⠼"),
             "footer at frame 4 should contain '⠼': {footer_at_4}"
         );
+    }
+
+    fn footer_model(id: &str, provider: &str, reasoning: bool, context_window: u32) -> Model {
+        Model {
+            id: id.into(),
+            name: id.into(),
+            api: "faux".into(),
+            provider: provider.into(),
+            base_url: String::new(),
+            reasoning,
+            thinking_level_map: None,
+            input: vec![pi_ai::types::ModelInput::Text],
+            cost: pi_ai::types::ModelCost::default(),
+            context_window,
+            max_tokens: 0,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    #[test]
+    fn format_tokens_uses_decimal_tiers() {
+        assert_eq!(format_tokens(999), "999");
+        assert_eq!(format_tokens(1_500), "1.5k");
+        assert_eq!(format_tokens(15_000), "15k");
+        assert_eq!(format_tokens(1_500_000), "1.5M");
+        assert_eq!(format_tokens(15_000_000), "15M");
+    }
+
+    #[test]
+    fn footer_stats_line_shows_cache_and_cost() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.stats = FooterStats {
+            input: 10,
+            output: 20,
+            cache_read: 30,
+            cache_write: 40,
+            cost: 0.125,
+            context_tokens: None,
+        };
+        let footer = root.footer(80).join("\n");
+        assert!(footer.contains("↑10"), "{footer}");
+        assert!(footer.contains("↓20"), "{footer}");
+        assert!(footer.contains("R30"), "{footer}");
+        assert!(footer.contains("W40"), "{footer}");
+        assert!(footer.contains("$0.125"), "{footer}");
+    }
+
+    #[test]
+    fn footer_shows_context_percentage_and_auto_indicator() {
+        let mut root =
+            InteractiveRoot::new(PathBuf::from("."), "m".to_string(), "session".to_string());
+        root.model = Some(footer_model("m", "p", false, 200_000));
+        root.stats.context_tokens = Some(100_000);
+        let footer = root.footer(80).join("\n");
+        assert!(footer.contains("50.0%/200k (auto)"), "{footer}");
+    }
+
+    #[test]
+    fn footer_shows_unknown_context_after_compaction() {
+        let mut root =
+            InteractiveRoot::new(PathBuf::from("."), "m".to_string(), "session".to_string());
+        root.model = Some(footer_model("m", "p", false, 200_000));
+        root.stats.context_tokens = None;
+        let footer = root.footer(80).join("\n");
+        assert!(footer.contains("?/200k (auto)"), "{footer}");
+    }
+
+    #[test]
+    fn footer_auto_indicator_off_when_compaction_disabled() {
+        let mut root =
+            InteractiveRoot::new(PathBuf::from("."), "m".to_string(), "session".to_string());
+        root.model = Some(footer_model("m", "p", false, 200_000));
+        root.settings.compaction.enabled = false;
+        let footer = root.footer(80).join("\n");
+        assert!(!footer.contains("(auto)"), "{footer}");
+    }
+
+    #[test]
+    fn footer_shows_thinking_level_for_reasoning_model() {
+        let mut root =
+            InteractiveRoot::new(PathBuf::from("."), "m".to_string(), "session".to_string());
+        root.model = Some(footer_model("m", "p", true, 200_000));
+        root.thinking_level = pi_agent_core::ThinkingLevel::High;
+        let footer = root.footer(80).join("\n");
+        assert!(footer.contains("m • high"), "{footer}");
+
+        root.thinking_level = pi_agent_core::ThinkingLevel::Off;
+        let footer = root.footer(80).join("\n");
+        assert!(footer.contains("m • thinking off"), "{footer}");
+    }
+
+    #[test]
+    fn footer_shows_provider_prefix_with_multiple_providers() {
+        let mut root =
+            InteractiveRoot::new(PathBuf::from("."), "m".to_string(), "session".to_string());
+        root.model = Some(footer_model("m", "anthropic", false, 200_000));
+        root.available_models = vec![
+            footer_model("m", "anthropic", false, 200_000),
+            footer_model("g", "openai", false, 200_000),
+        ];
+        let footer = root.footer(80).join("\n");
+        assert!(footer.contains("(anthropic) m"), "{footer}");
+    }
+
+    #[test]
+    fn footer_omits_provider_prefix_with_single_provider() {
+        let mut root =
+            InteractiveRoot::new(PathBuf::from("."), "m".to_string(), "session".to_string());
+        root.model = Some(footer_model("m", "anthropic", false, 200_000));
+        root.available_models = vec![footer_model("m", "anthropic", false, 200_000)];
+        let footer = root.footer(80).join("\n");
+        assert!(!footer.contains("(anthropic)"), "{footer}");
+    }
+
+    #[test]
+    fn footer_lines_never_exceed_width() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.model = Some(footer_model("faux-model", "p", true, 200_000));
+        root.stats = FooterStats {
+            input: 123_456,
+            output: 654_321,
+            cache_read: 99_999,
+            cache_write: 88_888,
+            cost: 1.234,
+            context_tokens: Some(180_000),
+        };
+        for width in [10, 20, 40, 80] {
+            for line in root.footer(width) {
+                assert!(
+                    visible_width(&line) <= width,
+                    "footer line exceeds width {width}: {:?}",
+                    line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn footer_pwd_line_includes_git_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = dir.path().join(".git").join("refs").join("heads");
+        std::fs::create_dir_all(&git).unwrap();
+        std::fs::write(
+            dir.path().join(".git").join("HEAD"),
+            "ref: refs/heads/main\n",
+        )
+        .unwrap();
+        let root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "m".to_string(),
+            "session".to_string(),
+        );
+        let footer = root.footer(80).join("\n");
+        assert!(footer.contains("(main)"), "{footer}");
     }
 
     #[test]
@@ -1451,7 +1616,11 @@ mod tests {
             "faux-model".to_string(),
             "Project Phoenix".to_string(),
         );
-        root.usage = (123, 456);
+        root.stats = FooterStats {
+            input: 123,
+            output: 456,
+            ..Default::default()
+        };
         root.push_user("old prompt".to_string());
         root.apply_events(vec![
             UiEvent::AssistantDelta {
@@ -1467,7 +1636,7 @@ mod tests {
         });
 
         assert_eq!(root.action, InteractiveAction::NewSession);
-        assert_eq!(root.usage, (0, 0));
+        assert_eq!(root.stats, FooterStats::default());
         let rendered = root.render(80).join("\n");
         assert!(rendered.contains("New session started"), "{rendered}");
         assert!(!rendered.contains("old prompt"), "{rendered}");
@@ -1734,7 +1903,11 @@ mod tests {
             "faux-model".to_string(),
             "Project Phoenix".to_string(),
         );
-        root.usage = (1234, 5678);
+        root.stats = FooterStats {
+            input: 1234,
+            output: 5678,
+            ..Default::default()
+        };
         root.handle_slash_command(ParsedSlashCommand {
             name: "session".to_string(),
             args: String::new(),
@@ -1744,8 +1917,8 @@ mod tests {
         assert!(text.contains("Session Info"), "{text}");
         assert!(text.contains("Project Phoenix"), "{text}");
         assert!(text.contains("faux-model"), "{text}");
-        assert!(text.contains("1k"), "{text}");
-        assert!(text.contains("5k"), "{text}");
+        assert!(text.contains("1.2k"), "{text}");
+        assert!(text.contains("5.7k"), "{text}");
     }
 
     #[test]

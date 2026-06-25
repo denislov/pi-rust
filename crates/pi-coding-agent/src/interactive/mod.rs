@@ -2,6 +2,7 @@ pub mod app;
 mod clipboard;
 mod commands;
 pub mod event_bridge;
+mod git_branch;
 mod input;
 pub mod key_hints;
 mod r#loop;

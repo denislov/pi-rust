@@ -91,7 +91,18 @@ fn safe_process_env() -> HashMap<String, String> {
 fn is_safe_env_key(key: &str) -> bool {
     matches!(
         key,
-        "PATH" | "HOME" | "USER" | "USERNAME" | "SHELL" | "TMPDIR" | "TEMP" | "TMP" | "LANG" | "LC_ALL" | "LC_CTYPE" | "TERM"
+        "PATH"
+            | "HOME"
+            | "USER"
+            | "USERNAME"
+            | "SHELL"
+            | "TMPDIR"
+            | "TEMP"
+            | "TMP"
+            | "LANG"
+            | "LC_ALL"
+            | "LC_CTYPE"
+            | "TERM"
     ) || key.starts_with("LC_")
 }
 
