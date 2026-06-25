@@ -208,3 +208,82 @@ fn parses_builtin_light_theme_and_exposes_schema() {
         serde_json::from_str(pi_coding_agent::theme::SCHEMA_JSON).unwrap();
     assert_eq!(schema["title"], "Pi Coding Agent Theme");
 }
+
+// --- Terminal background detection (mirrors theme-detection.test.ts) ---
+
+#[test]
+fn detects_light_background_from_colorfgbg() {
+    use pi_coding_agent::theme::{
+        DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
+    };
+    let env = vec![("COLORFGBG".to_string(), "0;15".to_string())];
+    let detection = detect_terminal_background(env.into_iter());
+    assert_eq!(detection.theme, TerminalTheme::Light);
+    assert_eq!(detection.source, DetectionSource::ColorFgbg);
+    assert_eq!(detection.confidence, DetectionConfidence::High);
+}
+
+#[test]
+fn detects_dark_background_from_colorfgbg() {
+    use pi_coding_agent::theme::{
+        DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
+    };
+    let env = vec![("COLORFGBG".to_string(), "15;0".to_string())];
+    let detection = detect_terminal_background(env.into_iter());
+    assert_eq!(detection.theme, TerminalTheme::Dark);
+    assert_eq!(detection.source, DetectionSource::ColorFgbg);
+    assert_eq!(detection.confidence, DetectionConfidence::High);
+}
+
+#[test]
+fn uses_last_colorfgbg_field_as_background() {
+    use pi_coding_agent::theme::{TerminalTheme, detect_terminal_background};
+    // "0;7;15" -> last field 15 (bright white) -> light
+    let env = vec![("COLORFGBG".to_string(), "0;7;15".to_string())];
+    let detection = detect_terminal_background(env.into_iter());
+    assert_eq!(detection.theme, TerminalTheme::Light);
+}
+
+#[test]
+fn defaults_to_dark_without_background_hints() {
+    use pi_coding_agent::theme::{
+        DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
+    };
+    let detection = detect_terminal_background(std::iter::empty::<(String, String)>());
+    assert_eq!(detection.theme, TerminalTheme::Dark);
+    assert_eq!(detection.source, DetectionSource::Fallback);
+    assert_eq!(detection.confidence, DetectionConfidence::Low);
+}
+
+#[test]
+fn parses_osc11_16bit_rgb_response() {
+    use pi_coding_agent::theme::parse_osc11_background_color;
+    // rgb:0000/8000/ffff -> (0, 128, 255)
+    assert_eq!(
+        parse_osc11_background_color("\x1b]11;rgb:0000/8000/ffff\x07"),
+        Some((0, 128, 255))
+    );
+}
+
+#[test]
+fn parses_osc11_hex_responses() {
+    use pi_coding_agent::theme::parse_osc11_background_color;
+    assert_eq!(
+        parse_osc11_background_color("\x1b]11;#ffffff\x1b\\"),
+        Some((255, 255, 255))
+    );
+    assert_eq!(
+        parse_osc11_background_color("\x1b]11;#000000\x07"),
+        Some((0, 0, 0))
+    );
+}
+
+#[test]
+fn classifies_rgb_colors_by_luminance() {
+    use pi_coding_agent::theme::{TerminalTheme, get_theme_for_rgb_color};
+    assert_eq!(get_theme_for_rgb_color((8, 8, 8)), TerminalTheme::Dark);
+    assert_eq!(
+        get_theme_for_rgb_color((250, 250, 250)),
+        TerminalTheme::Light
+    );
+}

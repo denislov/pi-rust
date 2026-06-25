@@ -100,6 +100,7 @@ pub(super) struct PromptContext {
     pub(super) resources: AgentResources,
     pub(super) settings: crate::config::Settings,
     pub(super) theme: TuiTheme,
+    pub(super) resolved_theme: crate::theme::ResolvedTheme,
     pub(super) model_choices: Vec<Model>,
     pub(super) model_rotation: Vec<Model>,
     pub(super) session_choices: Vec<SessionChoice>,
@@ -137,6 +138,10 @@ pub(super) fn build_prompt_context(
         resolved.config.settings.theme.as_deref(),
         resolved.loaded_resources.selected_theme.as_ref(),
     );
+    let resolved_theme = resolve_resolved_theme(
+        resolved.config.settings.theme.as_deref(),
+        resolved.loaded_resources.selected_theme.as_ref(),
+    );
 
     let session_target = match (&resolved.session, resolved.session_target.clone()) {
         (Some(session), None) if matches!(session.mode, SessionMode::Enabled) => {
@@ -163,6 +168,7 @@ pub(super) fn build_prompt_context(
         resources: resolved.agent_resources,
         settings: resolved.config.settings,
         theme,
+        resolved_theme,
         model_choices,
         model_rotation,
         session_choices,
@@ -180,6 +186,29 @@ fn resolve_tui_theme(
         Some("light") => light_theme(),
         _ => dark_theme(),
     }
+}
+
+/// Resolve the active theme into the full 51-token [`ResolvedTheme`] used for
+/// thinking-level editor borders and other token-driven rendering. Invalid
+/// user themes fall back to the built-in dark theme, mirroring TS `setTheme`.
+fn resolve_resolved_theme(
+    theme_name: Option<&str>,
+    selected: Option<&resources::ThemeResource>,
+) -> crate::theme::ResolvedTheme {
+    if let Some(theme) = selected {
+        if let Ok(resolved) = theme.theme.resolve_colors() {
+            return resolved;
+        }
+    }
+    let json = match theme_name {
+        Some("light") => crate::theme::builtin_light(),
+        _ => crate::theme::builtin_dark(),
+    };
+    json.resolve_colors().unwrap_or_else(|_| {
+        crate::theme::builtin_dark()
+            .resolve_colors()
+            .expect("built-in dark theme resolves")
+    })
 }
 
 pub(super) fn resolve_prompt_api_key(
@@ -955,6 +984,32 @@ mod tests {
             .expect("editor row should render");
         assert!(rendered[editor_row - 1].contains("─"), "{rendered:?}");
         assert!(rendered[editor_row + 1].contains("─"), "{rendered:?}");
+    }
+
+    #[test]
+    fn editor_border_reflects_thinking_level_from_resolved_theme() {
+        let resolved = crate::theme::builtin_dark().resolve_colors().unwrap();
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        )
+        .with_theme(dark_theme())
+        .with_resolved_theme(resolved);
+
+        // thinkingHigh in dark.json -> "#b294bb"
+        root.thinking_level = pi_agent_core::ThinkingLevel::High;
+        assert_eq!(
+            root.editor_border_style().fg,
+            pi_tui::Color::Rgb(0xb2, 0x94, 0xbb)
+        );
+
+        // thinkingOff in dark.json -> "darkGray" var -> "#505050"
+        root.thinking_level = pi_agent_core::ThinkingLevel::Off;
+        assert_eq!(
+            root.editor_border_style().fg,
+            pi_tui::Color::Rgb(0x50, 0x50, 0x50)
+        );
     }
 
     #[test]

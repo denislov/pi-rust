@@ -25,6 +25,7 @@ use crate::interactive::session_actions::{HydratedSession, SessionChoice};
 use crate::interactive::session_selector;
 use crate::interactive::slash::{self, ParsedSlashCommand};
 use crate::interactive::{Transcript, TranscriptItem, UiEvent};
+use crate::theme::{ResolvedTheme, ThemeColor};
 
 const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
@@ -113,6 +114,7 @@ pub(super) struct InteractiveRoot {
     pub(super) slash_suggestion_selected: usize,
     pub(super) slash_suggestions_dismissed_for: Option<String>,
     pub(super) theme: TuiTheme,
+    pub(super) resolved_theme: Option<ResolvedTheme>,
     pub(super) clipboard: Arc<dyn ClipboardSink>,
 }
 
@@ -248,6 +250,7 @@ impl InteractiveRoot {
             slash_suggestion_selected: 0,
             slash_suggestions_dismissed_for: None,
             theme,
+            resolved_theme: None,
             clipboard: Arc::new(SystemClipboard),
         }
     }
@@ -255,6 +258,11 @@ impl InteractiveRoot {
     #[cfg(test)]
     pub(super) fn with_theme(mut self, theme: TuiTheme) -> Self {
         self.theme = theme;
+        self
+    }
+
+    pub(super) fn with_resolved_theme(mut self, resolved_theme: ResolvedTheme) -> Self {
+        self.resolved_theme = Some(resolved_theme);
         self
     }
 
@@ -692,8 +700,30 @@ impl InteractiveRoot {
     pub(super) fn editor_border_style(&self) -> Style {
         if self.selecting_model || self.selecting_settings || self.selecting_session {
             self.theme.editor.menu_border
+        } else if let Some(resolved) = &self.resolved_theme {
+            // Editor border reflects the active thinking level, mirroring TS
+            // `getThinkingBorderColor`. Bash-mode border (TS
+            // `getBashModeBorderColor`) is not yet wired: Rust has no
+            // bash-mode input state.
+            Style::fg(crate::resources::to_color(
+                resolved.fg(Self::thinking_border_token(self.thinking_level)),
+            ))
         } else {
             self.theme.editor.active_border
+        }
+    }
+
+    /// Map a thinking level to its border color token, mirroring TS
+    /// `getThinkingBorderColor`.
+    fn thinking_border_token(level: pi_agent_core::ThinkingLevel) -> ThemeColor {
+        use pi_agent_core::ThinkingLevel;
+        match level {
+            ThinkingLevel::Off => ThemeColor::ThinkingOff,
+            ThinkingLevel::Minimal => ThemeColor::ThinkingMinimal,
+            ThinkingLevel::Low => ThemeColor::ThinkingLow,
+            ThinkingLevel::Medium => ThemeColor::ThinkingMedium,
+            ThinkingLevel::High => ThemeColor::ThinkingHigh,
+            ThinkingLevel::XHigh => ThemeColor::ThinkingXhigh,
         }
     }
 

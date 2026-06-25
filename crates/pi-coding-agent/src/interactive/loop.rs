@@ -139,7 +139,8 @@ fn initialize_started_tui<T: Terminal>(
             prompt_context.model_choices.clone(),
             prompt_context.settings.clone(),
             prompt_context.auth.clone(),
-        ),
+        )
+        .with_resolved_theme(prompt_context.resolved_theme.clone()),
     ));
     {
         let root = root_mut(&mut tui, root_id)?;

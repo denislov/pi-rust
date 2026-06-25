@@ -74,7 +74,7 @@ fn palette_from_resolved(resolved: &crate::theme::ResolvedTheme) -> ThemePalette
     }
 }
 
-fn to_color(color: ResolvedColor) -> Color {
+pub(crate) fn to_color(color: ResolvedColor) -> Color {
     match color {
         ResolvedColor::Default => Color::Default,
         ResolvedColor::Hex(r, g, b) => Color::Rgb(r, g, b),
