@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const DESCRIPTION: &str = "Read the contents of a text file. Output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files; continue with offset until complete. Image files are not read in this mode.";
+const MAX_READ_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 fn image_mime(path: &Path) -> Option<&'static str> {
     let ext = path
@@ -53,6 +54,17 @@ pub struct RealReadOperations;
 impl ReadOperations for RealReadOperations {
     fn read_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>> {
         async move {
+            let metadata = tokio::fs::metadata(path)
+                .await
+                .map_err(|e| format!("read: cannot stat {}: {e}", path.display()))?;
+            if metadata.len() > MAX_READ_FILE_BYTES {
+                return Err(format!(
+                    "read: refusing to read {} because it is {} and exceeds the {} safety limit; use a shell pager or a narrower tool instead",
+                    path.display(),
+                    format_size(metadata.len() as usize),
+                    format_size(MAX_READ_FILE_BYTES as usize),
+                ));
+            }
             tokio::fs::read(path)
                 .await
                 .map_err(|e| format!("read: cannot read {}: {e}", path.display()))
