@@ -48,12 +48,13 @@ fn message_id(message: &AgentMessage) -> &str {
 async fn compact_before_provider_request(
     state: &Arc<RwLock<AgentState>>,
 ) -> Result<Option<(String, String, u32)>, String> {
-    let (config, messages, model, cancel) = {
+    let (config, messages, model, stream_options, cancel) = {
         let s = state.read().unwrap();
         (
             s.config.compaction.clone(),
             s.messages.clone(),
             s.config.model.clone(),
+            s.config.stream_options.clone(),
             s.cancel_token.clone(),
         )
     };
@@ -75,6 +76,7 @@ async fn compact_before_provider_request(
         &model,
         &to_summarize,
         config.custom_instructions.as_deref(),
+        stream_options,
         Some(cancel),
     )
     .await

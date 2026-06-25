@@ -7,6 +7,7 @@ pub async fn summarize(
     model: &Model,
     messages: &[AgentMessage],
     custom_instructions: Option<&str>,
+    stream_options: Option<StreamOptions>,
     cancel: Option<CancellationToken>,
 ) -> Result<String, CompactionError> {
     let system_prompt = custom_instructions.unwrap_or(
@@ -82,7 +83,7 @@ pub async fn summarize(
         tools: None,
     };
 
-    let mut opts = StreamOptions::default();
+    let mut opts = stream_options.unwrap_or_default();
     opts.cancel = cancel;
     opts.max_tokens = Some(4096);
 

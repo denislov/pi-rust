@@ -19,18 +19,21 @@ pub struct ScriptedTurn {
 /// Test ApiProvider that replays scripted turns from a queue.
 pub struct TestProvider {
     pub turns: Mutex<Vec<ScriptedTurn>>,
+    pub stream_options: Mutex<Vec<Option<StreamOptions>>>,
 }
 
 impl TestProvider {
     pub fn new(turns: Vec<ScriptedTurn>) -> Self {
         Self {
             turns: Mutex::new(turns),
+            stream_options: Mutex::new(Vec::new()),
         }
     }
 }
 
 impl ApiProvider for TestProvider {
-    fn stream(&self, _model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+    fn stream(&self, _model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+        self.stream_options.lock().unwrap().push(opts);
         let turn = {
             let mut turns = self.turns.lock().unwrap();
             if turns.is_empty() {

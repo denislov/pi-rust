@@ -1,8 +1,21 @@
 use crate::compaction::estimate::estimate_tokens;
 use crate::types::{AgentMessage, CompactionSettings};
 
-pub fn should_compact(estimated_tokens: u32, context_window: u32, reserve_tokens: u32) -> bool {
-    context_window > 0 && estimated_tokens > context_window.saturating_sub(reserve_tokens)
+/// Check if compaction should trigger based on context usage.
+///
+/// Mirrors `shouldCompact` in `pi/packages/coding-agent/src/core/compaction/compaction.ts`:
+/// returns `false` when compaction is disabled via `settings.enabled`, otherwise
+/// returns `true` once the estimated context tokens exceed
+/// `context_window - settings.reserve_tokens`.
+pub fn should_compact(
+    estimated_tokens: u32,
+    context_window: u32,
+    settings: &CompactionSettings,
+) -> bool {
+    if !settings.enabled {
+        return false;
+    }
+    context_window > 0 && estimated_tokens > context_window.saturating_sub(settings.reserve_tokens)
 }
 
 pub fn prepare_compaction(
@@ -72,14 +85,44 @@ mod tests {
         }
     }
 
+    fn settings_with_reserve(reserve_tokens: u32) -> CompactionSettings {
+        CompactionSettings {
+            enabled: true,
+            reserve_tokens,
+            keep_recent_tokens: 0,
+        }
+    }
+
     #[test]
     fn should_compact_when_over_threshold() {
-        assert!(should_compact(10_000, 8_000, 1_000));
+        // context_window(100k) - reserve(10k) = 90k threshold; 95k exceeds it.
+        assert!(should_compact(
+            95_000,
+            100_000,
+            &settings_with_reserve(10_000)
+        ));
     }
 
     #[test]
     fn should_not_compact_under_threshold() {
-        assert!(!should_compact(5_000, 8_000, 1_000));
+        // 89k is below the 90k threshold.
+        assert!(!should_compact(
+            89_000,
+            100_000,
+            &settings_with_reserve(10_000)
+        ));
+    }
+
+    #[test]
+    fn should_not_compact_when_disabled() {
+        // Mirrors the TS "should return false when disabled" case: even well past
+        // the threshold, a disabled config must not trigger compaction.
+        let settings = CompactionSettings {
+            enabled: false,
+            reserve_tokens: 10_000,
+            keep_recent_tokens: 0,
+        };
+        assert!(!should_compact(95_000, 100_000, &settings));
     }
 
     #[test]

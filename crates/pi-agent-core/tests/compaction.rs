@@ -9,7 +9,7 @@ use pi_agent_core::{
 };
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
-use pi_ai::types::{ContentBlock, StopReason};
+use pi_ai::types::{ContentBlock, StopReason, StreamOptions};
 use std::sync::Arc;
 
 fn user_msg(text: &str) -> AgentMessage {
@@ -64,9 +64,15 @@ fn estimate_tokens_accumulates_assistant_usage_with_other_messages() {
 
 #[test]
 fn should_compact_applies_threshold() {
-    assert!(should_compact(10_000, 8_000, 1_000));
-    assert!(!should_compact(5_000, 8_000, 1_000));
-    assert!(!should_compact(100, 0, 0));
+    let settings = |reserve_tokens: u32| CompactionSettings {
+        enabled: true,
+        reserve_tokens,
+        keep_recent_tokens: 0,
+    };
+    assert!(should_compact(95_000, 100_000, &settings(10_000)));
+    assert!(!should_compact(89_000, 100_000, &settings(10_000)));
+    // Degenerate zero context window never compacts (Rust safety guard).
+    assert!(!should_compact(100, 0, &settings(0)));
 }
 
 #[test]
@@ -174,6 +180,62 @@ async fn runtime_compaction_summarizes_before_provider_request() {
         message,
         AgentMessage::CompactionSummary { summary, .. } if summary == "summary of old context"
     )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn runtime_compaction_forwards_stream_options_to_summarization() {
+    let api = "runtime-compaction-api-key";
+    let mut config = AgentConfig::new(faux_model(api));
+    config.max_turns = Some(3);
+    config.stream_options = Some(StreamOptions {
+        api_key: Some("test-api-key".to_string()),
+        max_retries: Some(2),
+        ..Default::default()
+    });
+    config.compaction = Some(CompactionConfig {
+        settings: CompactionSettings {
+            enabled: true,
+            reserve_tokens: 0,
+            keep_recent_tokens: 8,
+        },
+        custom_instructions: None,
+    });
+
+    let agent = Agent::new(config);
+    agent.add_message(user_msg(&"old context ".repeat(40)));
+    agent.add_message(user_msg(&"more old context ".repeat(40)));
+
+    let provider = Arc::new(common::TestProvider::new(vec![
+        common::text_turn("summary with key"),
+        common::text_turn("final answer with key"),
+    ]));
+    registry::register(api, provider.clone());
+
+    let events: Vec<_> = agent.prompt("new prompt").collect().await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::SessionCompacted { summary, .. } if summary == "summary with key"
+    )));
+    let recorded_options = provider.stream_options.lock().unwrap();
+    let keys = recorded_options
+        .iter()
+        .map(|opts| opts.as_ref().and_then(|opts| opts.api_key.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        vec![
+            Some("test-api-key".to_string()),
+            Some("test-api-key".to_string())
+        ]
+    );
+    let retries = recorded_options
+        .iter()
+        .map(|opts| opts.as_ref().and_then(|opts| opts.max_retries))
+        .collect::<Vec<_>>();
+    assert_eq!(retries, vec![Some(2), Some(2)]);
 
     registry::unregister(api);
 }
