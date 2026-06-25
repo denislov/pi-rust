@@ -76,12 +76,10 @@ fn normalize_for_fuzzy(text: &str) -> String {
 }
 
 fn count_occurrences(content: &str, old: &str) -> usize {
-    let fc = normalize_for_fuzzy(content);
-    let fo = normalize_for_fuzzy(old);
-    if fo.is_empty() {
+    if old.is_empty() {
         return 0;
     }
-    fc.matches(&fo).count()
+    content.matches(old).count()
 }
 
 fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, String), String> {
@@ -104,30 +102,21 @@ fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, 
         }
     }
 
-    let any_fuzzy = norm.iter().any(|e| {
-        !normalized.contains(&e.old_text)
+    for (i, e) in norm.iter().enumerate() {
+        if !normalized.contains(&e.old_text)
             && normalize_for_fuzzy(normalized).contains(&normalize_for_fuzzy(&e.old_text))
-    });
-    let base = if any_fuzzy {
-        normalize_for_fuzzy(normalized)
-    } else {
-        normalized.to_string()
-    };
+        {
+            return Err(fuzzy_refused(path, i, total));
+        }
+    }
 
+    let base = normalized.to_string();
     let mut matched: Vec<(usize, usize, usize, String)> = Vec::new();
 
     for (i, e) in norm.iter().enumerate() {
-        let (idx, len, new) = if any_fuzzy {
-            let fo = normalize_for_fuzzy(&e.old_text);
-            match base.find(&fo) {
-                Some(ix) => (ix, fo.len(), e.new_text.clone()),
-                None => return Err(not_found(path, i, total)),
-            }
-        } else {
-            match base.find(&e.old_text) {
-                Some(ix) => (ix, e.old_text.len(), e.new_text.clone()),
-                None => return Err(not_found(path, i, total)),
-            }
+        let (idx, len, new) = match base.find(&e.old_text) {
+            Some(ix) => (ix, e.old_text.len(), e.new_text.clone()),
+            None => return Err(not_found(path, i, total)),
         };
         let occ = count_occurrences(&base, &e.old_text);
         if occ > 1 {
@@ -161,6 +150,18 @@ fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, 
         });
     }
     Ok((base, new_content))
+}
+
+fn fuzzy_refused(path: &str, i: usize, total: usize) -> String {
+    if total == 1 {
+        format!(
+            "Could not find an exact match in {path}. A fuzzy-normalized match exists, but edit refuses fuzzy rewrites because they can alter unrelated text. Provide oldText exactly as it appears in the file."
+        )
+    } else {
+        format!(
+            "Could not find an exact match for edits[{i}] in {path}. A fuzzy-normalized match exists, but edit refuses fuzzy rewrites because they can alter unrelated text. Provide oldText exactly as it appears in the file."
+        )
+    }
 }
 
 fn not_found(path: &str, i: usize, total: usize) -> String {
