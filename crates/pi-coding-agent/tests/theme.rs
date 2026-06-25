@@ -395,3 +395,68 @@ async fn watcher_debounces_rapid_edits() {
 
     drop(watcher);
 }
+
+// --- Syntax highlighting (mirrors getLanguageFromPath + highlightCode) ---
+
+#[test]
+fn maps_file_extensions_to_languages() {
+    use pi_coding_agent::theme::get_language_from_path;
+    assert_eq!(get_language_from_path("main.rs"), Some("rust"));
+    assert_eq!(get_language_from_path("app.ts"), Some("typescript"));
+    assert_eq!(get_language_from_path("App.tsx"), Some("typescript"));
+    assert_eq!(get_language_from_path("main.py"), Some("python"));
+    assert_eq!(get_language_from_path("Dockerfile"), None);
+    assert_eq!(get_language_from_path("noext"), None);
+    // case-insensitive extension
+    assert_eq!(get_language_from_path("README.MD"), Some("markdown"));
+}
+
+#[test]
+fn highlights_rust_code_with_syntax_tokens() {
+    use pi_coding_agent::theme::highlight_code;
+    let theme = pi_coding_agent::theme::builtin_dark()
+        .resolve_colors()
+        .unwrap();
+    let lines = highlight_code("fn main() {}", Some("rust"), &theme);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    // dark.json: syntaxKeyword -> "#569CD6", syntaxFunction -> "#DCDCAA".
+    // `fn` is a keyword; its bytes should be wrapped in the keyword color.
+    let keyword = "\x1b[38;2;86;156;214m"; // 0x56,0x9c,0xd6
+    let func = "\x1b[38;2;220;220;170m"; // 0xdc,0xdc,0xaa
+    assert!(
+        line.contains(keyword),
+        "expected keyword color for `fn`, got: {line:?}"
+    );
+    assert!(
+        line.contains(func),
+        "expected function color for `main`, got: {line:?}"
+    );
+}
+
+#[test]
+fn highlight_falls_back_to_single_color_for_unknown_language() {
+    use pi_coding_agent::theme::highlight_code;
+    let theme = pi_coding_agent::theme::builtin_dark()
+        .resolve_colors()
+        .unwrap();
+    // Unknown language -> single mdCodeBlock color per line (green in dark).
+    let lines = highlight_code("x = 1\ny = 2", Some("totally-made-up-lang"), &theme);
+    assert_eq!(lines.len(), 2);
+    // dark.json mdCodeBlock -> "green" var -> "#b5bd68" = 0xb5,0xbd,0x68
+    let code_block = "\x1b[38;2;181;189;104m";
+    assert!(lines[0].contains(code_block), "{:?}", lines[0]);
+    assert!(lines[1].contains(code_block), "{:?}", lines[1]);
+}
+
+#[test]
+fn highlight_falls_back_for_no_language() {
+    use pi_coding_agent::theme::highlight_code;
+    let theme = pi_coding_agent::theme::builtin_dark()
+        .resolve_colors()
+        .unwrap();
+    let lines = highlight_code("plain text\nline two", None, &theme);
+    assert_eq!(lines.len(), 2);
+    // No lang -> mdCodeBlock single color; should NOT contain keyword colors.
+    assert!(!lines[0].contains("\x1b[38;2;86;156;214m"));
+}

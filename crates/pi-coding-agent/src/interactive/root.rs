@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use pi_agent_core::session::JsonlSessionStorage;
 use pi_ai::types::Model;
 use pi_tui::{
-    Component, ERROR, Editor, InputEvent, KeybindingsManager, STATUS_IDLE, STATUS_RUNNING, SYSTEM,
-    SettingItem, SettingsList, SettingsListOptions, Style, TUI_KEYBINDINGS, TuiTheme,
-    color_enabled, dark_theme, light_theme, paint_with, truncate_to_width,
+    Component, ERROR, Editor, InputEvent, KeybindingsManager, MarkdownTheme, STATUS_IDLE,
+    STATUS_RUNNING, SYSTEM, SettingItem, SettingsList, SettingsListOptions, Style, TUI_KEYBINDINGS,
+    TuiTheme, color_enabled, dark_theme, light_theme, paint_with, truncate_to_width,
     truncate_to_width_with_ellipsis, visible_width,
 };
 
@@ -348,6 +348,7 @@ impl InteractiveRoot {
                 self.viewport_width,
                 MAX_TOOL_RESULT_LINES,
                 color_enabled(),
+                &self.markdown_theme(),
             )
             .len()
         } else {
@@ -381,6 +382,7 @@ impl InteractiveRoot {
                 self.viewport_width,
                 MAX_TOOL_RESULT_LINES,
                 color_enabled(),
+                &self.markdown_theme(),
             )
             .len();
             self.transcript.preserve_scrolled_view_after_hidden_change(
@@ -790,6 +792,23 @@ impl InteractiveRoot {
         }
     }
 
+    /// Build a `MarkdownTheme` for the active resolved theme, wiring the
+    /// syntax-highlight callback (TS `getMarkdownTheme` + `highlightCode`).
+    /// Falls back to the palette theme's markdown styles when no resolved
+    /// theme is set.
+    fn markdown_theme(&self) -> MarkdownTheme {
+        let mut md = self.theme.markdown.clone();
+        if let Some(resolved) = &self.resolved_theme {
+            let resolved = resolved.clone();
+            md.highlight_code = Some(std::sync::Arc::new(
+                move |code: &str, lang: Option<&str>| {
+                    crate::theme::highlight_code(code, lang, &resolved)
+                },
+            ));
+        }
+        md
+    }
+
     pub(super) fn handle_settings_input(&mut self, event: &InputEvent) -> bool {
         if !self.selecting_settings {
             return false;
@@ -944,6 +963,7 @@ impl Component for InteractiveRoot {
             width,
             max_tool_result_lines,
             color_enabled(),
+            &self.markdown_theme(),
         );
         lines.extend(self.render_editor_box(width));
         if self.selecting_model {

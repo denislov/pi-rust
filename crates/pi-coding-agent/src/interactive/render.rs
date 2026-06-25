@@ -12,6 +12,7 @@ pub(super) fn render_transcript_lines(
     width: usize,
     max_tool_result_lines: usize,
     color: bool,
+    markdown_theme: &pi_tui::MarkdownTheme,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     let mut previous_was_finished_tool = false;
@@ -36,7 +37,7 @@ pub(super) fn render_transcript_lines(
                 .map(|line| fit_line(&paint_with(line, &SYSTEM, color), width))
                 .collect(),
             TranscriptItem::Assistant { markdown, .. } => {
-                let mut markdown = Markdown::new(markdown);
+                let mut markdown = Markdown::new(markdown).with_theme(markdown_theme.clone());
                 markdown
                     .render(width)
                     .into_iter()

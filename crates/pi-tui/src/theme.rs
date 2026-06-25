@@ -1,4 +1,12 @@
+use std::sync::Arc;
+
 use crate::{Color, Style};
+
+/// Optional syntax-highlighting callback for code blocks, mirroring TS
+/// `MarkdownTheme.highlightCode`. Given `(code, lang)`, returns one painted
+/// string per line (already ANSI-colored). When `None`, code blocks render
+/// in the single `code_block` color.
+pub type HighlightCodeFn = Arc<dyn Fn(&str, Option<&str>) -> Vec<String> + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeMode {
@@ -53,7 +61,7 @@ impl ThemePalette {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct MarkdownTheme {
     pub heading: Style,
     pub link: Style,
@@ -66,6 +74,28 @@ pub struct MarkdownTheme {
     pub hr: Style,
     pub list_bullet: Style,
     pub bold: Style,
+    /// Optional syntax highlighter for fenced code blocks. Mirrors TS
+    /// `MarkdownTheme.highlightCode`.
+    pub highlight_code: Option<HighlightCodeFn>,
+}
+
+impl std::fmt::Debug for MarkdownTheme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MarkdownTheme")
+            .field("heading", &self.heading)
+            .field("link", &self.link)
+            .field("link_url", &self.link_url)
+            .field("code", &self.code)
+            .field("code_block", &self.code_block)
+            .field("code_block_border", &self.code_block_border)
+            .field("quote", &self.quote)
+            .field("quote_border", &self.quote_border)
+            .field("hr", &self.hr)
+            .field("list_bullet", &self.list_bullet)
+            .field("bold", &self.bold)
+            .field("highlight_code", &self.highlight_code.is_some())
+            .finish()
+    }
 }
 
 impl Default for MarkdownTheme {
@@ -82,6 +112,7 @@ impl Default for MarkdownTheme {
             hr: Style::fg(Color::Default).dim(),
             list_bullet: Style::fg(Color::Default),
             bold: Style::fg(Color::Default).bold(),
+            highlight_code: None,
         }
     }
 }
@@ -153,7 +184,7 @@ impl Default for EditorTheme {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct TuiTheme {
     pub name: String,
     pub mode: ThemeMode,
@@ -197,6 +228,7 @@ impl TuiTheme {
             hr: Style::fg(palette.muted).dim(),
             list_bullet: Style::fg(palette.accent),
             bold: Style::fg(palette.text).bold(),
+            highlight_code: None,
         };
         let settings_list = SettingsListTheme {
             label: Style::fg(palette.text),

@@ -13,6 +13,7 @@ mod json;
 mod reload;
 mod resolve;
 mod runtime;
+mod syntax;
 mod tokens;
 
 pub use builtin::{DARK_JSON, LIGHT_JSON, SCHEMA_JSON, builtin_dark, builtin_light};
@@ -26,4 +27,5 @@ pub use json::{ExportSection, ThemeJson};
 pub use reload::{ThemeReloadSignal, ThemeWatcher, should_watch_target};
 pub use resolve::{ResolveError, ResolvedColor, resolve};
 pub use runtime::ResolvedTheme;
+pub use syntax::{get_language_from_path, highlight_code};
 pub use tokens::{REQUIRED_TOKEN_KEYS, ThemeBg, ThemeColor};

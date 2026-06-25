@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::terminal_image::hyperlink;
@@ -43,7 +43,7 @@ impl Markdown {
     }
 
     pub fn theme(&self) -> MarkdownTheme {
-        self.theme
+        self.theme.clone()
     }
 
     pub fn set_hyperlinks_enabled(&mut self, enabled: bool) {
@@ -181,7 +181,7 @@ fn markdown_to_lines(
                     hyperlinks_enabled,
                 );
             }
-            Event::Start(Tag::CodeBlock(_)) => {
+            Event::Start(Tag::CodeBlock(kind)) => {
                 flush_current(
                     &mut current,
                     &mut blocks,
@@ -190,18 +190,38 @@ fn markdown_to_lines(
                     hyperlinks_enabled,
                 );
                 context.in_code_block = true;
+                context.code_block_lang = match kind {
+                    CodeBlockKind::Fenced(lang) => {
+                        let lang = lang.trim();
+                        if lang.is_empty() {
+                            None
+                        } else {
+                            Some(lang.to_string())
+                        }
+                    }
+                    CodeBlockKind::Indented => None,
+                };
                 blocks.push(paint_markdown("```", &theme.code_block_border));
             }
             Event::End(TagEnd::CodeBlock) => {
-                // Flush accumulated code text as dim indented lines, then close fence.
+                // Flush accumulated code text. If a syntax highlighter is
+                // configured (TS `MarkdownTheme.highlightCode`), use it;
+                // otherwise fall back to the single code-block color.
                 let code = current.trim_end();
-                for source_line in code.split('\n') {
-                    let line = if source_line.is_empty() {
-                        paint_markdown("   ", &theme.code_block)
-                    } else {
-                        paint_markdown(&format!("   {source_line}"), &theme.code_block)
-                    };
-                    blocks.push(line);
+                let lang = context.code_block_lang.take();
+                if let Some(highlight) = &theme.highlight_code {
+                    for source_line in highlight(code, lang.as_deref()) {
+                        blocks.push(source_line);
+                    }
+                } else {
+                    for source_line in code.split('\n') {
+                        let line = if source_line.is_empty() {
+                            paint_markdown("   ", &theme.code_block)
+                        } else {
+                            paint_markdown(&format!("   {source_line}"), &theme.code_block)
+                        };
+                        blocks.push(line);
+                    }
                 }
                 current.clear();
                 context.in_code_block = false;
@@ -294,14 +314,28 @@ fn markdown_to_lines(
     lines
 }
 
-#[derive(Default)]
 struct BlockContext {
     heading: bool,
     in_quote: bool,
     in_code_block: bool,
+    code_block_lang: Option<String>,
     inline_spans: Vec<InlineSpan>,
     strong_starts: Vec<usize>,
     link_starts: Vec<LinkStart>,
+}
+
+impl Default for BlockContext {
+    fn default() -> Self {
+        Self {
+            heading: false,
+            in_quote: false,
+            in_code_block: false,
+            code_block_lang: None,
+            inline_spans: Vec::new(),
+            strong_starts: Vec::new(),
+            link_starts: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone)]

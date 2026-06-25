@@ -432,7 +432,7 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, true),
+            render_transcript_lines(&transcript, 80, 3, true, &pi_tui::MarkdownTheme::default()),
             vec![format!(
                 "{} {} src/lib.rs {}",
                 yellow("tool"),
@@ -441,7 +441,7 @@ mod tests {
             )]
         );
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, false),
+            render_transcript_lines(&transcript, 80, 3, false, &pi_tui::MarkdownTheme::default()),
             vec!["tool read src/lib.rs running"]
         );
 
@@ -452,7 +452,7 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, true),
+            render_transcript_lines(&transcript, 80, 3, true, &pi_tui::MarkdownTheme::default()),
             vec![
                 format!(
                     "{} {} src/lib.rs {}",
@@ -467,7 +467,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, false),
+            render_transcript_lines(&transcript, 80, 3, false, &pi_tui::MarkdownTheme::default()),
             vec![
                 "tool read src/lib.rs done",
                 "line 1",
@@ -478,7 +478,7 @@ mod tests {
         );
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 20, true),
+            render_transcript_lines(&transcript, 80, 20, true, &pi_tui::MarkdownTheme::default()),
             vec![
                 format!(
                     "{} {} src/lib.rs {}",
@@ -521,7 +521,13 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 120, 3, false),
+            render_transcript_lines(
+                &transcript,
+                120,
+                3,
+                false,
+                &pi_tui::MarkdownTheme::default()
+            ),
             vec![
                 "tool write src/main.rs done",
                 "w1",
@@ -557,7 +563,7 @@ mod tests {
         transcript.apply_event(UiEvent::AssistantDone);
 
         assert_eq!(
-            render_transcript_lines(&transcript, 40, 3, false),
+            render_transcript_lines(&transcript, 40, 3, false, &pi_tui::MarkdownTheme::default()),
             vec![
                 "tool read src/lib.rs done",
                 "contents",
@@ -576,11 +582,11 @@ mod tests {
             text: "boom".to_string(),
         });
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, true),
+            render_transcript_lines(&transcript, 80, 3, true, &pi_tui::MarkdownTheme::default()),
             vec![format!("{}: {}", red_bold("error"), red_bold("boom"))]
         );
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, false),
+            render_transcript_lines(&transcript, 80, 3, false, &pi_tui::MarkdownTheme::default()),
             vec!["error: boom"]
         );
     }
