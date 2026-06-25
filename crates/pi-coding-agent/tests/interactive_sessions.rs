@@ -26,6 +26,34 @@ async fn interactive_mode_appends_to_session() {
 }
 
 #[tokio::test]
+async fn interactive_footer_updates_to_created_session_id_after_prompt() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("saved")]);
+    let result = run_scripted_interactive_with_session_dir(provider, temp.path(), "persist me\r")
+        .await
+        .unwrap();
+    let files = jsonl_files(temp.path());
+    assert_eq!(files.len(), 1);
+    let session_text = std::fs::read_to_string(&files[0]).unwrap();
+    let header = session_text
+        .lines()
+        .next()
+        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .expect("session header should be valid JSON");
+    let session_id = header["id"]
+        .as_str()
+        .expect("session id should be present in header");
+    let visible_session_prefix = &session_id[..13];
+
+    let final_frame = result.rendered_lines.join("\n");
+    assert!(
+        final_frame.contains(&format!("session: {visible_session_prefix}")),
+        "{final_frame}"
+    );
+    assert!(!final_frame.contains("session: session"), "{final_frame}");
+}
+
+#[tokio::test]
 async fn interactive_mode_continues_same_session_across_prompts() {
     let temp = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![

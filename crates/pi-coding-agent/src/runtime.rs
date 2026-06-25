@@ -205,6 +205,9 @@ pub fn effective_no_context_files(args: &CliArgs, settings: &crate::config::Sett
 pub enum PromptInvocation {
     Text(String),
     Content(Vec<pi_ai::types::ContentBlock>),
+    Compact {
+        custom_instructions: Option<String>,
+    },
     Skill {
         name: String,
         additional_instructions: Option<String>,

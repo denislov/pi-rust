@@ -75,6 +75,79 @@ async fn scripted_interactive_clone_after_prompt_forks_current_session() {
 }
 
 #[tokio::test]
+async fn scripted_interactive_fork_after_prompt_creates_parent_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("assistant reply")]);
+
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        dir.path(),
+        vec![("hello\r", "assistant reply"), ("/fork\r", "parentSession")],
+        80,
+        24,
+    )
+    .await
+    .unwrap();
+
+    let files = collect_jsonl_files(dir.path());
+    assert_eq!(files.len(), 2, "{files:?}");
+    assert!(
+        output.contains("Forked to new session"),
+        "{}",
+        output.rendered
+    );
+    assert!(
+        files.iter().any(|path| std::fs::read_to_string(path)
+            .map(|text| text.contains("parentSession"))
+            .unwrap_or(false)),
+        "{files:?}"
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_compact_after_prompt_appends_compaction_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::with_call_queue(vec![
+        FauxProvider::text_call("assistant reply", StopReason::Stop),
+        FauxProvider::text_call("summary from compact", StopReason::Stop),
+    ]);
+
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        dir.path(),
+        vec![
+            ("hello\r", "assistant reply"),
+            ("/compact keep decisions\r", "summary from compact"),
+        ],
+        80,
+        24,
+    )
+    .await
+    .unwrap();
+
+    let files = collect_jsonl_files(dir.path());
+    assert_eq!(files.len(), 1, "{files:?}");
+    let session_text = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(
+        session_text.contains("\"type\":\"compaction\""),
+        "{session_text}"
+    );
+    assert!(
+        session_text.contains("summary from compact"),
+        "{session_text}"
+    );
+    assert!(
+        session_text.contains("\"firstKeptEntryId\""),
+        "{session_text}"
+    );
+    assert!(
+        output.contains("summary from compact"),
+        "{}",
+        output.rendered
+    );
+}
+
+#[tokio::test]
 async fn scripted_interactive_renders_assistant_markdown() {
     let provider = FauxProvider::new(vec![text_response(
         "# Title\n\nA paragraph with **bold** text and `code`.\n\n- one",
@@ -684,8 +757,9 @@ async fn scripted_interactive_settings_command_enters_settings_menu() {
     let frame = output.rendered_lines.join("\n");
 
     assert!(frame.contains("Settings"), "{frame}");
-    assert!(frame.contains("Theme:"), "{frame}");
-    assert!(frame.contains("Esc close"), "{frame}");
+    assert!(frame.contains("Theme"), "{frame}");
+    assert!(frame.contains("Auto compact"), "{frame}");
+    assert!(frame.contains("Enter/Space to change"), "{frame}");
     assert!(frame.contains("─"), "{frame}");
     assert!(!frame.contains("not implemented"), "{frame}");
     let editor_row = output

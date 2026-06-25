@@ -191,6 +191,44 @@ fn stored_to_agent_message(_entry_id: &str, stored: StoredAgentMessage) -> Optio
     }
 }
 
+fn compaction_summary_message(entry: &SessionEntry) -> Option<AgentMessage> {
+    entry
+        .field("summary")
+        .and_then(|value| value.as_str())
+        .map(|summary| AgentMessage::UserText {
+            message_id: entry.id.clone(),
+            text: format!(
+                "The conversation history before this point was compacted into the following summary:\n\n<summary>\n{summary}\n</summary>"
+            ),
+        })
+}
+
+fn append_context_entry(context: &mut SessionContext, entry: &SessionEntry) {
+    match entry.entry_type.as_str() {
+        "message" => {
+            if let Some(message) = entry
+                .field("message")
+                .and_then(|value| serde_json::from_value::<StoredAgentMessage>(value.clone()).ok())
+            {
+                if let Some(agent_message) = stored_to_agent_message(&entry.id, message) {
+                    context.messages.push(agent_message);
+                }
+            }
+        }
+        "branch_summary" => {
+            if let Some(summary) = entry.field("summary").and_then(|value| value.as_str()) {
+                context.messages.push(AgentMessage::UserText {
+                    message_id: entry.id.clone(),
+                    text: format!(
+                        "The following is a summary of a branch that this conversation came back from:\n\n<summary>\n{summary}\n</summary>"
+                    ),
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn build_session_context(
     entries: &[SessionEntry],
     explicit_leaf_id: Option<&str>,
@@ -208,17 +246,9 @@ pub fn build_session_context(
         ..Default::default()
     };
 
-    for entry in path {
+    let mut latest_compaction: Option<usize> = None;
+    for (idx, entry) in path.iter().enumerate() {
         match entry.entry_type.as_str() {
-            "message" => {
-                if let Some(message) = entry.field("message").and_then(|value| {
-                    serde_json::from_value::<StoredAgentMessage>(value.clone()).ok()
-                }) {
-                    if let Some(agent_message) = stored_to_agent_message(&entry.id, message) {
-                        context.messages.push(agent_message);
-                    }
-                }
-            }
             "thinking_level_change" => {
                 if let Some(level) = entry
                     .field("thinkingLevel")
@@ -248,28 +278,39 @@ pub fn build_session_context(
                 }
             }
             "compaction" => {
-                if let Some(summary) = entry.field("summary").and_then(|value| value.as_str()) {
-                    context.messages.push(AgentMessage::UserText {
-                        message_id: entry.id.clone(),
-                        text: format!(
-                            "The conversation history before this point was compacted into the following summary:\n\n<summary>\n{summary}\n</summary>"
-                        ),
-                    });
-                }
-            }
-            "branch_summary" => {
-                if let Some(summary) = entry.field("summary").and_then(|value| value.as_str()) {
-                    context.messages.push(AgentMessage::UserText {
-                        message_id: entry.id.clone(),
-                        text: format!(
-                            "The following is a summary of a branch that this conversation came back from:\n\n<summary>\n{summary}\n</summary>"
-                        ),
-                    });
-                }
+                latest_compaction = Some(idx);
             }
             _ => {}
         }
     }
+
+    if let Some(compaction_idx) = latest_compaction {
+        let compaction = path[compaction_idx];
+        if let Some(message) = compaction_summary_message(compaction) {
+            context.messages.push(message);
+        }
+
+        let first_kept_id = compaction
+            .field("firstKeptEntryId")
+            .and_then(|value| value.as_str());
+        let mut found_first_kept = first_kept_id.is_none();
+        for entry in &path[..compaction_idx] {
+            if first_kept_id == Some(entry.id.as_str()) {
+                found_first_kept = true;
+            }
+            if found_first_kept {
+                append_context_entry(&mut context, entry);
+            }
+        }
+        for entry in &path[compaction_idx + 1..] {
+            append_context_entry(&mut context, entry);
+        }
+    } else {
+        for entry in &path {
+            append_context_entry(&mut context, entry);
+        }
+    }
+
     Ok(context)
 }
 
@@ -461,6 +502,59 @@ mod tests {
             }
             _ => panic!("expected user text"),
         }
+    }
+
+    #[test]
+    fn compaction_replaces_prior_history_and_keeps_from_first_kept_entry() {
+        let entries = vec![
+            user_entry("u1", None, "old user"),
+            assistant_entry("a1", Some("u1"), "old assistant"),
+            user_entry("u2", Some("a1"), "kept user"),
+            assistant_entry("a2", Some("u2"), "kept assistant"),
+            SessionEntry {
+                entry_type: "compaction".into(),
+                id: "comp1".into(),
+                parent_id: Some("a2".into()),
+                timestamp: "2026-06-05T00:00:02.000Z".into(),
+                fields: {
+                    let mut m = Map::new();
+                    m.insert(
+                        "summary".into(),
+                        serde_json::Value::String("summary of old history".into()),
+                    );
+                    m.insert(
+                        "firstKeptEntryId".into(),
+                        serde_json::Value::String("u2".into()),
+                    );
+                    m.insert("tokensBefore".into(), serde_json::Value::Number(20.into()));
+                    m
+                },
+            },
+            user_entry("u3", Some("comp1"), "new user"),
+        ];
+
+        let context = build_session_context(&entries, None).unwrap();
+        assert_eq!(context.messages.len(), 4);
+        assert!(matches!(
+            &context.messages[0],
+            AgentMessage::UserText { text, .. } if text.contains("summary of old history")
+        ));
+        assert!(matches!(
+            &context.messages[1],
+            AgentMessage::UserText { text, .. } if text == "kept user"
+        ));
+        assert!(matches!(
+            &context.messages[2],
+            AgentMessage::Assistant { message, .. }
+                if message.content == vec![ContentBlock::Text {
+                    text: "kept assistant".into(),
+                    text_signature: None,
+                }]
+        ));
+        assert!(matches!(
+            &context.messages[3],
+            AgentMessage::UserText { text, .. } if text == "new user"
+        ));
     }
 
     #[test]

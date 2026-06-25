@@ -126,6 +126,7 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
             return;
         }
         if root.selecting_settings {
+            root.handle_settings_input(event);
             return;
         }
         let before_text = root.editor.text().to_string();

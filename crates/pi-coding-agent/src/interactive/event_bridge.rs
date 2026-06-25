@@ -54,10 +54,11 @@ impl InteractiveEventBridge {
             AgentEvent::ToolCallStart {
                 tool_call_id,
                 tool_name,
+                arguments,
             } => vec![UiEvent::ToolStarted {
                 call_id: tool_call_id.clone(),
                 name: tool_name.clone(),
-                args: serde_json::Value::Null,
+                args: arguments.clone(),
             }],
             AgentEvent::ToolCallUpdate {
                 tool_call_id,

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use pi_agent_core::session::JsonlSessionStorage;
 use pi_tui::{KeybindingsManager, TUI_KEYBINDINGS};
 
+use crate::config;
 use crate::interactive::app::welcome_line;
 use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
@@ -36,9 +37,11 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "session" => handle_session_command(root),
         "hotkeys" => handle_hotkeys_command(root),
         "changelog" => handle_changelog_command(root),
-        "scoped-models" | "share" | "fork" | "tree" | "login" | "logout" | "compact" => {
-            handle_pending_slash_command(root, &command)
-        }
+        "login" => handle_login_command(root, &command.args),
+        "logout" => handle_logout_command(root, &command.args),
+        "fork" => handle_fork_command(root, &command.args),
+        "compact" => handle_compact_command(root, &command.args),
+        "scoped-models" | "share" | "tree" => handle_pending_slash_command(root, &command),
         _ => {
             root.transcript.push(TranscriptItem::system(format!(
                 "unknown command: {} - type /help for available commands",
@@ -53,6 +56,29 @@ fn handle_pending_slash_command(root: &mut InteractiveRoot, command: &ParsedSlas
         "/{} is recognized but not implemented in the Rust interactive UI yet.",
         command.name
     )));
+}
+
+fn handle_compact_command(root: &mut InteractiveRoot, args: &str) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before compacting.",
+        ));
+        return;
+    }
+    if root.active_session_path.is_none() || root.active_leaf_id.is_none() {
+        root.transcript.push(TranscriptItem::system(
+            "Nothing to compact (no messages yet)",
+        ));
+        return;
+    }
+
+    let instructions = args.trim();
+    root.pending_compact_instructions = if instructions.is_empty() {
+        None
+    } else {
+        Some(instructions.to_string())
+    };
+    root.action = InteractiveAction::CompactSession;
 }
 
 fn handle_export_command(root: &mut InteractiveRoot, args: &str) {
@@ -157,6 +183,48 @@ fn handle_clone_command(root: &mut InteractiveRoot) {
             root.editor.set_text("");
             root.transcript
                 .push(TranscriptItem::system("Cloned to new session"));
+        }
+        Err(error) => {
+            root.transcript.push(TranscriptItem::system(error));
+        }
+    }
+}
+
+fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
+    let Some(source_path) = root.active_session_path.clone() else {
+        root.transcript
+            .push(TranscriptItem::system("Nothing to fork yet"));
+        return;
+    };
+    let target_entry_id = if args.is_empty() {
+        let Some(leaf_id) = root.active_leaf_id.clone() else {
+            root.transcript
+                .push(TranscriptItem::system("Nothing to fork yet"));
+            return;
+        };
+        leaf_id
+    } else {
+        let mut parts = args.split_whitespace();
+        let entry_id = parts.next().unwrap_or_default();
+        if parts.next().is_some() {
+            root.transcript
+                .push(TranscriptItem::system("Usage: /fork [entry-id]"));
+            return;
+        }
+        entry_id.to_string()
+    };
+
+    match clone_session_to_sibling(&source_path, &root.cwd, &target_entry_id) {
+        Ok(storage) => {
+            let leaf_id = storage.get_leaf_id().unwrap_or(None);
+            let choice = session_choice_from_metadata(storage.metadata());
+            root.session_label = choice.display_name().to_string();
+            root.selected_session = Some(choice.clone());
+            root.active_session_path = Some(choice.path);
+            root.active_leaf_id = leaf_id;
+            root.editor.set_text("");
+            root.transcript
+                .push(TranscriptItem::system("Forked to new session"));
         }
         Err(error) => {
             root.transcript.push(TranscriptItem::system(error));
@@ -302,4 +370,77 @@ fn handle_changelog_command(root: &mut InteractiveRoot) {
     root.transcript.push(TranscriptItem::system(
         "Changelog display is not implemented in the Rust interactive UI yet.".to_string(),
     ));
+}
+
+fn handle_login_command(root: &mut InteractiveRoot, args: &str) {
+    let mut parts = args.split_whitespace();
+    let Some(provider) = parts.next() else {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /login <provider> <api-key>"));
+        return;
+    };
+    let Some(key) = parts.next() else {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /login <provider> <api-key>"));
+        return;
+    };
+    if parts.next().is_some() {
+        root.transcript.push(TranscriptItem::system(
+            "Usage: /login <provider> <api-key> (API keys cannot contain whitespace)",
+        ));
+        return;
+    }
+
+    root.auth.set_api_key(provider, key);
+    let auth_path = config::resolve_paths(&root.cwd).global_auth();
+    match root.auth.save(&auth_path) {
+        Ok(()) => {
+            root.mark_auth_updated();
+            root.transcript.push(TranscriptItem::system(format!(
+                "Saved API key for {provider} to {}",
+                auth_path.display()
+            )));
+        }
+        Err(error) => {
+            root.transcript.push(TranscriptItem::system(format!(
+                "Failed to save auth for {provider}: {error}"
+            )));
+        }
+    }
+}
+
+fn handle_logout_command(root: &mut InteractiveRoot, args: &str) {
+    let mut parts = args.split_whitespace();
+    let Some(provider) = parts.next() else {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /logout <provider>"));
+        return;
+    };
+    if parts.next().is_some() {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /logout <provider>"));
+        return;
+    }
+
+    let removed = root.auth.remove_entry(provider);
+    let auth_path = config::resolve_paths(&root.cwd).global_auth();
+    match root.auth.save(&auth_path) {
+        Ok(()) => {
+            root.mark_auth_updated();
+            if removed {
+                root.transcript.push(TranscriptItem::system(format!(
+                    "Removed stored auth for {provider}"
+                )));
+            } else {
+                root.transcript.push(TranscriptItem::system(format!(
+                    "No stored auth found for {provider}"
+                )));
+            }
+        }
+        Err(error) => {
+            root.transcript.push(TranscriptItem::system(format!(
+                "Failed to save auth after logout for {provider}: {error}"
+            )));
+        }
+    }
 }

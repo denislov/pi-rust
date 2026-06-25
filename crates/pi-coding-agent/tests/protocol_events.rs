@@ -74,6 +74,7 @@ fn adapter_maps_tool_events_with_content_result() {
     let events = adapter.push(&pi_agent_core::AgentEvent::ToolCallStart {
         tool_call_id: "tool_1".into(),
         tool_name: "read".into(),
+        arguments: serde_json::json!({}),
     });
     assert!(matches!(
         events[0],

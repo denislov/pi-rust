@@ -388,13 +388,13 @@ mod tests {
         transcript.apply_event(UiEvent::ToolStarted {
             call_id: "tool_1".to_string(),
             name: "read".to_string(),
-            args: serde_json::Value::Null,
+            args: serde_json::json!({"path": "src/lib.rs"}),
         });
 
         assert_eq!(
             render_transcript_lines(&transcript, 80, 3, true),
             vec![format!(
-                "{} {} tool_1 {}",
+                "{} {} src/lib.rs {}",
                 yellow("tool"),
                 yellow("read"),
                 running("running")
@@ -402,7 +402,7 @@ mod tests {
         );
         assert_eq!(
             render_transcript_lines(&transcript, 80, 3, false),
-            vec!["tool read tool_1 running"]
+            vec!["tool read src/lib.rs running"]
         );
 
         transcript.apply_event(UiEvent::ToolFinished {
@@ -415,7 +415,7 @@ mod tests {
             render_transcript_lines(&transcript, 80, 3, true),
             vec![
                 format!(
-                    "{} {} tool_1 {}",
+                    "{} {} src/lib.rs {}",
                     yellow("tool"),
                     yellow("read"),
                     idle("done")
@@ -429,7 +429,7 @@ mod tests {
         assert_eq!(
             render_transcript_lines(&transcript, 80, 3, false),
             vec![
-                "tool read tool_1 done",
+                "tool read src/lib.rs done",
                 "line 1",
                 "line 2",
                 "line 3",
@@ -441,7 +441,7 @@ mod tests {
             render_transcript_lines(&transcript, 80, 20, true),
             vec![
                 format!(
-                    "{} {} tool_1 {}",
+                    "{} {} src/lib.rs {}",
                     yellow("tool"),
                     yellow("read"),
                     idle("done")
@@ -451,6 +451,78 @@ mod tests {
                 "line 3".to_string(),
                 "line 4".to_string(),
                 "line 5".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn render_transcript_lines_uses_tool_targets_and_does_not_truncate_write_or_edit() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "call_write".to_string(),
+            name: "write".to_string(),
+            args: serde_json::json!({"path": "src/main.rs"}),
+            result: Some("w1\nw2\nw3\nw4\nw5".to_string()),
+            is_error: false,
+        });
+        transcript.push(TranscriptItem::Tool {
+            call_id: "call_edit".to_string(),
+            name: "edit".to_string(),
+            args: serde_json::json!({"file_path": "src/lib.rs"}),
+            result: Some("e1\ne2\ne3\ne4\ne5".to_string()),
+            is_error: false,
+        });
+        transcript.push(TranscriptItem::Tool {
+            call_id: "call_bash".to_string(),
+            name: "bash".to_string(),
+            args: serde_json::json!({"command": "cargo test -p pi-coding-agent"}),
+            result: Some("ok".to_string()),
+            is_error: false,
+        });
+
+        assert_eq!(
+            render_transcript_lines(&transcript, 120, 3, false),
+            vec![
+                "tool write src/main.rs done",
+                "w1",
+                "w2",
+                "w3",
+                "w4",
+                "w5",
+                "tool edit src/lib.rs done",
+                "e1",
+                "e2",
+                "e3",
+                "e4",
+                "e5",
+                "tool bash cargo test -p pi-coding-agent done",
+                "ok",
+            ]
+        );
+    }
+
+    #[test]
+    fn render_transcript_lines_inserts_rule_between_finished_tools_and_assistant() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "call_read".to_string(),
+            name: "read".to_string(),
+            args: serde_json::json!({"path": "src/lib.rs"}),
+            result: Some("contents".to_string()),
+            is_error: false,
+        });
+        transcript.apply_event(UiEvent::AssistantDelta {
+            text: "next answer".to_string(),
+        });
+        transcript.apply_event(UiEvent::AssistantDone);
+
+        assert_eq!(
+            render_transcript_lines(&transcript, 40, 3, false),
+            vec![
+                "tool read src/lib.rs done",
+                "contents",
+                "────────────────────────────────────────",
+                "next answer",
             ]
         );
     }
@@ -754,6 +826,150 @@ mod tests {
         let rendered = root.render(60).join("\n");
         assert!(rendered.contains("Settings"), "{rendered}");
         assert!(!rendered.contains("not implemented"), "{rendered}");
+    }
+
+    #[test]
+    fn settings_menu_renders_theme_and_auto_compaction_items() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Settings"), "{rendered}");
+        assert!(rendered.contains("Theme"), "{rendered}");
+        assert!(rendered.contains("Auto compact"), "{rendered}");
+        assert!(rendered.contains("Enter/Space to change"), "{rendered}");
+    }
+
+    #[test]
+    fn settings_menu_cycles_theme_and_reports_settings_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.theme.name, "light");
+        assert_eq!(root.settings.theme.as_deref(), Some("light"));
+        let updated = root
+            .take_settings_update()
+            .expect("theme cycle should emit settings update");
+        assert_eq!(updated.theme.as_deref(), Some("light"));
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Theme"), "{rendered}");
+        assert!(rendered.contains("light"), "{rendered}");
+    }
+
+    #[test]
+    fn settings_menu_toggles_auto_compaction_and_reports_settings_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(root.settings.compaction.enabled);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\r"));
+
+        assert!(!root.settings.compaction.enabled);
+        let updated = root
+            .take_settings_update()
+            .expect("auto compact toggle should emit settings update");
+        assert!(!updated.compaction.enabled);
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Auto compact"), "{rendered}");
+        assert!(rendered.contains("off"), "{rendered}");
+    }
+
+    #[test]
+    fn login_command_saves_provider_api_key_and_updates_auth_state() {
+        let _guard = crate::test_support::env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", dir.path());
+        }
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "claude-haiku-4-5".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "login".to_string(),
+            args: "anthropic sk-test-login".to_string(),
+            original: "/login anthropic sk-test-login".to_string(),
+        });
+
+        assert_eq!(root.auth.api_key_entry("anthropic"), Some("sk-test-login"));
+        let text = std::fs::read_to_string(dir.path().join("auth.toml")).unwrap();
+        assert!(text.contains("[anthropic]"), "{text}");
+        assert!(text.contains("sk-test-login"), "{text}");
+        assert!(last_system_text(&root).contains("Saved API key for anthropic"));
+        assert_ne!(root.action, InteractiveAction::Submit);
+        assert!(root.pending_submit.is_none());
+
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
+    }
+
+    #[test]
+    fn logout_command_removes_provider_auth_entry_and_updates_auth_state() {
+        let _guard = crate::test_support::env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", dir.path());
+        }
+        let auth_path = dir.path().join("auth.toml");
+        std::fs::write(
+            &auth_path,
+            "[anthropic]\ntype = \"api_key\"\nkey = \"sk-test-login\"\n",
+        )
+        .unwrap();
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "claude-haiku-4-5".to_string(),
+            "no-session".to_string(),
+        );
+        root.auth.set_api_key("anthropic", "sk-test-login");
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "logout".to_string(),
+            args: "anthropic".to_string(),
+            original: "/logout anthropic".to_string(),
+        });
+
+        assert_eq!(root.auth.api_key_entry("anthropic"), None);
+        let text = std::fs::read_to_string(&auth_path).unwrap();
+        assert!(!text.contains("[anthropic]"), "{text}");
+        assert!(last_system_text(&root).contains("Removed stored auth for anthropic"));
+        assert_ne!(root.action, InteractiveAction::Submit);
+        assert!(root.pending_submit.is_none());
+
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
     }
 
     #[test]
@@ -1386,6 +1602,77 @@ mod tests {
         assert!(root.take_selected_session().is_none());
         let text = last_system_text(&root);
         assert!(text.contains("Nothing to clone yet"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn fork_command_forks_active_session_at_requested_entry_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_test_session(dir.path(), dir.path(), "hello fork");
+        let mut root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.active_session_path = Some(source.clone());
+        root.active_leaf_id = JsonlSessionStorage::open(&source)
+            .unwrap()
+            .get_leaf_id()
+            .unwrap();
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "fork".to_string(),
+            args: "entry-user".to_string(),
+            original: "/fork entry-user".to_string(),
+        });
+
+        let selected = root
+            .take_selected_session()
+            .expect("/fork should select forked session");
+        assert_ne!(selected.path, source);
+        assert!(selected.path.exists(), "fork should create a session file");
+        let forked = std::fs::read_to_string(&selected.path).unwrap();
+        assert!(forked.contains("hello fork"), "{forked}");
+        assert!(!forked.contains("response to hello fork"), "{forked}");
+        assert!(forked.contains("parentSession"), "{forked}");
+        assert_eq!(
+            root.active_session_path.as_deref(),
+            Some(selected.path.as_path())
+        );
+        let text = last_system_text(&root);
+        assert!(text.contains("Forked to new session"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn fork_command_defaults_to_active_leaf_when_no_entry_id_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_test_session(dir.path(), dir.path(), "hello fork leaf");
+        let mut root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.active_session_path = Some(source.clone());
+        root.active_leaf_id = JsonlSessionStorage::open(&source)
+            .unwrap()
+            .get_leaf_id()
+            .unwrap();
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "fork".to_string(),
+            args: String::new(),
+            original: "/fork".to_string(),
+        });
+
+        let selected = root
+            .take_selected_session()
+            .expect("/fork should select forked session");
+        let forked = std::fs::read_to_string(&selected.path).unwrap();
+        assert!(forked.contains("hello fork leaf"), "{forked}");
+        assert!(forked.contains("response to hello fork leaf"), "{forked}");
+        let text = last_system_text(&root);
+        assert!(text.contains("Forked to new session"), "{text}");
         assert!(!text.contains("not implemented"), "{text}");
     }
 

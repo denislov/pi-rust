@@ -5,9 +5,11 @@ use pi_agent_core::session::JsonlSessionStorage;
 use pi_ai::types::Model;
 use pi_tui::{
     Component, Editor, InputEvent, KeybindingsManager, PATH, STATUS_IDLE, STATUS_RUNNING, SYSTEM,
-    Style, TUI_KEYBINDINGS, TuiTheme, color_enabled, paint_with,
+    SettingItem, SettingsList, SettingsListOptions, Style, TUI_KEYBINDINGS, TuiTheme,
+    color_enabled, dark_theme, light_theme, paint_with,
 };
 
+use crate::config::{AuthStore, Settings};
 use crate::interactive::app::{PromptContext, welcome_line};
 use crate::interactive::clipboard::{ClipboardSink, SystemClipboard};
 use crate::interactive::commands;
@@ -28,6 +30,7 @@ const EXPANDED_TOOL_RESULT_LINES: usize = 20;
 pub(super) enum InteractiveAction {
     None,
     Submit,
+    CompactSession,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -53,6 +56,7 @@ pub(super) struct InteractiveRoot {
     pub(super) submitted: Arc<Mutex<Option<String>>>,
     pub(super) scroll_command: Arc<Mutex<Option<TranscriptScrollCommand>>>,
     pub(super) pending_submit: Option<String>,
+    pub(super) pending_compact_instructions: Option<String>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -73,6 +77,11 @@ pub(super) struct InteractiveRoot {
     pub(super) selecting_session: bool,
     pub(super) session_selection_selected: usize,
     pub(super) selecting_settings: bool,
+    pub(super) settings: Settings,
+    settings_list: SettingsList,
+    settings_update: Option<Settings>,
+    pub(super) auth: AuthStore,
+    auth_update: Option<AuthStore>,
     pub(super) usage: (u32, u32),
     pub(super) tool_output_expanded: bool,
     pub(super) spinner_frame: usize,
@@ -95,6 +104,10 @@ pub(super) struct InteractiveRenderState {
     slash_suggestion_selected: usize,
     slash_suggestions_dismissed_for: Option<String>,
     selecting_settings: bool,
+    settings: Settings,
+    auth: AuthStore,
+    theme_name: String,
+    settings_selected_item_id: Option<String>,
     selecting_model: bool,
     model_selection_selected: usize,
     selecting_session: bool,
@@ -117,12 +130,33 @@ impl InteractiveRoot {
         Self::new_with_theme_and_models(cwd, model_id, session_label, theme, Vec::new())
     }
 
+    #[cfg(test)]
     pub(super) fn new_with_theme_and_models(
         cwd: PathBuf,
         model_id: String,
         session_label: String,
         theme: TuiTheme,
         available_models: Vec<Model>,
+    ) -> Self {
+        Self::new_with_theme_models_and_settings(
+            cwd,
+            model_id,
+            session_label,
+            theme,
+            available_models,
+            crate::config::settings::PartialSettings::default().resolve(),
+            AuthStore::default(),
+        )
+    }
+
+    pub(super) fn new_with_theme_models_and_settings(
+        cwd: PathBuf,
+        model_id: String,
+        session_label: String,
+        theme: TuiTheme,
+        available_models: Vec<Model>,
+        settings: Settings,
+        auth: AuthStore,
     ) -> Self {
         let submitted = Arc::new(Mutex::new(None));
         let submitted_for_callback = Arc::clone(&submitted);
@@ -144,6 +178,7 @@ impl InteractiveRoot {
 
         let mut transcript = Transcript::new();
         transcript.push(TranscriptItem::system(welcome_line(&keybindings)));
+        let settings_list = build_settings_list(settings.clone(), &theme, keybindings.clone());
 
         Self {
             transcript,
@@ -152,6 +187,7 @@ impl InteractiveRoot {
             submitted,
             scroll_command,
             pending_submit: None,
+            pending_compact_instructions: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,
@@ -172,6 +208,11 @@ impl InteractiveRoot {
             selecting_session: false,
             session_selection_selected: 0,
             selecting_settings: false,
+            settings,
+            settings_list,
+            settings_update: None,
+            auth,
+            auth_update: None,
             usage: (0, 0),
             tool_output_expanded: false,
             spinner_frame: 0,
@@ -210,12 +251,24 @@ impl InteractiveRoot {
         self.selected_session.take()
     }
 
+    pub(super) fn take_settings_update(&mut self) -> Option<Settings> {
+        self.settings_update.take()
+    }
+
+    pub(super) fn take_auth_update(&mut self) -> Option<AuthStore> {
+        self.auth_update.take()
+    }
+
     pub(super) fn take_submitted(&mut self) -> Option<String> {
         self.submitted.lock().unwrap().take()
     }
 
     pub(super) fn take_pending_submit(&mut self) -> Option<String> {
         self.pending_submit.take()
+    }
+
+    pub(super) fn take_pending_compact_instructions(&mut self) -> Option<String> {
+        self.pending_compact_instructions.take()
     }
 
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
@@ -233,6 +286,10 @@ impl InteractiveRoot {
         self.model_rotation = prompt_context.model_rotation.clone();
         self.session_choices = prompt_context.session_choices.clone();
         self.theme = prompt_context.theme.clone();
+        self.settings = prompt_context.settings.clone();
+        self.settings_list =
+            build_settings_list(self.settings.clone(), &self.theme, self.keybindings.clone());
+        self.auth = prompt_context.auth.clone();
     }
 
     pub(super) fn push_user(&mut self, prompt: String) {
@@ -390,6 +447,13 @@ impl InteractiveRoot {
             slash_suggestion_selected: self.slash_suggestion_selected,
             slash_suggestions_dismissed_for: self.slash_suggestions_dismissed_for.clone(),
             selecting_settings: self.selecting_settings,
+            settings: self.settings.clone(),
+            auth: self.auth.clone(),
+            theme_name: self.theme.name.clone(),
+            settings_selected_item_id: self
+                .settings_list
+                .selected_item()
+                .map(|item| item.id.clone()),
             selecting_model: self.selecting_model,
             model_selection_selected: self.model_selection_selected,
             selecting_session: self.selecting_session,
@@ -419,20 +483,58 @@ impl InteractiveRoot {
         )
     }
 
-    fn render_settings_menu(&self, width: usize) -> Vec<String> {
+    fn render_settings_menu(&mut self, width: usize) -> Vec<String> {
         if !self.selecting_settings {
             return Vec::new();
         }
-        [
-            "Settings".to_string(),
-            format!("  Theme: {}", self.theme.name),
-            format!("  Model: {}", self.model_id),
-            format!("  Session: {}", self.session_label),
-            "  Esc close".to_string(),
-        ]
-        .into_iter()
-        .map(|line| fit_line(&line, width))
-        .collect()
+        let mut lines = vec![fit_line("Settings", width)];
+        lines.extend(self.settings_list.render(width));
+        lines
+    }
+
+    fn apply_settings_value(&mut self, id: &str, value: &str) {
+        match id {
+            "theme" => {
+                self.settings.theme = Some(value.to_string());
+                self.theme = match value {
+                    "light" => light_theme(),
+                    _ => dark_theme(),
+                };
+            }
+            "auto_compaction" => {
+                self.settings.compaction.enabled = value == "on";
+            }
+            _ => return,
+        }
+        self.settings_update = Some(self.settings.clone());
+    }
+
+    pub(super) fn handle_settings_input(&mut self, event: &InputEvent) -> bool {
+        if !self.selecting_settings {
+            return false;
+        }
+
+        let before = self
+            .settings_list
+            .selected_item()
+            .map(|item| (item.id.clone(), item.current_value.clone()));
+        self.settings_list.handle_input(event);
+        let after = self
+            .settings_list
+            .selected_item()
+            .map(|item| (item.id.clone(), item.current_value.clone()));
+
+        if let (Some((before_id, before_value)), Some((after_id, after_value))) = (before, after)
+            && before_id == after_id
+            && before_value != after_value
+        {
+            self.apply_settings_value(&after_id, &after_value);
+        }
+        true
+    }
+
+    pub(super) fn mark_auth_updated(&mut self) {
+        self.auth_update = Some(self.auth.clone());
     }
 
     fn render_model_selector(&mut self, width: usize) -> Vec<String> {
@@ -601,4 +703,34 @@ impl Component for InteractiveRoot {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+}
+
+fn build_settings_list(
+    settings: Settings,
+    theme: &TuiTheme,
+    keybindings: KeybindingsManager,
+) -> SettingsList {
+    SettingsList::with_options(
+        vec![
+            SettingItem::new("theme", "Theme", theme.name.clone())
+                .values(["dark", "light"])
+                .description("Change the active interface theme"),
+            SettingItem::new(
+                "auto_compaction",
+                "Auto compact",
+                if settings.compaction.enabled {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Automatically compact context before it exceeds the model window"),
+        ],
+        6,
+        keybindings,
+        SettingsListOptions {
+            enable_search: false,
+        },
+    )
 }

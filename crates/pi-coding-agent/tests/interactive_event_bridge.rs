@@ -56,13 +56,14 @@ fn tool_events_map_to_start_and_end_rows() {
     let start = bridge.handle(&AgentEvent::ToolCallStart {
         tool_call_id: "tool_1".to_string(),
         tool_name: "read".to_string(),
+        arguments: serde_json::json!({"path": "src/lib.rs"}),
     });
     assert_eq!(
         start,
         vec![UiEvent::ToolStarted {
             call_id: "tool_1".to_string(),
             name: "read".to_string(),
-            args: serde_json::Value::Null,
+            args: serde_json::json!({"path": "src/lib.rs"}),
         }]
     );
 

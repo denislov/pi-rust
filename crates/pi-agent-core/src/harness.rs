@@ -690,6 +690,7 @@ fn map_agent_event(event: AgentEvent) -> AgentHarnessEvent {
         AgentEvent::ToolCallStart {
             tool_call_id,
             tool_name,
+            ..
         } => AgentHarnessEvent::ToolCall {
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.clone(),

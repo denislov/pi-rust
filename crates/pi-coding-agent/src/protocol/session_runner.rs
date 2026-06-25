@@ -4,6 +4,8 @@ use crate::session::{
 };
 use crate::{CliError, build_agent_config};
 use futures::StreamExt;
+use pi_agent_core::compaction::estimate::estimate_tokens;
+use pi_agent_core::compaction::summarize::summarize;
 use pi_agent_core::session::{self, create_timestamp, generate_entry_id};
 use pi_agent_core::{
     Agent, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, CompactionConfig,
@@ -72,6 +74,7 @@ struct PreparedSessionPrompt {
     existing_ids: HashSet<String>,
     session_name: Option<String>,
     invocation: PromptInvocation,
+    model: Model,
 }
 
 struct StartedSessionPrompt {
@@ -117,6 +120,26 @@ pub fn spawn_session_prompt(
     let abort = SessionPromptControlHandle {
         agent: prepared.agent.clone(),
     };
+    if matches!(prepared.invocation, PromptInvocation::Compact { .. }) {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let mut on_event = |event: &AgentEvent| {
+                let _ = event_tx.send(event.clone());
+                Ok(())
+            };
+            let result = drive_prepared_session_prompt(prepared, Some(&mut on_event)).await;
+            let _ = done_tx.send(result);
+        });
+
+        return Ok(SpawnedSessionPrompt {
+            abort,
+            events: event_rx,
+            done: done_rx,
+        });
+    }
+
     let started = start_prepared_session_prompt(prepared)?;
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (done_tx, done_rx) = oneshot::channel();
@@ -163,7 +186,7 @@ fn prepare_session_prompt(
     }
 
     let mut config = build_agent_config(
-        model,
+        model.clone(),
         system_prompt,
         max_turns,
         api_key,
@@ -218,6 +241,7 @@ fn prepare_session_prompt(
         existing_ids,
         session_name,
         invocation,
+        model,
     })
 }
 
@@ -243,6 +267,11 @@ fn start_prepared_session_prompt(
         }
         PromptInvocation::Text(_) => {
             return Err(CliError::MissingPrompt);
+        }
+        PromptInvocation::Compact { .. } => {
+            return Err(CliError::AgentFailure(
+                "manual compaction must be driven directly".to_string(),
+            ));
         }
         PromptInvocation::Skill {
             name,
@@ -270,8 +299,108 @@ async fn drive_prepared_session_prompt(
     prepared: PreparedSessionPrompt,
     on_event: Option<&mut (dyn FnMut(&AgentEvent) -> Result<(), CliError> + Send)>,
 ) -> Result<SessionPromptResult, CliError> {
+    if matches!(prepared.invocation, PromptInvocation::Compact { .. }) {
+        return drive_manual_compaction(prepared, on_event).await;
+    }
     let started = start_prepared_session_prompt(prepared)?;
     drive_started_session_prompt(started, on_event).await
+}
+
+async fn drive_manual_compaction(
+    mut prepared: PreparedSessionPrompt,
+    mut on_event: Option<&mut (dyn FnMut(&AgentEvent) -> Result<(), CliError> + Send)>,
+) -> Result<SessionPromptResult, CliError> {
+    let Some(active) = prepared.active_session.as_mut() else {
+        return Err(CliError::AgentFailure(
+            "Nothing to compact (no active session)".to_string(),
+        ));
+    };
+
+    let messages = prepared.agent.messages();
+    if messages.len() < 2 {
+        return Err(CliError::AgentFailure(
+            "Nothing to compact (no messages yet)".to_string(),
+        ));
+    }
+
+    let tokens_before = estimate_tokens(&messages);
+    let first_kept_index = messages.len() - 1;
+    let to_summarize = &messages[..first_kept_index];
+    let first_kept_message_id = agent_message_id(&messages[first_kept_index]).to_string();
+    if to_summarize.is_empty() {
+        return Err(CliError::AgentFailure(
+            "Nothing to compact (no compactable history)".to_string(),
+        ));
+    }
+
+    let custom_instructions = match &prepared.invocation {
+        PromptInvocation::Compact {
+            custom_instructions,
+        } => custom_instructions.as_deref(),
+        _ => None,
+    };
+    let summary = summarize(&prepared.model, to_summarize, custom_instructions, None)
+        .await
+        .map_err(|error| CliError::AgentFailure(error.to_string()))?;
+
+    if let Some(sink) = on_event.as_mut() {
+        sink(&AgentEvent::SessionCompacted {
+            summary: summary.clone(),
+            first_kept_message_id: first_kept_message_id.clone(),
+            tokens_before,
+            details: None,
+        })?;
+    }
+
+    let current_leaf = active
+        .storage
+        .get_leaf_id()
+        .map_err(|e| CliError::SessionFailure(e.message))?;
+    let entry_id = generate_entry_id(&prepared.existing_ids);
+    prepared.existing_ids.insert(entry_id.clone());
+    let timestamp = create_timestamp();
+    let entry = pi_agent_core::session::SessionEntry::compaction(
+        entry_id,
+        current_leaf,
+        timestamp,
+        summary.clone(),
+        first_kept_message_id,
+        tokens_before,
+        None,
+        false,
+    );
+    active
+        .storage
+        .append_entry(entry)
+        .map_err(|e| CliError::SessionFailure(e.message))?;
+
+    let session_path = Some(active.storage.path().to_path_buf());
+    let leaf_id = active
+        .storage
+        .get_leaf_id()
+        .map_err(|error| CliError::SessionFailure(error.message))?;
+
+    let mut final_message = AssistantMessage::empty(&prepared.model.api, &prepared.model.id);
+    final_message.content = vec![ContentBlock::Text {
+        text: summary.clone(),
+        text_signature: None,
+    }];
+
+    let mut compacted_messages = Vec::with_capacity(1 + messages.len() - first_kept_index);
+    compacted_messages.push(AgentMessage::CompactionSummary {
+        message_id: format!("compaction_{tokens_before}"),
+        summary,
+        tokens_before,
+    });
+    compacted_messages.extend_from_slice(&messages[first_kept_index..]);
+    prepared.agent.replace_messages(compacted_messages);
+
+    Ok(SessionPromptResult {
+        final_message,
+        messages: prepared.agent.messages(),
+        session_path,
+        leaf_id,
+    })
 }
 
 async fn drive_started_session_prompt(

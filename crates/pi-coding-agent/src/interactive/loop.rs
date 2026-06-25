@@ -12,6 +12,7 @@ use crate::interactive::app::{
 use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::PromptTask;
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
+use crate::interactive::session_actions::session_choice_from_metadata;
 use crate::interactive::{InteractiveEventBridge, TranscriptItem, UiEvent};
 use crate::protocol::session_runner::{
     SessionPromptOptions, SessionPromptResult, spawn_session_prompt,
@@ -127,13 +128,17 @@ fn initialize_started_tui<T: Terminal>(
         .unwrap_or_else(|| PathBuf::from("."));
     let session_label = session_label(&prompt_context.session);
     let mut tui = Tui::new(terminal);
-    let root_id = tui.add_child_with_id(Box::new(InteractiveRoot::new_with_theme_and_models(
-        cwd,
-        prompt_context.model.id.clone(),
-        session_label,
-        prompt_context.theme.clone(),
-        prompt_context.model_choices.clone(),
-    )));
+    let root_id = tui.add_child_with_id(Box::new(
+        InteractiveRoot::new_with_theme_models_and_settings(
+            cwd,
+            prompt_context.model.id.clone(),
+            session_label,
+            prompt_context.theme.clone(),
+            prompt_context.model_choices.clone(),
+            prompt_context.settings.clone(),
+            prompt_context.auth.clone(),
+        ),
+    ));
     {
         let root = root_mut(&mut tui, root_id)?;
         root.model_rotation = prompt_context.model_rotation.clone();
@@ -425,7 +430,17 @@ fn handle_input_event<T: Terminal>(
         return Ok(LoopControl::Continue(RenderRequest::NONE));
     }
 
-    let (action, prompt, selected_model, selected_thinking_level, selected_session, render_request) = {
+    let (
+        action,
+        prompt,
+        selected_model,
+        selected_thinking_level,
+        selected_session,
+        settings_update,
+        auth_update,
+        compact_instructions,
+        render_request,
+    ) = {
         let root = root_mut(tui, root_id)?;
         let before = root.render_state();
         root.handle_input(&event);
@@ -438,6 +453,13 @@ fn handle_input_event<T: Terminal>(
         let selected_model = root.take_selected_model();
         let selected_thinking_level = root.take_selected_thinking_level();
         let selected_session = root.take_selected_session();
+        let settings_update = root.take_settings_update();
+        let auth_update = root.take_auth_update();
+        let compact_instructions = if action == InteractiveAction::CompactSession {
+            root.take_pending_compact_instructions()
+        } else {
+            None
+        };
         let after = root.render_state();
         (
             action,
@@ -445,6 +467,9 @@ fn handle_input_event<T: Terminal>(
             selected_model,
             selected_thinking_level,
             selected_session,
+            settings_update,
+            auth_update,
+            compact_instructions,
             RenderRequest::changed(before != after),
         )
     };
@@ -470,6 +495,22 @@ fn handle_input_event<T: Terminal>(
             session.path.display().to_string(),
         ));
         prompt_context.session_name = session.name.clone();
+    }
+    if let Some(settings) = settings_update {
+        prompt_context.settings = settings;
+    }
+    if let Some(auth) = auth_update {
+        prompt_context.auth = auth;
+        let (api_key, diagnostics) = resolve_prompt_api_key(
+            &prompt_context.model.provider,
+            prompt_context.cli_api_key.as_deref(),
+            &prompt_context.auth,
+        );
+        let diagnostic_text = crate::request::render_diagnostics(&diagnostics);
+        if !diagnostic_text.is_empty() {
+            eprint!("{diagnostic_text}");
+        }
+        prompt_context.api_key = api_key;
     }
 
     match action {
@@ -523,6 +564,18 @@ fn handle_input_event<T: Terminal>(
             *running = Some(start_prompt_task(tui, root_id, prompt, prompt_context)?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::CompactSession => {
+            if running.is_some() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            *running = Some(start_compact_task(
+                tui,
+                root_id,
+                compact_instructions,
+                prompt_context,
+            )?);
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
     }
 }
 
@@ -559,6 +612,42 @@ fn start_prompt_task<T: Terminal>(
     spawn_session_prompt(options).map(PromptTask::new)
 }
 
+fn start_compact_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    custom_instructions: Option<String>,
+    prompt_context: &PromptContext,
+) -> Result<PromptTask, CliError> {
+    {
+        let root = root_mut(tui, root_id)?;
+        root.transcript
+            .push(TranscriptItem::system("Compacting session..."));
+        root.set_status(InteractiveStatus::Running);
+    }
+
+    let options = SessionPromptOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Compact {
+            custom_instructions,
+        },
+    };
+
+    spawn_session_prompt(options).map(PromptTask::new)
+}
+
 fn apply_agent_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
@@ -583,6 +672,12 @@ fn finish_prompt<T: Terminal>(
         Ok(result) => {
             root.active_session_path = result.session_path;
             root.active_leaf_id = result.leaf_id;
+            if let Some(path) = root.active_session_path.as_ref()
+                && let Ok(storage) = pi_agent_core::session::JsonlSessionStorage::open(path)
+            {
+                let choice = session_choice_from_metadata(storage.metadata());
+                root.session_label = choice.display_name().to_string();
+            }
         }
         Err(error) => {
             root.apply_events(vec![UiEvent::AgentError {

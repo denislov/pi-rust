@@ -13,10 +13,18 @@ pub(super) fn render_transcript_lines(
     max_tool_result_lines: usize,
     color: bool,
 ) -> Vec<String> {
-    transcript
-        .items()
-        .iter()
-        .flat_map(|item| match item {
+    let mut lines = Vec::new();
+    let mut previous_was_finished_tool = false;
+
+    for item in transcript.items() {
+        if previous_was_finished_tool && matches!(item, TranscriptItem::Assistant { .. }) {
+            lines.push(fit_line(
+                &paint_with(&"─".repeat(width), &SYSTEM, color),
+                width,
+            ));
+        }
+
+        let item_lines = match item {
             TranscriptItem::User { text } => {
                 vec![fit_line(
                     &format!("{}: {}", paint_with("user", &USER, color), text),
@@ -36,14 +44,14 @@ pub(super) fn render_transcript_lines(
                     .collect::<Vec<_>>()
             }
             TranscriptItem::Tool {
-                call_id,
                 name,
+                args,
                 result,
                 is_error,
                 ..
             } => render_tool_lines(
-                call_id,
                 name,
+                args,
                 result.as_deref(),
                 *is_error,
                 width,
@@ -60,13 +68,23 @@ pub(super) fn render_transcript_lines(
                     width,
                 )]
             }
-        })
-        .collect()
+        };
+        lines.extend(item_lines);
+        previous_was_finished_tool = matches!(
+            item,
+            TranscriptItem::Tool {
+                result: Some(_),
+                ..
+            }
+        );
+    }
+
+    lines
 }
 
 fn render_tool_lines(
-    call_id: &str,
     name: &str,
+    args: &serde_json::Value,
     result: Option<&str>,
     is_error: bool,
     width: usize,
@@ -88,7 +106,7 @@ fn render_tool_lines(
         "{} {} {} {}",
         paint_with("tool", &TOOL_NAME, color),
         paint_with(name, &TOOL_NAME, color),
-        call_id,
+        tool_target(name, args),
         paint_with(status, &status_style, color),
     );
     let mut lines = vec![fit_line(&header, width)];
@@ -97,14 +115,19 @@ fn render_tool_lines(
     };
 
     let result_lines = result.lines().collect::<Vec<_>>();
-    lines.extend(result_lines.iter().take(max_tool_result_lines).map(|line| {
+    let result_line_limit = if matches!(name, "write" | "edit") {
+        result_lines.len()
+    } else {
+        max_tool_result_lines
+    };
+    lines.extend(result_lines.iter().take(result_line_limit).map(|line| {
         if is_error {
             fit_line(&paint_with(line, &TOOL_ERROR, color), width)
         } else {
             fit_line(line, width)
         }
     }));
-    let omitted = result_lines.len().saturating_sub(max_tool_result_lines);
+    let omitted = result_lines.len().saturating_sub(result_line_limit);
     if omitted > 0 {
         lines.push(fit_line(
             &paint_with(&format!("... truncated {omitted} lines"), &SYSTEM, color),
@@ -112,6 +135,29 @@ fn render_tool_lines(
         ));
     }
     lines
+}
+
+fn tool_target(name: &str, args: &serde_json::Value) -> String {
+    match name {
+        "bash" => string_arg(args, &["command", "cmd"]).unwrap_or_else(|| "-".to_string()),
+        "read" | "write" | "edit" => {
+            string_arg(args, &["path", "file_path", "filePath"]).unwrap_or_else(|| "-".to_string())
+        }
+        _ => string_arg(
+            args,
+            &["path", "file_path", "filePath", "command", "pattern"],
+        )
+        .unwrap_or_else(|| "-".to_string()),
+    }
+}
+
+fn string_arg(args: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        args.get(*key)
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string)
+    })
 }
 
 pub(super) fn editor_border_line(width: usize, style: &Style, color: bool) -> String {

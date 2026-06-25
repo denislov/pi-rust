@@ -424,6 +424,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                             yield AgentEvent::ToolCallStart {
                                 tool_call_id: tool_id.clone(),
                                 tool_name: tool_name.clone(),
+                                arguments: tool_args.clone(),
                             };
 
                             //--- before hook ---
@@ -620,6 +621,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                             yield AgentEvent::ToolCallStart {
                                 tool_call_id: call.tool_call_id.clone(),
                                 tool_name: call.tool_name.clone(),
+                                arguments: call.arguments.clone(),
                             };
                         }
 

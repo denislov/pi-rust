@@ -99,7 +99,7 @@ pub enum AuthEntry {
     },
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct AuthStore {
     entries: BTreeMap<String, AuthEntry>,
 }
@@ -173,6 +173,10 @@ impl AuthStore {
                 extra: BTreeMap::new(),
             },
         );
+    }
+
+    pub fn remove_entry(&mut self, provider: &str) -> bool {
+        self.entries.remove(provider).is_some()
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -435,6 +439,16 @@ mod tests {
         assert_eq!(loaded.api_key_entry("anthropic"), Some("sk-ant"));
         assert_eq!(loaded.api_key_entry("openai"), Some("$OPENAI_API_KEY"));
         assert!(d.is_empty());
+    }
+
+    #[test]
+    fn remove_entry_deletes_provider_and_reports_whether_it_existed() {
+        let mut store = AuthStore::default();
+        store.set_api_key("anthropic", "sk-ant");
+
+        assert!(store.remove_entry("anthropic"));
+        assert_eq!(store.api_key_entry("anthropic"), None);
+        assert!(!store.remove_entry("anthropic"));
     }
 
     #[test]
