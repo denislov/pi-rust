@@ -36,22 +36,30 @@ pub fn repair_json(input: &str) -> String {
 }
 
 /// Attempts to parse streaming (possibly incomplete) JSON.
-/// 1. Try strict serde_json::from_str
-/// 2. Try repair_json then parse
-/// 3. Try to close unclosed constructs (strings, arrays, objects)
-/// 4. Fall back to empty object
+///
+/// This parser is intentionally permissive for partial deltas: it tries strict
+/// JSON, repaired JSON, and a best-effort completion of unclosed constructs.
+/// Callers that are about to execute tool arguments should use
+/// try_parse_streaming_json instead so malformed arguments fail closed.
 pub fn parse_streaming_json(input: &str) -> serde_json::Value {
+    try_parse_streaming_json(input).unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+}
+
+/// Parses streaming JSON and returns an error instead of silently falling back
+/// to `{}`. Use this for final tool-call arguments where an empty object could
+/// cause the wrong tool invocation.
+pub fn try_parse_streaming_json(input: &str) -> Result<serde_json::Value, String> {
     if let Ok(v) = serde_json::from_str(input) {
-        return v;
+        return Ok(v);
     }
     let repaired = repair_json(input);
     if let Ok(v) = serde_json::from_str(&repaired) {
-        return v;
+        return Ok(v);
     }
     if let Ok(v) = serde_json::from_str(&close_incomplete(&repaired)) {
-        return v;
+        return Ok(v);
     }
-    serde_json::Value::Object(serde_json::Map::new())
+    Err("malformed streaming JSON".to_string())
 }
 
 /// Appends closing characters to make incomplete JSON parseable.
@@ -131,5 +139,10 @@ mod tests {
         let v = parse_streaming_json("not json at all!!!");
         assert!(v.is_object());
         assert!(v.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn try_parse_garbage_returns_error() {
+        assert!(try_parse_streaming_json("not json at all!!!").is_err());
     }
 }
