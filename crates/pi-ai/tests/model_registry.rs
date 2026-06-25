@@ -136,7 +136,7 @@ fn generated_registry_is_loaded_from_json_asset() {
     let raw = include_str!("../src/models_generated.json");
     let models: Vec<Model> = serde_json::from_str(raw).unwrap();
 
-    assert_eq!(models.len(), 934);
+    assert_eq!(models.len(), 921);
     assert_eq!(models.len(), all_models().len());
     assert!(
         models

@@ -57,9 +57,6 @@ fn self_auth_present(provider: &str) -> bool {
         ]
         .iter()
         .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty())),
-        "google-vertex" => {
-            std::env::var_os("GOOGLE_APPLICATION_CREDENTIALS").is_some_and(|s| !s.is_empty())
-        }
         _ => false,
     }
 }
