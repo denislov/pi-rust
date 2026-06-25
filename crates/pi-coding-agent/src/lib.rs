@@ -11,6 +11,7 @@ pub mod request;
 pub mod resources;
 pub mod runtime;
 pub mod session;
+pub mod theme;
 pub mod tools;
 
 pub use args::{CliArgs, CliMode, help_text, parse_args};

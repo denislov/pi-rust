@@ -1,10 +1,11 @@
 use crate::CliError;
+use crate::theme::{ResolvedColor, ThemeColor, ThemeJson};
 use pi_agent_core::resources::{
     load_prompt_templates as core_load_templates, load_skills as core_load_skills,
 };
 use pi_agent_core::types::DiagnosticSeverity;
 use pi_agent_core::{AgentResources, PromptTemplate, ResourceDiagnostic, Skill};
-use pi_tui::{Color, ThemePalette, TuiTheme, dark_theme, light_theme};
+use pi_tui::{Color, ThemePalette, TuiTheme, dark_theme};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,30 +34,52 @@ pub struct LoadedResources {
     pub diagnostics: Vec<ResourceDiagnostic>,
 }
 
+/// A discovered theme file, parsed into [`ThemeJson`]. The `theme` field holds
+/// the structured 51-token model ported from TS `theme/theme.ts`; `name` is
+/// the resolved theme name (JSON `name` or file stem), `path` the source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeResource {
     pub name: String,
     pub path: PathBuf,
-    pub content: String,
+    pub theme: ThemeJson,
 }
 
+/// Build a `pi_tui::TuiTheme` from a loaded theme resource.
+///
+/// This is a lossy bridge from the 51-token TS theme model to the current
+/// `pi-tui` 10-color `ThemePalette` (the contract layer). It maps the most
+/// relevant tokens: editor border <- `borderMuted`, menu/overlay border <-
+/// `border`, accents/status from their namesake tokens. A theme with invalid
+/// `vars` falls back to the dark palette, mirroring TS `setTheme` behavior.
 pub fn tui_theme_from_resource(resource: &ThemeResource) -> TuiTheme {
-    let value = serde_json::from_str::<serde_json::Value>(&resource.content).ok();
-    let mode = value
-        .as_ref()
-        .and_then(|value| string_field(value, "mode"))
-        .unwrap_or("dark");
-    let base = if mode.eq_ignore_ascii_case("light") {
-        light_theme().palette
-    } else {
-        dark_theme().palette
+    let palette = match resource.theme.resolve_colors() {
+        Ok(resolved) => palette_from_resolved(&resolved),
+        Err(_) => dark_theme().palette,
     };
-    let palette = value
-        .as_ref()
-        .and_then(|value| value.get("palette"))
-        .map(|palette| merge_palette(base, palette))
-        .unwrap_or(base);
     TuiTheme::custom(resource.name.clone(), palette)
+}
+
+fn palette_from_resolved(resolved: &crate::theme::ResolvedTheme) -> ThemePalette {
+    ThemePalette {
+        accent: to_color(resolved.fg(ThemeColor::Accent)),
+        muted: to_color(resolved.fg(ThemeColor::Muted)),
+        text: to_color(resolved.fg(ThemeColor::Text)),
+        background: Color::Default,
+        error: to_color(resolved.fg(ThemeColor::Error)),
+        success: to_color(resolved.fg(ThemeColor::Success)),
+        warning: to_color(resolved.fg(ThemeColor::Warning)),
+        path: to_color(resolved.fg(ThemeColor::Accent)),
+        input_border: to_color(resolved.fg(ThemeColor::BorderMuted)),
+        menu_border: to_color(resolved.fg(ThemeColor::Border)),
+    }
+}
+
+fn to_color(color: ResolvedColor) -> Color {
+    match color {
+        ResolvedColor::Default => Color::Default,
+        ResolvedColor::Hex(r, g, b) => Color::Rgb(r, g, b),
+        ResolvedColor::Ansi256(n) => Color::Ansi256(n),
+    }
 }
 
 pub fn resolve_resource_paths(paths: &[String], cwd: &Path) -> Vec<PathBuf> {
@@ -192,16 +215,20 @@ pub fn load_cli_resources_with_options(
     })
 }
 
+/// Load themes from the given paths, deduplicating by name (first wins, like
+/// TS `getAvailableThemesWithPaths`) and sorting by name. Invalid files and
+/// themes with missing required tokens produce diagnostics.
 fn load_themes(paths: &[PathBuf]) -> (Vec<ThemeResource>, Vec<ResourceDiagnostic>) {
     let mut themes = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
     for path in paths {
         if !path.exists() {
             continue;
         }
         if path.is_file() {
             if path.extension().is_some_and(|ext| ext == "json") {
-                load_theme_file(path, &mut themes, &mut diagnostics);
+                load_theme_file(path, &mut themes, &mut diagnostics, &mut seen);
             }
         } else if path.is_dir() {
             let Ok(entries) = std::fs::read_dir(path) else {
@@ -218,11 +245,13 @@ fn load_themes(paths: &[PathBuf]) -> (Vec<ThemeResource>, Vec<ResourceDiagnostic
             for entry in entries {
                 let path = entry.path();
                 if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-                    load_theme_file(&path, &mut themes, &mut diagnostics);
+                    load_theme_file(&path, &mut themes, &mut diagnostics, &mut seen);
                 }
             }
         }
     }
+    // TS `getAvailableThemesWithPaths` sorts available themes by name.
+    themes.sort_by(|a, b| a.name.cmp(&b.name));
     (themes, diagnostics)
 }
 
@@ -230,6 +259,7 @@ fn load_theme_file(
     path: &Path,
     themes: &mut Vec<ThemeResource>,
     diagnostics: &mut Vec<ResourceDiagnostic>,
+    seen: &mut std::collections::BTreeSet<String>,
 ) {
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
@@ -244,8 +274,8 @@ fn load_theme_file(
         }
     };
 
-    let value = match serde_json::from_str::<serde_json::Value>(&content) {
-        Ok(value) => value,
+    let theme = match serde_json::from_str::<ThemeJson>(&content) {
+        Ok(theme) => theme,
         Err(error) => {
             diagnostics.push(ResourceDiagnostic {
                 severity: DiagnosticSeverity::Warning,
@@ -257,106 +287,37 @@ fn load_theme_file(
         }
     };
 
-    let name = value
-        .get("name")
-        .and_then(|name| name.as_str())
-        .map(ToString::to_string)
-        .or_else(|| {
-            path.file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-        })
-        .unwrap_or_else(|| "unnamed".into());
+    let name = if theme.name.is_empty() {
+        path.file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unnamed".into())
+    } else {
+        theme.name.clone()
+    };
+    if !seen.insert(name.clone()) {
+        return; // duplicate theme name; first one wins (TS dedupe)
+    }
+
+    // Report missing required color tokens (TS `parseThemeJson` lists these).
+    let missing = theme.missing_tokens();
+    if !missing.is_empty() {
+        diagnostics.push(ResourceDiagnostic {
+            severity: DiagnosticSeverity::Warning,
+            code: "theme_missing_tokens".into(),
+            message: format!(
+                "missing {} color tokens: {}",
+                missing.len(),
+                missing.join(", ")
+            ),
+            path: path.to_path_buf(),
+        });
+    }
+
     themes.push(ThemeResource {
         name,
         path: path.to_path_buf(),
-        content,
+        theme,
     });
-}
-
-fn merge_palette(mut palette: ThemePalette, value: &serde_json::Value) -> ThemePalette {
-    if let Some(color) = color_field(value, "accent") {
-        palette.accent = color;
-    }
-    if let Some(color) = color_field(value, "muted") {
-        palette.muted = color;
-    }
-    if let Some(color) = color_field(value, "text") {
-        palette.text = color;
-    }
-    if let Some(color) = color_field(value, "background") {
-        palette.background = color;
-    }
-    if let Some(color) = color_field(value, "error") {
-        palette.error = color;
-    }
-    if let Some(color) = color_field(value, "success") {
-        palette.success = color;
-    }
-    if let Some(color) = color_field(value, "warning") {
-        palette.warning = color;
-    }
-    if let Some(color) = color_field(value, "path") {
-        palette.path = color;
-    }
-    if let Some(color) =
-        color_field(value, "input_border").or_else(|| color_field(value, "inputBorder"))
-    {
-        palette.input_border = color;
-    }
-    if let Some(color) =
-        color_field(value, "menu_border").or_else(|| color_field(value, "menuBorder"))
-    {
-        palette.menu_border = color;
-    }
-    palette
-}
-
-fn color_field(value: &serde_json::Value, field: &str) -> Option<Color> {
-    value.get(field).and_then(parse_color)
-}
-
-fn string_field<'a>(value: &'a serde_json::Value, field: &str) -> Option<&'a str> {
-    value.get(field).and_then(|value| value.as_str())
-}
-
-fn parse_color(value: &serde_json::Value) -> Option<Color> {
-    if let Some(index) = value.as_u64() {
-        return u8::try_from(index).ok().map(Color::Ansi256);
-    }
-    let text = value.as_str()?.trim();
-    match text.to_ascii_lowercase().as_str() {
-        "default" => Some(Color::Default),
-        "red" => Some(Color::Red),
-        "green" => Some(Color::Green),
-        "yellow" => Some(Color::Yellow),
-        "blue" => Some(Color::Blue),
-        "cyan" => Some(Color::Cyan),
-        "magenta" | "purple" => Some(Color::Magenta),
-        "white" => Some(Color::White),
-        text if text.starts_with('#') => parse_hex_color(text),
-        text if text.starts_with("ansi256:") => text
-            .trim_start_matches("ansi256:")
-            .parse::<u8>()
-            .ok()
-            .map(Color::Ansi256),
-        text if text.starts_with("ansi:") => text
-            .trim_start_matches("ansi:")
-            .parse::<u8>()
-            .ok()
-            .map(Color::Ansi256),
-        _ => None,
-    }
-}
-
-fn parse_hex_color(text: &str) -> Option<Color> {
-    let hex = text.strip_prefix('#')?;
-    if hex.len() != 6 {
-        return None;
-    }
-    let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some(Color::Rgb(red, green, blue))
 }
 
 pub fn find_skill<'a>(skills: &'a [Skill], name: &str) -> Option<&'a Skill> {

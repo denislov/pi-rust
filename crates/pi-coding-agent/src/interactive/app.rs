@@ -351,9 +351,13 @@ mod tests {
             themes_dir.join("violet.json"),
             r##"{
                 "name": "violet",
-                "palette": {
-                    "input_border": "#211144",
-                    "menu_border": "#1234aa"
+                "vars": {
+                    "ib": "#211144",
+                    "mb": "#1234aa"
+                },
+                "colors": {
+                    "borderMuted": "ib",
+                    "border": "mb"
                 }
             }"##,
         )
