@@ -12,7 +12,9 @@ use crate::interactive::app::{
 use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::PromptTask;
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
-use crate::interactive::session_actions::session_choice_from_metadata;
+use crate::interactive::session_actions::{
+    hydrate_existing_session_target, session_choice_from_metadata,
+};
 use crate::interactive::{InteractiveEventBridge, TranscriptItem, UiEvent};
 use crate::protocol::session_runner::{
     SessionPromptOptions, SessionPromptResult, spawn_session_prompt,
@@ -143,6 +145,12 @@ fn initialize_started_tui<T: Terminal>(
         let root = root_mut(&mut tui, root_id)?;
         root.model_rotation = prompt_context.model_rotation.clone();
         root.session_choices = prompt_context.session_choices.clone();
+        if let Some(hydrated) = hydrate_existing_session_target(
+            &prompt_context.session,
+            prompt_context.session_target.as_ref(),
+        )? {
+            root.apply_hydrated_session(hydrated, None);
+        }
     }
     tui.set_focus(Some(root_id));
     Ok((tui, root_id))
@@ -436,6 +444,7 @@ fn handle_input_event<T: Terminal>(
         selected_model,
         selected_thinking_level,
         selected_session,
+        selected_session_hydrate,
         settings_update,
         auth_update,
         compact_instructions,
@@ -453,6 +462,7 @@ fn handle_input_event<T: Terminal>(
         let selected_model = root.take_selected_model();
         let selected_thinking_level = root.take_selected_thinking_level();
         let selected_session = root.take_selected_session();
+        let selected_session_hydrate = root.take_selected_session_hydrate();
         let settings_update = root.take_settings_update();
         let auth_update = root.take_auth_update();
         let compact_instructions = if action == InteractiveAction::CompactSession {
@@ -467,6 +477,7 @@ fn handle_input_event<T: Terminal>(
             selected_model,
             selected_thinking_level,
             selected_session,
+            selected_session_hydrate,
             settings_update,
             auth_update,
             compact_instructions,
@@ -495,6 +506,18 @@ fn handle_input_event<T: Terminal>(
             session.path.display().to_string(),
         ));
         prompt_context.session_name = session.name.clone();
+        if selected_session_hydrate
+            && let Some(hydrated) = hydrate_existing_session_target(
+                &prompt_context.session,
+                prompt_context.session_target.as_ref(),
+            )?
+        {
+            let root = root_mut(tui, root_id)?;
+            root.apply_hydrated_session(
+                hydrated,
+                Some(format!("Session selected: {}", session.display_name())),
+            );
+        }
     }
     if let Some(settings) = settings_update {
         prompt_context.settings = settings;

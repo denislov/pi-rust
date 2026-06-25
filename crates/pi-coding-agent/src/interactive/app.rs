@@ -1978,6 +1978,23 @@ pub mod test_harness {
         run_scripted(provider, input, Some(session_dir)).await
     }
 
+    pub async fn run_scripted_interactive_with_args_and_session_dir(
+        provider: FauxProvider,
+        parsed: CliArgs,
+        session_dir: &Path,
+        input: &str,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_with_provider_args_and_size(
+            Arc::new(provider),
+            parsed,
+            vec![input],
+            Some(session_dir),
+            80,
+            24,
+        )
+        .await
+    }
+
     pub async fn run_scripted_interactive_with_session_dir_and_waits(
         provider: FauxProvider,
         session_dir: &Path,
@@ -2103,6 +2120,25 @@ pub mod test_harness {
         columns: usize,
         rows: usize,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_with_provider_args_and_size(
+            provider,
+            CliArgs::default(),
+            input_chunks,
+            session_dir,
+            columns,
+            rows,
+        )
+        .await
+    }
+
+    async fn run_scripted_with_provider_args_and_size(
+        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        parsed: CliArgs,
+        input_chunks: Vec<&str>,
+        session_dir: Option<&Path>,
+        columns: usize,
+        rows: usize,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
         let api = format!(
             "interactive-harness-{}",
             INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
@@ -2114,7 +2150,6 @@ pub mod test_harness {
             .map(str::to_string)
             .collect::<Vec<_>>();
         let mut input = InputPump::from_chunks(chunks);
-        let parsed = CliArgs::default();
         let session = session_dir
             .map(|dir| SessionRunOptions {
                 mode: SessionMode::Enabled,

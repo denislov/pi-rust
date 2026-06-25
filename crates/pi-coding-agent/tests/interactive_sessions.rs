@@ -1,7 +1,9 @@
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
 use pi_ai::types::StopReason;
+use pi_coding_agent::CliArgs;
 use pi_coding_agent::interactive::test_harness::{
-    run_scripted_interactive_with_session_dir, run_scripted_interactive_with_session_dir_and_waits,
+    run_scripted_interactive_with_args_and_session_dir, run_scripted_interactive_with_session_dir,
+    run_scripted_interactive_with_session_dir_and_waits,
 };
 
 fn text_response(text: &str) -> FauxResponse {
@@ -79,6 +81,75 @@ async fn interactive_mode_continues_same_session_across_prompts() {
     assert!(contents.contains("first saved"));
     assert!(contents.contains("second prompt"));
     assert!(contents.contains("second saved"));
+}
+
+#[tokio::test]
+async fn interactive_resume_loads_existing_session_messages_and_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("previous answer")]);
+    run_scripted_interactive_with_session_dir(provider, temp.path(), "previous prompt\r")
+        .await
+        .unwrap();
+
+    let files = jsonl_files(temp.path());
+    assert_eq!(files.len(), 1);
+    let mut storage = pi_agent_core::session::JsonlSessionStorage::open(&files[0]).unwrap();
+    let leaf_id = storage.get_leaf_id().unwrap();
+    storage
+        .append_entry(pi_agent_core::session::SessionEntry::session_info(
+            "session-name-entry".to_string(),
+            leaf_id,
+            "2026-06-25T00:00:00.000Z".to_string(),
+            "Resume Target".to_string(),
+        ))
+        .unwrap();
+
+    let mut args = CliArgs::default();
+    args.resume = true;
+    let provider = FauxProvider::new(Vec::new());
+    let result =
+        run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), "")
+            .await
+            .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("previous prompt"), "{frame}");
+    assert!(frame.contains("previous answer"), "{frame}");
+    assert!(frame.contains("session: Resume Target"), "{frame}");
+    assert!(!frame.contains("session: session"), "{frame}");
+}
+
+#[tokio::test]
+async fn interactive_resume_command_loads_selected_session_messages_and_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("selected answer")]);
+    run_scripted_interactive_with_session_dir(provider, temp.path(), "selected prompt\r")
+        .await
+        .unwrap();
+
+    let files = jsonl_files(temp.path());
+    assert_eq!(files.len(), 1);
+    let mut storage = pi_agent_core::session::JsonlSessionStorage::open(&files[0]).unwrap();
+    let leaf_id = storage.get_leaf_id().unwrap();
+    storage
+        .append_entry(pi_agent_core::session::SessionEntry::session_info(
+            "session-name-entry".to_string(),
+            leaf_id,
+            "2026-06-25T00:00:00.000Z".to_string(),
+            "Picked".to_string(),
+        ))
+        .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir(provider, temp.path(), "/resume\r\r")
+        .await
+        .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("selected prompt"), "{frame}");
+    assert!(frame.contains("selected answer"), "{frame}");
+    assert!(frame.contains("Session selected: Picked"), "{frame}");
+    assert!(frame.contains("session: Picked"), "{frame}");
 }
 
 fn jsonl_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {

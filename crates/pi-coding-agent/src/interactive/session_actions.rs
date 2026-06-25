@@ -5,10 +5,13 @@ use pi_agent_core::session::{
     JsonlSessionMetadata, JsonlSessionRepo, JsonlSessionStorage, SessionEntry, SessionHeader,
     StoredAgentMessage, StoredUsage, create_session_id, create_timestamp, generate_entry_id,
 };
+use pi_agent_core::{AgentMessage, session};
 use pi_ai::types::{ContentBlock, StopReason};
 
+use crate::CliError;
 use crate::interactive::transcript::TranscriptItem;
 use crate::runtime::{SessionMode, SessionRunOptions};
+use crate::session::ResolvedSessionTarget;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SessionChoice {
@@ -18,6 +21,13 @@ pub(super) struct SessionChoice {
     pub(super) created_at: String,
     pub(super) name: Option<String>,
     pub(super) entry_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct HydratedSession {
+    pub(super) choice: SessionChoice,
+    pub(super) transcript_items: Vec<TranscriptItem>,
+    pub(super) leaf_id: Option<String>,
 }
 
 impl SessionChoice {
@@ -42,6 +52,127 @@ impl SessionChoice {
             || self.path.display().to_string() == target
             || self.name.as_deref() == Some(target)
     }
+}
+
+pub(super) fn hydrate_existing_session_target(
+    session_options: &Option<SessionRunOptions>,
+    target: Option<&ResolvedSessionTarget>,
+) -> Result<Option<HydratedSession>, CliError> {
+    let Some(session_options) = session_options else {
+        return Ok(None);
+    };
+    if !matches!(session_options.mode, SessionMode::Enabled) {
+        return Ok(None);
+    }
+    let Some(target) = target else {
+        return Ok(None);
+    };
+
+    let root = match &session_options.session_dir {
+        Some(dir) => dir.clone(),
+        None => crate::session::resolve_session_dir(&session_options.cwd, None, None)?,
+    };
+    let repo = JsonlSessionRepo::new(root);
+    let cwd = session_options.cwd.display().to_string();
+    let storage = match target {
+        ResolvedSessionTarget::ContinueMostRecent => repo
+            .most_recent(&cwd)
+            .map_err(|error| CliError::SessionFailure(error.message))?,
+        ResolvedSessionTarget::OpenTarget(target) => Some(
+            repo.open_target(&cwd, target)
+                .map_err(|error| CliError::SessionFailure(error.message))?,
+        ),
+        ResolvedSessionTarget::OpenOrCreateId(id) => repo.open_target(&cwd, id).ok(),
+        ResolvedSessionTarget::New | ResolvedSessionTarget::ForkTarget(_) => None,
+    };
+
+    storage.map(hydrate_session_storage).transpose()
+}
+
+pub(super) fn hydrate_session_storage(
+    storage: JsonlSessionStorage,
+) -> Result<HydratedSession, CliError> {
+    let leaf_id = storage
+        .get_leaf_id()
+        .map_err(|error| CliError::SessionFailure(error.message))?;
+    let entries = storage.get_entries();
+    let context = session::build_session_context(&entries, leaf_id.as_deref())
+        .map_err(|error| CliError::SessionFailure(error.message))?;
+    let choice = session_choice_from_metadata(storage.metadata());
+    Ok(HydratedSession {
+        choice,
+        transcript_items: transcript_items_from_messages(&context.messages),
+        leaf_id,
+    })
+}
+
+fn transcript_items_from_messages(messages: &[AgentMessage]) -> Vec<TranscriptItem> {
+    messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| match message {
+            AgentMessage::UserText { text, .. } => Some(TranscriptItem::user(text.clone())),
+            AgentMessage::Assistant { message, .. } => {
+                let text = content_blocks_to_text(&message.content);
+                (!text.trim().is_empty())
+                    .then(|| TranscriptItem::assistant(format!("assistant_{index}"), text, true))
+            }
+            AgentMessage::ToolResult {
+                tool_call_id,
+                tool_name,
+                is_error,
+                content,
+                ..
+            } => Some(TranscriptItem::Tool {
+                call_id: tool_call_id.clone(),
+                name: tool_name.clone(),
+                args: serde_json::Value::Object(Default::default()),
+                result: Some(content_blocks_to_text(content)),
+                is_error: *is_error,
+            }),
+            AgentMessage::BashExecution {
+                message_id,
+                command,
+                output,
+                exit_code,
+                cancelled,
+                ..
+            } => Some(TranscriptItem::Tool {
+                call_id: message_id.clone(),
+                name: "bash".to_string(),
+                args: serde_json::json!({ "command": command }),
+                result: Some(output.clone()),
+                is_error: *cancelled || exit_code.is_some_and(|code| code != 0),
+            }),
+            AgentMessage::Custom {
+                custom_type,
+                content,
+                display,
+                ..
+            } if *display => Some(TranscriptItem::system(format!(
+                "{}: {}",
+                custom_type,
+                content_blocks_to_text(content)
+            ))),
+            AgentMessage::BranchSummary { summary, .. }
+            | AgentMessage::CompactionSummary { summary, .. } => {
+                Some(TranscriptItem::system(summary.clone()))
+            }
+            AgentMessage::SystemPrompt { .. } | AgentMessage::Custom { .. } => None,
+        })
+        .collect()
+}
+
+fn content_blocks_to_text(content: &[ContentBlock]) -> String {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.as_str()),
+            ContentBlock::Thinking { thinking, .. } => Some(thinking.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(super) fn export_path_arg(args: &str) -> Option<String> {

@@ -19,7 +19,7 @@ use crate::interactive::render::{
     abbreviate_cwd, editor_border_line, fit_line, format_tokens, render_transcript_lines,
     running_status_text,
 };
-use crate::interactive::session_actions::SessionChoice;
+use crate::interactive::session_actions::{HydratedSession, SessionChoice};
 use crate::interactive::session_selector;
 use crate::interactive::slash::{self, ParsedSlashCommand};
 use crate::interactive::{Transcript, TranscriptItem, UiEvent};
@@ -72,6 +72,7 @@ pub(super) struct InteractiveRoot {
     pub(super) model_selection_selected: usize,
     pub(super) session_choices: Vec<SessionChoice>,
     pub(super) selected_session: Option<SessionChoice>,
+    pub(super) selected_session_hydrate: bool,
     pub(super) active_session_path: Option<PathBuf>,
     pub(super) active_leaf_id: Option<String>,
     pub(super) selecting_session: bool,
@@ -203,6 +204,7 @@ impl InteractiveRoot {
             model_selection_selected: 0,
             session_choices: Vec::new(),
             selected_session: None,
+            selected_session_hydrate: false,
             active_session_path: None,
             active_leaf_id: None,
             selecting_session: false,
@@ -249,6 +251,10 @@ impl InteractiveRoot {
 
     pub(super) fn take_selected_session(&mut self) -> Option<SessionChoice> {
         self.selected_session.take()
+    }
+
+    pub(super) fn take_selected_session_hydrate(&mut self) -> bool {
+        std::mem::take(&mut self.selected_session_hydrate)
     }
 
     pub(super) fn take_settings_update(&mut self) -> Option<Settings> {
@@ -389,6 +395,7 @@ impl InteractiveRoot {
     pub(super) fn set_selected_session(&mut self, choice: SessionChoice) {
         self.session_label = choice.display_name().to_string();
         self.selected_session = Some(choice.clone());
+        self.selected_session_hydrate = true;
         self.active_session_path = Some(choice.path.clone());
         self.active_leaf_id = JsonlSessionStorage::open(&choice.path)
             .ok()
@@ -401,6 +408,28 @@ impl InteractiveRoot {
             "Session selected: {}",
             choice.display_name()
         )));
+    }
+
+    pub(super) fn apply_hydrated_session(
+        &mut self,
+        hydrated: HydratedSession,
+        notice: Option<String>,
+    ) {
+        self.session_label = hydrated.choice.display_name().to_string();
+        self.active_session_path = Some(hydrated.choice.path.clone());
+        self.active_leaf_id = hydrated.leaf_id;
+
+        let mut transcript = Transcript::new();
+        if let Some(first) = self.transcript.items().first().cloned() {
+            transcript.push(first);
+        }
+        for item in hydrated.transcript_items {
+            transcript.push(item);
+        }
+        if let Some(notice) = notice {
+            transcript.push(TranscriptItem::system(notice));
+        }
+        self.transcript = transcript;
     }
 
     pub(super) fn footer(&self) -> String {
