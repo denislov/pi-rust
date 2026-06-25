@@ -9,9 +9,11 @@ use tokio::io::AsyncReadExt;
 
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
 
-const DESCRIPTION: &str = "Execute a bash command in the working directory. Returns merged stdout and stderr. Output is truncated to the last 2000 lines or 50KB (whichever is hit first). Optionally provide a timeout in seconds.";
+const DESCRIPTION: &str = "Execute a bash command in the working directory. Returns merged stdout and stderr. Output is truncated to the last 2000 lines or 50KB (whichever is hit first). Commands time out after 120 seconds by default; timeout is capped at 600 seconds.";
 const BUFFER_KEEP: usize = 65536;
 const DRAIN_GRACE_MS: u64 = 500;
+const DEFAULT_TIMEOUT_SECS: f64 = 120.0;
+const MAX_TIMEOUT_SECS: f64 = 600.0;
 
 #[derive(Clone)]
 pub struct BashSpawnContext {
@@ -59,7 +61,7 @@ fn schema() -> serde_json::Value {
         "type":"object",
         "properties":{
             "command":{"type":"string","description":"Bash command to execute"},
-            "timeout":{"type":"number","description":"Timeout in seconds (optional)"}
+            "timeout":{"type":"number","description":"Timeout in seconds (optional, default 120, max 600)"}
         },
         "required":["command"]
     })
@@ -80,6 +82,19 @@ async fn resolve_shell_path(custom_shell_path: Option<&str>) -> Result<String, S
     }
 }
 
+fn safe_process_env() -> HashMap<String, String> {
+    std::env::vars()
+        .filter(|(key, _)| is_safe_env_key(key))
+        .collect()
+}
+
+fn is_safe_env_key(key: &str) -> bool {
+    matches!(
+        key,
+        "PATH" | "HOME" | "USER" | "USERNAME" | "SHELL" | "TMPDIR" | "TEMP" | "TMP" | "LANG" | "LC_ALL" | "LC_CTYPE" | "TERM"
+    ) || key.starts_with("LC_")
+}
+
 fn resolve_spawn_context(
     command: String,
     cwd: PathBuf,
@@ -88,12 +103,25 @@ fn resolve_spawn_context(
     let context = BashSpawnContext {
         command,
         cwd,
-        env: std::env::vars().collect(),
+        env: safe_process_env(),
     };
     match spawn_hook {
         Some(hook) => hook(context),
         None => context,
     }
+}
+
+fn timeout_secs_from_args(args: &serde_json::Value) -> Result<f64, String> {
+    let raw = args
+        .get("timeout")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(DEFAULT_TIMEOUT_SECS);
+    if !raw.is_finite() || raw <= 0.0 {
+        return Err(format!(
+            "bash: timeout must be a finite positive number of seconds (max {MAX_TIMEOUT_SECS})"
+        ));
+    }
+    Ok(raw.min(MAX_TIMEOUT_SECS))
 }
 
 fn drain_byte(buf: &mut Vec<u8>, keep: usize) {
@@ -137,6 +165,10 @@ impl OutputTail {
             drain_byte(&mut self.buf, BUFFER_KEEP);
             self.overflowed = true;
         }
+    }
+
+    fn buf_to_string(&self) -> String {
+        String::from_utf8_lossy(&self.buf).into_owned()
     }
 }
 
@@ -230,10 +262,7 @@ async fn drain_with_grace(
     on_update: Option<&ToolUpdateCallback>,
 ) {
     let grace = std::time::Duration::from_millis(DRAIN_GRACE_MS);
-    match tokio::time::timeout(grace, drain_pipes(stdout, stderr, tail, on_update)).await {
-        Ok(()) => {}
-        Err(_) => {}
-    }
+    let _ = tokio::time::timeout(grace, drain_pipes(stdout, stderr, tail, on_update)).await;
 }
 
 fn push_output(tail: &mut OutputTail, data: &[u8], on_update: Option<&ToolUpdateCallback>) {
@@ -292,7 +321,7 @@ async fn bash_execute_real(
         .and_then(|v| v.as_str())
         .ok_or("bash: missing or non-string 'command' argument")?
         .to_string();
-    let timeout_secs = args.get("timeout").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let timeout_secs = timeout_secs_from_args(&args)?;
     let workdir = cwd.to_path_buf();
     let resolved_command = match options.command_prefix.as_deref() {
         Some(prefix) if !prefix.is_empty() => format!("{prefix}\n{command}"),
@@ -319,7 +348,8 @@ async fn bash_execute_real(
         .envs(&spawn_context.env)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     #[cfg(unix)]
     {
         cmd.process_group(0);
@@ -338,79 +368,45 @@ async fn bash_execute_real(
         .ok_or_else(|| "bash: failed to capture stderr".to_string())?;
 
     let mut tail = OutputTail::new();
-
     let mut timed_out = false;
     let mut exit_code: Option<i32> = None;
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut stdout_buf = vec![0u8; 8192];
     let mut stderr_buf = vec![0u8; 8192];
+    let timeout = tokio::time::sleep(std::time::Duration::from_secs_f64(timeout_secs));
+    tokio::pin!(timeout);
 
-    if timeout_secs > 0.0 && timeout_secs.is_finite() {
-        let dur = std::time::Duration::from_secs_f64(timeout_secs);
-        let timeout = tokio::time::sleep(dur);
-        tokio::pin!(timeout);
-        loop {
-            tokio::select! {
-                status = child.wait() => {
-                    match status {
-                        Ok(status) => exit_code = status.code(),
-                        Err(e) => {
-                            terminate_child_process_tree(&mut child).await;
-                            drain_with_grace(stdout, stderr, &mut tail, on_update.as_ref()).await;
-                            return Err(format!("bash: wait failed: {e}"));
-                        }
-                    }
-                    break;
-                }
-                _ = &mut timeout => {
-                    terminate_child_process_tree(&mut child).await;
-                    timed_out = true;
-                    break;
-                }
-                read = stdout.read(&mut stdout_buf), if stdout_open => {
-                    match read {
-                        Ok(0) => stdout_open = false,
-                        Ok(n) => push_output(&mut tail, &stdout_buf[..n], on_update.as_ref()),
-                        Err(_) => stdout_open = false,
+    loop {
+        tokio::select! {
+            status = child.wait() => {
+                match status {
+                    Ok(status) => exit_code = status.code(),
+                    Err(e) => {
+                        terminate_child_process_tree(&mut child).await;
+                        drain_with_grace(stdout, stderr, &mut tail, on_update.as_ref()).await;
+                        return Err(format!("bash: wait failed: {e}"));
                     }
                 }
-                read = stderr.read(&mut stderr_buf), if stderr_open => {
-                    match read {
-                        Ok(0) => stderr_open = false,
-                        Ok(n) => push_output(&mut tail, &stderr_buf[..n], on_update.as_ref()),
-                        Err(_) => stderr_open = false,
-                    }
+                break;
+            }
+            _ = &mut timeout => {
+                terminate_child_process_tree(&mut child).await;
+                timed_out = true;
+                break;
+            }
+            read = stdout.read(&mut stdout_buf), if stdout_open => {
+                match read {
+                    Ok(0) => stdout_open = false,
+                    Ok(n) => push_output(&mut tail, &stdout_buf[..n], on_update.as_ref()),
+                    Err(_) => stdout_open = false,
                 }
             }
-        }
-    } else {
-        loop {
-            tokio::select! {
-                status = child.wait() => {
-                    match status {
-                        Ok(status) => exit_code = status.code(),
-                        Err(e) => {
-                            terminate_child_process_tree(&mut child).await;
-                            drain_with_grace(stdout, stderr, &mut tail, on_update.as_ref()).await;
-                            return Err(format!("bash: wait failed: {e}"));
-                        }
-                    }
-                    break;
-                }
-                read = stdout.read(&mut stdout_buf), if stdout_open => {
-                    match read {
-                        Ok(0) => stdout_open = false,
-                        Ok(n) => push_output(&mut tail, &stdout_buf[..n], on_update.as_ref()),
-                        Err(_) => stdout_open = false,
-                    }
-                }
-                read = stderr.read(&mut stderr_buf), if stderr_open => {
-                    match read {
-                        Ok(0) => stderr_open = false,
-                        Ok(n) => push_output(&mut tail, &stderr_buf[..n], on_update.as_ref()),
-                        Err(_) => stderr_open = false,
-                    }
+            read = stderr.read(&mut stderr_buf), if stderr_open => {
+                match read {
+                    Ok(0) => stderr_open = false,
+                    Ok(n) => push_output(&mut tail, &stderr_buf[..n], on_update.as_ref()),
+                    Err(_) => stderr_open = false,
                 }
             }
         }
@@ -488,12 +484,6 @@ async fn kill_process_group(pid: u32) -> bool {
         .status()
         .await
         .is_ok_and(|status| status.success())
-}
-
-impl OutputTail {
-    fn buf_to_string(&self) -> String {
-        String::from_utf8_lossy(&self.buf).into_owned()
-    }
 }
 
 pub fn bash_tool(cwd: PathBuf) -> AgentTool {
