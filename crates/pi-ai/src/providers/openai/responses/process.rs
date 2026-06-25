@@ -5,7 +5,7 @@ use crate::stream::EventStream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, Model, StopReason, Usage,
 };
-use crate::util::json_repair::parse_streaming_json;
+use crate::util::json_repair::{parse_streaming_json, try_parse_streaming_json};
 use bytes::Bytes;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
@@ -75,7 +75,8 @@ impl SseEventHandler for ResponsesHandler {
             wire::ResponseStreamEvent::OutputItemAdded { item } => match item.item_type.as_str() {
                 "function_call" => {
                     if let Some(ci) = self.tool_content_index {
-                        let parsed = parse_streaming_json(&self.accumulated_tool_args);
+                        let parsed = try_parse_streaming_json(&self.accumulated_tool_args)
+                            .map_err(|e| format!("Malformed final tool arguments: {e}"))?;
                         if let Some(ContentBlock::ToolCall { arguments, .. }) =
                             partial.content.get_mut(ci as usize)
                         {
@@ -160,7 +161,8 @@ impl SseEventHandler for ResponsesHandler {
                 }
                 "function_call" => {
                     if let Some(ci) = self.tool_content_index {
-                        let parsed = parse_streaming_json(&self.accumulated_tool_args);
+                        let parsed = try_parse_streaming_json(&self.accumulated_tool_args)
+                            .map_err(|e| format!("Malformed final tool arguments: {e}"))?;
                         if let Some(ContentBlock::ToolCall { arguments, .. }) =
                             partial.content.get_mut(ci as usize)
                         {
