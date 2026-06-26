@@ -806,6 +806,33 @@ impl InteractiveRoot {
             "show_progress" => {
                 self.settings.terminal.show_progress = value == "on";
             }
+            "auto_resize_images" => {
+                self.settings.terminal.auto_resize_images = value == "on";
+            }
+            "block_images" => {
+                self.settings.terminal.block_images = value == "on";
+            }
+            "enable_skill_commands" => {
+                self.settings.enable_skill_commands = value == "on";
+            }
+            "hide_thinking_block" => {
+                self.settings.hide_thinking_block = value == "on";
+            }
+            "collapse_changelog" => {
+                self.settings.collapse_changelog = value == "on";
+            }
+            "quiet_startup" => {
+                self.settings.quiet_startup = value == "on";
+            }
+            "clear_on_shrink" => {
+                self.settings.terminal.clear_on_shrink = value == "on";
+            }
+            "double_escape_action" => {
+                self.settings.double_escape_action = value.to_string();
+            }
+            "tree_filter_mode" => {
+                self.settings.tree_filter_mode = value.to_string();
+            }
             _ => return,
         }
         self.settings_update = Some(self.settings.clone());
@@ -1112,8 +1139,99 @@ fn build_settings_list(
             )
             .values(["on", "off"])
             .description("Show progress indicators in terminal tab bar"),
+            SettingItem::new(
+                "auto_resize_images",
+                "Auto-resize images",
+                if settings.terminal.auto_resize_images {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Resize large images to 2000\u{d7}2000 max for better model compatibility"),
+            SettingItem::new(
+                "block_images",
+                "Block images",
+                if settings.terminal.block_images {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Prevent images from being sent to LLM providers"),
+            SettingItem::new(
+                "enable_skill_commands",
+                "Skill commands",
+                if settings.enable_skill_commands {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Register skills as /skill:name commands"),
+            SettingItem::new(
+                "hide_thinking_block",
+                "Hide thinking",
+                if settings.hide_thinking_block {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Hide thinking blocks in assistant responses"),
+            SettingItem::new(
+                "collapse_changelog",
+                "Collapse changelog",
+                if settings.collapse_changelog {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Show condensed changelog after updates"),
+            SettingItem::new(
+                "quiet_startup",
+                "Quiet startup",
+                if settings.quiet_startup {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Disable verbose printing at startup"),
+            SettingItem::new(
+                "clear_on_shrink",
+                "Clear on shrink",
+                if settings.terminal.clear_on_shrink {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Clear empty rows when content shrinks (may cause flicker)"),
+            SettingItem::new(
+                "double_escape_action",
+                "Double-escape action",
+                &settings.double_escape_action,
+            )
+            .values(["tree", "fork", "none"])
+            .description("Action when pressing Escape twice with empty editor"),
+            SettingItem::new(
+                "tree_filter_mode",
+                "Tree filter mode",
+                &settings.tree_filter_mode,
+            )
+            .values(["default", "no-tools", "user-only", "labeled-only", "all"])
+            .description("Default filter when opening /tree"),
         ],
-        8,
+        14,
         keybindings,
         SettingsListOptions {
             enable_search: false,

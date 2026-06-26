@@ -23,6 +23,9 @@ pub struct PartialRetry {
 pub struct PartialTerminal {
     pub show_images: Option<bool>,
     pub show_progress: Option<bool>,
+    pub clear_on_shrink: Option<bool>,
+    pub auto_resize_images: Option<bool>,
+    pub block_images: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
@@ -40,6 +43,12 @@ pub struct PartialSettings {
     pub themes: Option<Vec<String>>,
     pub theme: Option<String>,
     pub no_context_files: Option<bool>,
+    pub hide_thinking_block: Option<bool>,
+    pub collapse_changelog: Option<bool>,
+    pub quiet_startup: Option<bool>,
+    pub enable_skill_commands: Option<bool>,
+    pub double_escape_action: Option<String>,
+    pub tree_filter_mode: Option<String>,
     pub terminal: Option<PartialTerminal>,
     pub compaction: Option<PartialCompaction>,
     pub retry: Option<PartialRetry>,
@@ -63,6 +72,9 @@ pub struct RetrySettings {
 pub struct TerminalSettings {
     pub show_images: bool,
     pub show_progress: bool,
+    pub clear_on_shrink: bool,
+    pub auto_resize_images: bool,
+    pub block_images: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +91,12 @@ pub struct Settings {
     pub themes: Vec<String>,
     pub theme: Option<String>,
     pub no_context_files: bool,
+    pub hide_thinking_block: bool,
+    pub collapse_changelog: bool,
+    pub quiet_startup: bool,
+    pub enable_skill_commands: bool,
+    pub double_escape_action: String,
+    pub tree_filter_mode: String,
     pub terminal: TerminalSettings,
     pub compaction: CompactionSettings,
     pub retry: RetrySettings,
@@ -118,6 +136,9 @@ fn merge_terminal(
         (Some(b), Some(o)) => Some(PartialTerminal {
             show_images: o.show_images.or(b.show_images),
             show_progress: o.show_progress.or(b.show_progress),
+            clear_on_shrink: o.clear_on_shrink.or(b.clear_on_shrink),
+            auto_resize_images: o.auto_resize_images.or(b.auto_resize_images),
+            block_images: o.block_images.or(b.block_images),
         }),
     }
 }
@@ -147,6 +168,12 @@ impl PartialSettings {
             themes: merge_vec(self.themes, over.themes),
             theme: over.theme.or(self.theme),
             no_context_files: over.no_context_files.or(self.no_context_files),
+            hide_thinking_block: over.hide_thinking_block.or(self.hide_thinking_block),
+            collapse_changelog: over.collapse_changelog.or(self.collapse_changelog),
+            quiet_startup: over.quiet_startup.or(self.quiet_startup),
+            enable_skill_commands: over.enable_skill_commands.or(self.enable_skill_commands),
+            double_escape_action: over.double_escape_action.or(self.double_escape_action),
+            tree_filter_mode: over.tree_filter_mode.or(self.tree_filter_mode),
             terminal: merge_terminal(self.terminal, over.terminal),
             compaction: merge_compaction(self.compaction, over.compaction),
             retry: merge_retry(self.retry, over.retry),
@@ -174,9 +201,18 @@ impl PartialSettings {
             themes: self.themes.unwrap_or_default(),
             theme: self.theme,
             no_context_files: self.no_context_files.unwrap_or(false),
+            hide_thinking_block: self.hide_thinking_block.unwrap_or(false),
+            collapse_changelog: self.collapse_changelog.unwrap_or(false),
+            quiet_startup: self.quiet_startup.unwrap_or(false),
+            enable_skill_commands: self.enable_skill_commands.unwrap_or(true),
+            double_escape_action: self.double_escape_action.unwrap_or_else(|| "tree".to_string()),
+            tree_filter_mode: self.tree_filter_mode.unwrap_or_else(|| "default".to_string()),
             terminal: TerminalSettings {
                 show_images: t.show_images.unwrap_or(true),
                 show_progress: t.show_progress.unwrap_or(true),
+                clear_on_shrink: t.clear_on_shrink.unwrap_or(false),
+                auto_resize_images: t.auto_resize_images.unwrap_or(true),
+                block_images: t.block_images.unwrap_or(false),
             },
             compaction: CompactionSettings {
                 enabled: c.enabled.unwrap_or(true),
@@ -239,6 +275,15 @@ mod tests {
         assert_eq!(s.retry.max_retries, 3);
         assert_eq!(s.retry.base_delay_ms, 2000);
         assert!(s.default_model.is_none());
+        assert!(!s.hide_thinking_block);
+        assert!(!s.collapse_changelog);
+        assert!(!s.quiet_startup);
+        assert!(s.enable_skill_commands);
+        assert_eq!(s.double_escape_action, "tree");
+        assert_eq!(s.tree_filter_mode, "default");
+        assert!(!s.terminal.clear_on_shrink);
+        assert!(s.terminal.auto_resize_images);
+        assert!(!s.terminal.block_images);
     }
 
     #[test]
@@ -288,6 +333,7 @@ mod tests {
             terminal: Some(PartialTerminal {
                 show_images: Some(false),
                 show_progress: Some(false),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -309,11 +355,65 @@ mod tests {
     }
 
     #[test]
+    fn terminal_new_fields_merge_field_wise() {
+        let global = PartialSettings {
+            terminal: Some(PartialTerminal {
+                clear_on_shrink: Some(true),
+                auto_resize_images: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let project = PartialSettings {
+            terminal: Some(PartialTerminal {
+                auto_resize_images: Some(true),
+                block_images: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let s = global.merge(project).resolve();
+        assert!(s.terminal.clear_on_shrink);      // global survives
+        assert!(s.terminal.auto_resize_images);    // project overrides
+        assert!(s.terminal.block_images);          // project adds
+    }
+
+    #[test]
+    fn scalar_new_fields_merge_and_resolve() {
+        let global = PartialSettings {
+            hide_thinking_block: Some(true),
+            quiet_startup: Some(true),
+            double_escape_action: Some("fork".into()),
+            ..Default::default()
+        };
+        let project = PartialSettings {
+            hide_thinking_block: Some(false),
+            collapse_changelog: Some(true),
+            tree_filter_mode: Some("user-only".into()),
+            ..Default::default()
+        };
+        let s = global.merge(project).resolve();
+        assert!(!s.hide_thinking_block);           // project overrides
+        assert!(s.collapse_changelog);              // project adds
+        assert!(s.quiet_startup);                   // global survives
+        assert!(s.enable_skill_commands);            // default
+        assert_eq!(s.double_escape_action, "fork"); // global survives
+        assert_eq!(s.tree_filter_mode, "user-only");// project overrides
+    }
+
+    #[test]
     fn terminal_defaults_are_enabled_and_context_files_default_on() {
         let s = PartialSettings::default().resolve();
         assert!(s.terminal.show_images);
         assert!(s.terminal.show_progress);
+        assert!(!s.terminal.clear_on_shrink);
+        assert!(s.terminal.auto_resize_images);
+        assert!(!s.terminal.block_images);
         assert!(!s.no_context_files);
+        assert!(!s.hide_thinking_block);
+        assert!(s.enable_skill_commands);
+        assert_eq!(s.double_escape_action, "tree");
+        assert_eq!(s.tree_filter_mode, "default");
         assert!(s.theme.is_none());
     }
 

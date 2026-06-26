@@ -1245,6 +1245,240 @@ mod tests {
     }
 
     #[test]
+    fn settings_menu_auto_resize_images_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(root.settings.terminal.auto_resize_images);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..7 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(!root.settings.terminal.auto_resize_images);
+        let updated = root
+            .take_settings_update()
+            .expect("auto resize images toggle should emit settings update");
+        assert!(!updated.terminal.auto_resize_images);
+    }
+
+    #[test]
+    fn settings_menu_block_images_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(!root.settings.terminal.block_images);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..8 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(root.settings.terminal.block_images);
+        let updated = root
+            .take_settings_update()
+            .expect("block images toggle should emit settings update");
+        assert!(updated.terminal.block_images);
+    }
+
+    #[test]
+    fn settings_menu_skill_commands_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(root.settings.enable_skill_commands);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..9 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(!root.settings.enable_skill_commands);
+        let updated = root
+            .take_settings_update()
+            .expect("skill commands toggle should emit settings update");
+        assert!(!updated.enable_skill_commands);
+    }
+
+    #[test]
+    fn settings_menu_hide_thinking_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(!root.settings.hide_thinking_block);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..10 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(root.settings.hide_thinking_block);
+        let updated = root
+            .take_settings_update()
+            .expect("hide thinking toggle should emit settings update");
+        assert!(updated.hide_thinking_block);
+    }
+
+    #[test]
+    fn settings_menu_collapse_changelog_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(!root.settings.collapse_changelog);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..11 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(root.settings.collapse_changelog);
+        let updated = root
+            .take_settings_update()
+            .expect("collapse changelog toggle should emit settings update");
+        assert!(updated.collapse_changelog);
+    }
+
+    #[test]
+    fn settings_menu_quiet_startup_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(!root.settings.quiet_startup);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..12 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(root.settings.quiet_startup);
+        let updated = root
+            .take_settings_update()
+            .expect("quiet startup toggle should emit settings update");
+        assert!(updated.quiet_startup);
+    }
+
+    #[test]
+    fn settings_menu_clear_on_shrink_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(!root.settings.terminal.clear_on_shrink);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..13 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(root.settings.terminal.clear_on_shrink);
+        let updated = root
+            .take_settings_update()
+            .expect("clear on shrink toggle should emit settings update");
+        assert!(updated.terminal.clear_on_shrink);
+    }
+
+    #[test]
+    fn settings_menu_double_escape_action_cycles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert_eq!(root.settings.double_escape_action, "tree");
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..14 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.settings.double_escape_action, "fork");
+        let updated = root
+            .take_settings_update()
+            .expect("double escape toggle should emit settings update");
+        assert_eq!(updated.double_escape_action, "fork");
+    }
+
+    #[test]
+    fn settings_menu_tree_filter_mode_cycles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert_eq!(root.settings.tree_filter_mode, "default");
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..15 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.settings.tree_filter_mode, "no-tools");
+        let updated = root
+            .take_settings_update()
+            .expect("tree filter mode toggle should emit settings update");
+        assert_eq!(updated.tree_filter_mode, "no-tools");
+    }
+
+    #[test]
     fn settings_menu_toggles_auto_compaction_and_reports_settings_update() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
