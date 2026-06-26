@@ -155,6 +155,11 @@ pub fn paint_with_level(text: &str, style: &Style, level: ColorLevel) -> String 
         return text.to_string();
     }
 
+    // Downgrade RGB to the nearest 256-color index on Ansi256/Ansi16 terminals,
+    // mirroring TS `rgbTo256` (6x6x6 cube + grayscale, weighted luminance).
+    let fg = downsample_color(style.fg, level);
+    let bg = downsample_color(style.bg, level);
+
     let mut params: Vec<String> = Vec::new();
     if style.bold {
         params.push("1".to_string());
@@ -174,10 +179,90 @@ pub fn paint_with_level(text: &str, style: &Style, level: ColorLevel) -> String 
     if style.reverse {
         params.push("7".to_string());
     }
-    params.extend(style.fg.sgr_params(true));
-    params.extend(style.bg.sgr_params(false));
+    params.extend(fg.sgr_params(true));
+    params.extend(bg.sgr_params(false));
 
     format!("\x1b[{}m{}\x1b[0m", params.join(";"), text)
+}
+
+/// Downsample a [`Color`] for the terminal's color level. RGB values are
+/// quantized to the 256-color palette on `Ansi256`/`Ansi16` terminals
+/// (mirrors TS `rgbTo256`); `TrueColor` leaves them unchanged. Non-RGB colors
+/// pass through at any level.
+fn downsample_color(color: Color, level: ColorLevel) -> Color {
+    if level >= ColorLevel::TrueColor {
+        return color;
+    }
+    match color {
+        Color::Rgb(r, g, b) => Color::Ansi256(rgb_to_256(r, g, b)),
+        other => other,
+    }
+}
+
+/// Quantize an RGB color to the nearest 256-color palette index, mirroring TS
+/// `rgbTo256`. Picks the closer of the 6x6x6 cube and the grayscale ramp
+/// (weighted-luminance distance); saturated colors prefer the cube to keep
+/// their tint.
+fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
+    const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    // Grayscale ramp 232-255: 24 shades from 8 to 238.
+    let gray_values: [u8; 24] = std::array::from_fn(|i| (8 + i * 10) as u8);
+
+    let r_idx = nearest_cube_index(r);
+    let g_idx = nearest_cube_index(g);
+    let b_idx = nearest_cube_index(b);
+    let cube_index: u8 = (16 + 36 * r_idx + 6 * g_idx + b_idx) as u8;
+    let cube_dist = color_distance(r, g, b, CUBE[r_idx], CUBE[g_idx], CUBE[b_idx]);
+
+    let gray = ((0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64).round()) as u8;
+    let (gray_idx, gray_value) = nearest_gray(gray, &gray_values);
+    let gray_index = 232 + gray_idx as u8;
+    let gray_dist = color_distance(r, g, b, gray_value, gray_value, gray_value);
+
+    // Prefer the cube for noticeably saturated colors; only use grayscale when
+    // the color is nearly neutral AND closer to gray.
+    let spread = r.max(g).max(b).saturating_sub(r.min(g).min(b));
+    if spread < 10 && gray_dist < cube_dist {
+        gray_index
+    } else {
+        cube_index
+    }
+}
+
+fn nearest_cube_index(value: u8) -> usize {
+    const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let mut best = 0;
+    let mut best_dist = u32::MAX;
+    for (i, c) in CUBE.iter().enumerate() {
+        let dist = value.abs_diff(*c) as u32;
+        if dist < best_dist {
+            best_dist = dist;
+            best = i;
+        }
+    }
+    best
+}
+
+fn nearest_gray(value: u8, gray_values: &[u8]) -> (usize, u8) {
+    let mut best = 0;
+    let mut best_dist = u32::MAX;
+    for (i, g) in gray_values.iter().enumerate() {
+        let dist = value.abs_diff(*g) as u32;
+        if dist < best_dist {
+            best_dist = dist;
+            best = i;
+        }
+    }
+    (best, gray_values[best])
+}
+
+/// Weighted squared distance (human eye is more sensitive to green), mirroring
+/// TS `colorDistance`.
+fn color_distance(r1: u8, g1: u8, b1: u8, r2: u8, g2: u8, b2: u8) -> u32 {
+    let dr = r1 as i32 - r2 as i32;
+    let dg = g1 as i32 - g2 as i32;
+    let db = b1 as i32 - b2 as i32;
+    (dr * dr * 299 + dg * dg * 587 + db * db * 114) as u32 / 1000
 }
 
 static CACHED_COLOR_LEVEL: OnceLock<ColorLevel> = OnceLock::new();

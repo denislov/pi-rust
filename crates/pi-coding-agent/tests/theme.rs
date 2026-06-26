@@ -460,3 +460,84 @@ fn highlight_falls_back_for_no_language() {
     // No lang -> mdCodeBlock single color; should NOT contain keyword colors.
     assert!(!lines[0].contains("\x1b[38;2;86;156;214m"));
 }
+
+// --- HTML export colors (mirrors getThemeExportColors / isLightTheme) ---
+
+#[test]
+fn is_light_theme_checks_name() {
+    use pi_coding_agent::theme::is_light_theme;
+    assert!(is_light_theme(Some("light")));
+    assert!(!is_light_theme(Some("dark")));
+    assert!(!is_light_theme(Some("custom")));
+    assert!(!is_light_theme(None));
+}
+
+#[test]
+fn export_colors_resolve_vars_and_convert_256_to_hex() {
+    use pi_coding_agent::theme::{ThemeJson, get_theme_export_colors};
+    // Build a theme with export vars (recursive + 256-color + hex).
+    let json: ThemeJson = serde_json::from_str(
+        r##"{
+        "name": "export-test",
+        "vars": {
+            "pageBgVar": "#112233",
+            "pageBgAlias": "pageBgVar",
+            "infoBgVar": "#445566",
+            "cardBgVar": "#223344",
+            "gray256": 242
+        },
+        "colors": {
+            "accent": "#000000", "border": "#000000", "borderAccent": "#000000",
+            "borderMuted": "#000000", "success": "#000000", "error": "#000000",
+            "warning": "#000000", "muted": "#000000", "dim": "#000000", "text": "#000000",
+            "thinkingText": "#000000", "selectedBg": "#000000", "userMessageBg": "#000000",
+            "userMessageText": "#000000", "customMessageBg": "#000000",
+            "customMessageText": "#000000", "customMessageLabel": "#000000",
+            "toolPendingBg": "#000000", "toolSuccessBg": "#000000", "toolErrorBg": "#000000",
+            "toolTitle": "#000000", "toolOutput": "#000000", "mdHeading": "#000000",
+            "mdLink": "#000000", "mdLinkUrl": "#000000", "mdCode": "#000000",
+            "mdCodeBlock": "#000000", "mdCodeBlockBorder": "#000000", "mdQuote": "#000000",
+            "mdQuoteBorder": "#000000", "mdHr": "#000000", "mdListBullet": "#000000",
+            "toolDiffAdded": "#000000", "toolDiffRemoved": "#000000",
+            "toolDiffContext": "#000000", "syntaxComment": "#000000",
+            "syntaxKeyword": "#000000", "syntaxFunction": "#000000",
+            "syntaxVariable": "#000000", "syntaxString": "#000000",
+            "syntaxNumber": "#000000", "syntaxType": "#000000",
+            "syntaxOperator": "#000000", "syntaxPunctuation": "#000000",
+            "thinkingOff": "#000000", "thinkingMinimal": "#000000",
+            "thinkingLow": "#000000", "thinkingMedium": "#000000",
+            "thinkingHigh": "#000000", "thinkingXhigh": "#000000", "bashMode": "#000000"
+        },
+        "export": {
+            "pageBg": "pageBgAlias",
+            "cardBg": "cardBgVar",
+            "infoBg": "infoBgVar"
+        }
+    }"##,
+    )
+    .unwrap();
+    let export = get_theme_export_colors(&json);
+    assert_eq!(export.page_bg.as_deref(), Some("#112233"));
+    assert_eq!(export.card_bg.as_deref(), Some("#223344"));
+    assert_eq!(export.info_bg.as_deref(), Some("#445566"));
+}
+
+#[test]
+fn export_colors_omit_unset_and_convert_256() {
+    use pi_coding_agent::theme::{ThemeJson, get_theme_export_colors};
+    // No export section -> all None.
+    let json: ThemeJson = serde_json::from_str(
+        r##"{"name":"noexport","colors":{"accent":"#000000","border":"#000000","borderAccent":"#000000","borderMuted":"#000000","success":"#000000","error":"#000000","warning":"#000000","muted":"#000000","dim":"#000000","text":"#000000","thinkingText":"#000000","selectedBg":"#000000","userMessageBg":"#000000","userMessageText":"#000000","customMessageBg":"#000000","customMessageText":"#000000","customMessageLabel":"#000000","toolPendingBg":"#000000","toolSuccessBg":"#000000","toolErrorBg":"#000000","toolTitle":"#000000","toolOutput":"#000000","mdHeading":"#000000","mdLink":"#000000","mdLinkUrl":"#000000","mdCode":"#000000","mdCodeBlock":"#000000","mdCodeBlockBorder":"#000000","mdQuote":"#000000","mdQuoteBorder":"#000000","mdHr":"#000000","mdListBullet":"#000000","toolDiffAdded":"#000000","toolDiffRemoved":"#000000","toolDiffContext":"#000000","syntaxComment":"#000000","syntaxKeyword":"#000000","syntaxFunction":"#000000","syntaxVariable":"#000000","syntaxString":"#000000","syntaxNumber":"#000000","syntaxType":"#000000","syntaxOperator":"#000000","syntaxPunctuation":"#000000","thinkingOff":"#000000","thinkingMinimal":"#000000","thinkingLow":"#000000","thinkingMedium":"#000000","thinkingHigh":"#000000","thinkingXhigh":"#000000","bashMode":"#000000"}}"##,
+    ).unwrap();
+    let export = get_theme_export_colors(&json);
+    assert_eq!(export.page_bg, None);
+    assert_eq!(export.card_bg, None);
+    assert_eq!(export.info_bg, None);
+
+    // 256-color export value -> nearest hex (242 -> #6c6c6c).
+    let with_256: ThemeJson = serde_json::from_str(
+        r##"{"name":"export256","colors":{"accent":"#000000","border":"#000000","borderAccent":"#000000","borderMuted":"#000000","success":"#000000","error":"#000000","warning":"#000000","muted":"#000000","dim":"#000000","text":"#000000","thinkingText":"#000000","selectedBg":"#000000","userMessageBg":"#000000","userMessageText":"#000000","customMessageBg":"#000000","customMessageText":"#000000","customMessageLabel":"#000000","toolPendingBg":"#000000","toolSuccessBg":"#000000","toolErrorBg":"#000000","toolTitle":"#000000","toolOutput":"#000000","mdHeading":"#000000","mdLink":"#000000","mdLinkUrl":"#000000","mdCode":"#000000","mdCodeBlock":"#000000","mdCodeBlockBorder":"#000000","mdQuote":"#000000","mdQuoteBorder":"#000000","mdHr":"#000000","mdListBullet":"#000000","toolDiffAdded":"#000000","toolDiffRemoved":"#000000","toolDiffContext":"#000000","syntaxComment":"#000000","syntaxKeyword":"#000000","syntaxFunction":"#000000","syntaxVariable":"#000000","syntaxString":"#000000","syntaxNumber":"#000000","syntaxType":"#000000","syntaxOperator":"#000000","syntaxPunctuation":"#000000","thinkingOff":"#000000","thinkingMinimal":"#000000","thinkingLow":"#000000","thinkingMedium":"#000000","thinkingHigh":"#000000","thinkingXhigh":"#000000","bashMode":"#000000"},"export":{"infoBg":242}}"##,
+    ).unwrap();
+    let export = get_theme_export_colors(&with_256);
+    assert_eq!(export.info_bg.as_deref(), Some("#6c6c6c"));
+}

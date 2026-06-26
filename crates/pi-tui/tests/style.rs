@@ -132,3 +132,27 @@ fn style_italic_underline_strikethrough_builders_set_flags() {
     assert!(style.strikethrough);
     assert!(!style.bold);
 }
+
+#[test]
+fn paint_with_ansi256_level_quantizes_rgb_to_256_color() {
+    // In a 256-color terminal, RGB colors are downgraded to the nearest
+    // 256 palette index (mirrors TS rgbTo256). Pure red (255,0,0) -> index 196.
+    let style = Style::fg(Color::Rgb(255, 0, 0));
+    let painted = paint_with_level("hi", &style, ColorLevel::Ansi256);
+    assert!(
+        painted.starts_with("\x1b[38;5;"),
+        "expected 256-color sequence, got: {painted:?}"
+    );
+    assert!(
+        painted.contains("196"),
+        "red(255,0,0) should map near 196: {painted:?}"
+    );
+}
+
+#[test]
+fn paint_with_truecolor_level_keeps_rgb() {
+    // TrueColor terminals keep the full RGB sequence.
+    let style = Style::fg(Color::Rgb(255, 0, 0));
+    let painted = paint_with_level("hi", &style, ColorLevel::TrueColor);
+    assert_eq!(painted, "\x1b[38;2;255;0;0mhi\x1b[0m");
+}

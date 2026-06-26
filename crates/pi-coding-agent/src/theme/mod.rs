@@ -9,6 +9,7 @@
 mod builtin;
 mod color_value;
 mod detection;
+mod export;
 mod json;
 mod reload;
 mod resolve;
@@ -22,6 +23,9 @@ pub use detection::{
     DetectionConfidence, DetectionSource, Rgb, TerminalBackgroundDetection, TerminalTheme,
     detect_terminal_background, get_default_theme, get_theme_for_rgb_color,
     parse_osc11_background_color,
+};
+pub use export::{
+    ThemeExportColors, get_resolved_theme_colors, get_theme_export_colors, is_light_theme,
 };
 pub use json::{ExportSection, ThemeJson};
 pub use reload::{ThemeReloadSignal, ThemeWatcher, should_watch_target};
