@@ -35,7 +35,7 @@ use crate::interactive::root::{
 use crate::interactive::session_actions::{SessionChoice, collect_session_choices};
 #[cfg(test)]
 use crate::interactive::slash::{
-    BUILTIN_SLASH_COMMANDS, ParsedSlashCommand, help_text, parse_slash_command,
+    ParsedSlashCommand, builtin_slash_commands, help_text, parse_slash_command,
 };
 #[cfg(test)]
 use crate::interactive::{Transcript, TranscriptItem, UiEvent};
@@ -907,13 +907,13 @@ mod tests {
 
     #[test]
     fn slash_registry_contains_typescript_builtin_commands() {
-        let names: Vec<&str> = BUILTIN_SLASH_COMMANDS
+        let names: Vec<String> = builtin_slash_commands()
             .iter()
-            .map(|command| command.name)
+            .map(|command| command.name.clone())
             .collect();
         assert_eq!(
             names,
-            vec![
+            [
                 "help",
                 "settings",
                 "model",
@@ -936,7 +936,7 @@ mod tests {
                 "resume",
                 "reload",
                 "quit",
-            ]
+            ].map(String::from)
         );
     }
 
@@ -1475,7 +1475,7 @@ mod tests {
     #[test]
     fn help_text_lists_all_builtin_commands() {
         let help = help_text();
-        for command in BUILTIN_SLASH_COMMANDS {
+        for command in builtin_slash_commands() {
             assert!(
                 help.contains(&format!("/{}", command.name)),
                 "help text should list /{}: {help}",

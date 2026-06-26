@@ -740,6 +740,7 @@ impl InteractiveRoot {
             self.slash_suggestions_dismissed_for.as_deref(),
             &mut self.slash_suggestion_selected,
             width,
+            &slash::builtin_slash_commands(),
         )
     }
 
@@ -883,6 +884,7 @@ impl InteractiveRoot {
             &mut self.editor,
             &mut self.slash_suggestion_selected,
             &mut self.slash_suggestions_dismissed_for,
+            &slash::builtin_slash_commands(),
         )
     }
 

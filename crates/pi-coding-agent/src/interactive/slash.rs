@@ -7,102 +7,38 @@ use crate::interactive::render::fit_line;
 
 const MAX_SLASH_SUGGESTIONS: usize = 5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct BuiltinSlashCommand {
-    pub(super) name: &'static str,
-    pub(super) description: &'static str,
+    pub(super) name: String,
+    pub(super) description: String,
 }
 
-pub(super) const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
-    BuiltinSlashCommand {
-        name: "help",
-        description: "Show help",
-    },
-    BuiltinSlashCommand {
-        name: "settings",
-        description: "Open settings menu",
-    },
-    BuiltinSlashCommand {
-        name: "model",
-        description: "Select model",
-    },
-    BuiltinSlashCommand {
-        name: "scoped-models",
-        description: "Enable or disable models for cycling",
-    },
-    BuiltinSlashCommand {
-        name: "export",
-        description: "Export session",
-    },
-    BuiltinSlashCommand {
-        name: "import",
-        description: "Import and resume a session from JSONL",
-    },
-    BuiltinSlashCommand {
-        name: "share",
-        description: "Share session as a secret GitHub gist",
-    },
-    BuiltinSlashCommand {
-        name: "copy",
-        description: "Copy last assistant message to clipboard",
-    },
-    BuiltinSlashCommand {
-        name: "name",
-        description: "Show or set the session display name",
-    },
-    BuiltinSlashCommand {
-        name: "session",
-        description: "Show session info and stats",
-    },
-    BuiltinSlashCommand {
-        name: "changelog",
-        description: "Show changelog entries",
-    },
-    BuiltinSlashCommand {
-        name: "hotkeys",
-        description: "Show keyboard shortcuts",
-    },
-    BuiltinSlashCommand {
-        name: "fork",
-        description: "Create a new fork from a previous user message",
-    },
-    BuiltinSlashCommand {
-        name: "clone",
-        description: "Duplicate the current session at the current position",
-    },
-    BuiltinSlashCommand {
-        name: "tree",
-        description: "Navigate session tree",
-    },
-    BuiltinSlashCommand {
-        name: "login",
-        description: "Configure provider authentication",
-    },
-    BuiltinSlashCommand {
-        name: "logout",
-        description: "Remove provider authentication",
-    },
-    BuiltinSlashCommand {
-        name: "new",
-        description: "Start a new session",
-    },
-    BuiltinSlashCommand {
-        name: "compact",
-        description: "Manually compact the session context",
-    },
-    BuiltinSlashCommand {
-        name: "resume",
-        description: "Resume a different session",
-    },
-    BuiltinSlashCommand {
-        name: "reload",
-        description: "Reload keybindings and resources",
-    },
-    BuiltinSlashCommand {
-        name: "quit",
-        description: "Quit pi",
-    },
-];
+pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
+    vec![
+        BuiltinSlashCommand { name: "help".into(), description: "Show help".into() },
+        BuiltinSlashCommand { name: "settings".into(), description: "Open settings menu".into() },
+        BuiltinSlashCommand { name: "model".into(), description: "Select model".into() },
+        BuiltinSlashCommand { name: "scoped-models".into(), description: "Enable or disable models for cycling".into() },
+        BuiltinSlashCommand { name: "export".into(), description: "Export session".into() },
+        BuiltinSlashCommand { name: "import".into(), description: "Import and resume a session from JSONL".into() },
+        BuiltinSlashCommand { name: "share".into(), description: "Share session as a secret GitHub gist".into() },
+        BuiltinSlashCommand { name: "copy".into(), description: "Copy last assistant message to clipboard".into() },
+        BuiltinSlashCommand { name: "name".into(), description: "Show or set the session display name".into() },
+        BuiltinSlashCommand { name: "session".into(), description: "Show session info and stats".into() },
+        BuiltinSlashCommand { name: "changelog".into(), description: "Show changelog entries".into() },
+        BuiltinSlashCommand { name: "hotkeys".into(), description: "Show keyboard shortcuts".into() },
+        BuiltinSlashCommand { name: "fork".into(), description: "Create a new fork from a previous user message".into() },
+        BuiltinSlashCommand { name: "clone".into(), description: "Duplicate the current session at the current position".into() },
+        BuiltinSlashCommand { name: "tree".into(), description: "Navigate session tree".into() },
+        BuiltinSlashCommand { name: "login".into(), description: "Configure provider authentication".into() },
+        BuiltinSlashCommand { name: "logout".into(), description: "Remove provider authentication".into() },
+        BuiltinSlashCommand { name: "new".into(), description: "Start a new session".into() },
+        BuiltinSlashCommand { name: "compact".into(), description: "Manually compact the session context".into() },
+        BuiltinSlashCommand { name: "resume".into(), description: "Resume a different session".into() },
+        BuiltinSlashCommand { name: "reload".into(), description: "Reload keybindings and resources".into() },
+        BuiltinSlashCommand { name: "quit".into(), description: "Quit pi".into() },
+    ]
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ParsedSlashCommand {
@@ -153,12 +89,13 @@ fn suggestion_indices(
     text: &str,
     cursor: usize,
     dismissed_for: Option<&str>,
+    commands: &[BuiltinSlashCommand],
 ) -> Option<Vec<usize>> {
     if dismissed_for.is_some_and(|dismissed| dismissed == text) {
         return None;
     }
     let query = slash_completion_query(text, cursor)?;
-    let indices = fuzzy_filter_indices(BUILTIN_SLASH_COMMANDS, query, |command| {
+    let indices = fuzzy_filter_indices(commands, query, |command| {
         command.name.to_string()
     });
     (!indices.is_empty()).then_some(indices)
@@ -170,8 +107,9 @@ pub(super) fn render_suggestions(
     dismissed_for: Option<&str>,
     selected: &mut usize,
     width: usize,
+    commands: &[BuiltinSlashCommand],
 ) -> Vec<String> {
-    let Some(indices) = suggestion_indices(text, cursor, dismissed_for) else {
+    let Some(indices) = suggestion_indices(text, cursor, dismissed_for, commands) else {
         return Vec::new();
     };
     *selected = (*selected).min(indices.len().saturating_sub(1));
@@ -189,7 +127,7 @@ pub(super) fn render_suggestions(
         .enumerate()
     {
         let absolute_index = window_start + visible_offset;
-        let command = &BUILTIN_SLASH_COMMANDS[command_index];
+        let command = &commands[command_index];
         let label = format!("/{}", command.name);
         let marker = if absolute_index == *selected {
             "->"
@@ -198,7 +136,7 @@ pub(super) fn render_suggestions(
         };
         let line = format!(
             "{marker} {label:<17} {}",
-            paint_with(command.description, &SYSTEM, color)
+            paint_with(&command.description, &SYSTEM, color)
         );
         if absolute_index == *selected {
             lines.push(fit_line(&paint_with(&line, &USER, color), width));
@@ -223,9 +161,10 @@ pub(super) fn handle_suggestion_input(
     editor: &mut Editor,
     selected: &mut usize,
     dismissed_for: &mut Option<String>,
+    commands: &[BuiltinSlashCommand],
 ) -> bool {
     let Some(indices) =
-        suggestion_indices(editor.text(), editor.cursor(), dismissed_for.as_deref())
+        suggestion_indices(editor.text(), editor.cursor(), dismissed_for.as_deref(), commands)
     else {
         return false;
     };
@@ -250,7 +189,7 @@ pub(super) fn handle_suggestion_input(
         .is_some_and(|query| {
             indices
                 .iter()
-                .any(|index| BUILTIN_SLASH_COMMANDS[*index].name == query)
+                .any(|index| commands[*index].name == query)
         });
     if keybindings.matches(event, "tui.select.confirm") && exact_query_matches_command {
         return false;
@@ -259,7 +198,7 @@ pub(super) fn handle_suggestion_input(
         || keybindings.matches(event, "tui.input.tab")
     {
         let command_index = indices[(*selected).min(indices.len() - 1)];
-        let command = &BUILTIN_SLASH_COMMANDS[command_index];
+        let command = &commands[command_index];
         editor.set_text(format!("/{} ", command.name));
         *selected = 0;
         *dismissed_for = None;
@@ -274,11 +213,12 @@ pub(super) fn handle_suggestion_input(
 }
 
 pub(super) fn help_text() -> String {
+    let commands = builtin_slash_commands();
     let mut lines = vec![
         "commands:".to_string(),
         "  /help, /h, /? - show this help".to_string(),
     ];
-    for command in BUILTIN_SLASH_COMMANDS {
+    for command in commands {
         if command.name == "help" {
             continue;
         }
