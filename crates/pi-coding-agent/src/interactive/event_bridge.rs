@@ -8,6 +8,9 @@ pub enum UiEvent {
     AssistantDelta {
         text: String,
     },
+    ThinkingDelta {
+        text: String,
+    },
     AssistantDone,
     ToolStarted {
         call_id: String,
@@ -140,6 +143,11 @@ impl InteractiveEventBridge {
         match event {
             AssistantMessageEvent::TextDelta { delta, .. } => {
                 vec![UiEvent::AssistantDelta {
+                    text: delta.clone(),
+                }]
+            }
+            AssistantMessageEvent::ThinkingDelta { delta, .. } => {
+                vec![UiEvent::ThinkingDelta {
                     text: delta.clone(),
                 }]
             }

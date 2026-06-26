@@ -6,6 +6,7 @@ pub enum TranscriptItem {
     Assistant {
         id: String,
         markdown: String,
+        thinking: String,
         done: bool,
     },
     Tool {
@@ -32,6 +33,7 @@ impl TranscriptItem {
         Self::Assistant {
             id: id.into(),
             markdown: markdown.into(),
+            thinking: String::new(),
             done,
         }
     }
@@ -106,6 +108,7 @@ impl Transcript {
         match event {
             UiEvent::AgentStarted | UiEvent::TurnStarted => {}
             UiEvent::AssistantDelta { text } => self.append_assistant_delta(&text),
+            UiEvent::ThinkingDelta { text } => self.append_assistant_thinking(&text),
             UiEvent::AssistantDone => self.mark_assistant_done(),
             UiEvent::ToolStarted {
                 call_id,
@@ -128,6 +131,7 @@ impl Transcript {
             UiEvent::CompactionNotice { summary } => self.push(TranscriptItem::Assistant {
                 id: format!("compaction_{}", self.items.len()),
                 markdown: summary,
+                thinking: String::new(),
                 done: true,
             }),
             UiEvent::UsageUpdate { .. } => {}
@@ -157,6 +161,35 @@ impl Transcript {
         self.push(TranscriptItem::Assistant {
             id: format!("assistant_{}", self.items.len()),
             markdown: text.to_string(),
+            thinking: String::new(),
+            done: false,
+        });
+    }
+
+    fn append_assistant_thinking(&mut self, text: &str) {
+        let was_scrolled = self.scroll_offset > 0;
+        if let Some(TranscriptItem::Assistant { thinking, done, .. }) = self
+            .items
+            .iter_mut()
+            .rev()
+            .find(|item| matches!(item, TranscriptItem::Assistant { done: false, .. }))
+        {
+            if was_scrolled {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
+                self.new_output_below = true;
+            } else {
+                self.scroll_offset = 0;
+                self.new_output_below = false;
+            }
+            thinking.push_str(text);
+            *done = false;
+            return;
+        }
+
+        self.push(TranscriptItem::Assistant {
+            id: format!("assistant_{}", self.items.len()),
+            markdown: String::new(),
+            thinking: text.to_string(),
             done: false,
         });
     }
@@ -175,6 +208,7 @@ impl Transcript {
         self.push(TranscriptItem::Assistant {
             id: format!("assistant_{}", self.items.len()),
             markdown: String::new(),
+            thinking: String::new(),
             done: true,
         });
     }

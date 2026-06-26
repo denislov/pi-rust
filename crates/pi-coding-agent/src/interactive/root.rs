@@ -383,6 +383,7 @@ impl InteractiveRoot {
                 MAX_TOOL_RESULT_LINES,
                 color_enabled(),
                 &self.markdown_theme(),
+                self.settings.hide_thinking_block,
             )
             .len()
         } else {
@@ -417,6 +418,7 @@ impl InteractiveRoot {
                 MAX_TOOL_RESULT_LINES,
                 color_enabled(),
                 &self.markdown_theme(),
+                self.settings.hide_thinking_block,
             )
             .len();
             self.transcript.preserve_scrolled_view_after_hidden_change(
@@ -1054,6 +1056,7 @@ impl Component for InteractiveRoot {
             max_tool_result_lines,
             color_enabled(),
             &self.markdown_theme(),
+            self.settings.hide_thinking_block,
         );
         lines.extend(self.render_editor_box(width));
         if self.selecting_model {

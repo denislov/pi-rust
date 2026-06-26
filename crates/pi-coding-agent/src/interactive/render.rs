@@ -13,6 +13,7 @@ pub(super) fn render_transcript_lines(
     max_tool_result_lines: usize,
     color: bool,
     markdown_theme: &pi_tui::MarkdownTheme,
+    hide_thinking_block: bool,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     let mut previous_was_finished_tool = false;
@@ -36,13 +37,29 @@ pub(super) fn render_transcript_lines(
                 .split('\n')
                 .map(|line| fit_line(&paint_with(line, &SYSTEM, color), width))
                 .collect(),
-            TranscriptItem::Assistant { markdown, .. } => {
-                let mut markdown = Markdown::new(markdown).with_theme(markdown_theme.clone());
-                markdown
-                    .render(width)
-                    .into_iter()
-                    .map(|line| fit_line(&line, width))
-                    .collect::<Vec<_>>()
+            TranscriptItem::Assistant {
+                markdown,
+                thinking,
+                ..
+            } => {
+                let mut lines = Vec::new();
+                if !thinking.is_empty() && !hide_thinking_block {
+                    let thinking_style = Style::fg(Color::Yellow).italic();
+                    for line in thinking.lines() {
+                        lines.push(fit_line(
+                            &paint_with(line, &thinking_style, color),
+                            width,
+                        ));
+                    }
+                }
+                if !markdown.is_empty() {
+                    let mut markdown =
+                        Markdown::new(markdown).with_theme(markdown_theme.clone());
+                    lines.extend(markdown.render(width).into_iter().map(|line| {
+                        fit_line(&line, width)
+                    }));
+                }
+                lines
             }
             TranscriptItem::Tool {
                 name,
