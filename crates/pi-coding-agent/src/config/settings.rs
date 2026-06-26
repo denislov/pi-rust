@@ -270,7 +270,9 @@ impl PartialSettings {
             npm_command: merge_vec(self.npm_command, over.npm_command),
             http_proxy: over.http_proxy.or(self.http_proxy),
             http_idle_timeout_ms: over.http_idle_timeout_ms.or(self.http_idle_timeout_ms),
-            websocket_connect_timeout_ms: over.websocket_connect_timeout_ms.or(self.websocket_connect_timeout_ms),
+            websocket_connect_timeout_ms: over
+                .websocket_connect_timeout_ms
+                .or(self.websocket_connect_timeout_ms),
             enabled_models: merge_vec(self.enabled_models, over.enabled_models),
             warnings: merge_warnings(self.warnings, over.warnings),
             terminal: merge_terminal(self.terminal, over.terminal),
@@ -304,8 +306,12 @@ impl PartialSettings {
             collapse_changelog: self.collapse_changelog.unwrap_or(false),
             quiet_startup: self.quiet_startup.unwrap_or(false),
             enable_skill_commands: self.enable_skill_commands.unwrap_or(true),
-            double_escape_action: self.double_escape_action.unwrap_or_else(|| "tree".to_string()),
-            tree_filter_mode: self.tree_filter_mode.unwrap_or_else(|| "default".to_string()),
+            double_escape_action: self
+                .double_escape_action
+                .unwrap_or_else(|| "tree".to_string()),
+            tree_filter_mode: self
+                .tree_filter_mode
+                .unwrap_or_else(|| "default".to_string()),
             shell_path: self.shell_path,
             shell_command_prefix: self.shell_command_prefix,
             npm_command: self.npm_command.unwrap_or_else(|| vec!["npm".to_string()]),
@@ -410,9 +416,7 @@ pub fn merge_and_save_settings(
                 _ => None,
             })
             .unwrap_or_default(),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            toml::value::Table::new()
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => toml::value::Table::new(),
         Err(err) => {
             diags.push(ConfigDiagnostic::warn(
                 format!("failed to read settings file: {err}"),
@@ -613,9 +617,9 @@ mod tests {
             ..Default::default()
         };
         let s = global.merge(project).resolve();
-        assert!(s.terminal.clear_on_shrink);      // global survives
-        assert!(s.terminal.auto_resize_images);    // project overrides
-        assert!(s.terminal.block_images);          // project adds
+        assert!(s.terminal.clear_on_shrink); // global survives
+        assert!(s.terminal.auto_resize_images); // project overrides
+        assert!(s.terminal.block_images); // project adds
     }
 
     #[test]
@@ -633,12 +637,12 @@ mod tests {
             ..Default::default()
         };
         let s = global.merge(project).resolve();
-        assert!(!s.hide_thinking_block);           // project overrides
-        assert!(s.collapse_changelog);              // project adds
-        assert!(s.quiet_startup);                   // global survives
-        assert!(s.enable_skill_commands);            // default
+        assert!(!s.hide_thinking_block); // project overrides
+        assert!(s.collapse_changelog); // project adds
+        assert!(s.quiet_startup); // global survives
+        assert!(s.enable_skill_commands); // default
         assert_eq!(s.double_escape_action, "fork"); // global survives
-        assert_eq!(s.tree_filter_mode, "user-only");// project overrides
+        assert_eq!(s.tree_filter_mode, "user-only"); // project overrides
     }
 
     #[test]
@@ -815,9 +819,21 @@ mod tests {
         // Read back and verify merge
         let saved = std::fs::read_to_string(global.join("settings.toml")).unwrap();
         let parsed: PartialSettings = toml::from_str(&saved).unwrap();
-        assert_eq!(parsed.default_model.as_deref(), Some("claude-3"), "existing field preserved");
-        assert_eq!(parsed.transport.as_deref(), Some("sse"), "existing field preserved");
-        assert_eq!(parsed.theme.as_deref(), Some("light"), "delta field written");
+        assert_eq!(
+            parsed.default_model.as_deref(),
+            Some("claude-3"),
+            "existing field preserved"
+        );
+        assert_eq!(
+            parsed.transport.as_deref(),
+            Some("sse"),
+            "existing field preserved"
+        );
+        assert_eq!(
+            parsed.theme.as_deref(),
+            Some("light"),
+            "delta field written"
+        );
     }
 
     #[test]
@@ -891,10 +907,9 @@ mod tests {
             }),
             ..Default::default()
         };
-        let toml_str = toml::to_string_pretty(&original)
-            .expect("serialize should succeed");
-        let parsed: PartialSettings = toml::from_str(&toml_str)
-            .expect("deserialize should succeed");
+        let toml_str = toml::to_string_pretty(&original).expect("serialize should succeed");
+        let parsed: PartialSettings =
+            toml::from_str(&toml_str).expect("deserialize should succeed");
         assert_eq!(original, parsed);
     }
 }

@@ -105,6 +105,7 @@ pub(super) struct InteractiveRoot {
     pub(super) settings: Settings,
     settings_list: SettingsList,
     settings_update: Option<Settings>,
+    settings_delta: crate::config::settings::PartialSettings,
     pub(super) auth: AuthStore,
     auth_update: Option<AuthStore>,
     pub(super) git_branch: GitBranchProvider,
@@ -244,6 +245,7 @@ impl InteractiveRoot {
             settings,
             settings_list,
             settings_update: None,
+            settings_delta: crate::config::settings::PartialSettings::default(),
             auth,
             auth_update: None,
             stats: FooterStats::default(),
@@ -298,6 +300,10 @@ impl InteractiveRoot {
 
     pub(super) fn take_settings_update(&mut self) -> Option<Settings> {
         self.settings_update.take()
+    }
+
+    pub(super) fn settings_delta(&self) -> &crate::config::settings::PartialSettings {
+        &self.settings_delta
     }
 
     pub(super) fn take_auth_update(&mut self) -> Option<AuthStore> {
@@ -794,58 +800,97 @@ impl InteractiveRoot {
         match id {
             "theme" => {
                 self.settings.theme = Some(value.to_string());
+                self.settings_delta.theme = Some(value.to_string());
                 self.apply_builtin_theme(value);
             }
             "auto_compaction" => {
                 self.settings.compaction.enabled = value == "on";
+                self.settings_delta
+                    .compaction
+                    .get_or_insert_with(|| crate::config::settings::PartialCompaction::default())
+                    .enabled = Some(value == "on");
             }
             "transport" => {
                 self.settings.transport = value.to_string();
+                self.settings_delta.transport = Some(value.to_string());
             }
             "steering_mode" => {
                 self.settings.steering_mode = value.to_string();
+                self.settings_delta.steering_mode = Some(value.to_string());
             }
             "follow_up_mode" => {
                 self.settings.follow_up_mode = value.to_string();
+                self.settings_delta.follow_up_mode = Some(value.to_string());
             }
             "show_images" => {
                 self.settings.terminal.show_images = value == "on";
+                self.settings_delta
+                    .terminal
+                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .show_images = Some(value == "on");
             }
             "show_progress" => {
                 self.settings.terminal.show_progress = value == "on";
+                self.settings_delta
+                    .terminal
+                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .show_progress = Some(value == "on");
             }
             "auto_resize_images" => {
                 self.settings.terminal.auto_resize_images = value == "on";
+                self.settings_delta
+                    .terminal
+                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .auto_resize_images = Some(value == "on");
             }
             "block_images" => {
                 self.settings.terminal.block_images = value == "on";
+                self.settings_delta
+                    .terminal
+                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .block_images = Some(value == "on");
             }
             "enable_skill_commands" => {
                 self.settings.enable_skill_commands = value == "on";
+                self.settings_delta.enable_skill_commands = Some(value == "on");
             }
             "hide_thinking_block" => {
                 self.settings.hide_thinking_block = value == "on";
+                self.settings_delta.hide_thinking_block = Some(value == "on");
             }
             "collapse_changelog" => {
                 self.settings.collapse_changelog = value == "on";
+                self.settings_delta.collapse_changelog = Some(value == "on");
             }
             "quiet_startup" => {
                 self.settings.quiet_startup = value == "on";
+                self.settings_delta.quiet_startup = Some(value == "on");
             }
             "clear_on_shrink" => {
                 self.settings.terminal.clear_on_shrink = value == "on";
+                self.settings_delta
+                    .terminal
+                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .clear_on_shrink = Some(value == "on");
             }
             "double_escape_action" => {
                 self.settings.double_escape_action = value.to_string();
+                self.settings_delta.double_escape_action = Some(value.to_string());
             }
             "tree_filter_mode" => {
                 self.settings.tree_filter_mode = value.to_string();
+                self.settings_delta.tree_filter_mode = Some(value.to_string());
             }
             "warnings_anthropic_extra_usage" => {
                 self.settings.warnings.anthropic_extra_usage = value == "on";
+                self.settings_delta
+                    .warnings
+                    .get_or_insert_with(|| crate::config::settings::PartialWarnings::default())
+                    .anthropic_extra_usage = Some(value == "on");
             }
             "default_thinking_level" => {
                 self.settings.default_thinking_level = Some(value.to_string());
+                self.settings_delta.default_thinking_level = Some(value.to_string());
                 // Also update the active thinking level so the editor border reflects it
                 if let Ok(level) = value.parse::<pi_agent_core::ThinkingLevel>() {
                     self.thinking_level = level;

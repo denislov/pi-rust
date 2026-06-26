@@ -448,7 +448,14 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, true, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                80,
+                3,
+                true,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec![format!(
                 "{} {} src/lib.rs {}",
                 yellow("tool"),
@@ -457,7 +464,14 @@ mod tests {
             )]
         );
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, false, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                80,
+                3,
+                false,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec!["tool read src/lib.rs running"]
         );
 
@@ -468,7 +482,14 @@ mod tests {
         });
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, true, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                80,
+                3,
+                true,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec![
                 format!(
                     "{} {} src/lib.rs {}",
@@ -483,7 +504,14 @@ mod tests {
             ]
         );
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, false, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                80,
+                3,
+                false,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec![
                 "tool read src/lib.rs done",
                 "line 1",
@@ -494,7 +522,14 @@ mod tests {
         );
 
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 20, true, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                80,
+                20,
+                true,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec![
                 format!(
                     "{} {} src/lib.rs {}",
@@ -580,7 +615,14 @@ mod tests {
         transcript.apply_event(UiEvent::AssistantDone);
 
         assert_eq!(
-            render_transcript_lines(&transcript, 40, 3, false, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                40,
+                3,
+                false,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec![
                 "tool read src/lib.rs done",
                 "contents",
@@ -599,11 +641,25 @@ mod tests {
             text: "boom".to_string(),
         });
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, true, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                80,
+                3,
+                true,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec![format!("{}: {}", red_bold("error"), red_bold("boom"))]
         );
         assert_eq!(
-            render_transcript_lines(&transcript, 80, 3, false, &pi_tui::MarkdownTheme::default(), false),
+            render_transcript_lines(
+                &transcript,
+                80,
+                3,
+                false,
+                &pi_tui::MarkdownTheme::default(),
+                false
+            ),
             vec!["error: boom"]
         );
     }
@@ -953,7 +1009,8 @@ mod tests {
                 "resume",
                 "reload",
                 "quit",
-            ].map(String::from)
+            ]
+            .map(String::from)
         );
     }
 
@@ -1549,10 +1606,7 @@ mod tests {
         let updated = root
             .take_settings_update()
             .expect("thinking level toggle should emit settings update");
-        assert_eq!(
-            updated.default_thinking_level.as_deref(),
-            Some("minimal")
-        );
+        assert_eq!(updated.default_thinking_level.as_deref(), Some("minimal"));
     }
 
     #[test]
@@ -1580,6 +1634,51 @@ mod tests {
         let rendered = root.render(80).join("\n");
         assert!(rendered.contains("Auto compact"), "{rendered}");
         assert!(rendered.contains("off"), "{rendered}");
+    }
+
+    #[test]
+    fn settings_menu_tracks_changes_in_settings_delta() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        // Initially empty delta (no changes tracked yet)
+        {
+            let delta = root.settings_delta();
+            assert!(delta.theme.is_none());
+            assert!(delta.compaction.is_none());
+            assert!(delta.transport.is_none());
+        }
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        // Cycle theme (Enter on first item)
+        root.handle_input(&key_event("\r"));
+
+        // Verify delta tracks the theme change
+        {
+            let delta = root.settings_delta();
+            assert_eq!(delta.theme.as_deref(), Some("light"), "delta tracks theme");
+        }
+
+        // Cycle auto_compaction
+        root.handle_input(&key_event("\x1b[B")); // down to auto_compaction
+        root.handle_input(&key_event("\r"));
+
+        {
+            let delta = root.settings_delta();
+            assert_eq!(
+                delta.theme.as_deref(),
+                Some("light"),
+                "delta still has theme"
+            );
+            let compaction = delta.compaction.as_ref().expect("compaction delta");
+            assert_eq!(compaction.enabled, Some(false), "delta tracks compaction");
+        }
     }
 
     #[test]
@@ -2382,7 +2481,6 @@ mod tests {
 
     #[test]
     fn expand_skill_command_expands_to_xml_block() {
-
         let skills = vec![pi_agent_core::Skill {
             name: "rust".into(),
             description: "Rust".into(),
@@ -2402,19 +2500,14 @@ mod tests {
 
     #[test]
     fn expand_skill_command_unknown_passes_through() {
-
-        let result = crate::interactive::commands::expand_skill_command(
-            "/skill:unknown do something",
-            &[],
-        );
+        let result =
+            crate::interactive::commands::expand_skill_command("/skill:unknown do something", &[]);
         assert_eq!(result, "/skill:unknown do something");
     }
 
     #[test]
     fn expand_skill_command_non_skill_passes_through() {
-
-        let result =
-            crate::interactive::commands::expand_skill_command("/help", &[]);
+        let result = crate::interactive::commands::expand_skill_command("/help", &[]);
         assert_eq!(result, "/help");
     }
 
@@ -2422,7 +2515,6 @@ mod tests {
 
     #[test]
     fn expand_prompt_template_substitutes_args() {
-
         let templates = vec![pi_agent_core::PromptTemplate {
             name: "review".into(),
             description: "Review".into(),
@@ -2430,28 +2522,20 @@ mod tests {
             location: "/prompts/review.md".into(),
         }];
 
-        let result = crate::interactive::commands::expand_prompt_template(
-            "/review code tests",
-            &templates,
-        );
+        let result =
+            crate::interactive::commands::expand_prompt_template("/review code tests", &templates);
         assert_eq!(result, "Review code and code tests");
     }
 
     #[test]
     fn expand_prompt_template_unknown_passes_through() {
-
-        let result = crate::interactive::commands::expand_prompt_template(
-            "/unknown blah",
-            &[],
-        );
+        let result = crate::interactive::commands::expand_prompt_template("/unknown blah", &[]);
         assert_eq!(result, "/unknown blah");
     }
 
     #[test]
     fn expand_prompt_template_non_slash_passes_through() {
-
-        let result =
-            crate::interactive::commands::expand_prompt_template("just text", &[]);
+        let result = crate::interactive::commands::expand_prompt_template("just text", &[]);
         assert_eq!(result, "just text");
     }
 
@@ -2459,7 +2543,6 @@ mod tests {
 
     #[test]
     fn handle_unknown_slash_command_with_template_expands_and_submits() {
-
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
@@ -2492,7 +2575,6 @@ mod tests {
 
     #[test]
     fn handle_unknown_slash_command_with_skill_expands_and_submits() {
-
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
@@ -2524,7 +2606,6 @@ mod tests {
 
     #[test]
     fn handle_builtin_slash_command_still_works_with_templates_loaded() {
-
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
@@ -2555,7 +2636,6 @@ mod tests {
 
     #[test]
     fn all_slash_commands_includes_templates_and_skills() {
-
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
@@ -2635,8 +2715,7 @@ mod tests {
 
         let result = root.expand_prompt_text("/skill:rust write code");
         assert_eq!(
-            result,
-            "/skill:rust write code",
+            result, "/skill:rust write code",
             "skill command should pass through when disabled"
         );
     }
