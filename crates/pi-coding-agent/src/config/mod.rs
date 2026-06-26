@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub use auth::AuthStore;
 pub use paths::{ConfigPaths, resolve as resolve_paths};
-pub use settings::Settings;
+pub use settings::{Settings, SettingsScope};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticSeverity {

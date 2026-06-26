@@ -2,6 +2,13 @@ use crate::config::{ConfigDiagnostic, ConfigPaths};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Which settings file to target when saving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsScope {
+    Global,
+    Project,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PartialCompaction {
@@ -334,6 +341,124 @@ impl PartialSettings {
     }
 }
 
+/// Recursively merge `over` table into `base` table. `over` overwrites `base`.
+fn merge_toml_tables(base: &mut toml::value::Table, over: &toml::value::Table) {
+    for (key, value) in over {
+        match (base.get_mut(key), value) {
+            (Some(toml::Value::Table(base_table)), toml::Value::Table(over_table)) => {
+                merge_toml_tables(base_table, over_table);
+            }
+            _ => {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+/// Merge a `PartialSettings` delta into the settings file for the given
+/// scope and write it back to disk. Only non-`None` fields in `delta`
+/// overwrite matching keys in the file; `None` fields are left untouched.
+/// Creates the file if it doesn't exist.
+pub fn merge_and_save_settings(
+    paths: &ConfigPaths,
+    scope: SettingsScope,
+    delta: &PartialSettings,
+    diags: &mut Vec<ConfigDiagnostic>,
+) {
+    let path = match scope {
+        SettingsScope::Global => paths.global_settings(),
+        SettingsScope::Project => paths.project_settings(),
+    };
+
+    // Serialize delta to TOML string, then parse as Value::Table.
+    // Because PartialSettings uses skip_serializing_if = Option::is_none,
+    // only fields that are Some(...) appear in the output.
+    let delta_str = match toml::to_string(delta) {
+        Ok(s) => s,
+        Err(err) => {
+            diags.push(ConfigDiagnostic::warn(
+                format!("failed to serialize settings delta: {err}"),
+                Some(path),
+            ));
+            return;
+        }
+    };
+    let delta_value: toml::Value = match toml::from_str(&delta_str) {
+        Ok(v) => v,
+        Err(err) => {
+            diags.push(ConfigDiagnostic::warn(
+                format!("failed to parse serialized delta: {err}"),
+                Some(path),
+            ));
+            return;
+        }
+    };
+    let Some(delta_table) = delta_value.as_table() else {
+        diags.push(ConfigDiagnostic::warn(
+            "settings delta produced a non-table value".to_string(),
+            Some(path),
+        ));
+        return;
+    };
+
+    // Read existing file content, or start with an empty table
+    let mut current_table = match std::fs::read_to_string(&path) {
+        Ok(text) => toml::from_str::<toml::Value>(&text)
+            .ok()
+            .and_then(|v| match v {
+                toml::Value::Table(t) => Some(t),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            toml::value::Table::new()
+        }
+        Err(err) => {
+            diags.push(ConfigDiagnostic::warn(
+                format!("failed to read settings file: {err}"),
+                Some(path),
+            ));
+            return;
+        }
+    };
+
+    // Merge delta into current
+    merge_toml_tables(&mut current_table, delta_table);
+
+    // Serialize merged table and write
+    let merged_value = toml::Value::Table(current_table);
+    let merged_str = match toml::to_string_pretty(&merged_value) {
+        Ok(s) => s,
+        Err(err) => {
+            diags.push(ConfigDiagnostic::warn(
+                format!("failed to serialize merged settings: {err}"),
+                Some(path),
+            ));
+            return;
+        }
+    };
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                diags.push(ConfigDiagnostic::warn(
+                    format!("failed to create settings dir: {err}"),
+                    Some(path),
+                ));
+                return;
+            }
+        }
+    }
+
+    if let Err(err) = std::fs::write(&path, merged_str) {
+        diags.push(ConfigDiagnostic::warn(
+            format!("failed to write settings file: {err}"),
+            Some(path),
+        ));
+    }
+}
+
 pub fn load_partial(path: &Path, diags: &mut Vec<ConfigDiagnostic>) -> PartialSettings {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -650,6 +775,103 @@ mod tests {
         assert_eq!(s.skills, vec!["global-skill", "project-skill"]);
         assert_eq!(s.prompts, vec!["global-prompt", "project-prompt"]);
         assert_eq!(s.themes, vec!["global-theme", "project-theme"]);
+    }
+
+    #[test]
+    fn merge_and_save_settings_writes_delta_and_preserves_existing() {
+        use crate::config::ConfigPaths;
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("global");
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+
+        // Write an existing settings file with a field we won't touch
+        std::fs::write(
+            global.join("settings.toml"),
+            "default_model = \"claude-3\"\ntransport = \"sse\"\n",
+        )
+        .unwrap();
+
+        let paths = ConfigPaths {
+            global_dir: global.clone(),
+            project_dir: project.clone(),
+        };
+        let delta = PartialSettings {
+            theme: Some("light".into()),
+            ..Default::default()
+        };
+
+        let mut diags = Vec::new();
+        crate::config::settings::merge_and_save_settings(
+            &paths,
+            crate::config::SettingsScope::Global,
+            &delta,
+            &mut diags,
+        );
+
+        assert!(diags.is_empty(), "diags: {diags:?}");
+
+        // Read back and verify merge
+        let saved = std::fs::read_to_string(global.join("settings.toml")).unwrap();
+        let parsed: PartialSettings = toml::from_str(&saved).unwrap();
+        assert_eq!(parsed.default_model.as_deref(), Some("claude-3"), "existing field preserved");
+        assert_eq!(parsed.transport.as_deref(), Some("sse"), "existing field preserved");
+        assert_eq!(parsed.theme.as_deref(), Some("light"), "delta field written");
+    }
+
+    #[test]
+    fn merge_and_save_settings_creates_file_when_missing() {
+        use crate::config::ConfigPaths;
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        let paths = ConfigPaths {
+            global_dir: global.clone(),
+            project_dir: dir.path().join("project"),
+        };
+        let delta = PartialSettings {
+            theme: Some("dark".into()),
+            ..Default::default()
+        };
+        let mut diags = Vec::new();
+        merge_and_save_settings(&paths, SettingsScope::Global, &delta, &mut diags);
+        assert!(diags.is_empty());
+        let saved = std::fs::read_to_string(global.join("settings.toml")).unwrap();
+        assert!(saved.contains("dark"));
+    }
+
+    #[test]
+    fn merge_and_save_settings_handles_nested_delta_merge() {
+        use crate::config::ConfigPaths;
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join("settings.toml"),
+            "[compaction]\nenabled = true\nreserve_tokens = 16384\n",
+        )
+        .unwrap();
+        let paths = ConfigPaths {
+            global_dir: global.clone(),
+            project_dir: dir.path().join("project"),
+        };
+        // Only change compaction.enabled
+        let delta = PartialSettings {
+            compaction: Some(PartialCompaction {
+                enabled: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut diags = Vec::new();
+        merge_and_save_settings(&paths, SettingsScope::Global, &delta, &mut diags);
+        assert!(diags.is_empty());
+        let saved = std::fs::read_to_string(global.join("settings.toml")).unwrap();
+        let parsed: PartialSettings = toml::from_str(&saved).unwrap();
+        let c = parsed.compaction.unwrap();
+        assert!(!c.enabled.unwrap(), "delta overrides");
+        assert_eq!(c.reserve_tokens, Some(16384), "existing field preserved");
     }
 
     #[test]
