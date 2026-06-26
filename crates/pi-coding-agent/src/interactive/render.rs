@@ -348,7 +348,38 @@ fn render_error_message(
 /// width so the background fills the row (mirrors `pi_tui::Box` background
 /// handling). When color is disabled this collapses to a plain padded line,
 /// so layout (spacing/indent) is preserved on colorless terminals.
+///
+/// `text` may already carry foreground ANSI codes (e.g. the user-message
+/// text color). Those nested resets would normally drop the background for
+/// the rest of the row, so when a background is applied we rewrite inner
+/// `\x1b[0m` (full reset) to `\x1b[39m` (foreground-only reset, mirroring
+/// TS `theme.bg` which closes with `\x1b[49m`). This keeps the background
+/// span unbroken across the trailing padding.
 fn paint_bg_line(text: &str, width: usize, bg: &Style, color: bool) -> String {
+    let padded = pad_to_width(text, width);
+    if !color || bg.bg == Color::Default {
+        // No background to apply: keep the padded line verbatim (foreground
+        // codes, if any, stay as-is).
+        return padded;
+    }
+    // Rewrite inner full-resets so the background survives the content's
+    // own foreground reset.
+    let content = padded.replace("\x1b[0m", "\x1b[39m");
+    let bg_style = Style {
+        fg: Color::Default,
+        bg: bg.bg,
+        bold: false,
+        dim: false,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+        reverse: false,
+    };
+    paint_with(&content, &bg_style, color)
+}
+
+/// Pad `text` with trailing spaces to `width`, truncating if it overflows.
+fn pad_to_width(text: &str, width: usize) -> String {
     let mut line = if visible_width(text) <= width {
         text.to_string()
     } else {
@@ -358,7 +389,7 @@ fn paint_bg_line(text: &str, width: usize, bg: &Style, color: bool) -> String {
     if line_width < width {
         line.push_str(&" ".repeat(width - line_width));
     }
-    paint_with(&line, bg, color)
+    line
 }
 
 fn render_tool_block(
@@ -862,6 +893,73 @@ mod tests {
         for line in &lines {
             assert_eq!(visible_width(line), 20, "row must fill width: {lines:?}");
         }
+    }
+
+    #[test]
+    fn user_message_background_fills_full_width_with_color() {
+        // Regression: with color enabled and a real theme, the user-message
+        // background must cover the full row width — including the trailing
+        // padding after the content. The content's own foreground reset
+        // (\x1b[0m) must not bleed into a full reset that drops the
+        // background for the rest of the row (TS theme.bg uses \x1b[49m,
+        // a background-only reset, so nesting stays clean).
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::user("hi"));
+
+        let resolved = builtin_dark()
+            .resolve_colors()
+            .expect("dark theme resolves");
+        let styles = TranscriptStyles::from_theme(Some(&resolved));
+        let opts = TranscriptRenderOptions {
+            width: 30,
+            max_tool_result_lines: 3,
+            color: true,
+            markdown_theme: pi_tui::MarkdownTheme::default(),
+            hide_thinking_block: false,
+            hidden_thinking_label: "Thinking...",
+            styles,
+        };
+        let lines = render_transcript_lines(&transcript, &opts);
+
+        // Every row must carry the userMessageBg background escape and end
+        // with a reset, so the background spans the whole width.
+        for (i, line) in lines.iter().enumerate() {
+            assert!(
+                line.starts_with("\x1b[48;2;52;53;65m"),
+                "row {i} missing bg open: {line:?}"
+            );
+            assert!(
+                line.ends_with("\x1b[0m"),
+                "row {i} missing bg close: {line:?}"
+            );
+            assert_eq!(visible_width(line), 30, "row {i} not full width: {line:?}");
+        }
+
+        // The content row's trailing padding must stay inside the
+        // background span: the content's inner reset must be a
+        // foreground-only reset (\x1b[39m), NOT a full reset (\x1b[0m),
+        // so the background opened at the start of the row covers the
+        // trailing spaces all the way to the row's final reset.
+        let content = &lines[1];
+        let hi_pos = content.find("hi").expect("content present");
+        let after_hi = &content[hi_pos + 2..];
+        assert!(
+            after_hi.starts_with("\x1b[39m"),
+            "content reset should be foreground-only (\\x1b[39m), got: {content:?}"
+        );
+        // No full reset appears before the final row reset, so the bg span is
+        // unbroken across the trailing padding.
+        let inner = &content[..content.len() - "\x1b[0m".len()];
+        assert_eq!(
+            inner.matches("\x1b[0m").count(),
+            0,
+            "inner full reset would break the bg span: {content:?}"
+        );
+        assert_eq!(
+            inner.matches("\x1b[48;2;52;53;65m").count(),
+            1,
+            "bg should open exactly once: {content:?}"
+        );
     }
 
     #[test]
