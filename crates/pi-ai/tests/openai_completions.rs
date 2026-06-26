@@ -1,11 +1,13 @@
 use bytes::Bytes;
 use futures::stream;
-use pi_ai::compat::{ModelCompat, OpenAICompletionsCompat};
+use pi_ai::compat::{
+    ModelCompat, OpenAICompletionsCompat, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue,
+};
 use pi_ai::providers::openai::completions;
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
-    StopReason, StreamOptions, Tool,
+    StopReason, StreamOptions, ThinkingConfig, Tool,
 };
 
 fn test_model() -> Model {
@@ -39,6 +41,25 @@ fn test_model() -> Model {
 fn fixture_bytes(path: &str) -> Vec<Bytes> {
     let content = std::fs::read_to_string(path).unwrap();
     vec![Bytes::from(content)]
+}
+
+fn deepseek_reasoning_model() -> Model {
+    let mut model = test_model();
+    model.reasoning = true;
+    model.thinking_level_map = Some(ThinkingLevelMap {
+        high: Some(ThinkingLevelValue::String("high".into())),
+        xhigh: Some(ThinkingLevelValue::String("max".into())),
+        ..Default::default()
+    });
+    model.compat = Some(ModelCompat::OpenAICompletions(OpenAICompletionsCompat {
+        thinking_format: Some(ThinkingFormat::DeepSeek),
+        max_tokens_field: Some("max_tokens".into()),
+        supports_usage_in_streaming: Some(true),
+        supports_developer_role: Some(false),
+        requires_reasoning_content_on_assistant_messages: Some(true),
+        ..Default::default()
+    }));
+    model
 }
 
 #[test]
@@ -106,6 +127,62 @@ fn completions_request_maps_context_tools_and_options() {
     assert_eq!(req.tools.unwrap().len(), 1);
 }
 
+#[test]
+fn completions_request_enables_deepseek_thinking() {
+    let model = deepseek_reasoning_model();
+    let ctx = Context {
+        system_prompt: None,
+        messages: vec![Message::User {
+            content: vec![ContentBlock::Text {
+                text: "Think carefully.".into(),
+                text_signature: None,
+            }],
+        }],
+        tools: None,
+    };
+    let opts = StreamOptions {
+        thinking: Some(ThinkingConfig {
+            enabled: true,
+            budget_tokens: Some(16384),
+            effort: Some("xhigh".into()),
+        }),
+        ..Default::default()
+    };
+
+    let req = completions::convert::build_request(&model, &ctx, &Some(opts));
+    let json = serde_json::to_value(&req).unwrap();
+
+    assert_eq!(json["thinking"], serde_json::json!({ "type": "enabled" }));
+    assert_eq!(json["reasoning_effort"], "max");
+}
+
+#[test]
+fn completions_request_replays_deepseek_assistant_reasoning_content() {
+    let model = deepseek_reasoning_model();
+    let ctx = Context {
+        system_prompt: None,
+        messages: vec![Message::Assistant {
+            content: vec![
+                ContentBlock::Thinking {
+                    thinking: "prior reasoning".into(),
+                    thinking_signature: None,
+                    redacted: None,
+                },
+                ContentBlock::Text {
+                    text: "prior answer".into(),
+                    text_signature: None,
+                },
+            ],
+        }],
+        tools: None,
+    };
+
+    let req = completions::convert::build_request(&model, &ctx, &None);
+    let json = serde_json::to_value(&req).unwrap();
+
+    assert_eq!(json["messages"][0]["reasoning_content"], "prior reasoning");
+}
+
 #[tokio::test]
 async fn completions_fixture_maps_text_tool_usage_and_done() {
     let body = stream::iter(
@@ -146,6 +223,45 @@ async fn completions_fixture_maps_text_tool_usage_and_done() {
             );
         }
         _ => panic!("expected Done event, got {:?}", last),
+    }
+}
+
+#[tokio::test]
+async fn completions_stream_maps_reasoning_content_to_thinking_events() {
+    let body = stream::iter(
+        vec![Bytes::from(
+            concat!(
+                "data: {\"id\":\"chatcmpl-thinking\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"consider\"},\"finish_reason\":null}],\"usage\":null}\n\n",
+                "data: {\"id\":\"chatcmpl-thinking\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":5,\"total_tokens\":8}}\n\n",
+                "data: [DONE]\n\n"
+            ),
+        )]
+        .into_iter()
+        .map(Ok::<_, String>),
+    );
+    let model = deepseek_reasoning_model();
+    let event_stream = completions::process::process(body, model, None);
+    use futures::StreamExt;
+
+    let events: Vec<_> = event_stream.collect().await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AssistantMessageEvent::ThinkingDelta { delta, .. } if delta == "consider"
+    )));
+
+    match events.last().unwrap() {
+        AssistantMessageEvent::Done { message, .. } => {
+            assert!(message.content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Thinking { thinking, .. } if thinking == "consider"
+            )));
+            assert!(message.content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Text { text, .. } if text == "answer"
+            )));
+        }
+        other => panic!("expected Done event, got {other:?}"),
     }
 }
 

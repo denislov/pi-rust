@@ -17,6 +17,10 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<ChatTool>>,
     #[serde(rename = "tool_choice", skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<serde_json::Value>,
+    #[serde(rename = "reasoning_effort", skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub stream: bool,
     #[serde(rename = "stream_options", skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
@@ -38,6 +42,8 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(rename = "tool_call_id", skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +119,12 @@ pub struct ChoiceDelta {
 pub struct Delta {
     #[serde(default)]
     pub content: Option<String>,
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
+    #[serde(default)]
+    pub reasoning: Option<String>,
+    #[serde(default)]
+    pub reasoning_text: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
     #[serde(default)]

@@ -32,6 +32,7 @@ where
 struct CompletionsHandler {
     first_event: bool,
     text_content_index: Option<u32>,
+    thinking_content_index: Option<u32>,
     tool_index_map: HashMap<u32, u32>,
     tool_args_acc: HashMap<u32, String>,
     finish_reason: Option<String>,
@@ -92,6 +93,34 @@ impl SseEventHandler for CompletionsHandler {
                     events.push(AssistantMessageEvent::TextDelta {
                         content_index: ci,
                         delta: text_delta.clone(),
+                        partial: partial.clone(),
+                    });
+                }
+            }
+
+            if let Some(reasoning_delta) = first_reasoning_delta(&choice.delta) {
+                if !reasoning_delta.is_empty() {
+                    if self.thinking_content_index.is_none() {
+                        self.thinking_content_index = Some(partial.content.len() as u32);
+                        partial.content.push(ContentBlock::Thinking {
+                            thinking: String::new(),
+                            thinking_signature: None,
+                            redacted: None,
+                        });
+                        events.push(AssistantMessageEvent::ThinkingStart {
+                            content_index: self.thinking_content_index.unwrap(),
+                            partial: partial.clone(),
+                        });
+                    }
+                    let ci = self.thinking_content_index.unwrap();
+                    if let Some(ContentBlock::Thinking { thinking, .. }) =
+                        partial.content.get_mut(ci as usize)
+                    {
+                        thinking.push_str(reasoning_delta);
+                    }
+                    events.push(AssistantMessageEvent::ThinkingDelta {
+                        content_index: ci,
+                        delta: reasoning_delta.to_string(),
                         partial: partial.clone(),
                     });
                 }
@@ -181,6 +210,13 @@ impl SseEventHandler for CompletionsHandler {
             });
         }
 
+        if let Some(ci) = self.thinking_content_index {
+            events.push(AssistantMessageEvent::ThinkingEnd {
+                content_index: ci,
+                partial: partial.clone(),
+            });
+        }
+
         for (oi, pos) in &self.tool_index_map {
             let acc = self.tool_args_acc.get(oi).map(|s| s.as_str()).unwrap_or("");
             let parsed = parse_streaming_json(acc);
@@ -203,6 +239,20 @@ impl SseEventHandler for CompletionsHandler {
 
         events
     }
+}
+
+fn first_reasoning_delta(delta: &wire::Delta) -> Option<&str> {
+    delta
+        .reasoning_content
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .or_else(|| delta.reasoning.as_deref().filter(|value| !value.is_empty()))
+        .or_else(|| {
+            delta
+                .reasoning_text
+                .as_deref()
+                .filter(|value| !value.is_empty())
+        })
 }
 
 fn map_finish_reason(reason: Option<&str>) -> StopReason {
