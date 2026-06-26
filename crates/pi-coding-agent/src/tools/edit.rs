@@ -1,4 +1,7 @@
-use crate::tools::edit_diff::{generate_diff_string, generate_unified_patch};
+use crate::tools::edit_diff::{
+    TextReplacement, apply_replacements_preserving_unchanged_lines, generate_diff_string,
+    generate_unified_patch,
+};
 use crate::tools::file_mutation_queue::with_file_mutation_queue;
 use crate::tools::path::resolve_to_cwd;
 use futures::future::{BoxFuture, FutureExt};
@@ -82,6 +85,21 @@ fn count_occurrences(content: &str, old: &str) -> usize {
     content.matches(old).count()
 }
 
+/// Try an exact match first; on failure, try a fuzzy-normalized match.
+/// Returns `(found, match_index, match_length, used_fuzzy)`. Mirrors TS
+/// `fuzzyFindText` (offsets are in the content used for replacement).
+fn fuzzy_find_text(content: &str, old_text: &str) -> (bool, usize, usize, bool) {
+    if let Some(idx) = content.find(old_text) {
+        return (true, idx, old_text.len(), false);
+    }
+    let fuzzy_content = normalize_for_fuzzy(content);
+    let fuzzy_old = normalize_for_fuzzy(old_text);
+    if let Some(idx) = fuzzy_content.find(&fuzzy_old) {
+        return (true, idx, fuzzy_old.len(), true);
+    }
+    (false, 0, 0, false)
+}
+
 fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, String), String> {
     let total = edits.len();
     let norm: Vec<Edit> = edits
@@ -102,27 +120,29 @@ fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, 
         }
     }
 
-    for (i, e) in norm.iter().enumerate() {
-        if !normalized.contains(&e.old_text)
-            && normalize_for_fuzzy(normalized).contains(&normalize_for_fuzzy(&e.old_text))
-        {
-            return Err(fuzzy_refused(path, i, total));
-        }
-    }
+    // Match each edit: exact first, then fuzzy-normalized. If any edit uses
+    // fuzzy matching, replacements run in fuzzy-normalized space and are then
+    // overlaid onto the original content so unchanged lines keep their original
+    // bytes (TS `applyEditsToNormalizedContent` +
+    // `applyReplacementsPreservingUnchangedLines`).
+    let used_fuzzy = norm.iter().any(|e| !normalized.contains(&e.old_text));
+    let base: String = if used_fuzzy {
+        normalize_for_fuzzy(normalized)
+    } else {
+        normalized.to_string()
+    };
 
-    let base = normalized.to_string();
     let mut matched: Vec<(usize, usize, usize, String)> = Vec::new();
-
     for (i, e) in norm.iter().enumerate() {
-        let (idx, len, new) = match base.find(&e.old_text) {
-            Some(ix) => (ix, e.old_text.len(), e.new_text.clone()),
-            None => return Err(not_found(path, i, total)),
-        };
+        let (found, idx, len, _fuzzy) = fuzzy_find_text(&base, &e.old_text);
+        if !found {
+            return Err(not_found(path, i, total));
+        }
         let occ = count_occurrences(&base, &e.old_text);
         if occ > 1 {
             return Err(duplicate(path, i, total, occ));
         }
-        matched.push((i, idx, len, new));
+        matched.push((i, idx, len, e.new_text.clone()));
     }
 
     matched.sort_by_key(|m| m.1);
@@ -136,11 +156,31 @@ fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, 
         }
     }
 
-    let mut new_content = base.clone();
-    for (_, idx, len, new) in matched.iter().rev() {
-        new_content.replace_range(*idx..*idx + *len, new);
-    }
-    if base == new_content {
+    let base_content = normalized.to_string();
+    let new_content = if used_fuzzy {
+        let replacements: Vec<TextReplacement<'_>> = matched
+            .iter()
+            .map(|(_, idx, len, new)| TextReplacement {
+                match_index: *idx,
+                match_length: *len,
+                new_text: new.as_str(),
+            })
+            .collect();
+        apply_replacements_preserving_unchanged_lines(normalized, &base, &replacements)
+            .ok_or_else(|| {
+                format!(
+                    "Could not align fuzzy match to original lines in {path}. Provide oldText exactly as it appears in the file."
+                )
+            })?
+    } else {
+        let mut out = base.clone();
+        for (_, idx, len, new) in matched.iter().rev() {
+            out.replace_range(*idx..*idx + *len, new);
+        }
+        out
+    };
+
+    if base_content == new_content {
         return Err(if total == 1 {
             format!(
                 "No changes made to {path}. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected."
@@ -149,19 +189,7 @@ fn apply_edits(normalized: &str, edits: &[Edit], path: &str) -> Result<(String, 
             format!("No changes made to {path}. The replacements produced identical content.")
         });
     }
-    Ok((base, new_content))
-}
-
-fn fuzzy_refused(path: &str, i: usize, total: usize) -> String {
-    if total == 1 {
-        format!(
-            "Could not find an exact match in {path}. A fuzzy-normalized match exists, but edit refuses fuzzy rewrites because they can alter unrelated text. Provide oldText exactly as it appears in the file."
-        )
-    } else {
-        format!(
-            "Could not find an exact match for edits[{i}] in {path}. A fuzzy-normalized match exists, but edit refuses fuzzy rewrites because they can alter unrelated text. Provide oldText exactly as it appears in the file."
-        )
-    }
+    Ok((base_content, new_content))
 }
 
 fn not_found(path: &str, i: usize, total: usize) -> String {

@@ -179,6 +179,31 @@ async fn fuzzy_preserves_replacement_text() {
 }
 
 #[tokio::test]
+async fn fuzzy_preserves_unmatched_lines_original_bytes() {
+    // Safety contract (TS applyReplacementsPreservingUnchangedLines): when an
+    // edit matches via fuzzy normalization, only the touched lines are
+    // rewritten from the normalized base; unchanged lines keep their original
+    // bytes. A smart quote on an untouched line must survive verbatim.
+    let d = tempdir().unwrap();
+    let p = d.path().join("f.txt");
+    // Line 1 has smart quotes (untouched); line 2 is the fuzzy target written
+    // with ASCII quotes in oldText.
+    std::fs::write(
+        &p,
+        "keep \u{2018}this\u{2019} line\nreplace \u{2018}me\u{2019} here\n",
+    )
+    .unwrap();
+    edit_execute(
+        d.path(),
+        serde_json::json!({"path":"f.txt","edits":[{"oldText":"replace 'me' here","newText":"done"}]}),
+    )
+    .await
+    .unwrap();
+    let result = std::fs::read_to_string(&p).unwrap();
+    assert_eq!(result, "keep \u{2018}this\u{2019} line\ndone\n");
+}
+
+#[tokio::test]
 async fn crlf_preserved() {
     let d = tempdir().unwrap();
     let p = d.path().join("f.txt");
