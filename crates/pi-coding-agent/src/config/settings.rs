@@ -20,6 +20,12 @@ pub struct PartialRetry {
 
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct PartialWarnings {
+    pub anthropic_extra_usage: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PartialTerminal {
     pub show_images: Option<bool>,
     pub show_progress: Option<bool>,
@@ -56,6 +62,8 @@ pub struct PartialSettings {
     pub http_proxy: Option<String>,
     pub http_idle_timeout_ms: Option<u64>,
     pub websocket_connect_timeout_ms: Option<u64>,
+    pub enabled_models: Option<Vec<String>>,
+    pub warnings: Option<PartialWarnings>,
     pub terminal: Option<PartialTerminal>,
     pub compaction: Option<PartialCompaction>,
     pub retry: Option<PartialRetry>,
@@ -73,6 +81,11 @@ pub struct RetrySettings {
     pub enabled: bool,
     pub max_retries: u32,
     pub base_delay_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WarningsSettings {
+    pub anthropic_extra_usage: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +124,8 @@ pub struct Settings {
     pub http_proxy: Option<String>,
     pub http_idle_timeout_ms: u64,
     pub websocket_connect_timeout_ms: u64,
+    pub enabled_models: Vec<String>,
+    pub warnings: WarningsSettings,
     pub terminal: TerminalSettings,
     pub compaction: CompactionSettings,
     pub retry: RetrySettings,
@@ -158,6 +173,18 @@ fn merge_terminal(
     }
 }
 
+fn merge_warnings(
+    base: Option<PartialWarnings>,
+    over: Option<PartialWarnings>,
+) -> Option<PartialWarnings> {
+    match (base, over) {
+        (None, x) | (x, None) => x,
+        (Some(b), Some(o)) => Some(PartialWarnings {
+            anthropic_extra_usage: o.anthropic_extra_usage.or(b.anthropic_extra_usage),
+        }),
+    }
+}
+
 fn merge_vec(base: Option<Vec<String>>, over: Option<Vec<String>>) -> Option<Vec<String>> {
     match (base, over) {
         (None, x) | (x, None) => x,
@@ -195,6 +222,8 @@ impl PartialSettings {
             http_proxy: over.http_proxy.or(self.http_proxy),
             http_idle_timeout_ms: over.http_idle_timeout_ms.or(self.http_idle_timeout_ms),
             websocket_connect_timeout_ms: over.websocket_connect_timeout_ms.or(self.websocket_connect_timeout_ms),
+            enabled_models: merge_vec(self.enabled_models, over.enabled_models),
+            warnings: merge_warnings(self.warnings, over.warnings),
             terminal: merge_terminal(self.terminal, over.terminal),
             compaction: merge_compaction(self.compaction, over.compaction),
             retry: merge_retry(self.retry, over.retry),
@@ -234,6 +263,13 @@ impl PartialSettings {
             http_proxy: self.http_proxy,
             http_idle_timeout_ms: self.http_idle_timeout_ms.unwrap_or(300000),
             websocket_connect_timeout_ms: self.websocket_connect_timeout_ms.unwrap_or(30000),
+            enabled_models: self.enabled_models.unwrap_or_default(),
+            warnings: {
+                let w = self.warnings.unwrap_or_default();
+                WarningsSettings {
+                    anthropic_extra_usage: w.anthropic_extra_usage.unwrap_or(true),
+                }
+            },
             terminal: TerminalSettings {
                 show_images: t.show_images.unwrap_or(true),
                 show_progress: t.show_progress.unwrap_or(true),
@@ -312,6 +348,15 @@ mod tests {
         assert!(!s.terminal.clear_on_shrink);
         assert!(s.terminal.auto_resize_images);
         assert!(!s.terminal.block_images);
+        assert_eq!(s.terminal.image_width_cells, 60);
+        assert!(s.shell_path.is_none());
+        assert!(s.shell_command_prefix.is_none());
+        assert_eq!(s.npm_command, vec!["npm"]);
+        assert!(s.http_proxy.is_none());
+        assert_eq!(s.http_idle_timeout_ms, 300000);
+        assert_eq!(s.websocket_connect_timeout_ms, 30000);
+        assert!(s.enabled_models.is_empty());
+        assert!(s.warnings.anthropic_extra_usage);
     }
 
     #[test]
@@ -427,6 +472,57 @@ mod tests {
         assert!(s.enable_skill_commands);            // default
         assert_eq!(s.double_escape_action, "fork"); // global survives
         assert_eq!(s.tree_filter_mode, "user-only");// project overrides
+    }
+
+    #[test]
+    fn enabled_models_merge() {
+        let global = PartialSettings {
+            enabled_models: Some(vec!["claude-*".into()]),
+            ..Default::default()
+        };
+        let project = PartialSettings {
+            enabled_models: Some(vec!["gpt-4*".into()]),
+            ..Default::default()
+        };
+        let s = global.merge(project).resolve();
+        assert_eq!(s.enabled_models, vec!["claude-*", "gpt-4*"]);
+    }
+
+    #[test]
+    fn warnings_merge() {
+        let project = PartialSettings {
+            warnings: Some(PartialWarnings {
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // global's value should survive where project is silent
+        let s = PartialSettings {
+            warnings: Some(PartialWarnings {
+                anthropic_extra_usage: Some(false),
+            }),
+            ..Default::default()
+        }
+        .merge(project)
+        .resolve();
+        assert!(!s.warnings.anthropic_extra_usage);
+
+        // project overrides global
+        let project = PartialSettings {
+            warnings: Some(PartialWarnings {
+                anthropic_extra_usage: Some(true),
+            }),
+            ..Default::default()
+        };
+        let s = PartialSettings {
+            warnings: Some(PartialWarnings {
+                anthropic_extra_usage: Some(false),
+            }),
+            ..Default::default()
+        }
+        .merge(project)
+        .resolve();
+        assert!(s.warnings.anthropic_extra_usage);
     }
 
     #[test]

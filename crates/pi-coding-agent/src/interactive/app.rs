@@ -132,6 +132,7 @@ pub(super) fn build_prompt_context(
             .provider
             .as_deref()
             .or(resolved.config.settings.default_provider.as_deref()),
+        Some(&resolved.config.settings.enabled_models),
     )?;
     let model_choices = configured_model_choices(
         &resolved.model,
@@ -265,11 +266,19 @@ fn configured_model_choices(
 fn rotation_model_choices(
     models_arg: Option<&str>,
     provider: Option<&str>,
+    enabled_models: Option<&[String]>,
 ) -> Result<Vec<Model>, CliError> {
-    let Some(models_arg) = models_arg else {
+    // CLI `--models` takes precedence over settings `enabled_models`
+    let models_arg: Option<String> = match models_arg {
+        Some(arg) => Some(arg.to_string()),
+        None => enabled_models
+            .filter(|list| !list.is_empty())
+            .map(|list| list.join(",")),
+    };
+    let Some(ref models_arg) = models_arg else {
         return Ok(Vec::new());
     };
-    let rotation = crate::models::parse_model_rotation(models_arg)?;
+    let rotation = crate::models::parse_model_rotation(&models_arg)?;
     let mut candidates = pi_ai::all_models().to_vec();
     candidates.sort_by(|left, right| left.id.cmp(&right.id));
     if let Some(provider) = provider {

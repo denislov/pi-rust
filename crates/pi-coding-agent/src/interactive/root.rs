@@ -839,6 +839,9 @@ impl InteractiveRoot {
             "tree_filter_mode" => {
                 self.settings.tree_filter_mode = value.to_string();
             }
+            "warnings_anthropic_extra_usage" => {
+                self.settings.warnings.anthropic_extra_usage = value == "on";
+            }
             _ => return,
         }
         self.settings_update = Some(self.settings.clone());
@@ -1236,8 +1239,19 @@ fn build_settings_list(
             )
             .values(["default", "no-tools", "user-only", "labeled-only", "all"])
             .description("Default filter when opening /tree"),
+            SettingItem::new(
+                "warnings_anthropic_extra_usage",
+                "Warn: Anthropic extra usage",
+                if settings.warnings.anthropic_extra_usage {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Warn when Anthropic subscription auth may use paid extra usage"),
         ],
-        14,
+        15,
         keybindings,
         SettingsListOptions {
             enable_search: false,
