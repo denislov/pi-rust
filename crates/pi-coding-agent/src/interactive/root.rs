@@ -18,8 +18,8 @@ use crate::interactive::git_branch::GitBranchProvider;
 use crate::interactive::input;
 use crate::interactive::model_selector;
 use crate::interactive::render::{
-    WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens, render_transcript_lines,
-    running_status_text,
+    TranscriptRenderOptions, TranscriptStyles, WARNING, abbreviate_cwd, editor_border_line,
+    fit_line, format_tokens, render_transcript_lines, running_status_text,
 };
 use crate::interactive::session_actions::{HydratedSession, SessionChoice};
 use crate::interactive::session_selector;
@@ -385,11 +385,7 @@ impl InteractiveRoot {
         let previous_rows = if previous_scroll_offset > 0 {
             render_transcript_lines(
                 &self.transcript,
-                self.viewport_width,
-                MAX_TOOL_RESULT_LINES,
-                color_enabled(),
-                &self.markdown_theme(),
-                self.settings.hide_thinking_block,
+                &self.transcript_render_options(MAX_TOOL_RESULT_LINES),
             )
             .len()
         } else {
@@ -420,11 +416,7 @@ impl InteractiveRoot {
         if previous_scroll_offset > 0 {
             let current_rows = render_transcript_lines(
                 &self.transcript,
-                self.viewport_width,
-                MAX_TOOL_RESULT_LINES,
-                color_enabled(),
-                &self.markdown_theme(),
-                self.settings.hide_thinking_block,
+                &self.transcript_render_options(MAX_TOOL_RESULT_LINES),
             )
             .len();
             self.transcript.preserve_scrolled_view_after_hidden_change(
@@ -944,6 +936,24 @@ impl InteractiveRoot {
         md
     }
 
+    /// Build the [`TranscriptRenderOptions`] used by transcript block
+    /// rendering. Resolves styles from the active [`ResolvedTheme`] when
+    /// available, falling back to the built-in palette otherwise.
+    fn transcript_render_options(
+        &self,
+        max_tool_result_lines: usize,
+    ) -> TranscriptRenderOptions<'_> {
+        TranscriptRenderOptions {
+            width: self.viewport_width,
+            max_tool_result_lines,
+            color: color_enabled(),
+            markdown_theme: self.markdown_theme(),
+            hide_thinking_block: self.settings.hide_thinking_block,
+            hidden_thinking_label: "Thinking...",
+            styles: TranscriptStyles::from_theme(self.resolved_theme.as_ref()),
+        }
+    }
+
     pub(super) fn handle_settings_input(&mut self, event: &InputEvent) -> bool {
         if !self.selecting_settings {
             return false;
@@ -1097,11 +1107,7 @@ impl Component for InteractiveRoot {
         };
         let mut lines = render_transcript_lines(
             &self.transcript,
-            width,
-            max_tool_result_lines,
-            color_enabled(),
-            &self.markdown_theme(),
-            self.settings.hide_thinking_block,
+            &self.transcript_render_options(max_tool_result_lines),
         );
         lines.extend(self.render_editor_box(width));
         if self.selecting_model {

@@ -298,7 +298,11 @@ fn parse_unmodified_kitty_printable_codepoint(sequence: &str) -> Option<u32> {
     let body = sequence.strip_prefix("\x1b[")?.strip_suffix('u')?;
     let codepoint: u32 = body.split(':').next()?.parse().ok()?;
     // Only printable codepoints (space and above)
-    if codepoint >= 32 { Some(codepoint) } else { None }
+    if codepoint >= 32 {
+        Some(codepoint)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -411,11 +415,14 @@ mod tests {
         // \x1b\x1b[97u = ESC press + 'a' CSI-u release (WezTerm concatenation)
         let events = buffer.process("\x1b\x1b[97u");
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0], InputEvent::Key(KeyEvent {
-            key: Key::Escape,
-            modifiers: KeyModifiers::empty(),
-            kind: KeyEventKind::Press,
-        }));
+        assert_eq!(
+            events[0],
+            InputEvent::Key(KeyEvent {
+                key: Key::Escape,
+                modifiers: KeyModifiers::empty(),
+                kind: KeyEventKind::Press,
+            })
+        );
         match &events[1] {
             InputEvent::Key(ke) => {
                 assert_eq!(ke.key, Key::Char("a".to_string()));

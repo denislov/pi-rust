@@ -32,8 +32,7 @@ pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
 pub use input::{
     InputEvent, Key, KeyEvent, KeyEventKind, KeyModifiers, KeybindingConflict,
     KeybindingDefinition, KeybindingsConfig, KeybindingsManager, StdinBuffer, TUI_KEYBINDINGS,
-    is_key_release, is_kitty_protocol_active, matches_key, parse_key,
-    set_kitty_protocol_active,
+    is_key_release, is_kitty_protocol_active, matches_key, parse_key, set_kitty_protocol_active,
 };
 pub use overlay::{OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, SizeValue};
 pub use runtime::RenderScheduler;

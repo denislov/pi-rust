@@ -109,9 +109,7 @@ pub fn parse_key(data: &str) -> Option<KeyEvent> {
                 return None;
             }
         }
-        "\x1b\x7f" | "\x1b\x08" => {
-            modified(Key::Backspace, KeyModifiers::ALT, KeyEventKind::Press)
-        }
+        "\x1b\x7f" | "\x1b\x08" => modified(Key::Backspace, KeyModifiers::ALT, KeyEventKind::Press),
         "\x1bB" => {
             if !is_kitty_protocol_active() {
                 modified(Key::Left, KeyModifiers::ALT, KeyEventKind::Press)
@@ -370,9 +368,21 @@ fn parse_legacy_ss3(data: &str) -> Option<KeyEvent> {
         // SS3 ctrl-modified arrow keys
         "\x1bOa" => return Some(modified(Key::Up, KeyModifiers::CTRL, KeyEventKind::Press)),
         "\x1bOb" => return Some(modified(Key::Down, KeyModifiers::CTRL, KeyEventKind::Press)),
-        "\x1bOc" => return Some(modified(Key::Right, KeyModifiers::CTRL, KeyEventKind::Press)),
+        "\x1bOc" => {
+            return Some(modified(
+                Key::Right,
+                KeyModifiers::CTRL,
+                KeyEventKind::Press,
+            ));
+        }
         "\x1bOd" => return Some(modified(Key::Left, KeyModifiers::CTRL, KeyEventKind::Press)),
-        "\x1bOe" => return Some(modified(Key::Clear, KeyModifiers::CTRL, KeyEventKind::Press)),
+        "\x1bOe" => {
+            return Some(modified(
+                Key::Clear,
+                KeyModifiers::CTRL,
+                KeyEventKind::Press,
+            ));
+        }
         _ => return parse_alt_sequence(data),
     };
     Some(key(parsed_key))
@@ -405,7 +415,8 @@ fn parse_alt_sequence(data: &str) -> Option<KeyEvent> {
         Some(event)
     } else if !is_kitty_protocol_active()
         && rest.len() == 1
-        && rest.as_bytes()[0] >= 1 && rest.as_bytes()[0] <= 26
+        && rest.as_bytes()[0] >= 1
+        && rest.as_bytes()[0] <= 26
     {
         // Legacy: \x1b followed by a control character (byte 1-26) is
         // ctrl+alt+letter, not alt+ctrl+letter on a non-control char.

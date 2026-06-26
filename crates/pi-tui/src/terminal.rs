@@ -1,9 +1,9 @@
 #[cfg(windows)]
 use std::io;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;

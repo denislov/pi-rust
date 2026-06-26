@@ -27,7 +27,10 @@ use crate::interactive::r#loop::{
     LoopResult, run_interactive_loop, run_interactive_loop_with_input,
 };
 #[cfg(test)]
-use crate::interactive::render::{format_tokens, render_transcript_lines, running_status_text};
+use crate::interactive::render::{
+    TranscriptRenderOptions, TranscriptStyles, format_tokens, render_transcript_lines,
+    running_status_text,
+};
 #[cfg(test)]
 use crate::interactive::root::{
     FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus,
@@ -333,6 +336,27 @@ mod tests {
     use super::*;
     use pi_tui::StdinBuffer;
 
+    /// Build render options with no resolved theme (fallback palette) and
+    /// color disabled, for layout-focused assertions.
+    fn opts(width: usize, max_tool_result_lines: usize) -> TranscriptRenderOptions<'static> {
+        TranscriptRenderOptions {
+            width,
+            max_tool_result_lines,
+            color: false,
+            markdown_theme: pi_tui::MarkdownTheme::default(),
+            hide_thinking_block: false,
+            hidden_thinking_label: "Thinking...",
+            styles: TranscriptStyles::from_theme(None),
+        }
+    }
+
+    /// Same as [`opts`] but with color enabled, for style assertions.
+    fn opts_color(width: usize, max_tool_result_lines: usize) -> TranscriptRenderOptions<'static> {
+        let mut o = opts(width, max_tool_result_lines);
+        o.color = true;
+        o
+    }
+
     fn key_event(data: &str) -> InputEvent {
         let mut buffer = StdinBuffer::new();
         let mut events = buffer.process(data);
@@ -434,12 +458,11 @@ mod tests {
 
     #[test]
     fn render_transcript_lines_compacts_tool_rows_and_truncates_noisy_output() {
-        use pi_tui::{STATUS_IDLE, STATUS_RUNNING, SYSTEM, TOOL_NAME, paint_with};
-        let yellow = |s: &str| paint_with(s, &TOOL_NAME, true);
-        let dim = |s: &str| paint_with(s, &SYSTEM, true);
-        let running = |s: &str| paint_with(s, &STATUS_RUNNING, true);
-        let idle = |s: &str| paint_with(s, &STATUS_IDLE, true);
-
+        // New visual spec (plan stage 2): tool blocks get a status background
+        // shell, the header carries tool name + target + status, results are
+        // indented two columns, and a collapsed view shows an "expand tools"
+        // hint instead of a bare "truncated" note. Block spacing is handled
+        // by the caller, so a single tool block renders with no leading gap.
         let mut transcript = Transcript::new();
         transcript.apply_event(UiEvent::ToolStarted {
             call_id: "tool_1".to_string(),
@@ -447,32 +470,12 @@ mod tests {
             args: serde_json::json!({"path": "src/lib.rs"}),
         });
 
-        assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                80,
-                3,
-                true,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec![format!(
-                "{} {} src/lib.rs {}",
-                yellow("tool"),
-                yellow("read"),
-                running("running")
-            )]
-        );
-        assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                80,
-                3,
-                false,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec!["tool read src/lib.rs running"]
+        let pending = render_transcript_lines(&transcript, &opts(80, 3));
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        assert!(
+            pending[0]
+                .trim_start()
+                .starts_with("tool read src/lib.rs running")
         );
 
         transcript.apply_event(UiEvent::ToolFinished {
@@ -481,69 +484,30 @@ mod tests {
             is_error: false,
         });
 
-        assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                80,
-                3,
-                true,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec![
-                format!(
-                    "{} {} src/lib.rs {}",
-                    yellow("tool"),
-                    yellow("read"),
-                    idle("done")
-                ),
-                "line 1".to_string(),
-                "line 2".to_string(),
-                "line 3".to_string(),
-                dim("... truncated 2 lines"),
-            ]
+        let collapsed = render_transcript_lines(&transcript, &opts(80, 3));
+        // Header + 3 result lines + 1 "more lines" hint.
+        assert_eq!(collapsed.len(), 5, "{collapsed:?}");
+        assert!(
+            collapsed[0]
+                .trim_start()
+                .starts_with("tool read src/lib.rs done"),
+            "{}",
+            collapsed[0]
         );
-        assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                80,
-                3,
-                false,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec![
-                "tool read src/lib.rs done",
-                "line 1",
-                "line 2",
-                "line 3",
-                "... truncated 2 lines",
-            ]
+        assert!(collapsed[1].trim_start().starts_with("line 1"));
+        assert!(collapsed[2].trim_start().starts_with("line 2"));
+        assert!(collapsed[3].trim_start().starts_with("line 3"));
+        assert!(
+            collapsed[4]
+                .trim_start()
+                .starts_with("... 2 more lines (expand tools)"),
+            "{}",
+            collapsed[4]
         );
 
-        assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                80,
-                20,
-                true,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec![
-                format!(
-                    "{} {} src/lib.rs {}",
-                    yellow("tool"),
-                    yellow("read"),
-                    idle("done")
-                ),
-                "line 1".to_string(),
-                "line 2".to_string(),
-                "line 3".to_string(),
-                "line 4".to_string(),
-                "line 5".to_string(),
-            ]
-        );
+        let expanded = render_transcript_lines(&transcript, &opts(80, 20));
+        assert_eq!(expanded.len(), 6, "{expanded:?}");
+        assert!(expanded[5].trim_start().starts_with("line 5"));
     }
 
     #[test]
@@ -571,36 +535,48 @@ mod tests {
             is_error: false,
         });
 
+        let lines = render_transcript_lines(&transcript, &opts(120, 3));
+        // write/edit keep all result lines (no truncation); bash yields 1 line.
+        // Each block is separated from the next by one blank line.
+        let headers: Vec<&str> = lines
+            .iter()
+            .map(|line| line.trim())
+            .filter(|line| line.starts_with("tool "))
+            .collect();
         assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                120,
-                3,
-                false,
-                &pi_tui::MarkdownTheme::default(),
-                false,
-            ),
-            vec![
+            headers,
+            [
                 "tool write src/main.rs done",
-                "w1",
-                "w2",
-                "w3",
-                "w4",
-                "w5",
                 "tool edit src/lib.rs done",
-                "e1",
-                "e2",
-                "e3",
-                "e4",
-                "e5",
                 "tool bash cargo test -p pi-coding-agent done",
-                "ok",
-            ]
+            ],
+            "{lines:?}"
+        );
+        // write results w1..w5 all present (no "more lines" hint for write/edit).
+        let body: String = lines
+            .iter()
+            .map(|l| l.trim())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for w in ["w1", "w2", "w3", "w4", "w5"] {
+            assert!(body.contains(w), "write result {w} missing: {body}");
+        }
+        for e in ["e1", "e2", "e3", "e4", "e5"] {
+            assert!(body.contains(e), "edit result {e} missing: {body}");
+        }
+        // Two blank-line separators between the three blocks.
+        assert_eq!(
+            lines.iter().filter(|l| l.trim().is_empty()).count(),
+            2,
+            "expected one blank line between each block: {lines:?}"
         );
     }
 
     #[test]
-    fn render_transcript_lines_inserts_rule_between_finished_tools_and_assistant() {
+    fn render_transcript_lines_separates_finished_tool_and_assistant_with_blank_line() {
+        // Plan stage 1 spacing policy: the old full-width `─` rule between a
+        // finished tool and the following assistant message is removed; a
+        // single blank line now separates the blocks.
         let mut transcript = Transcript::new();
         transcript.push(TranscriptItem::Tool {
             call_id: "call_read".to_string(),
@@ -614,21 +590,30 @@ mod tests {
         });
         transcript.apply_event(UiEvent::AssistantDone);
 
-        assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                40,
-                3,
-                false,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec![
-                "tool read src/lib.rs done",
-                "contents",
-                "────────────────────────────────────────",
-                "next answer",
-            ]
+        let lines = render_transcript_lines(&transcript, &opts(40, 3));
+        assert!(
+            lines[0]
+                .trim_start()
+                .starts_with("tool read src/lib.rs done"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[1].trim_start().starts_with("contents"),
+            "{}",
+            lines[1]
+        );
+        // Exactly one blank line separates the tool block from the assistant.
+        assert_eq!(lines[2], "", "expected blank separator: {lines:?}");
+        assert!(
+            lines[3].trim_start().starts_with("next answer"),
+            "{}",
+            lines[3]
+        );
+        // No full-width rule anywhere in the frame.
+        assert!(
+            !lines.iter().any(|l| l.contains('─')),
+            "rule should be gone: {lines:?}"
         );
     }
 
@@ -640,28 +625,18 @@ mod tests {
         transcript.push(TranscriptItem::Error {
             text: "boom".to_string(),
         });
+
+        // With color: `Error:` label + body, both red bold (TS assistant-message
+        // error fallback style).
+        let colored = render_transcript_lines(&transcript, &opts_color(80, 3));
         assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                80,
-                3,
-                true,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec![format!("{}: {}", red_bold("error"), red_bold("boom"))]
+            colored,
+            vec![format!("{} {}", red_bold("Error:"), red_bold("boom"))]
         );
-        assert_eq!(
-            render_transcript_lines(
-                &transcript,
-                80,
-                3,
-                false,
-                &pi_tui::MarkdownTheme::default(),
-                false
-            ),
-            vec!["error: boom"]
-        );
+
+        // Without color: plain `Error: boom`.
+        let plain = render_transcript_lines(&transcript, &opts(80, 3));
+        assert_eq!(plain, vec!["Error: boom".to_string()]);
     }
 
     #[test]
@@ -682,8 +657,8 @@ mod tests {
 
         let collapsed = root.render(40).join("\n");
         assert!(
-            collapsed.contains("... truncated"),
-            "collapsed tool output should show truncation: {collapsed}"
+            collapsed.contains("more lines"),
+            "collapsed tool output should show a truncation hint: {collapsed}"
         );
 
         // Ctrl+O is the single byte 0x0f, which parse_control_char maps to
@@ -699,8 +674,8 @@ mod tests {
 
         let expanded = root.render(40).join("\n");
         assert!(
-            !expanded.contains("... truncated"),
-            "expanded tool output should not show truncation: {expanded}"
+            !expanded.contains("more lines"),
+            "expanded tool output should not show a truncation hint: {expanded}"
         );
         assert!(
             expanded.contains("l6"),

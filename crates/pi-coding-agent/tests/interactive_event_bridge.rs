@@ -155,6 +155,7 @@ fn ui_events_apply_to_transcript() {
         &[TranscriptItem::Assistant {
             id: "assistant_0".to_string(),
             markdown: "hello".to_string(),
+            thinking: String::new(),
             done: true,
         }]
     );
