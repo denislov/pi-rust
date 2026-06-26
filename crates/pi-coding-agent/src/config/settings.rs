@@ -1,71 +1,113 @@
 use crate::config::{ConfigDiagnostic, ConfigPaths};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PartialCompaction {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reserve_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_recent_tokens: Option<u64>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PartialRetry {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_delay_ms: Option<u64>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PartialWarnings {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub anthropic_extra_usage: Option<bool>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PartialTerminal {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_images: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_progress: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub clear_on_shrink: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_resize_images: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_images: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub image_width_cells: Option<u32>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PartialSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_thinking_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transport: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub steering_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub follow_up_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skills: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompts: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub themes: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub no_context_files: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hide_thinking_block: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub collapse_changelog: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub quiet_startup: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enable_skill_commands: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub double_escape_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tree_filter_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_command_prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub npm_command: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub http_proxy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub http_idle_timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub websocket_connect_timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled_models: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<PartialWarnings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal: Option<PartialTerminal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub compaction: Option<PartialCompaction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub retry: Option<PartialRetry>,
 }
 
@@ -608,5 +650,29 @@ mod tests {
         assert_eq!(s.skills, vec!["global-skill", "project-skill"]);
         assert_eq!(s.prompts, vec!["global-prompt", "project-prompt"]);
         assert_eq!(s.themes, vec!["global-theme", "project-theme"]);
+    }
+
+    #[test]
+    fn partial_settings_serialize_round_trip() {
+        let original = PartialSettings {
+            theme: Some("light".into()),
+            transport: Some("sse".into()),
+            compaction: Some(PartialCompaction {
+                enabled: Some(false),
+                reserve_tokens: Some(8192),
+                ..Default::default()
+            }),
+            terminal: Some(PartialTerminal {
+                show_images: Some(false),
+                image_width_cells: Some(80),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let toml_str = toml::to_string_pretty(&original)
+            .expect("serialize should succeed");
+        let parsed: PartialSettings = toml::from_str(&toml_str)
+            .expect("deserialize should succeed");
+        assert_eq!(original, parsed);
     }
 }
