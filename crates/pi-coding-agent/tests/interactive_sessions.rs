@@ -49,10 +49,10 @@ async fn interactive_footer_updates_to_created_session_id_after_prompt() {
 
     let final_frame = result.rendered_lines.join("\n");
     assert!(
-        final_frame.contains(&format!("session: {visible_session_prefix}")),
+        final_frame.contains(&format!("• {visible_session_prefix}")),
         "{final_frame}"
     );
-    assert!(!final_frame.contains("session: session"), "{final_frame}");
+    assert!(!final_frame.contains("• session"), "{final_frame}");
 }
 
 #[tokio::test]
@@ -115,8 +115,8 @@ async fn interactive_resume_loads_existing_session_messages_and_name() {
 
     assert!(frame.contains("previous prompt"), "{frame}");
     assert!(frame.contains("previous answer"), "{frame}");
-    assert!(frame.contains("session: Resume Target"), "{frame}");
-    assert!(!frame.contains("session: session"), "{frame}");
+    assert!(frame.contains("• Resume Target"), "{frame}");
+    assert!(!frame.contains("• session"), "{frame}");
 }
 
 #[tokio::test]
@@ -149,7 +149,7 @@ async fn interactive_resume_command_loads_selected_session_messages_and_name() {
     assert!(frame.contains("selected prompt"), "{frame}");
     assert!(frame.contains("selected answer"), "{frame}");
     assert!(frame.contains("Session selected: Picked"), "{frame}");
-    assert!(frame.contains("session: Picked"), "{frame}");
+    assert!(frame.contains("• Picked"), "{frame}");
 }
 
 fn jsonl_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
