@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
+use pi_agent_core::resources::{parse_command_args, substitute_args};
 use pi_agent_core::session::JsonlSessionStorage;
+use pi_agent_core::{PromptTemplate, Skill};
 use pi_tui::{KeybindingsManager, TUI_KEYBINDINGS};
 
 use crate::config;
@@ -16,15 +18,64 @@ use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selec
 use crate::interactive::{Transcript, TranscriptItem};
 
 /// Expand a /skill:name command into its XML skill block.
-pub(super) fn expand_skill_command(text: &str, _skills: &[pi_agent_core::Skill]) -> String {
-    // Stub — full implementation in Task 4
-    text.to_string()
+///
+/// Mirrors TS `_expandSkillCommand` in `agent-session.ts`.
+pub(super) fn expand_skill_command(text: &str, skills: &[Skill]) -> String {
+    if !text.starts_with("/skill:") {
+        return text.to_string();
+    }
+
+    let space_index = text.find(' ');
+    let skill_name = match space_index {
+        Some(i) => &text[7..i],
+        None => &text[7..],
+    };
+    let args = match space_index {
+        Some(i) => text[i + 1..].trim().to_string(),
+        None => String::new(),
+    };
+
+    let Some(skill) = skills.iter().find(|s| s.name == skill_name) else {
+        return text.to_string();
+    };
+
+    let skill_block = pi_agent_core::resources::format_skill_invocation(
+        &skill.name,
+        &skill.location,
+        &skill.content,
+        if args.is_empty() { None } else { Some(&args) },
+    );
+    skill_block
 }
 
 /// Expand a /templatename command with arg substitution.
-pub(super) fn expand_prompt_template(text: &str, _templates: &[pi_agent_core::PromptTemplate]) -> String {
-    // Stub — full implementation in Task 4
-    text.to_string()
+///
+/// Mirrors TS `expandPromptTemplate` in `prompt-templates.ts`.
+pub(super) fn expand_prompt_template(text: &str, templates: &[PromptTemplate]) -> String {
+    if !text.starts_with('/') {
+        return text.to_string();
+    }
+
+    // Match /name followed by optional args (may include newlines)
+    let Some(rest) = text.strip_prefix('/') else {
+        return text.to_string();
+    };
+    let space_index = rest.find(|c: char| c.is_whitespace());
+    let template_name = match space_index {
+        Some(i) => &rest[..i],
+        None => rest,
+    };
+    let args_string = match space_index {
+        Some(i) => rest[i + 1..].to_string(),
+        None => String::new(),
+    };
+
+    let Some(template) = templates.iter().find(|t| t.name == template_name) else {
+        return text.to_string();
+    };
+
+    let args = parse_command_args(&args_string);
+    substitute_args(&template.content, &args)
 }
 
 pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSlashCommand) {
