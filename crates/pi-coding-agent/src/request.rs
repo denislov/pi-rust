@@ -99,7 +99,11 @@ pub fn resolve_cli_context(
             no_themes: parsed.no_themes,
             skill_paths: config.settings.skills.clone(),
             prompt_paths: config.settings.prompts.clone(),
-            theme_paths: config.settings.themes.clone(),
+            theme_paths: {
+                let mut paths = config.settings.themes.clone();
+                paths.extend(parsed.theme_paths.iter().cloned());
+                paths
+            },
             theme: config.settings.theme.clone(),
         },
     )?;

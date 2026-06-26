@@ -60,6 +60,7 @@ pub struct CliArgs {
     pub no_skills: bool,
     pub no_prompt_templates: bool,
     pub no_themes: bool,
+    pub theme_paths: Vec<String>,
     pub tools: Vec<String>,
     pub exclude_tools: Vec<String>,
     pub no_tools: bool,
@@ -105,6 +106,7 @@ impl Default for CliArgs {
             no_skills: false,
             no_prompt_templates: false,
             no_themes: false,
+            theme_paths: Vec::new(),
             tools: Vec::new(),
             exclude_tools: Vec::new(),
             no_tools: false,
@@ -118,7 +120,7 @@ impl Default for CliArgs {
 
 pub fn help_text() -> String {
     format!(
-        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --mode <mode>            Headless mode: print|json|rpc\n  --provider <id>          Provider preference for model selection\n  --model <id>             Model id from the built-in Rust model table\n  --models <list>          Comma-separated model rotation globs, optionally model:thinking\n  --list-models [search]   List models, optionally fuzzy-filtered by search text\n  --json                   Emit JSON for --list-models\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --append-system-prompt <text> Append to system prompt (repeatable)\n  --max-turns <n>          Optional cap on agent loop turns (default: unlimited, matches TS pi)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --tools, -t <names>      Comma-separated builtin tool allowlist\n  --exclude-tools, -xt <names> Comma-separated builtin tool denylist\n  --no-tools               Disable all tools\n  --no-builtin-tools       Do not register builtin tools\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --no-context-files       Disable AGENTS.md / CLAUDE.md discovery\n  --no-skills              Disable skill discovery\n  --no-prompt-templates    Disable prompt template discovery\n  --no-themes              Disable theme discovery\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  --verbose                Emit verbose diagnostics\n  --offline                Avoid network-dependent behavior where supported\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
+        "pi-coding-agent {}\n\nUsage:\n  pi-coding-agent -p <prompt>\n\nOptions:\n  -p, --print              Run one prompt and print the assistant response\n  --mode <mode>            Headless mode: print|json|rpc\n  --provider <id>          Provider preference for model selection\n  --model <id>             Model id from the built-in Rust model table\n  --models <list>          Comma-separated model rotation globs, optionally model:thinking\n  --list-models [search]   List models, optionally fuzzy-filtered by search text\n  --json                   Emit JSON for --list-models\n  --api-key <key>          API key passed to the selected provider\n  --system-prompt <text>   System prompt override\n  --append-system-prompt <text> Append to system prompt (repeatable)\n  --max-turns <n>          Optional cap on agent loop turns (default: unlimited, matches TS pi)\n  --thinking <level>       Thinking level: off|minimal|low|medium|high|xhigh\n  --tool-execution <mode>  Tool execution mode: parallel|sequential\n  --tools, -t <names>      Comma-separated builtin tool allowlist\n  --exclude-tools, -xt <names> Comma-separated builtin tool denylist\n  --no-tools               Disable all tools\n  --no-builtin-tools       Do not register builtin tools\n  --skills <dir>           Directory to load skills from (repeatable)\n  --prompt-templates <p>   Path to load prompt templates from (repeatable)\n  --no-context-files       Disable AGENTS.md / CLAUDE.md discovery\n  --no-skills              Disable skill discovery\n  --no-prompt-templates    Disable prompt template discovery\n  --no-themes              Disable theme discovery\n  --theme <path>            Load a theme file or directory (repeatable)\n  --skill <name>           Invoke a loaded skill by name\n  --prompt-template <name> Invoke a prompt template by name\n  --template-arg <value>   Argument for prompt template (repeatable)\n  --verbose                Emit verbose diagnostics\n  --offline                Avoid network-dependent behavior where supported\n  -h, --help               Show help\n  -v, --version            Show version\n\nSession Options:\n  -c, --continue           Continue the most recent session\n  -r, --resume             Resume the most recent session\n  --no-session             Disable session persistence\n  --session <path|id>      Open a specific session by path or id prefix\n  --session-id <id>        Open or create a session by exact id\n  --fork <path|id>         Fork an existing session\n  --session-dir <dir>      Directory to store session files\n  --name <name>            Name for the current session\n  -n <name>                Short form of --name\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -238,6 +240,10 @@ where
             "--no-skills" => parsed.no_skills = true,
             "--no-prompt-templates" => parsed.no_prompt_templates = true,
             "--no-themes" => parsed.no_themes = true,
+            "--theme" => {
+                let val = take_value(&raw, &mut i, "--theme")?;
+                parsed.theme_paths.push(val);
+            }
             "--skill" => parsed.skill = Some(take_value(&raw, &mut i, "--skill")?),
             "--prompt-template" => {
                 parsed.prompt_template = Some(take_value(&raw, &mut i, "--prompt-template")?)

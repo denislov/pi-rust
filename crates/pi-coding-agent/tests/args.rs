@@ -152,3 +152,19 @@ fn rejects_unknown_flags() {
         CliError::UnknownFlag("-x".into())
     );
 }
+
+#[test]
+fn theme_flag_is_repeatable_and_collects_paths() {
+    let args = parse(&["--theme", "a.json", "--theme", "themes/"]).unwrap();
+    assert_eq!(
+        args.theme_paths,
+        vec!["a.json".to_string(), "themes/".to_string()]
+    );
+}
+
+#[test]
+fn theme_flag_requires_a_value() {
+    let err = parse(&["--theme"]).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("--theme"), "{msg}");
+}

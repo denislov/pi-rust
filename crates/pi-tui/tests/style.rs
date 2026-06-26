@@ -116,3 +116,19 @@ fn detect_color_level_detects_truecolor_and_ansi256() {
         ColorLevel::Ansi16
     );
 }
+
+#[test]
+fn paint_with_enabled_italic_underline_strikethrough() {
+    let style = Style::fg(Color::Red).italic().underline().strikethrough();
+    // SGR codes: italic=3, underline=4, strikethrough=9, red fg=31
+    assert_eq!(paint_with("hi", &style, true), "\x1b[3;4;9;31mhi\x1b[0m");
+}
+
+#[test]
+fn style_italic_underline_strikethrough_builders_set_flags() {
+    let style = Style::default().italic().underline().strikethrough();
+    assert!(style.italic);
+    assert!(style.underline);
+    assert!(style.strikethrough);
+    assert!(!style.bold);
+}

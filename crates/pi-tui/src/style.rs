@@ -72,6 +72,9 @@ pub struct Style {
     pub bg: Color,
     pub bold: bool,
     pub dim: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
     pub reverse: bool,
 }
 
@@ -82,6 +85,9 @@ impl Style {
             bg: Color::Default,
             bold: false,
             dim: false,
+            italic: false,
+            underline: false,
+            strikethrough: false,
             reverse: false,
         }
     }
@@ -96,6 +102,21 @@ impl Style {
         self
     }
 
+    pub const fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    pub const fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+
+    pub const fn strikethrough(mut self) -> Self {
+        self.strikethrough = true;
+        self
+    }
+
     pub const fn reverse(mut self) -> Self {
         self.reverse = true;
         self
@@ -106,6 +127,9 @@ impl Style {
             || self.bg != Color::Default
             || self.bold
             || self.dim
+            || self.italic
+            || self.underline
+            || self.strikethrough
             || self.reverse
     }
 }
@@ -137,6 +161,15 @@ pub fn paint_with_level(text: &str, style: &Style, level: ColorLevel) -> String 
     }
     if style.dim {
         params.push("2".to_string());
+    }
+    if style.italic {
+        params.push("3".to_string());
+    }
+    if style.underline {
+        params.push("4".to_string());
+    }
+    if style.strikethrough {
+        params.push("9".to_string());
     }
     if style.reverse {
         params.push("7".to_string());
