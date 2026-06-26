@@ -110,7 +110,7 @@ fn load_prompt_templates_from_files() {
     let dir = TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("review.md"),
-        "---\ndescription: Review changes\n---\n\nPlease review $1 and ${2}.",
+        "---\ndescription: Review changes\n---\n\nPlease review $1 and $2.",
     )
     .unwrap();
 
@@ -125,7 +125,7 @@ fn load_prompt_templates_from_files() {
 fn format_prompt_template_replaces_args() {
     let result = format_prompt_template_invocation(
         "review",
-        "Review $1 and ${2}",
+        "Review $1 and $2",
         &["foo".into(), "bar".into()],
     );
     assert_eq!(result, "Review foo and bar");
