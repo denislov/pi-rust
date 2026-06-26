@@ -1,6 +1,6 @@
 use pi_agent_core::AgentResources;
 use pi_coding_agent::config::settings::{
-    CompactionSettings, RetrySettings, Settings, TerminalSettings,
+    CompactionSettings, RetrySettings, Settings, TerminalSettings, WarningsSettings,
 };
 use pi_coding_agent::{
     CliError, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config, parse_args, select_model,
@@ -20,9 +20,29 @@ fn runtime_settings() -> Settings {
         themes: Vec::new(),
         theme: None,
         no_context_files: false,
+        hide_thinking_block: false,
+        collapse_changelog: false,
+        quiet_startup: false,
+        enable_skill_commands: true,
+        double_escape_action: "tree".into(),
+        tree_filter_mode: "default".into(),
+        shell_path: None,
+        shell_command_prefix: None,
+        npm_command: vec!["npm".into()],
+        http_proxy: None,
+        http_idle_timeout_ms: 300000,
+        websocket_connect_timeout_ms: 30000,
+        enabled_models: Vec::new(),
+        warnings: pi_coding_agent::config::settings::WarningsSettings {
+            anthropic_extra_usage: true,
+        },
         terminal: TerminalSettings {
             show_images: true,
             show_progress: true,
+            clear_on_shrink: false,
+            auto_resize_images: true,
+            block_images: false,
+            image_width_cells: 60,
         },
         compaction: CompactionSettings {
             enabled: true,

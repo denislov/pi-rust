@@ -27,6 +27,25 @@ impl ThinkingLevelMap {
     pub fn from_json(value: Value) -> Self {
         serde_json::from_value(value).unwrap_or_default()
     }
+
+    /// Resolve a pi thinking level name to the provider-specific value.
+    /// Returns `None` if the level maps to null (meaning the provider doesn't
+    /// support that level). Falls back to the level name itself if not in the map.
+    pub fn resolve(&self, level: &str) -> Option<String> {
+        let entry = match level {
+            "minimal" => self.minimal.as_ref(),
+            "low" => self.low.as_ref(),
+            "medium" => self.medium.as_ref(),
+            "high" => self.high.as_ref(),
+            "xhigh" => self.xhigh.as_ref(),
+            _ => return Some(level.to_string()),
+        };
+        match entry {
+            Some(ThinkingLevelValue::String(s)) => Some(s.clone()),
+            Some(ThinkingLevelValue::Null) => None,
+            None => Some(level.to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
