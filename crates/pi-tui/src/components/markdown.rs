@@ -253,6 +253,26 @@ fn markdown_to_lines(
                     });
                 }
             }
+            Event::Start(Tag::Emphasis) => context.emphasis_starts.push(current.len()),
+            Event::End(TagEnd::Emphasis) => {
+                if let Some(start) = context.emphasis_starts.pop() {
+                    context.inline_spans.push(InlineSpan {
+                        start,
+                        end: current.len(),
+                        kind: InlineKind::Emphasis,
+                    });
+                }
+            }
+            Event::Start(Tag::Strikethrough) => context.strikethrough_starts.push(current.len()),
+            Event::End(TagEnd::Strikethrough) => {
+                if let Some(start) = context.strikethrough_starts.pop() {
+                    context.inline_spans.push(InlineSpan {
+                        start,
+                        end: current.len(),
+                        kind: InlineKind::Strikethrough,
+                    });
+                }
+            }
             Event::Start(Tag::Link { dest_url, .. }) => {
                 context.link_starts.push(LinkStart {
                     start: current.len(),
@@ -321,6 +341,8 @@ struct BlockContext {
     code_block_lang: Option<String>,
     inline_spans: Vec<InlineSpan>,
     strong_starts: Vec<usize>,
+    emphasis_starts: Vec<usize>,
+    strikethrough_starts: Vec<usize>,
     link_starts: Vec<LinkStart>,
 }
 
@@ -333,6 +355,8 @@ impl Default for BlockContext {
             code_block_lang: None,
             inline_spans: Vec::new(),
             strong_starts: Vec::new(),
+            emphasis_starts: Vec::new(),
+            strikethrough_starts: Vec::new(),
             link_starts: Vec::new(),
         }
     }
@@ -349,6 +373,8 @@ struct InlineSpan {
 enum InlineKind {
     Code,
     Strong,
+    Emphasis,
+    Strikethrough,
     Link { url: String },
 }
 
@@ -389,6 +415,8 @@ fn flush_current(
         current.clear();
         context.inline_spans.clear();
         context.strong_starts.clear();
+        context.emphasis_starts.clear();
+        context.strikethrough_starts.clear();
         context.link_starts.clear();
         context.heading = false;
         context.in_quote = false;
@@ -401,6 +429,8 @@ fn flush_current(
     current.clear();
     context.inline_spans.clear();
     context.strong_starts.clear();
+    context.emphasis_starts.clear();
+    context.strikethrough_starts.clear();
     context.link_starts.clear();
     context.heading = false;
     context.in_quote = false;
@@ -473,6 +503,8 @@ fn apply_inline_span(
     match kind {
         InlineKind::Code => paint_markdown(text, &theme.code),
         InlineKind::Strong => paint_markdown(text, &theme.bold),
+        InlineKind::Emphasis => paint_markdown(text, &theme.italic),
+        InlineKind::Strikethrough => paint_markdown(text, &theme.strikethrough),
         InlineKind::Link { url } => {
             let styled = paint_markdown(text, &theme.link);
             if hyperlinks_enabled {

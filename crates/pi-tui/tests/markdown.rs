@@ -1,4 +1,6 @@
-use pi_tui::{Color, Component, Markdown, Style, color_enabled, paint_with, visible_width};
+use pi_tui::{
+    Color, Component, Markdown, MarkdownTheme, Style, color_enabled, paint_with, visible_width,
+};
 
 fn bold() -> Style {
     Style::fg(Color::Default).bold()
@@ -169,4 +171,33 @@ fn markdown_code_block_multiline_content_each_line_indented_and_dim() {
         joined.contains(&paint_with("   let b = 2;", &dim(), color_enabled())),
         "expected dim indented second line in: {joined:?}"
     );
+}
+
+#[test]
+fn renders_emphasis_with_italic_style() {
+    let style = Style::fg(Color::Cyan).italic();
+    let theme = MarkdownTheme {
+        italic: style,
+        ..MarkdownTheme::default()
+    };
+    let mut md = Markdown::new("*italic*").with_theme(theme);
+    let rendered = md.render(40).join("\n");
+    assert!(rendered.contains("italic"), "{rendered}");
+    // Default strong handler: the text should be painted with italic style.
+    let expected = paint_with("italic", &style, color_enabled());
+    assert!(rendered.contains(&expected), "{rendered}");
+}
+
+#[test]
+fn renders_strikethrough_with_strikethrough_style() {
+    let style = Style::fg(Color::Magenta).strikethrough();
+    let theme = MarkdownTheme {
+        strikethrough: style,
+        ..MarkdownTheme::default()
+    };
+    let mut md = Markdown::new("~~deleted~~").with_theme(theme);
+    let rendered = md.render(40).join("\n");
+    assert!(rendered.contains("deleted"), "{rendered}");
+    let expected = paint_with("deleted", &style, color_enabled());
+    assert!(rendered.contains(&expected), "{rendered}");
 }

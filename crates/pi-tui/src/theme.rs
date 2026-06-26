@@ -74,6 +74,9 @@ pub struct MarkdownTheme {
     pub hr: Style,
     pub list_bullet: Style,
     pub bold: Style,
+    pub italic: Style,
+    pub underline: Style,
+    pub strikethrough: Style,
     /// Optional syntax highlighter for fenced code blocks. Mirrors TS
     /// `MarkdownTheme.highlightCode`.
     pub highlight_code: Option<HighlightCodeFn>,
@@ -93,6 +96,9 @@ impl std::fmt::Debug for MarkdownTheme {
             .field("hr", &self.hr)
             .field("list_bullet", &self.list_bullet)
             .field("bold", &self.bold)
+            .field("italic", &self.italic)
+            .field("underline", &self.underline)
+            .field("strikethrough", &self.strikethrough)
             .field("highlight_code", &self.highlight_code.is_some())
             .finish()
     }
@@ -112,6 +118,9 @@ impl Default for MarkdownTheme {
             hr: Style::fg(Color::Default).dim(),
             list_bullet: Style::fg(Color::Default),
             bold: Style::fg(Color::Default).bold(),
+            italic: Style::fg(Color::Default).italic(),
+            underline: Style::fg(Color::Default).underline(),
+            strikethrough: Style::fg(Color::Default).strikethrough(),
             highlight_code: None,
         }
     }
@@ -228,6 +237,9 @@ impl TuiTheme {
             hr: Style::fg(palette.muted).dim(),
             list_bullet: Style::fg(palette.accent),
             bold: Style::fg(palette.text).bold(),
+            italic: Style::fg(palette.text).italic(),
+            underline: Style::fg(palette.accent).underline(),
+            strikethrough: Style::fg(palette.muted).strikethrough(),
             highlight_code: None,
         };
         let settings_list = SettingsListTheme {
