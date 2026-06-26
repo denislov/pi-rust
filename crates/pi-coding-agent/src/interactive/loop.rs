@@ -155,6 +155,7 @@ fn initialize_started_tui<T: Terminal>(
             root.apply_hydrated_session(hydrated, None);
         }
     }
+    tui.set_clear_on_shrink(prompt_context.settings.terminal.clear_on_shrink);
     tui.set_focus(Some(root_id));
     Ok((tui, root_id))
 }
@@ -542,7 +543,9 @@ fn handle_input_event<T: Terminal>(
         }
     }
     if let Some(settings) = settings_update {
+        let clear_on_shrink = settings.terminal.clear_on_shrink;
         prompt_context.settings = settings;
+        tui.set_clear_on_shrink(clear_on_shrink);
     }
     if let Some(auth) = auth_update {
         prompt_context.auth = auth;

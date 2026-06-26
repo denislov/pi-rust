@@ -343,7 +343,11 @@ impl InteractiveRoot {
     }
 
     pub(super) fn expand_prompt_text(&self, text: &str) -> String {
-        let text = crate::interactive::commands::expand_skill_command(text, &self.skills);
+        let text = if self.settings.enable_skill_commands {
+            crate::interactive::commands::expand_skill_command(text, &self.skills)
+        } else {
+            text.to_string()
+        };
         crate::interactive::commands::expand_prompt_template(&text, &self.prompt_templates)
     }
 
@@ -355,11 +359,13 @@ impl InteractiveRoot {
                 description: t.description.clone(),
             });
         }
-        for s in &self.skills {
-            commands.push(slash::BuiltinSlashCommand {
-                name: format!("skill:{}", s.name),
-                description: s.description.clone(),
-            });
+        if self.settings.enable_skill_commands {
+            for s in &self.skills {
+                commands.push(slash::BuiltinSlashCommand {
+                    name: format!("skill:{}", s.name),
+                    description: s.description.clone(),
+                });
+            }
         }
         commands
     }

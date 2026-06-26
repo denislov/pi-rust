@@ -2510,6 +2510,84 @@ mod tests {
     }
 
     #[test]
+    fn all_slash_commands_excludes_skills_when_disabled() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.settings.enable_skill_commands = false;
+        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+            name: "review".into(),
+            description: "Review code".into(),
+            content: "content".into(),
+            location: "/p/review.md".into(),
+        }];
+        root.skills = vec![pi_agent_core::Skill {
+            name: "rust".into(),
+            description: "Rust".into(),
+            location: "/s/rust".into(),
+            content: "content".into(),
+            disable_model_invocation: false,
+        }];
+
+        let commands = root.all_slash_commands();
+        assert!(commands.iter().any(|c| c.name == "review"));
+        assert!(commands.iter().any(|c| c.name == "help"));
+        assert!(
+            !commands.iter().any(|c| c.name == "skill:rust"),
+            "skill commands should be excluded when enable_skill_commands is off"
+        );
+    }
+
+    #[test]
+    fn expand_skill_command_does_not_expand_when_disabled() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.settings.enable_skill_commands = false;
+        root.skills = vec![pi_agent_core::Skill {
+            name: "rust".into(),
+            description: "Rust".into(),
+            location: "/s/rust".into(),
+            content: "Rust guide".into(),
+            disable_model_invocation: false,
+        }];
+
+        let result = root.expand_prompt_text("/skill:rust write code");
+        assert_eq!(
+            result,
+            "/skill:rust write code",
+            "skill command should pass through when disabled"
+        );
+    }
+
+    #[test]
+    fn expand_skill_command_expands_when_enabled() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.settings.enable_skill_commands = true;
+        root.skills = vec![pi_agent_core::Skill {
+            name: "rust".into(),
+            description: "Rust".into(),
+            location: "/s/rust".into(),
+            content: "Rust guide".into(),
+            disable_model_invocation: false,
+        }];
+
+        let result = root.expand_prompt_text("/skill:rust write code");
+        assert!(
+            result.contains("Rust guide"),
+            "skill command should expand when enabled: {result}"
+        );
+    }
+
+    #[test]
     fn name_command_without_args_shows_current_session_label() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
