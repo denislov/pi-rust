@@ -1066,6 +1066,7 @@ dependencies = [
  "futures",
  "ignore",
  "pi-ai",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

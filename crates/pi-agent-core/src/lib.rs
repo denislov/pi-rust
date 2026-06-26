@@ -38,9 +38,7 @@ pub use hooks::{
     BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ConvertToLlmHook,
     ShouldStopAfterTurnHook, TransformContextHook,
 };
-pub use resources::{
-    parse_command_args, substitute_args,
-};
+pub use resources::{parse_command_args, substitute_args};
 pub use types::{
     AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolOutput,
     AgentToolResult, CompactionConfig, CompactionSettings, PromptTemplate, ProviderRequestSnapshot,

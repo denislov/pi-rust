@@ -42,7 +42,8 @@ pub fn repair_json(input: &str) -> String {
 /// Callers that are about to execute tool arguments should use
 /// try_parse_streaming_json instead so malformed arguments fail closed.
 pub fn parse_streaming_json(input: &str) -> serde_json::Value {
-    try_parse_streaming_json(input).unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+    try_parse_streaming_json(input)
+        .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
 }
 
 /// Parses streaming JSON and returns an error instead of silently falling back

@@ -38,26 +38,23 @@ pub(super) fn render_transcript_lines(
                 .map(|line| fit_line(&paint_with(line, &SYSTEM, color), width))
                 .collect(),
             TranscriptItem::Assistant {
-                markdown,
-                thinking,
-                ..
+                markdown, thinking, ..
             } => {
                 let mut lines = Vec::new();
                 if !thinking.is_empty() && !hide_thinking_block {
                     let thinking_style = Style::fg(Color::Yellow).italic();
                     for line in thinking.lines() {
-                        lines.push(fit_line(
-                            &paint_with(line, &thinking_style, color),
-                            width,
-                        ));
+                        lines.push(fit_line(&paint_with(line, &thinking_style, color), width));
                     }
                 }
                 if !markdown.is_empty() {
-                    let mut markdown =
-                        Markdown::new(markdown).with_theme(markdown_theme.clone());
-                    lines.extend(markdown.render(width).into_iter().map(|line| {
-                        fit_line(&line, width)
-                    }));
+                    let mut markdown = Markdown::new(markdown).with_theme(markdown_theme.clone());
+                    lines.extend(
+                        markdown
+                            .render(width)
+                            .into_iter()
+                            .map(|line| fit_line(&line, width)),
+                    );
                 }
                 lines
             }

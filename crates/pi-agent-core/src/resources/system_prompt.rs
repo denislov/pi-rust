@@ -385,7 +385,10 @@ mod tests {
     #[test]
     fn substitute_array_slice_with_length() {
         assert_eq!(
-            substitute_args("${@:2:2}", &["a".into(), "b".into(), "c".into(), "d".into()]),
+            substitute_args(
+                "${@:2:2}",
+                &["a".into(), "b".into(), "c".into(), "d".into()]
+            ),
             "b c"
         );
     }
@@ -433,16 +436,16 @@ mod tests {
             "$A $$ $ $ARGS"
         );
         // Plain ${1} (without :-default) is NOT substituted
-        assert_eq!(
-            substitute_args("${1}", &["a".into()]),
-            "${1}"
-        );
+        assert_eq!(substitute_args("${1}", &["a".into()]), "${1}");
     }
 
     #[test]
     fn substitute_case_sensitive() {
         assert_eq!(
-            substitute_args("$arguments $Arguments $ARGUMENTS", &["a".into(), "b".into()]),
+            substitute_args(
+                "$arguments $Arguments $ARGUMENTS",
+                &["a".into(), "b".into()]
+            ),
             "$arguments $Arguments a b"
         );
     }

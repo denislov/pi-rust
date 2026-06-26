@@ -17,24 +17,24 @@ pub fn build_request(
 
     messages.extend(ctx.messages.iter().filter_map(convert_message));
 
-    let (thinking, reasoning_effort) = opts.as_ref().and_then(|o| o.thinking.as_ref()).map_or(
-        (None, None),
-        |tc| {
-            if tc.enabled {
-                // Map pi thinking level to provider value via thinkingLevelMap
-                let effort = tc.effort.as_deref().and_then(|level| {
-                    model
-                        .thinking_level_map
-                        .as_ref()
-                        .and_then(|map| map.resolve(level))
-                        .or(Some(level.to_string()))
-                });
-                (Some(json!({ "type": "enabled" })), effort)
-            } else {
-                (None, None)
-            }
-        },
-    );
+    let (thinking, reasoning_effort) =
+        opts.as_ref()
+            .and_then(|o| o.thinking.as_ref())
+            .map_or((None, None), |tc| {
+                if tc.enabled {
+                    // Map pi thinking level to provider value via thinkingLevelMap
+                    let effort = tc.effort.as_deref().and_then(|level| {
+                        model
+                            .thinking_level_map
+                            .as_ref()
+                            .and_then(|map| map.resolve(level))
+                            .or(Some(level.to_string()))
+                    });
+                    (Some(json!({ "type": "enabled" })), effort)
+                } else {
+                    (None, None)
+                }
+            });
 
     ChatCompletionRequest {
         model: model.id.clone(),
