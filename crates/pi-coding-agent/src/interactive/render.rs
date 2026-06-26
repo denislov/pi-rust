@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use pi_tui::{
-    Color, Component, ERROR, Loader, Markdown, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style,
-    TOOL_ERROR, TOOL_NAME, USER, paint_with, truncate_to_width, visible_width,
+    Color, Component, ERROR, Loader, Markdown, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, USER,
+    paint_with, truncate_to_width, visible_width,
 };
 
 use crate::interactive::transcript::{Transcript, TranscriptItem};
@@ -25,6 +25,11 @@ pub(super) struct TranscriptStyles {
     pub tool_success_bg: Style,
     pub tool_error_bg: Style,
     pub tool_error_text: Style,
+    pub tool_diff_added: Style,
+    pub tool_diff_removed: Style,
+    pub tool_diff_context: Style,
+    pub bash_mode: Style,
+    pub warning: Style,
 }
 
 impl TranscriptStyles {
@@ -63,6 +68,11 @@ impl TranscriptStyles {
             tool_success_bg: bg(ThemeBg::ToolSuccessBg),
             tool_error_bg: bg(ThemeBg::ToolErrorBg),
             tool_error_text: fg(ThemeColor::Error),
+            tool_diff_added: fg(ThemeColor::ToolDiffAdded),
+            tool_diff_removed: fg(ThemeColor::ToolDiffRemoved),
+            tool_diff_context: fg(ThemeColor::ToolDiffContext),
+            bash_mode: fg(ThemeColor::BashMode).bold(),
+            warning: fg(ThemeColor::Warning),
         }
     }
 
@@ -79,6 +89,11 @@ impl TranscriptStyles {
             tool_success_bg: Style::default(),
             tool_error_bg: Style::default(),
             tool_error_text: TOOL_ERROR,
+            tool_diff_added: Style::fg(Color::Green),
+            tool_diff_removed: Style::fg(Color::Red),
+            tool_diff_context: Style::fg(Color::Default).dim(),
+            bash_mode: Style::fg(Color::Green).bold(),
+            warning: Style::fg(Color::Yellow),
         }
     }
 }
@@ -354,53 +369,264 @@ fn render_tool_block(
     styles: &TranscriptStyles,
 ) -> Vec<String> {
     let status = match (result, is_error) {
-        (None, _) => "running",
-        (Some(_), true) => "error",
-        (Some(_), false) => "done",
+        (None, _) => ToolStatus::Running,
+        (Some(_), true) => ToolStatus::Error,
+        (Some(_), false) => ToolStatus::Done,
     };
-    let (status_style, bg) = match status {
-        "running" => (STATUS_RUNNING, &styles.tool_pending_bg),
-        "error" => (TOOL_ERROR, &styles.tool_error_bg),
-        "done" => (STATUS_IDLE, &styles.tool_success_bg),
-        _ => (Style::default(), &styles.tool_success_bg),
+    let bg = match status {
+        ToolStatus::Running => &styles.tool_pending_bg,
+        ToolStatus::Error => &styles.tool_error_bg,
+        ToolStatus::Done => &styles.tool_success_bg,
     };
-    let header = format!(
-        "{} {} {} {}",
-        paint_with("tool", &styles.tool_title, color),
-        paint_with(name, &styles.tool_title, color),
-        tool_target(name, args),
-        paint_with(status, &status_style, color),
-    );
+
+    // `edit` self-renders its diff (TS renderShell: "self") so the diff's
+    // added/removed/context colors aren't swallowed by a flat tool bg.
+    if name == "edit" {
+        return render_edit_block(args, result, is_error, width, color, styles);
+    }
+
+    let header = render_tool_header(name, args, status, color, styles);
     let mut lines = vec![paint_bg_line(&header, width, bg, color)];
     let Some(result) = result else {
+        // Bash shows a running hint while pending; other tools just stop.
+        if name == "bash" {
+            let hint = paint_with("Running...", &styles.system, color);
+            lines.push(paint_bg_line(&format!("  {hint}"), width, bg, color));
+        }
         return lines;
     };
 
-    let result_lines = result.lines().collect::<Vec<_>>();
-    let result_line_limit = if matches!(name, "write" | "edit") {
-        result_lines.len()
-    } else {
-        max_tool_result_lines
+    let body =
+        render_tool_result_body(name, result, is_error, max_tool_result_lines, color, styles);
+    for line in body {
+        lines.push(paint_bg_line(&line, width, bg, color));
+    }
+    lines
+}
+
+#[derive(Clone, Copy)]
+enum ToolStatus {
+    Running,
+    Done,
+    Error,
+}
+
+impl ToolStatus {
+    fn label(self) -> &'static str {
+        match self {
+            ToolStatus::Running => "running",
+            ToolStatus::Done => "done",
+            ToolStatus::Error => "error",
+        }
+    }
+    fn style(self, styles: &TranscriptStyles) -> Style {
+        match self {
+            ToolStatus::Running => styles.warning,
+            ToolStatus::Done => styles.tool_diff_added,
+            ToolStatus::Error => styles.tool_error_text,
+        }
+    }
+}
+
+/// Render a tool's header line. Built-in tools get friendly, TS-parity
+/// headers (`read <path>:range`, `$ <command>`, `edit <path>`); others fall
+/// back to the generic `tool <name> <target> <status>` shape.
+fn render_tool_header(
+    name: &str,
+    args: &serde_json::Value,
+    status: ToolStatus,
+    color: bool,
+    styles: &TranscriptStyles,
+) -> String {
+    let status_text = paint_with(status.label(), &status.style(styles), color);
+    match name {
+        "read" => {
+            let path = tool_target(name, args);
+            let range = read_line_range(args, color, styles);
+            format!(
+                "{} {}{} {}",
+                paint_with("read", &styles.tool_title, color),
+                path,
+                range,
+                status_text,
+            )
+        }
+        "bash" => {
+            let command = tool_target(name, args);
+            format!(
+                "{} {}",
+                paint_with(&format!("$ {command}"), &styles.bash_mode, color),
+                status_text,
+            )
+        }
+        "write" | "edit" => {
+            let path = tool_target(name, args);
+            format!(
+                "{} {} {}",
+                paint_with(name, &styles.tool_title, color),
+                path,
+                status_text,
+            )
+        }
+        _ => format!(
+            "{} {} {} {}",
+            paint_with("tool", &styles.tool_title, color),
+            paint_with(name, &styles.tool_title, color),
+            tool_target(name, args),
+            status_text,
+        ),
+    }
+}
+
+/// `:<start>-<end>` range suffix for `read`, mirroring TS
+/// `formatReadLineRange`, in the warning color.
+fn read_line_range(args: &serde_json::Value, color: bool, styles: &TranscriptStyles) -> String {
+    let offset = args.get("offset").and_then(|v| v.as_u64());
+    let limit = args.get("limit").and_then(|v| v.as_u64());
+    if offset.is_none() && limit.is_none() {
+        return String::new();
+    }
+    let start = offset.unwrap_or(1);
+    let end = limit.map(|l| start + l - 1);
+    let range = match end {
+        Some(e) => format!(":{start}-{e}"),
+        None => format!(":{start}"),
     };
+    paint_with(&range, &styles.warning, color)
+}
+
+/// Render a tool's result body (indented two columns). Built-in tools tailor
+/// the preview: `read` replaces tabs and paints output; `bash` shows the
+/// *tail* of the output (TS parity) and surfaces truncation notes; others use
+/// the generic head-truncated preview.
+fn render_tool_result_body(
+    name: &str,
+    result: &str,
+    is_error: bool,
+    max_tool_result_lines: usize,
+    color: bool,
+    styles: &TranscriptStyles,
+) -> Vec<String> {
     let output_style = if is_error {
         styles.tool_error_text
     } else {
         styles.tool_output
     };
-    lines.extend(result_lines.iter().take(result_line_limit).map(|line| {
-        let painted = paint_with(line, &output_style, color);
-        paint_bg_line(&format!("  {painted}"), width, bg, color)
-    }));
-    let omitted = result_lines.len().saturating_sub(result_line_limit);
+    let all_lines: Vec<&str> = result.lines().collect();
+
+    // write/edit keep their full result (handled here for write; edit is
+    // self-rendered above).
+    let keep_all = matches!(name, "write");
+    let limit = if keep_all {
+        all_lines.len()
+    } else {
+        max_tool_result_lines
+    };
+
+    let (shown, omitted) = if name == "bash" && !keep_all {
+        // Tail preview: show the last `limit` logical lines.
+        let start = all_lines.len().saturating_sub(limit);
+        (all_lines[start..].to_vec(), start)
+    } else {
+        (
+            all_lines[..limit.min(all_lines.len())].to_vec(),
+            all_lines.len().saturating_sub(limit),
+        )
+    };
+
+    let mut out = Vec::new();
+    for line in &shown {
+        let text = if name == "read" {
+            replace_tabs(line)
+        } else {
+            (*line).to_string()
+        };
+        let painted = paint_with(&text, &output_style, color);
+        out.push(format!("  {painted}"));
+    }
     if omitted > 0 {
         let note = paint_with(
             &format!("... {omitted} more lines (expand tools)"),
             &styles.system,
             color,
         );
-        lines.push(paint_bg_line(&format!("  {note}"), width, bg, color));
+        out.push(format!("  {note}"));
+    }
+    out
+}
+
+/// Self-rendered `edit` block: no tool bg, diff lines colored by
+/// added/removed/context, mirroring TS `renderShell: "self"`.
+fn render_edit_block(
+    args: &serde_json::Value,
+    result: Option<&str>,
+    is_error: bool,
+    width: usize,
+    color: bool,
+    styles: &TranscriptStyles,
+) -> Vec<String> {
+    let path = tool_target("edit", args);
+    let status = match (result, is_error) {
+        (None, _) => ToolStatus::Running,
+        (Some(_), true) => ToolStatus::Error,
+        (Some(_), false) => ToolStatus::Done,
+    };
+    let header = format!(
+        "{} {} {}",
+        paint_with("edit", &styles.tool_title, color),
+        path,
+        paint_with(status.label(), &status.style(styles), color),
+    );
+    let mut lines = vec![fit_line(&header, width)];
+    let Some(result) = result else {
+        return lines;
+    };
+
+    let output_style = if is_error {
+        styles.tool_error_text
+    } else {
+        styles.tool_output
+    };
+    for line in result.lines() {
+        let styled = paint_diff_line(line, color, styles, output_style);
+        lines.push(fit_line(&format!("  {styled}"), width));
     }
     lines
+}
+
+/// Paint a single diff line with semantic colors: `+` added, `-` removed,
+/// ` ` context, and hunk headers (`@@`/`---`/`+++`) dimmed.
+fn paint_diff_line(line: &str, color: bool, styles: &TranscriptStyles, fallback: Style) -> String {
+    let (prefix, style) = if line.starts_with("+++") || line.starts_with("---") {
+        (line, styles.tool_diff_context)
+    } else if let Some(rest) = line.strip_prefix('+') {
+        (rest, styles.tool_diff_added)
+    } else if let Some(rest) = line.strip_prefix('-') {
+        (rest, styles.tool_diff_removed)
+    } else if line.starts_with("@@") {
+        (line, styles.tool_diff_context)
+    } else if let Some(rest) = line.strip_prefix(' ') {
+        (rest, styles.tool_diff_context)
+    } else {
+        (line, fallback)
+    };
+    // Preserve the leading marker (stripped above) so the diff is still
+    // readable on colorless terminals.
+    let marker = if line.starts_with('+') {
+        "+"
+    } else if line.starts_with('-') {
+        "-"
+    } else if line.starts_with(' ') {
+        " "
+    } else {
+        ""
+    };
+    format!("{}{}", marker, paint_with(prefix, &style, color))
+}
+
+/// Replace tabs with three spaces, mirroring TS `replaceTabs`.
+fn replace_tabs(text: &str) -> String {
+    text.replace('\t', "   ")
 }
 
 fn tool_target(name: &str, args: &serde_json::Value) -> String {
@@ -518,6 +744,12 @@ mod tests {
         assert_eq!(styles.tool_error_bg.bg, Color::Rgb(0x3c, 0x28, 0x28));
         // toolTitle bold
         assert!(styles.tool_title.bold);
+        // tool diffs + bash + warning tokens
+        assert_eq!(styles.tool_diff_added.fg, Color::Rgb(0xb5, 0xbd, 0x68));
+        assert_eq!(styles.tool_diff_removed.fg, Color::Rgb(0xcc, 0x66, 0x66));
+        assert_eq!(styles.bash_mode.fg, Color::Rgb(0xb5, 0xbd, 0x68));
+        assert!(styles.bash_mode.bold);
+        assert_eq!(styles.warning.fg, Color::Rgb(0xff, 0xff, 0x00));
     }
 
     /// Build render options with no resolved theme (fallback palette) and
@@ -660,5 +892,135 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn read_header_shows_path_and_line_range() {
+        // Plan stage 3 read parity: header is `read <path>:<range>` (no
+        // `tool` prefix), with the line range in the warning color.
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "read".to_string(),
+            args: serde_json::json!({"path": "src/lib.rs", "offset": 10, "limit": 5}),
+            result: Some("body".to_string()),
+            is_error: false,
+        });
+        let lines = render_transcript_lines(&transcript, &test_opts(60, false));
+        assert!(
+            lines[0].trim().starts_with("read src/lib.rs:10-14 done"),
+            "{}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn bash_header_uses_dollar_prefix_and_running_hint() {
+        // Plan stage 3 bash parity: header is `$ <command>`; while pending
+        // show `Running...`.
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "bash".to_string(),
+            args: serde_json::json!({"command": "cargo test"}),
+            result: None,
+            is_error: false,
+        });
+        let lines = render_transcript_lines(&transcript, &test_opts(60, false));
+        assert!(
+            lines[0].trim().starts_with("$ cargo test running"),
+            "{}",
+            lines[0]
+        );
+        assert!(lines[1].trim().starts_with("Running..."), "{}", lines[1]);
+    }
+
+    #[test]
+    fn bash_result_shows_tail_preview_not_head() {
+        // Plan stage 3 bash parity: collapsed view shows the *last* N lines
+        // (tail), not the first N, so the most recent output stays visible.
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "bash".to_string(),
+            args: serde_json::json!({"command": "echo"}),
+            result: Some("l1\nl2\nl3\nl4\nl5\nl6".to_string()),
+            is_error: false,
+        });
+        let lines = render_transcript_lines(&transcript, &test_opts(60, false));
+        let body: Vec<String> = lines
+            .iter()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(
+            body.iter().any(|l| l.starts_with("l6")),
+            "tail must include l6: {body:?}"
+        );
+        assert!(
+            body.iter().any(|l| l.starts_with("l4")),
+            "tail must include l4: {body:?}"
+        );
+        assert!(
+            !body.iter().any(|l| l.starts_with("l1")),
+            "head l1 should be hidden: {body:?}"
+        );
+        assert!(
+            body.iter().any(|l| l.contains("3 more lines")),
+            "omitted hint missing: {body:?}"
+        );
+    }
+
+    #[test]
+    fn edit_block_self_renders_diff_with_semantic_colors() {
+        // Plan stage 3 edit parity: edit self-renders (no tool bg), with
+        // added/removed/context lines colored separately.
+        let diff = "--- src/lib.rs\n+++ src/lib.rs\n@@ -1,2 +1,2 @@\n context\n-old\n+new";
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "edit".to_string(),
+            args: serde_json::json!({"file_path": "src/lib.rs"}),
+            result: Some(diff.to_string()),
+            is_error: false,
+        });
+
+        let colored = render_transcript_lines(&transcript, &test_opts(60, true));
+        let joined = colored.join("\n");
+        // Header is `edit <path> done` with no `tool` prefix.
+        assert!(joined.contains("src/lib.rs"), "path missing: {joined}");
+        assert!(joined.contains("done"), "status missing: {joined}");
+        assert!(
+            !joined.contains("tool edit"),
+            "should not use generic prefix: {joined}"
+        );
+        // Added/removed lines carry their semantic color escapes (green/red).
+        // toolDiffAdded = green = ANSI 2, toolDiffRemoved = red = ANSI 1.
+        assert!(
+            joined.contains("\x1b[32m"),
+            "added line not green: {joined}"
+        );
+        assert!(
+            joined.contains("\x1b[31m"),
+            "removed line not red: {joined}"
+        );
+        // The `+new` / `-old` markers are preserved, with added/removed
+        // content colored green/red respectively.
+        assert!(
+            joined.contains("\x1b[32mnew"),
+            "added content not green: {joined}"
+        );
+        assert!(
+            joined.contains("\x1b[31mold"),
+            "removed content not red: {joined}"
+        );
+        assert!(
+            joined.contains("+\x1b[32m"),
+            "added marker missing: {joined}"
+        );
+        assert!(
+            joined.contains("-\x1b[31m"),
+            "removed marker missing: {joined}"
+        );
     }
 }

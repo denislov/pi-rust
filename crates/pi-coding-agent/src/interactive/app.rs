@@ -475,7 +475,7 @@ mod tests {
         assert!(
             pending[0]
                 .trim_start()
-                .starts_with("tool read src/lib.rs running")
+                .starts_with("read src/lib.rs running")
         );
 
         transcript.apply_event(UiEvent::ToolFinished {
@@ -490,7 +490,7 @@ mod tests {
         assert!(
             collapsed[0]
                 .trim_start()
-                .starts_with("tool read src/lib.rs done"),
+                .starts_with("read src/lib.rs done"),
             "{}",
             collapsed[0]
         );
@@ -541,14 +541,16 @@ mod tests {
         let headers: Vec<&str> = lines
             .iter()
             .map(|line| line.trim())
-            .filter(|line| line.starts_with("tool "))
+            .filter(|line| {
+                line.starts_with("write ") || line.starts_with("edit ") || line.starts_with("$ ")
+            })
             .collect();
         assert_eq!(
             headers,
             [
-                "tool write src/main.rs done",
-                "tool edit src/lib.rs done",
-                "tool bash cargo test -p pi-coding-agent done",
+                "write src/main.rs done",
+                "edit src/lib.rs done",
+                "$ cargo test -p pi-coding-agent done",
             ],
             "{lines:?}"
         );
@@ -592,9 +594,7 @@ mod tests {
 
         let lines = render_transcript_lines(&transcript, &opts(40, 3));
         assert!(
-            lines[0]
-                .trim_start()
-                .starts_with("tool read src/lib.rs done"),
+            lines[0].trim_start().starts_with("read src/lib.rs done"),
             "{}",
             lines[0]
         );
