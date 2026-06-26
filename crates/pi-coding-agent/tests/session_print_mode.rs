@@ -1,6 +1,6 @@
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
-use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
+use pi_ai::types::{Model, ModelCost, ModelInput, StopReason, Usage};
 use pi_coding_agent::print_mode::PrintModeOptions;
 use pi_coding_agent::run_print_mode;
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
@@ -8,6 +8,14 @@ use pi_coding_agent::session::ResolvedSessionTarget;
 use std::sync::Arc;
 
 fn faux_model(api: &str) -> Model {
+    faux_model_with_window(api, 0)
+}
+
+/// Like [`faux_model`] but with an explicit `context_window`. The default
+/// [`faux_model`] keeps `context_window: 0` (never auto-compacts under the
+/// context-window-gated trigger); tests that exercise auto compaction should
+/// pick a window appropriate to their scenario.
+fn faux_model_with_window(api: &str, context_window: u32) -> Model {
     Model {
         id: "faux-model".into(),
         name: "Faux Model".into(),
@@ -23,7 +31,7 @@ fn faux_model(api: &str) -> Model {
             cache_read: 0.0,
             cache_write: 0.0,
         },
-        context_window: 0,
+        context_window,
         max_tokens: 0,
         headers: None,
         compat: None,
@@ -125,8 +133,26 @@ async fn persists_session_with_name() {
 
 #[tokio::test]
 async fn persists_compaction_entry_when_continued_session_is_too_large() {
+    // 60k context window; default reserve_tokens=16_384 → trigger threshold
+    // 43_616. The first session's single long user prompt (~36k heuristic
+    // tokens, no assistant usage yet) stays under the threshold, so it does
+    // NOT compact. The first session's provider call reports a large
+    // `usage.total_tokens` (50k) to mirror a real provider reporting the
+    // accumulated context size; when the second session loads that assistant
+    // message, `estimate_context_tokens` anchors on it (50k + trailing) and
+    // exceeds 43_616, so compaction fires and the entry is persisted.
     let api_first = "session-print-compaction-first";
-    registry::register(api_first, Arc::new(FauxProvider::simple_text("stored")));
+    registry::register(
+        api_first,
+        Arc::new(
+            FauxProvider::simple_text("stored").with_default_usage(Usage {
+                input: 49_980,
+                output: 20,
+                total_tokens: 50_000,
+                ..Default::default()
+            }),
+        ),
+    );
     let dir = tempfile::tempdir().unwrap();
 
     let project_dir = dir.path().join("project");
@@ -137,7 +163,7 @@ async fn persists_compaction_entry_when_continued_session_is_too_large() {
     let long_prompt = "old context ".repeat(12_120);
     let first = run_print_mode(PrintModeOptions {
         prompt: long_prompt.clone(),
-        model: faux_model(api_first),
+        model: faux_model_with_window(api_first, 60_000),
         api_key: None,
         system_prompt: None,
         max_turns: Some(5),
@@ -172,7 +198,7 @@ async fn persists_compaction_entry_when_continued_session_is_too_large() {
 
     let second = run_print_mode(PrintModeOptions {
         prompt: "continue".into(),
-        model: faux_model(api_second),
+        model: faux_model_with_window(api_second, 60_000),
         api_key: None,
         system_prompt: None,
         max_turns: Some(5),

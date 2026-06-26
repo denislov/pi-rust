@@ -5,8 +5,8 @@ use futures::{FutureExt, StreamExt};
 use std::sync::{Arc, RwLock};
 
 use crate::agent::AgentState;
-use crate::compaction::estimate::estimate_tokens;
-use crate::compaction::prepare::prepare_compaction;
+use crate::compaction::estimate::estimate_context_tokens;
+use crate::compaction::prepare::{prepare_compaction, should_compact};
 use crate::compaction::summarize::summarize;
 use crate::hooks::{
     AfterToolCallContext, BeforeProviderRequestContext, BeforeToolCallContext,
@@ -62,11 +62,19 @@ async fn compact_before_provider_request(
     let Some(config) = config else {
         return Ok(None);
     };
-    if !config.settings.enabled {
+
+    // Gate auto compaction on the active model's context window (TS parity):
+    // trigger only when the estimated active context exceeds
+    // `model.context_window - settings.reserve_tokens`. `keep_recent_tokens`
+    // only controls how much recent history remains once compaction is
+    // deemed necessary, not when it starts. `should_compact` also returns
+    // false when compaction is disabled or `context_window == 0`.
+    let usage_estimate = estimate_context_tokens(&messages);
+    let tokens_before = usage_estimate.tokens;
+    if !should_compact(tokens_before, model.context_window, &config.settings) {
         return Ok(None);
     }
 
-    let tokens_before = estimate_tokens(&messages);
     let (to_summarize, keep) = prepare_compaction(&messages, &config.settings);
     if to_summarize.is_empty() {
         return Ok(None);

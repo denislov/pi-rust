@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use async_stream::stream;
 use pi_ai::providers::faux::FauxResponse;
 use pi_ai::registry::ApiProvider;
@@ -185,6 +187,14 @@ pub fn tool_use_turn(tool_id: &str, tool_name: &str, arguments: serde_json::Valu
 }
 
 pub fn faux_model(api: &str) -> Model {
+    faux_model_with_window(api, 0)
+}
+
+/// Like [`faux_model`] but with an explicit `context_window`. The default
+/// [`faux_model`] keeps `context_window: 0` (never auto-compacts under the
+/// context-window-gated trigger); tests that exercise auto compaction should
+/// pick a window appropriate to their scenario.
+pub fn faux_model_with_window(api: &str, context_window: u32) -> Model {
     Model {
         id: "faux-model".into(),
         name: "Faux Model".into(),
@@ -200,7 +210,7 @@ pub fn faux_model(api: &str) -> Model {
             cache_read: 0.0,
             cache_write: 0.0,
         },
-        context_window: 0,
+        context_window,
         max_tokens: 0,
         headers: None,
         compat: None,

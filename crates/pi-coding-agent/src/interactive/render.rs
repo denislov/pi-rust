@@ -2,7 +2,7 @@ use std::path::Path;
 
 use pi_tui::{
     Color, Component, ERROR, Loader, Markdown, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, USER,
-    paint_with, truncate_to_width, visible_width,
+    paint_with, truncate_to_width, visible_width, wrap_text_with_ansi,
 };
 
 use crate::interactive::transcript::{Transcript, TranscriptItem};
@@ -324,6 +324,12 @@ fn render_assistant_message(
 
 /// Render an error item with an `Error:` label (TS assistant-message error
 /// fallback style).
+///
+/// Long errors wrap to the available transcript width (mirrors TS error
+/// rendering) instead of being truncated to a single line. The `Error:` label
+/// prefixes only the first rendered line; continuation lines wrap at column 0.
+/// `fit_line` is kept as a final safety clamp so ANSI-bearing wrapped lines
+/// can never overflow the width.
 fn render_error_message(
     text: &str,
     width: usize,
@@ -331,17 +337,24 @@ fn render_error_message(
     styles: &TranscriptStyles,
 ) -> Vec<String> {
     let label = paint_with("Error:", &styles.error, color);
-    text.split('\n')
-        .enumerate()
-        .map(|(i, line)| {
-            let body = paint_with(line, &styles.error, color);
-            if i == 0 {
-                fit_line(&format!("{label} {body}"), width)
+    // The first rendered line shares its row with the `Error: ` label (label
+    // plus one separating space), so the first source line wraps to the
+    // reduced width; later lines use the full width.
+    let first_width = width.saturating_sub(visible_width("Error: ")).max(1);
+
+    let mut out: Vec<String> = Vec::new();
+    for source_line in text.split('\n') {
+        let wrap_width = if out.is_empty() { first_width } else { width };
+        for wrapped_line in wrap_text_with_ansi(source_line, wrap_width) {
+            let body = paint_with(&wrapped_line, &styles.error, color);
+            if out.is_empty() {
+                out.push(fit_line(&format!("{label} {body}"), width));
             } else {
-                fit_line(&body, width)
+                out.push(fit_line(&body, width));
             }
-        })
-        .collect()
+        }
+    }
+    out
 }
 
 /// Paint a line with a background style, padding it to the full render
@@ -1323,5 +1336,107 @@ mod tests {
         let lines = render_transcript_lines(&transcript, &test_opts(60, false));
         let header = lines[0].trim();
         assert!(header.starts_with("write src/main.rs done"), "{}", header);
+    }
+
+    // ---- error message wrapping ----
+
+    #[test]
+    fn long_error_wraps_to_multiple_lines() {
+        // A long single-line error must wrap to the transcript width instead
+        // of being truncated to one line.
+        let mut transcript = Transcript::new();
+        let long_text = "summarization failed: complete failed: HTTP 400 unexpected provider response payload that is quite long indeed";
+        transcript.push(TranscriptItem::error(long_text.to_string()));
+
+        let lines = render_transcript_lines(&transcript, &test_opts(40, false));
+        assert!(
+            lines.len() > 1,
+            "long error should wrap to multiple lines: {lines:?}"
+        );
+        // First line carries the Error: label.
+        assert!(
+            lines[0].starts_with("Error: "),
+            "first line missing label: {:?}",
+            lines[0]
+        );
+        // No rendered line overflows the width.
+        for line in &lines {
+            assert!(
+                visible_width(line) <= 40,
+                "line overflows width: {:?} ({})",
+                line,
+                visible_width(line)
+            );
+        }
+        // Full text is recoverable: every word of the original appears across
+        // the wrapped lines (no ANSI with color=false).
+        let recovered = lines
+            .iter()
+            .map(|l| l.strip_prefix("Error: ").unwrap_or(l))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for word in long_text.split_whitespace() {
+            assert!(
+                recovered.contains(word),
+                "missing word {word:?} in recovered text: {recovered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_line_error_preserves_newlines_and_wraps_each_paragraph() {
+        // Explicit newlines in the error are preserved as paragraph breaks,
+        // and each paragraph wraps within the width.
+        let mut transcript = Transcript::new();
+        let text = "first paragraph that is long enough to wrap across several lines here\nsecond paragraph also long enough to wrap nicely within the width";
+        transcript.push(TranscriptItem::error(text.to_string()));
+
+        let lines = render_transcript_lines(&transcript, &test_opts(30, false));
+        let all = lines.join("\n");
+        for word in text.split_whitespace() {
+            assert!(all.contains(word), "missing word {word:?}: {all:?}");
+        }
+        for line in &lines {
+            assert!(
+                visible_width(line) <= 30,
+                "overflow: {:?} ({})",
+                line,
+                visible_width(line)
+            );
+        }
+        assert!(lines.len() > 2, "both paragraphs should wrap: {lines:?}");
+        // Only the very first rendered line carries the Error: label.
+        assert!(lines[0].starts_with("Error: "));
+        assert!(
+            lines.iter().filter(|l| l.starts_with("Error: ")).count() == 1,
+            "exactly one label expected: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn colored_error_keeps_style_on_all_wrapped_lines() {
+        // With color enabled, the fallback ERROR style (bold red) must be
+        // applied to every wrapped line, not just the first.
+        let mut transcript = Transcript::new();
+        let long_text = "summarization failed: complete failed: HTTP 400 unexpected provider response payload that is quite long";
+        transcript.push(TranscriptItem::error(long_text.to_string()));
+
+        let lines = render_transcript_lines(&transcript, &test_opts(40, true));
+        assert!(lines.len() > 1, "should wrap: {lines:?}");
+        for line in &lines {
+            if !line.is_empty() {
+                assert!(
+                    line.contains("\x1b[1;31m"),
+                    "error style missing on line: {line:?}"
+                );
+                assert!(line.contains("\x1b[0m"), "reset missing on line: {line:?}");
+            }
+            assert!(
+                visible_width(line) <= 40,
+                "overflow with color: {:?} ({})",
+                line,
+                visible_width(line)
+            );
+        }
     }
 }

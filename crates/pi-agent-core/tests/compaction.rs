@@ -1,6 +1,6 @@
 mod common;
 
-use common::faux_model;
+use common::faux_model_with_window;
 use futures::StreamExt;
 use pi_agent_core::compaction::estimate::estimate_tokens;
 use pi_agent_core::compaction::prepare::{prepare_compaction, should_compact};
@@ -37,6 +37,18 @@ fn compaction_msg(summary: &str, tokens: u32) -> AgentMessage {
         message_id: "cs".into(),
         summary: summary.into(),
         tokens_before: tokens,
+    }
+}
+
+/// Build an assistant message carrying provider `usage.total_tokens`, used to
+/// anchor `estimate_context_tokens` in runtime compaction tests.
+fn assistant_with_usage(total_tokens: u32) -> AgentMessage {
+    let mut msg = pi_ai::types::AssistantMessage::empty("test", "test-model");
+    msg.usage.total_tokens = total_tokens;
+    msg.stop_reason = StopReason::Stop;
+    AgentMessage::Assistant {
+        message_id: "a".into(),
+        message: msg,
     }
 }
 
@@ -139,7 +151,10 @@ fn empty_messages_no_split() {
 #[tokio::test]
 async fn runtime_compaction_summarizes_before_provider_request() {
     let api = "runtime-compaction";
-    let mut config = AgentConfig::new(faux_model(api));
+    // Small context window so the context-window-gated trigger fires for
+    // this fixture-sized conversation (default `faux_model` has
+    // `context_window: 0`, which never auto-compacts).
+    let mut config = AgentConfig::new(faux_model_with_window(api, 100));
     config.max_turns = Some(3);
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings {
@@ -187,7 +202,8 @@ async fn runtime_compaction_summarizes_before_provider_request() {
 #[tokio::test]
 async fn runtime_compaction_forwards_stream_options_to_summarization() {
     let api = "runtime-compaction-api-key";
-    let mut config = AgentConfig::new(faux_model(api));
+    // Small context window so the context-window-gated trigger fires.
+    let mut config = AgentConfig::new(faux_model_with_window(api, 100));
     config.max_turns = Some(3);
     config.stream_options = Some(StreamOptions {
         api_key: Some("test-api-key".to_string()),
@@ -236,6 +252,124 @@ async fn runtime_compaction_forwards_stream_options_to_summarization() {
         .map(|opts| opts.as_ref().and_then(|opts| opts.max_retries))
         .collect::<Vec<_>>();
     assert_eq!(retries, vec![Some(2), Some(2)]);
+
+    registry::unregister(api);
+}
+
+// ---- Context-window-gated trigger (TS parity) ----
+
+#[tokio::test]
+async fn runtime_compaction_does_not_trigger_on_large_context_model() {
+    // deepseek-v4-flash-style: 1M context window. ~50k estimated tokens is
+    // far below the 1,000,000 - 16,384 = 983,616 trigger threshold, so auto
+    // compaction must NOT fire. Regression for the "compacts at ~1% usage"
+    // bug where the trigger ignored the active model's context window.
+    let api = "runtime-no-compact-large";
+    let mut config = AgentConfig::new(faux_model_with_window(api, 1_000_000));
+    config.max_turns = Some(3);
+    config.compaction = Some(CompactionConfig {
+        settings: CompactionSettings::default(),
+        custom_instructions: None,
+    });
+
+    let agent = Agent::new(config);
+    agent.add_message(assistant_with_usage(50_000));
+    agent.add_message(user_msg("continue the work"));
+
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("final answer", StopReason::Stop),
+        ])),
+    );
+
+    let events: Vec<_> = agent.prompt("next prompt").collect().await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::SessionCompacted { .. })),
+        "must not compact at ~5% of a 1M context window: {events:?}"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentDone { message }
+            if message.content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Text { text, .. } if text == "final answer"
+            ))
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn runtime_compaction_triggers_near_context_limit() {
+    // 100k context window; ~95k estimated tokens exceeds the
+    // 100,000 - 16,384 = 83,616 trigger threshold, so compaction fires and
+    // the summary is emitted before the final provider turn.
+    let api = "runtime-compact-near-limit";
+    let mut config = AgentConfig::new(faux_model_with_window(api, 100_000));
+    config.max_turns = Some(3);
+    config.compaction = Some(CompactionConfig {
+        settings: CompactionSettings::default(),
+        custom_instructions: None,
+    });
+
+    let agent = Agent::new(config);
+    agent.add_message(assistant_with_usage(95_000));
+    agent.add_message(user_msg("continue the work"));
+
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("summary of old context", StopReason::Stop),
+            FauxProvider::text_call("final answer", StopReason::Stop),
+        ])),
+    );
+
+    let events: Vec<_> = agent.prompt("next prompt").collect().await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::SessionCompacted { summary, .. } if summary == "summary of old context"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn runtime_compaction_zero_context_window_never_compacts() {
+    // context_window == 0 is the "no model metadata" guard: never auto
+    // compact, even when the estimate is large. Mirrors the `should_compact`
+    // `context_window > 0` guard.
+    let api = "runtime-no-compact-zero-window";
+    let mut config = AgentConfig::new(faux_model_with_window(api, 0));
+    config.max_turns = Some(3);
+    config.compaction = Some(CompactionConfig {
+        settings: CompactionSettings::default(),
+        custom_instructions: None,
+    });
+
+    let agent = Agent::new(config);
+    agent.add_message(assistant_with_usage(50_000));
+    agent.add_message(user_msg("continue the work"));
+
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("final answer", StopReason::Stop),
+        ])),
+    );
+
+    let events: Vec<_> = agent.prompt("next prompt").collect().await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::SessionCompacted { .. })),
+        "context_window == 0 must never auto compact: {events:?}"
+    );
 
     registry::unregister(api);
 }

@@ -9,6 +9,11 @@ use std::sync::Mutex;
 
 pub struct FauxProvider {
     pub responses: Mutex<FauxState>,
+    /// Optional usage reported by every streamed call, overriding the
+    /// built-in default (`input: 10, output: 20, total_tokens: 30`). Lets
+    /// tests simulate a provider reporting a large accumulated context so
+    /// context-window-gated compaction logic can be exercised.
+    pub default_usage: Option<Usage>,
 }
 
 pub struct FauxState {
@@ -46,6 +51,7 @@ impl FauxProvider {
                 call_queue: vec![],
                 default_responses: responses,
             }),
+            default_usage: None,
         }
     }
 
@@ -57,6 +63,7 @@ impl FauxProvider {
                 call_queue: calls,
                 default_responses: vec![],
             }),
+            default_usage: None,
         }
     }
 
@@ -87,6 +94,14 @@ impl FauxProvider {
             stop_reason,
         }
     }
+
+    /// Override the usage reported by every streamed call. Returns `self` for
+    /// chaining. Useful for simulating a provider that reports a large
+    /// accumulated context so context-window-gated compaction can be tested.
+    pub fn with_default_usage(mut self, usage: Usage) -> Self {
+        self.default_usage = Some(usage);
+        self
+    }
 }
 
 impl ApiProvider for FauxProvider {
@@ -101,6 +116,12 @@ impl ApiProvider for FauxProvider {
             }
         };
         let model_id = model.id.clone();
+        let usage = self.default_usage.clone().unwrap_or(Usage {
+            input: 10,
+            output: 20,
+            total_tokens: 30,
+            ..Default::default()
+        });
         Box::pin(stream! {
             let mut partial = AssistantMessage::empty("faux", &model_id);
             partial.provider = Some("faux".into());
@@ -175,10 +196,7 @@ impl ApiProvider for FauxProvider {
                 }
             }
 
-            partial.usage = Usage {
-                input: 10, output: 20, total_tokens: 30,
-                ..Default::default()
-            };
+            partial.usage = usage;
             partial.stop_reason = stop_reason.clone();
 
             yield AssistantMessageEvent::Done {
