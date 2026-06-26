@@ -115,6 +115,8 @@ pub(super) struct InteractiveRoot {
     pub(super) slash_suggestions_dismissed_for: Option<String>,
     pub(super) theme: TuiTheme,
     pub(super) resolved_theme: Option<ResolvedTheme>,
+    pub(super) prompt_templates: Vec<pi_agent_core::PromptTemplate>,
+    pub(super) skills: Vec<pi_agent_core::Skill>,
     pub(super) clipboard: Arc<dyn ClipboardSink>,
 }
 
@@ -251,6 +253,8 @@ impl InteractiveRoot {
             slash_suggestions_dismissed_for: None,
             theme,
             resolved_theme: None,
+            prompt_templates: Vec::new(),
+            skills: Vec::new(),
             clipboard: Arc::new(SystemClipboard),
         }
     }
@@ -334,6 +338,30 @@ impl InteractiveRoot {
             build_settings_list(self.settings.clone(), &self.theme, self.keybindings.clone());
         self.auth = prompt_context.auth.clone();
         self.git_branch.set_cwd(&self.cwd);
+        self.prompt_templates = prompt_context.resources.prompt_templates.clone();
+        self.skills = prompt_context.resources.skills.clone();
+    }
+
+    pub(super) fn expand_prompt_text(&self, text: &str) -> String {
+        let text = crate::interactive::commands::expand_skill_command(text, &self.skills);
+        crate::interactive::commands::expand_prompt_template(&text, &self.prompt_templates)
+    }
+
+    pub(super) fn all_slash_commands(&self) -> Vec<slash::BuiltinSlashCommand> {
+        let mut commands = slash::builtin_slash_commands();
+        for t in &self.prompt_templates {
+            commands.push(slash::BuiltinSlashCommand {
+                name: t.name.clone(),
+                description: t.description.clone(),
+            });
+        }
+        for s in &self.skills {
+            commands.push(slash::BuiltinSlashCommand {
+                name: format!("skill:{}", s.name),
+                description: s.description.clone(),
+            });
+        }
+        commands
     }
 
     pub(super) fn push_user(&mut self, prompt: String) {
@@ -734,13 +762,14 @@ impl InteractiveRoot {
             return Vec::new();
         }
 
+        let commands = self.all_slash_commands();
         slash::render_suggestions(
             self.editor.text(),
             self.editor.cursor(),
             self.slash_suggestions_dismissed_for.as_deref(),
             &mut self.slash_suggestion_selected,
             width,
-            &slash::builtin_slash_commands(),
+            &commands,
         )
     }
 
@@ -878,13 +907,14 @@ impl InteractiveRoot {
         if self.selecting_model || self.selecting_settings || self.selecting_session {
             return false;
         }
+        let commands = self.all_slash_commands();
         slash::handle_suggestion_input(
             &self.keybindings,
             event,
             &mut self.editor,
             &mut self.slash_suggestion_selected,
             &mut self.slash_suggestions_dismissed_for,
-            &slash::builtin_slash_commands(),
+            &commands,
         )
     }
 

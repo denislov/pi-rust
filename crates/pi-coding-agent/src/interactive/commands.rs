@@ -15,6 +15,18 @@ use crate::interactive::session_actions::{
 use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selector_arg};
 use crate::interactive::{Transcript, TranscriptItem};
 
+/// Expand a /skill:name command into its XML skill block.
+pub(super) fn expand_skill_command(text: &str, _skills: &[pi_agent_core::Skill]) -> String {
+    // Stub — full implementation in Task 4
+    text.to_string()
+}
+
+/// Expand a /templatename command with arg substitution.
+pub(super) fn expand_prompt_template(text: &str, _templates: &[pi_agent_core::PromptTemplate]) -> String {
+    // Stub — full implementation in Task 4
+    text.to_string()
+}
+
 pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSlashCommand) {
     match command.name.as_str() {
         "quit" | "exit" | "q" => match root.status {
