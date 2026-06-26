@@ -30,6 +30,7 @@ pub(super) struct TranscriptStyles {
     pub tool_diff_context: Style,
     pub bash_mode: Style,
     pub warning: Style,
+    pub accent: Style,
 }
 
 impl TranscriptStyles {
@@ -73,6 +74,7 @@ impl TranscriptStyles {
             tool_diff_context: fg(ThemeColor::ToolDiffContext),
             bash_mode: fg(ThemeColor::BashMode).bold(),
             warning: fg(ThemeColor::Warning),
+            accent: fg(ThemeColor::Accent),
         }
     }
 
@@ -94,6 +96,7 @@ impl TranscriptStyles {
             tool_diff_context: Style::fg(Color::Default).dim(),
             bash_mode: Style::fg(Color::Green).bold(),
             warning: Style::fg(Color::Yellow),
+            accent: Style::fg(Color::Cyan),
         }
     }
 }
@@ -459,6 +462,17 @@ fn render_tool_header(
                 status_text,
             )
         }
+        "grep" => format!("{} {}", grep_header(args, color, styles), status_text),
+        "find" => format!("{} {}", find_header(args, color, styles), status_text),
+        "ls" => {
+            let path = string_arg(args, &["path"]).unwrap_or_else(|| ".".to_string());
+            format!(
+                "{} {} {}",
+                paint_with("ls", &styles.tool_title, color),
+                path,
+                status_text,
+            )
+        }
         "write" | "edit" => {
             let path = tool_target(name, args);
             format!(
@@ -493,6 +507,66 @@ fn read_line_range(args: &serde_json::Value, color: bool, styles: &TranscriptSty
         None => format!(":{start}"),
     };
     paint_with(&range, &styles.warning, color)
+}
+
+/// `grep /<pattern>/ in <path> (<glob>) limit <n>` header, mirroring TS
+/// `formatGrepCall`. The pattern is accented; path/glob/limit use toolOutput.
+fn grep_header(args: &serde_json::Value, color: bool, styles: &TranscriptStyles) -> String {
+    let pattern = string_arg(args, &["pattern"]).unwrap_or_default();
+    let path = string_arg(args, &["path"]).unwrap_or_else(|| ".".to_string());
+    let glob = string_arg(args, &["glob"]);
+    let limit = args.get("limit").and_then(|v| v.as_u64());
+    let mut text = format!(
+        "{} {}",
+        paint_with("grep", &styles.tool_title, color),
+        paint_with(&format!("/{pattern}/"), &styles.accent, color),
+    );
+    text.push_str(&paint_with(
+        &format!(" in {path}"),
+        &styles.tool_output,
+        color,
+    ));
+    if let Some(glob) = glob {
+        text.push_str(&paint_with(
+            &format!(" ({glob})"),
+            &styles.tool_output,
+            color,
+        ));
+    }
+    if let Some(limit) = limit {
+        text.push_str(&paint_with(
+            &format!(" limit {limit}"),
+            &styles.tool_output,
+            color,
+        ));
+    }
+    text
+}
+
+/// `find <pattern> in <path> (limit <n>)` header, mirroring TS
+/// `formatFindCall`. The pattern is accented; path/limit use toolOutput.
+fn find_header(args: &serde_json::Value, color: bool, styles: &TranscriptStyles) -> String {
+    let pattern = string_arg(args, &["pattern"]).unwrap_or_default();
+    let path = string_arg(args, &["path"]).unwrap_or_else(|| ".".to_string());
+    let limit = args.get("limit").and_then(|v| v.as_u64());
+    let mut text = format!(
+        "{} {}",
+        paint_with("find", &styles.tool_title, color),
+        paint_with(&pattern, &styles.accent, color),
+    );
+    text.push_str(&paint_with(
+        &format!(" in {path}"),
+        &styles.tool_output,
+        color,
+    ));
+    if let Some(limit) = limit {
+        text.push_str(&paint_with(
+            &format!(" (limit {limit})"),
+            &styles.tool_output,
+            color,
+        ));
+    }
+    text
 }
 
 /// Render a tool's result body (indented two columns). Built-in tools tailor
@@ -879,6 +953,36 @@ mod tests {
             result: Some("line content here\nand more".to_string()),
             is_error: false,
         });
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "grep".to_string(),
+            args: serde_json::json!({
+                "pattern": "someLongRegexPattern",
+                "path": "src/very/deep/nested/dir",
+                "glob": "*.rs",
+                "limit": 100
+            }),
+            result: Some("src/lib.rs:1: match".to_string()),
+            is_error: false,
+        });
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "find".to_string(),
+            args: serde_json::json!({
+                "pattern": "**/*.rs",
+                "path": "crates/very/deeply/nested",
+                "limit": 1000
+            }),
+            result: Some("crates/lib.rs".to_string()),
+            is_error: false,
+        });
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "ls".to_string(),
+            args: serde_json::json!({"path": "src/very/deeply/nested/path"}),
+            result: Some("file.rs".to_string()),
+            is_error: false,
+        });
 
         for (color, label) in [(false, "colorless"), (true, "colored")] {
             for width in [40, 20] {
@@ -1022,5 +1126,104 @@ mod tests {
             joined.contains("-\x1b[31m"),
             "removed marker missing: {joined}"
         );
+    }
+
+    #[test]
+    fn grep_header_shows_pattern_path_glob_and_limit() {
+        // Plan stage 4 grep parity: header surfaces pattern (accent), path,
+        // glob, and limit, mirroring TS formatGrepCall.
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "grep".to_string(),
+            args: serde_json::json!({
+                "pattern": "TODO",
+                "path": "src",
+                "glob": "*.rs",
+                "limit": 50
+            }),
+            result: Some("src/lib.rs:1: TODO".to_string()),
+            is_error: false,
+        });
+        let lines = render_transcript_lines(&transcript, &test_opts(80, false));
+        let header = lines[0].trim();
+        assert!(header.starts_with("grep"), "no grep prefix: {header}");
+        assert!(header.contains("/TODO/"), "pattern missing: {header}");
+        assert!(header.contains("in src"), "path missing: {header}");
+        assert!(header.contains("(*.rs)"), "glob missing: {header}");
+        assert!(header.contains("limit 50"), "limit missing: {header}");
+        assert!(header.contains("done"), "status missing: {header}");
+    }
+
+    #[test]
+    fn find_header_shows_pattern_path_and_limit() {
+        // Plan stage 4 find parity: header surfaces pattern (accent), path,
+        // and limit, mirroring TS formatFindCall.
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "find".to_string(),
+            args: serde_json::json!({
+                "pattern": "**/*.rs",
+                "path": "crates",
+                "limit": 100
+            }),
+            result: Some("crates/lib.rs".to_string()),
+            is_error: false,
+        });
+        let lines = render_transcript_lines(&transcript, &test_opts(80, false));
+        let header = lines[0].trim();
+        assert!(header.starts_with("find"), "no find prefix: {header}");
+        assert!(header.contains("**/*.rs"), "pattern missing: {header}");
+        assert!(header.contains("in crates"), "path missing: {header}");
+        assert!(header.contains("limit 100"), "limit missing: {header}");
+    }
+
+    #[test]
+    fn ls_header_shows_path_defaulting_to_dot() {
+        // Plan stage 4 ls parity: header is `ls <path>`, defaulting to `.`
+        // when no path is given, mirroring TS formatLsCall.
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "ls".to_string(),
+            args: serde_json::json!({}),
+            result: Some("file.rs".to_string()),
+            is_error: false,
+        });
+        let lines = render_transcript_lines(&transcript, &test_opts(40, false));
+        let header = lines[0].trim();
+        assert!(header.starts_with("ls ."), "default path missing: {header}");
+
+        let mut transcript2 = Transcript::new();
+        transcript2.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "ls".to_string(),
+            args: serde_json::json!({"path": "src"}),
+            result: Some("lib.rs".to_string()),
+            is_error: false,
+        });
+        let lines2 = render_transcript_lines(&transcript2, &test_opts(40, false));
+        let header2 = lines2[0].trim();
+        assert!(
+            header2.starts_with("ls src"),
+            "explicit path missing: {header2}"
+        );
+    }
+
+    #[test]
+    fn write_header_shows_path() {
+        // Plan stage 4 write parity: header is `write <path>`.
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "c".to_string(),
+            name: "write".to_string(),
+            args: serde_json::json!({"path": "src/main.rs", "content": "fn main(){}"}),
+            result: Some("Successfully wrote 12 bytes to src/main.rs".to_string()),
+            is_error: false,
+        });
+        let lines = render_transcript_lines(&transcript, &test_opts(60, false));
+        let header = lines[0].trim();
+        assert!(header.starts_with("write src/main.rs done"), "{}", header);
     }
 }
