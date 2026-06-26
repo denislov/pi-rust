@@ -168,7 +168,14 @@ pub(super) fn build_prompt_context(
         session: resolved.session,
         session_target,
         session_name: resolved.session_name,
-        thinking_level: parsed.thinking,
+        thinking_level: parsed.thinking.or_else(|| {
+            resolved
+                .config
+                .settings
+                .default_thinking_level
+                .as_deref()
+                .and_then(|s| s.parse().ok())
+        }),
         tool_execution: parsed.tool_execution,
         resources: resolved.agent_resources,
         settings: resolved.config.settings,
@@ -1485,6 +1492,66 @@ mod tests {
             .take_settings_update()
             .expect("tree filter mode toggle should emit settings update");
         assert_eq!(updated.tree_filter_mode, "no-tools");
+    }
+
+    #[test]
+    fn settings_menu_warnings_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(root.settings.warnings.anthropic_extra_usage);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..16 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(!root.settings.warnings.anthropic_extra_usage);
+        let updated = root
+            .take_settings_update()
+            .expect("warnings toggle should emit settings update");
+        assert!(!updated.warnings.anthropic_extra_usage);
+    }
+
+    #[test]
+    fn settings_menu_thinking_level_cycles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(root.settings.default_thinking_level.is_none());
+        assert_eq!(root.thinking_level, pi_agent_core::ThinkingLevel::Off);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..17 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(
+            root.settings.default_thinking_level.as_deref(),
+            Some("minimal")
+        );
+        assert_eq!(root.thinking_level, pi_agent_core::ThinkingLevel::Minimal);
+        let updated = root
+            .take_settings_update()
+            .expect("thinking level toggle should emit settings update");
+        assert_eq!(
+            updated.default_thinking_level.as_deref(),
+            Some("minimal")
+        );
     }
 
     #[test]

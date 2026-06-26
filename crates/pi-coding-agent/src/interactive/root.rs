@@ -842,6 +842,13 @@ impl InteractiveRoot {
             "warnings_anthropic_extra_usage" => {
                 self.settings.warnings.anthropic_extra_usage = value == "on";
             }
+            "default_thinking_level" => {
+                self.settings.default_thinking_level = Some(value.to_string());
+                // Also update the active thinking level so the editor border reflects it
+                if let Ok(level) = value.parse::<pi_agent_core::ThinkingLevel>() {
+                    self.thinking_level = level;
+                }
+            }
             _ => return,
         }
         self.settings_update = Some(self.settings.clone());
@@ -1250,8 +1257,18 @@ fn build_settings_list(
             )
             .values(["on", "off"])
             .description("Warn when Anthropic subscription auth may use paid extra usage"),
+            SettingItem::new(
+                "default_thinking_level",
+                "Thinking level",
+                settings
+                    .default_thinking_level
+                    .as_deref()
+                    .unwrap_or("off"),
+            )
+            .values(["off", "minimal", "low", "medium", "high", "xhigh"])
+            .description("Default reasoning depth for thinking-capable models"),
         ],
-        15,
+        16,
         keybindings,
         SettingsListOptions {
             enable_search: false,
