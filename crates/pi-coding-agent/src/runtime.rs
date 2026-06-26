@@ -177,6 +177,16 @@ pub fn build_agent_config(
             custom_instructions: None,
         });
     }
+    if let Some(settings) = settings {
+        config.steering_mode = settings
+            .steering_mode
+            .parse()
+            .unwrap_or(pi_agent_core::QueueMode::OneAtATime);
+        config.follow_up_mode = settings
+            .follow_up_mode
+            .parse()
+            .unwrap_or(pi_agent_core::QueueMode::OneAtATime);
+    }
     if let Some(tl) = thinking_level {
         config.thinking_level = tl;
     }

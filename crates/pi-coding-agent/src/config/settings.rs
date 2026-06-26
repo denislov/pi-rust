@@ -26,6 +26,7 @@ pub struct PartialTerminal {
     pub clear_on_shrink: Option<bool>,
     pub auto_resize_images: Option<bool>,
     pub block_images: Option<bool>,
+    pub image_width_cells: Option<u32>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
@@ -49,6 +50,12 @@ pub struct PartialSettings {
     pub enable_skill_commands: Option<bool>,
     pub double_escape_action: Option<String>,
     pub tree_filter_mode: Option<String>,
+    pub shell_path: Option<String>,
+    pub shell_command_prefix: Option<String>,
+    pub npm_command: Option<Vec<String>>,
+    pub http_proxy: Option<String>,
+    pub http_idle_timeout_ms: Option<u64>,
+    pub websocket_connect_timeout_ms: Option<u64>,
     pub terminal: Option<PartialTerminal>,
     pub compaction: Option<PartialCompaction>,
     pub retry: Option<PartialRetry>,
@@ -75,6 +82,7 @@ pub struct TerminalSettings {
     pub clear_on_shrink: bool,
     pub auto_resize_images: bool,
     pub block_images: bool,
+    pub image_width_cells: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +105,12 @@ pub struct Settings {
     pub enable_skill_commands: bool,
     pub double_escape_action: String,
     pub tree_filter_mode: String,
+    pub shell_path: Option<String>,
+    pub shell_command_prefix: Option<String>,
+    pub npm_command: Vec<String>,
+    pub http_proxy: Option<String>,
+    pub http_idle_timeout_ms: u64,
+    pub websocket_connect_timeout_ms: u64,
     pub terminal: TerminalSettings,
     pub compaction: CompactionSettings,
     pub retry: RetrySettings,
@@ -139,6 +153,7 @@ fn merge_terminal(
             clear_on_shrink: o.clear_on_shrink.or(b.clear_on_shrink),
             auto_resize_images: o.auto_resize_images.or(b.auto_resize_images),
             block_images: o.block_images.or(b.block_images),
+            image_width_cells: o.image_width_cells.or(b.image_width_cells),
         }),
     }
 }
@@ -174,6 +189,12 @@ impl PartialSettings {
             enable_skill_commands: over.enable_skill_commands.or(self.enable_skill_commands),
             double_escape_action: over.double_escape_action.or(self.double_escape_action),
             tree_filter_mode: over.tree_filter_mode.or(self.tree_filter_mode),
+            shell_path: over.shell_path.or(self.shell_path),
+            shell_command_prefix: over.shell_command_prefix.or(self.shell_command_prefix),
+            npm_command: merge_vec(self.npm_command, over.npm_command),
+            http_proxy: over.http_proxy.or(self.http_proxy),
+            http_idle_timeout_ms: over.http_idle_timeout_ms.or(self.http_idle_timeout_ms),
+            websocket_connect_timeout_ms: over.websocket_connect_timeout_ms.or(self.websocket_connect_timeout_ms),
             terminal: merge_terminal(self.terminal, over.terminal),
             compaction: merge_compaction(self.compaction, over.compaction),
             retry: merge_retry(self.retry, over.retry),
@@ -207,12 +228,19 @@ impl PartialSettings {
             enable_skill_commands: self.enable_skill_commands.unwrap_or(true),
             double_escape_action: self.double_escape_action.unwrap_or_else(|| "tree".to_string()),
             tree_filter_mode: self.tree_filter_mode.unwrap_or_else(|| "default".to_string()),
+            shell_path: self.shell_path,
+            shell_command_prefix: self.shell_command_prefix,
+            npm_command: self.npm_command.unwrap_or_else(|| vec!["npm".to_string()]),
+            http_proxy: self.http_proxy,
+            http_idle_timeout_ms: self.http_idle_timeout_ms.unwrap_or(300000),
+            websocket_connect_timeout_ms: self.websocket_connect_timeout_ms.unwrap_or(30000),
             terminal: TerminalSettings {
                 show_images: t.show_images.unwrap_or(true),
                 show_progress: t.show_progress.unwrap_or(true),
                 clear_on_shrink: t.clear_on_shrink.unwrap_or(false),
                 auto_resize_images: t.auto_resize_images.unwrap_or(true),
                 block_images: t.block_images.unwrap_or(false),
+                image_width_cells: t.image_width_cells.unwrap_or(60),
             },
             compaction: CompactionSettings {
                 enabled: c.enabled.unwrap_or(true),
