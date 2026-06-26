@@ -1933,6 +1933,214 @@ mod tests {
         assert!(root.pending_submit.is_none());
     }
 
+    // ── expand_skill_command ──────────────────────────────────────────
+
+    #[test]
+    fn expand_skill_command_expands_to_xml_block() {
+
+        let skills = vec![pi_agent_core::Skill {
+            name: "rust".into(),
+            description: "Rust".into(),
+            location: "/skills/rust/SKILL.md".into(),
+            content: "Rust programming guide".into(),
+            disable_model_invocation: false,
+        }];
+
+        let result = crate::interactive::commands::expand_skill_command(
+            "/skill:rust write a function",
+            &skills,
+        );
+        assert!(result.contains("<skill name=\"rust\""), "{result}");
+        assert!(result.contains("Rust programming guide"), "{result}");
+        assert!(result.contains("write a function"), "{result}");
+    }
+
+    #[test]
+    fn expand_skill_command_unknown_passes_through() {
+
+        let result = crate::interactive::commands::expand_skill_command(
+            "/skill:unknown do something",
+            &[],
+        );
+        assert_eq!(result, "/skill:unknown do something");
+    }
+
+    #[test]
+    fn expand_skill_command_non_skill_passes_through() {
+
+        let result =
+            crate::interactive::commands::expand_skill_command("/help", &[]);
+        assert_eq!(result, "/help");
+    }
+
+    // ── expand_prompt_template ────────────────────────────────────────
+
+    #[test]
+    fn expand_prompt_template_substitutes_args() {
+
+        let templates = vec![pi_agent_core::PromptTemplate {
+            name: "review".into(),
+            description: "Review".into(),
+            content: "Review $1 and $ARGUMENTS".into(),
+            location: "/prompts/review.md".into(),
+        }];
+
+        let result = crate::interactive::commands::expand_prompt_template(
+            "/review code tests",
+            &templates,
+        );
+        assert_eq!(result, "Review code and code tests");
+    }
+
+    #[test]
+    fn expand_prompt_template_unknown_passes_through() {
+
+        let result = crate::interactive::commands::expand_prompt_template(
+            "/unknown blah",
+            &[],
+        );
+        assert_eq!(result, "/unknown blah");
+    }
+
+    #[test]
+    fn expand_prompt_template_non_slash_passes_through() {
+
+        let result =
+            crate::interactive::commands::expand_prompt_template("just text", &[]);
+        assert_eq!(result, "just text");
+    }
+
+    // ── expansion in handle_slash_command catch-all ───────────────────
+
+    #[test]
+    fn handle_unknown_slash_command_with_template_expands_and_submits() {
+
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+            name: "review".into(),
+            description: "Review".into(),
+            content: "Review $ARGUMENTS".into(),
+            location: "/prompts/review.md".into(),
+        }];
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "review".to_string(),
+            args: "code tests".to_string(),
+            original: "/review code tests".to_string(),
+        });
+
+        assert_eq!(
+            root.action,
+            InteractiveAction::Submit,
+            "template expansion should trigger submit"
+        );
+        assert_eq!(
+            root.pending_submit.as_deref(),
+            Some("Review code tests"),
+            "pending_submit should contain expanded template"
+        );
+    }
+
+    #[test]
+    fn handle_unknown_slash_command_with_skill_expands_and_submits() {
+
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.skills = vec![pi_agent_core::Skill {
+            name: "rust".into(),
+            description: "Rust".into(),
+            location: "/skills/rust/SKILL.md".into(),
+            content: "Rust programming guide".into(),
+            disable_model_invocation: false,
+        }];
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "skill:rust".to_string(),
+            args: "write a fn".to_string(),
+            original: "/skill:rust write a fn".to_string(),
+        });
+
+        assert_eq!(
+            root.action,
+            InteractiveAction::Submit,
+            "skill expansion should trigger submit"
+        );
+        let expanded = root.pending_submit.expect("has pending submit");
+        assert!(expanded.contains("<skill name=\"rust\""), "{expanded}");
+        assert!(expanded.contains("write a fn"), "{expanded}");
+    }
+
+    #[test]
+    fn handle_builtin_slash_command_still_works_with_templates_loaded() {
+
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        // Even with templates loaded, builtin commands take priority
+        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+            name: "help".into(),
+            description: "custom help".into(),
+            content: "custom content".into(),
+            location: "/prompts/help.md".into(),
+        }];
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "help".to_string(),
+            args: String::new(),
+            original: "/help".to_string(),
+        });
+
+        // Should still show builtin help, not submit custom content
+        assert_ne!(root.action, InteractiveAction::Submit);
+        assert!(root.pending_submit.is_none());
+        let text = last_system_text(&root);
+        assert!(text.contains("/reload"), "{text}");
+    }
+
+    // ── all_slash_commands ────────────────────────────────────────────
+
+    #[test]
+    fn all_slash_commands_includes_templates_and_skills() {
+
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        // Default (no templates/skills): only builtin commands
+        let commands = root.all_slash_commands();
+        assert!(commands.iter().any(|c| c.name == "help"));
+        assert!(commands.iter().any(|c| c.name == "quit"));
+
+        // With templates loaded
+        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+            name: "review".into(),
+            description: "Review code".into(),
+            content: "content".into(),
+            location: "/p/review.md".into(),
+        }];
+        root.skills = vec![pi_agent_core::Skill {
+            name: "rust".into(),
+            description: "Rust".into(),
+            location: "/s/rust".into(),
+            content: "content".into(),
+            disable_model_invocation: false,
+        }];
+        let commands = root.all_slash_commands();
+        assert!(commands.iter().any(|c| c.name == "review"));
+        assert!(commands.iter().any(|c| c.name == "skill:rust"));
+    }
+
     #[test]
     fn name_command_without_args_shows_current_session_label() {
         let mut root = InteractiveRoot::new(
