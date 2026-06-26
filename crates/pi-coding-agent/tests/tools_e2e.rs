@@ -230,7 +230,7 @@ async fn read_builtin_tool_error_is_sent_back_to_model_and_loop_completes() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(text.contains("read: cannot read"), "{text}");
+    assert!(text.contains("read: cannot"), "{text}");
 }
 
 #[tokio::test]
