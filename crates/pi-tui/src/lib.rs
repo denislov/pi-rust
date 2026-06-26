@@ -50,8 +50,8 @@ pub use terminal_image::{
     render_image,
 };
 pub use theme::{
-    EditorTheme, MarkdownTheme, SelectListTheme, SettingsListTheme, ThemeMode, ThemePalette,
-    TuiTheme, dark_theme, light_theme,
+    EditorTheme, ImageTheme, MarkdownTheme, SelectListTheme, SettingsListTheme, ThemeMode,
+    ThemePalette, TuiTheme, dark_theme, light_theme,
 };
 pub use tui::{RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError};
 pub use utils::{

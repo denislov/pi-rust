@@ -94,3 +94,10 @@ fn select_list_accepts_theme_for_selected_and_description_text() {
     assert!(line.contains("Model"), "{line:?}");
     assert!(line.contains("Switch model"), "{line:?}");
 }
+
+#[test]
+fn image_theme_fallback_color_defaults() {
+    let t = pi_tui::ImageTheme::default();
+    assert_eq!(t.fallback_color.fg, pi_tui::Color::Default);
+    assert_eq!(t.fallback_color.bold, false);
+}

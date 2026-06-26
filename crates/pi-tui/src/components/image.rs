@@ -1,6 +1,7 @@
 use crate::{
-    CellDimensions, Component, ImageDimensions, ImageRenderOptions, TerminalCapabilities,
-    image_dimensions_from_base64, render_image, truncate_to_width,
+    CellDimensions, Component, ImageDimensions, ImageRenderOptions, ImageTheme,
+    TerminalCapabilities, color_enabled, image_dimensions_from_base64, paint_with, render_image,
+    truncate_to_width,
 };
 
 pub struct Image {
@@ -13,6 +14,7 @@ pub struct Image {
     max_width_cells: Option<u32>,
     max_height_cells: Option<u32>,
     image_id: Option<u32>,
+    image_theme: ImageTheme,
 }
 
 impl Image {
@@ -31,6 +33,7 @@ impl Image {
             max_width_cells: None,
             max_height_cells: None,
             image_id: None,
+            image_theme: ImageTheme::default(),
         }
     }
 
@@ -64,6 +67,11 @@ impl Image {
         self
     }
 
+    pub fn image_theme(mut self, theme: ImageTheme) -> Self {
+        self.image_theme = theme;
+        self
+    }
+
     pub fn image_id(mut self, image_id: u32) -> Self {
         self.image_id = Some(image_id);
         self
@@ -83,7 +91,8 @@ impl Image {
         if let Some(dimensions) = self.dimensions_or_parse() {
             parts.push(format!("{}x{}", dimensions.width_px, dimensions.height_px));
         }
-        truncate_to_width(&format!("[Image: {}]", parts.join(" ")), width)
+        let text = truncate_to_width(&format!("[Image: {}]", parts.join(" ")), width);
+        paint_with(&text, &self.image_theme.fallback_color, color_enabled())
     }
 }
 

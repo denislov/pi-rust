@@ -173,6 +173,21 @@ impl Default for SettingsListTheme {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageTheme {
+    /// Color for the fallback text shown when images are unsupported
+    /// (mirrors TS `ImageTheme.fallbackColor`).
+    pub fallback_color: Style,
+}
+
+impl Default for ImageTheme {
+    fn default() -> Self {
+        Self {
+            fallback_color: Style::fg(Color::Default).dim(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorTheme {
     pub border: Style,
     pub active_border: Style,
