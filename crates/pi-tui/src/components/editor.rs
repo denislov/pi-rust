@@ -535,11 +535,20 @@ impl Editor {
                 .modifiers
                 .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER)
             {
-                let target = if text == "space" { " " } else { text };
+                let target = text.as_str();
                 self.jump_mode = None;
                 self.jump_to_char(target, direction);
                 return true;
             }
+        }
+        if key_event.key == Key::Space
+            && !key_event
+                .modifiers
+                .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            self.jump_mode = None;
+            self.jump_to_char(" ", direction);
+            return true;
         }
 
         self.jump_mode = None;
@@ -1077,7 +1086,14 @@ impl Editor {
                     {
                         return;
                     }
-                    self.insert(if text == "space" { " " } else { text });
+                    self.insert(text);
+                    self.refresh_regular_autocomplete();
+                } else if key_event.key == Key::Space
+                    && !key_event
+                        .modifiers
+                        .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER)
+                {
+                    self.insert(" ");
                     self.refresh_regular_autocomplete();
                 }
             }

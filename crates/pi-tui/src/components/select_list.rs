@@ -187,12 +187,12 @@ impl Component for SelectList {
                 }
 
                 match &key_event.key {
-                    Key::Char(text) if text != "space" => {
+                    Key::Char(text) => {
                         self.filter.push_str(text);
                         self.selected = 0;
                         self.rebuild_filter();
                     }
-                    Key::Char(text) if text == "space" => {
+                    Key::Space => {
                         self.filter.push(' ');
                         self.selected = 0;
                         self.rebuild_filter();

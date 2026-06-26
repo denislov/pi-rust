@@ -14,6 +14,10 @@ pub struct StdinBuffer {
     in_paste: bool,
     pending_timeout: Duration,
     pending_since: Option<Instant>,
+    /// Tracks the codepoint of the last emitted Kitty CSI-u printable
+    /// sequence so that the release event for the same key is not
+    /// emitted as a duplicate character.
+    pending_kitty_printable_codepoint: Option<u32>,
 }
 
 impl Default for StdinBuffer {
@@ -24,6 +28,7 @@ impl Default for StdinBuffer {
             in_paste: false,
             pending_timeout: DEFAULT_PENDING_TIMEOUT,
             pending_since: None,
+            pending_kitty_printable_codepoint: None,
         }
     }
 }
@@ -77,6 +82,7 @@ impl StdinBuffer {
                     self.buffer.clear();
                     self.buffer.push_str(&remainder);
                     self.in_paste = false;
+                    self.pending_kitty_printable_codepoint = None;
                     events.push(InputEvent::Paste(std::mem::take(&mut self.paste_buffer)));
                     continue;
                 }
@@ -106,11 +112,12 @@ impl StdinBuffer {
             self.buffer.clear();
             self.buffer.push_str(&remainder);
 
-            events.push(
-                parse_key(&sequence)
-                    .map(InputEvent::Key)
-                    .unwrap_or_else(|| InputEvent::Raw(sequence)),
-            );
+            // Kitty printable dedup: when the terminal sends CSI-u for both
+            // press and release of a printable key, skip the release event
+            // so the character is not inserted twice.
+            if let Some(event) = self.emit_sequence(&sequence) {
+                events.push(event);
+            }
         }
 
         self.refresh_pending_since(now);
@@ -125,6 +132,7 @@ impl StdinBuffer {
             events.push(InputEvent::Paste(std::mem::take(&mut self.paste_buffer)));
             self.in_paste = false;
         }
+        self.pending_kitty_printable_codepoint = None;
         events.extend(self.drain_pending_residual());
         events
     }
@@ -157,6 +165,37 @@ impl StdinBuffer {
         self.pending_since.is_some()
     }
 
+    /// Process raw bytes, converting high-byte (>127) single bytes to
+    /// ESC + (byte - 128) for compatibility with legacy terminal input.
+    pub fn process_bytes(&mut self, data: &[u8]) -> Vec<InputEvent> {
+        if data.len() == 1 && data[0] > 127 {
+            let byte = data[0] - 128;
+            if let Some(ch) = char::from_u32(byte as u32) {
+                return self.process(&format!("\x1b{ch}"));
+            }
+        }
+        let s = String::from_utf8_lossy(data);
+        self.process(&s)
+    }
+
+    fn emit_sequence(&mut self, sequence: &str) -> Option<InputEvent> {
+        // Kitty printable dedup: when the terminal sends CSI-u for both
+        // press and release of a printable key, skip the duplicate.
+        if let Some(cp) = parse_unmodified_kitty_printable_codepoint(sequence) {
+            if self.pending_kitty_printable_codepoint == Some(cp) {
+                self.pending_kitty_printable_codepoint = None;
+                return None;
+            }
+            self.pending_kitty_printable_codepoint = Some(cp);
+        }
+
+        Some(
+            parse_key(sequence)
+                .map(InputEvent::Key)
+                .unwrap_or_else(|| InputEvent::Raw(sequence.to_string())),
+        )
+    }
+
     fn drain_pending_residual(&mut self) -> Vec<InputEvent> {
         self.pending_since = None;
         if self.buffer.is_empty() {
@@ -187,6 +226,16 @@ fn next_sequence_len(buffer: &str) -> Option<usize> {
 
     if buffer.len() == ESC.len() {
         return None;
+    }
+
+    // WezTerm fix: \x1b\x1b followed by CSI/OSC/SS3/DCS/APC means an
+    // ESC press got concatenated with a Kitty CSI-u release sequence.
+    // Emit only the first ESC so the CSI-u part is parsed separately.
+    if buffer.starts_with("\x1b\x1b") && buffer.len() > 2 {
+        let next = buffer.as_bytes()[2];
+        if matches!(next, b'[' | b']' | b'O' | b'P' | b'_') {
+            return Some(1);
+        }
     }
 
     if buffer.starts_with("\x1b[") {
@@ -241,10 +290,21 @@ fn nth_char_end(buffer: &str, count: usize) -> Option<usize> {
     }
 }
 
+/// Extract the codepoint from a Kitty CSI-u sequence that represents a
+/// plain (unmodified) printable key press.  Returns `None` for modified
+/// keys or non-printable codepoints.
+fn parse_unmodified_kitty_printable_codepoint(sequence: &str) -> Option<u32> {
+    // Match \x1b[<codepoint>u or \x1b[<codepoint>;1u (no modifiers)
+    let body = sequence.strip_prefix("\x1b[")?.strip_suffix('u')?;
+    let codepoint: u32 = body.split(':').next()?.parse().ok()?;
+    // Only printable codepoints (space and above)
+    if codepoint >= 32 { Some(codepoint) } else { None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Key, KeyEventKind, KeyModifiers};
+    use crate::input::{Key, KeyEvent, KeyEventKind, KeyModifiers};
 
     #[test]
     fn lone_escape_is_held_until_timeout_elapses() {
@@ -343,5 +403,68 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert!(!buffer.has_pending_residual());
         assert!(buffer.pending_timeout_at(start).is_none());
+    }
+
+    #[test]
+    fn wezterm_double_escape_split_emits_escape_then_csi_u() {
+        let mut buffer = StdinBuffer::new();
+        // \x1b\x1b[97u = ESC press + 'a' CSI-u release (WezTerm concatenation)
+        let events = buffer.process("\x1b\x1b[97u");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0], InputEvent::Key(KeyEvent {
+            key: Key::Escape,
+            modifiers: KeyModifiers::empty(),
+            kind: KeyEventKind::Press,
+        }));
+        match &events[1] {
+            InputEvent::Key(ke) => {
+                assert_eq!(ke.key, Key::Char("a".to_string()));
+            }
+            _ => panic!("expected key event for 'a'"),
+        }
+    }
+
+    #[test]
+    fn kitty_printable_dedup_skips_duplicate_release() {
+        let mut buffer = StdinBuffer::new();
+        // Simulate Kitty protocol: press sends \x1b[97u, release sends \x1b[97u again
+        let events = buffer.process("\x1b[97u\x1b[97u");
+        // First is the press, second should be suppressed by dedup
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            InputEvent::Key(ke) => {
+                assert_eq!(ke.key, Key::Char("a".to_string()));
+            }
+            _ => panic!("expected key event for 'a'"),
+        }
+    }
+
+    #[test]
+    fn high_byte_conversion_becomes_esc_sequence() {
+        let mut buffer = StdinBuffer::new();
+        // Byte 129 = 0x81 → 129 - 128 = 1 = Ctrl+A → \x1b\x01
+        let events = buffer.process_bytes(&[0x81]);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            InputEvent::Key(ke) => {
+                assert_eq!(ke.key, Key::Char("a".to_string()));
+                assert!(ke.modifiers.contains(KeyModifiers::CTRL));
+            }
+            _ => panic!("expected key event"),
+        }
+    }
+
+    #[test]
+    fn normal_bytes_pass_through_without_conversion() {
+        let mut buffer = StdinBuffer::new();
+        let events = buffer.process_bytes(&[0x68, 0x69]);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            InputEvent::Key(ke) => {
+                assert_eq!(ke.key, Key::Char("h".to_string()));
+                assert!(ke.modifiers.is_empty());
+            }
+            _ => panic!("expected key event for 'h'"),
+        }
     }
 }

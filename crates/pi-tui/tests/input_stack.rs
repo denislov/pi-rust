@@ -1,4 +1,7 @@
-use pi_tui::{InputEvent, Key, KeyEventKind, KeyModifiers, StdinBuffer, matches_key, parse_key};
+use pi_tui::{
+    InputEvent, Key, KeyEventKind, KeyModifiers, StdinBuffer, matches_key, parse_key,
+    set_kitty_protocol_active,
+};
 
 #[test]
 fn stdin_buffer_splits_batched_escape_sequences() {
@@ -49,6 +52,10 @@ fn parse_legacy_and_kitty_keys() {
     ));
     assert!(matches_key(
         &InputEvent::Key(parse_key("\x1b[65;5u").unwrap()),
+        "ctrl+a"
+    ));
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b[65;6u").unwrap()),
         "ctrl+shift+a"
     ));
 }
@@ -74,5 +81,136 @@ fn kitty_release_events_are_detected() {
     let event = parse_key("\x1b[97;3:3u").unwrap();
     assert_eq!(event.key, Key::Char("a".to_string()));
     assert_eq!(event.kind, KeyEventKind::Release);
+    assert_eq!(event.modifiers, KeyModifiers::ALT);
+}
+
+#[test]
+fn parse_modify_other_keys_ctrl_c() {
+    let event = parse_key("\x1b[27;5;99~").unwrap();
+    assert_eq!(event.key, Key::Char("c".to_string()));
+    assert_eq!(event.modifiers, KeyModifiers::CTRL);
+}
+
+#[test]
+fn parse_modify_other_keys_shift_enter() {
+    let event = parse_key("\x1b[27;2;13~").unwrap();
+    assert_eq!(event.key, Key::Enter);
     assert_eq!(event.modifiers, KeyModifiers::SHIFT);
+}
+
+#[test]
+fn parse_kitty_keypad_digits() {
+    assert_eq!(
+        parse_key("\x1b[57399u").unwrap().key,
+        Key::Char("0".to_string())
+    );
+    assert_eq!(
+        parse_key("\x1b[57400u").unwrap().key,
+        Key::Char("1".to_string())
+    );
+}
+
+#[test]
+fn parse_kitty_keypad_navigation() {
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b[57417u").unwrap()),
+        "left"
+    ));
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b[57419u").unwrap()),
+        "up"
+    ));
+}
+
+#[test]
+fn parse_rxvt_shift_sequences() {
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b[a").unwrap()),
+        "shift+up"
+    ));
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b[2$").unwrap()),
+        "shift+insert"
+    ));
+}
+
+#[test]
+fn parse_rxvt_ctrl_sequences() {
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1bOa").unwrap()),
+        "ctrl+up"
+    ));
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b[2^").unwrap()),
+        "ctrl+insert"
+    ));
+}
+
+#[test]
+fn parse_clear_key() {
+    assert_eq!(parse_key("\x1b[E").unwrap().key, Key::Clear);
+    assert_eq!(parse_key("\x1bOE").unwrap().key, Key::Clear);
+}
+
+#[test]
+fn space_key_roundtrip() {
+    let event = parse_key(" ").unwrap();
+    assert_eq!(event.key, Key::Space);
+    assert!(matches_key(&InputEvent::Key(event), "space"));
+}
+
+#[test]
+fn kitty_active_changes_newline_semantics() {
+    set_kitty_protocol_active(true);
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\n").unwrap()),
+        "ctrl+j"
+    ));
+    // \n = ctrl+j, which in legacy mode also matches "enter"
+    assert!(!matches_key(
+        &InputEvent::Key(parse_key("\n").unwrap()),
+        "enter"
+    ));
+    set_kitty_protocol_active(false);
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\n").unwrap()),
+        "enter"
+    ));
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\n").unwrap()),
+        "ctrl+j"
+    ));
+}
+
+#[test]
+fn kitty_active_changes_alt_enter_semantics() {
+    set_kitty_protocol_active(true);
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b\r").unwrap()),
+        "shift+enter"
+    ));
+    set_kitty_protocol_active(false);
+    assert!(matches_key(
+        &InputEvent::Key(parse_key("\x1b\r").unwrap()),
+        "alt+enter"
+    ));
+}
+
+#[test]
+fn ctrl_space_is_parsed_correctly() {
+    let event = parse_key("\x00").unwrap();
+    assert_eq!(event.key, Key::Space);
+    assert_eq!(event.modifiers, KeyModifiers::CTRL);
+    assert!(matches_key(&InputEvent::Key(event), "ctrl+space"));
+}
+
+#[test]
+fn ctrl_minus_and_ctrl_underscore_are_equivalent() {
+    // ctrl+- and ctrl+_ share the same control character (byte 31)
+    let event = parse_key("\x1f").unwrap();
+    assert_eq!(event.key, Key::Char("-".to_string()));
+    assert_eq!(event.modifiers, KeyModifiers::CTRL);
+    // Both key IDs should match the same event
+    assert!(matches_key(&InputEvent::Key(event.clone()), "ctrl+-"));
+    assert!(matches_key(&InputEvent::Key(event), "ctrl+_"));
 }

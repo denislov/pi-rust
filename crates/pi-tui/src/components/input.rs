@@ -139,7 +139,13 @@ impl Component for Input {
                     {
                         return;
                     }
-                    self.insert(if text == "space" { " " } else { text });
+                    self.insert(text);
+                } else if key_event.key == Key::Space
+                    && !key_event
+                        .modifiers
+                        .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER)
+                {
+                    self.insert(" ");
                 }
             }
             _ => {}

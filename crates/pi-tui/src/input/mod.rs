@@ -2,7 +2,10 @@ mod key;
 mod keybindings;
 mod stdin_buffer;
 
-pub use key::{Key, KeyEvent, KeyEventKind, KeyModifiers, is_key_release, matches_key, parse_key};
+pub use key::{
+    Key, KeyEvent, KeyEventKind, KeyModifiers, is_key_release, is_kitty_protocol_active,
+    matches_key, parse_key, set_kitty_protocol_active,
+};
 pub use keybindings::{
     KeybindingConflict, KeybindingDefinition, KeybindingsConfig, KeybindingsManager,
     TUI_KEYBINDINGS,

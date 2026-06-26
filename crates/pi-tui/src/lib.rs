@@ -32,7 +32,8 @@ pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
 pub use input::{
     InputEvent, Key, KeyEvent, KeyEventKind, KeyModifiers, KeybindingConflict,
     KeybindingDefinition, KeybindingsConfig, KeybindingsManager, StdinBuffer, TUI_KEYBINDINGS,
-    is_key_release, matches_key, parse_key,
+    is_key_release, is_kitty_protocol_active, matches_key, parse_key,
+    set_kitty_protocol_active,
 };
 pub use overlay::{OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, SizeValue};
 pub use runtime::RenderScheduler;
@@ -41,7 +42,7 @@ pub use style::{
     TOOL_NAME, USER, color_enabled, color_level, detect_color_level_from_env, paint, paint_with,
     paint_with_level,
 };
-pub use terminal::{ProcessTerminal, Terminal, TerminalSize};
+pub use terminal::{NegotiationResult, ProcessTerminal, Terminal, TerminalSize};
 pub use terminal_image::{
     CellDimensions, ImageCellSize, ImageDimensions, ImageProtocol, ImageRenderOptions,
     RenderedImage, TerminalCapabilities, calculate_image_cell_size, delete_all_kitty_images,

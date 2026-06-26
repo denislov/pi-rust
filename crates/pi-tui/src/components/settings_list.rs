@@ -220,8 +220,13 @@ impl SettingsList {
 
     fn handle_search_key(&mut self, key: &Key) {
         match key {
-            Key::Char(text) if text != "space" => {
+            Key::Char(text) => {
                 self.search.push_str(text);
+                self.selected = 0;
+                self.rebuild_filter();
+            }
+            Key::Space => {
+                self.search.push(' ');
                 self.selected = 0;
                 self.rebuild_filter();
             }
@@ -337,7 +342,7 @@ impl Component for SettingsList {
                     return;
                 }
                 if self.keybindings.matches(event, "tui.select.confirm")
-                    || matches!(&key_event.key, Key::Char(text) if text == "space")
+                    || key_event.key == Key::Space
                 {
                     self.activate_selected();
                     return;
