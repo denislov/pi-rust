@@ -25,6 +25,23 @@ fn encodes_cwd_like_typescript() {
 }
 
 #[test]
+fn encodes_cwd_windows_path() {
+    // TS: cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")
+    assert_eq!(
+        JsonlSessionRepo::encode_cwd("D:\\Workspace\\pi2rust\\pi-rust"),
+        "--D--Workspace-pi2rust-pi-rust--"
+    );
+}
+
+#[test]
+fn encodes_cwd_mixed_slashes_and_colon() {
+    assert_eq!(
+        JsonlSessionRepo::encode_cwd("C:/Users/name/project"),
+        "--C--Users-name-project--"
+    );
+}
+
+#[test]
 fn creates_lists_and_opens_by_id_prefix() {
     let dir = tempfile::tempdir().unwrap();
     let repo = JsonlSessionRepo::new(dir.path());

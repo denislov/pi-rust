@@ -18,8 +18,9 @@ impl JsonlSessionRepo {
     }
 
     pub fn encode_cwd(cwd: &str) -> String {
-        let stripped = cwd.trim_start_matches('/');
-        format!("--{}--", stripped.replace('/', "-"))
+        let stripped = cwd.trim_start_matches(|c: char| c == '/' || c == '\\');
+        let sanitized = stripped.replace(['/', '\\', ':'], "-");
+        format!("--{sanitized}--")
     }
 
     pub fn session_dir(&self, cwd: &str) -> PathBuf {

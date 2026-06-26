@@ -1,4 +1,6 @@
-use std::io::{Write, stdout};
+#[cfg(windows)]
+use std::io;
+use std::io::{stdout, Write};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -92,6 +94,8 @@ pub enum NegotiationResult {
 
 pub struct ProcessTerminal {
     raw_mode_enabled_by_us: bool,
+    #[cfg(windows)]
+    windows_stdin_original_mode: Option<u32>,
     kitty_protocol_active: bool,
     modify_other_keys_active: bool,
     keyboard_protocol_pushed: bool,
@@ -107,6 +111,8 @@ impl ProcessTerminal {
     pub fn new() -> Self {
         Self {
             raw_mode_enabled_by_us: false,
+            #[cfg(windows)]
+            windows_stdin_original_mode: None,
             kitty_protocol_active: false,
             modify_other_keys_active: false,
             keyboard_protocol_pushed: false,
@@ -149,6 +155,52 @@ impl ProcessTerminal {
 
     #[cfg(not(windows))]
     pub fn enable_windows_vt_input(&mut self) {}
+
+    #[cfg(windows)]
+    fn save_windows_stdin_mode(&mut self) {
+        if self.windows_stdin_original_mode.is_some() {
+            return;
+        }
+
+        use win32::*;
+        let invalid = (-1isize) as HANDLE;
+        unsafe {
+            let handle = GetStdHandle(STD_INPUT_HANDLE);
+            if handle.is_null() || handle == invalid {
+                return;
+            }
+            let mut mode: u32 = 0;
+            if GetConsoleMode(handle, &mut mode) != 0 {
+                self.windows_stdin_original_mode = Some(mode);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn restore_windows_stdin_mode(&mut self) -> io::Result<bool> {
+        let Some(original_mode) = self.windows_stdin_original_mode else {
+            return Ok(false);
+        };
+
+        use win32::*;
+        let invalid = (-1isize) as HANDLE;
+        unsafe {
+            let handle = GetStdHandle(STD_INPUT_HANDLE);
+            if handle.is_null() || handle == invalid {
+                return Ok(false);
+            }
+            if SetConsoleMode(handle, original_mode) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        self.windows_stdin_original_mode = None;
+        Ok(true)
+    }
+
+    #[cfg(not(windows))]
+    fn restore_windows_stdin_mode(&mut self) -> std::io::Result<bool> {
+        Ok(false)
+    }
 
     /// Feed raw stdin data through the Kitty protocol negotiation state
     /// machine. Call this after [`Terminal::start`] until it returns
@@ -369,6 +421,9 @@ impl Terminal for ProcessTerminal {
     }
 
     fn start(&mut self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        self.save_windows_stdin_mode();
+
         let already_raw = terminal::is_raw_mode_enabled().unwrap_or(false);
         if !already_raw {
             terminal::enable_raw_mode()?;
@@ -393,24 +448,27 @@ impl Terminal for ProcessTerminal {
 
     fn stop(&mut self) -> std::io::Result<()> {
         self.stop_progress_thread();
-        self.write("\x1b[?2004l")?;
+        // Fire-and-forget escape sequences, matching TS behaviour.
+        // Never let a write failure skip the critical disable_raw_mode call.
+        let _ = self.write("\x1b[?2004l");
         let should_disable = self.keyboard_protocol_pushed || self.kitty_protocol_active;
         self.negotiation_buffer.clear();
         self.negotiation_done = true;
 
         if should_disable {
-            self.write("\x1b[<u")?;
+            let _ = self.write("\x1b[<u");
             self.keyboard_protocol_pushed = false;
             self.kitty_protocol_active = false;
             set_kitty_protocol_active(false);
         }
         self.disable_modify_other_keys();
-        self.show_cursor()?;
-        self.flush()?;
-        if self.raw_mode_enabled_by_us {
+        let _ = self.show_cursor();
+        let _ = self.flush();
+        let restored_windows_mode = self.restore_windows_stdin_mode()?;
+        if self.raw_mode_enabled_by_us && !restored_windows_mode {
             terminal::disable_raw_mode()?;
-            self.raw_mode_enabled_by_us = false;
         }
+        self.raw_mode_enabled_by_us = false;
         Ok(())
     }
 
@@ -461,7 +519,8 @@ impl Terminal for ProcessTerminal {
                     while !stop_clone.load(Ordering::Relaxed) {
                         thread::sleep(Duration::from_millis(TERMINAL_PROGRESS_KEEPALIVE_MS));
                         if !stop_clone.load(Ordering::Relaxed) {
-                            let _ = stdout().write_all(TERMINAL_PROGRESS_ACTIVE_SEQUENCE.as_bytes());
+                            let _ =
+                                stdout().write_all(TERMINAL_PROGRESS_ACTIVE_SEQUENCE.as_bytes());
                             let _ = stdout().flush();
                         }
                     }
@@ -491,7 +550,8 @@ fn is_device_attributes_response(sequence: &str) -> bool {
 }
 
 fn is_negotiation_prefix(sequence: &str) -> bool {
-    sequence == "\x1b[" || (sequence.starts_with("\x1b[?") && !sequence.contains('c') && !sequence.ends_with('u'))
+    sequence == "\x1b["
+        || (sequence.starts_with("\x1b[?") && !sequence.contains('c') && !sequence.ends_with('u'))
 }
 
 #[cfg(test)]

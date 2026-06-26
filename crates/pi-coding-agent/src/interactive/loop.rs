@@ -78,6 +78,10 @@ pub(super) async fn run_interactive_loop<T: Terminal>(
     let loop_result =
         run_started_interactive_loop(&mut tui, root_id, input, prompt_context, &parsed, &options)
             .await;
+    // Drain in-flight Kitty key release events before stopping, matching TS `drainInput(1000)`.
+    let _ = tui
+        .terminal_mut()
+        .drain_input(Duration::from_millis(1000), Duration::from_millis(50));
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
     match (loop_result, stop_result) {
         (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
@@ -111,6 +115,10 @@ where
         &options,
     )
     .await;
+    // Drain in-flight Kitty key release events before stopping.
+    let _ = tui
+        .terminal_mut()
+        .drain_input(Duration::from_millis(1000), Duration::from_millis(50));
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
     match (loop_result, stop_result) {
         (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
