@@ -106,10 +106,17 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "compact" => handle_compact_command(root, &command.args),
         "scoped-models" | "share" | "tree" => handle_pending_slash_command(root, &command),
         _ => {
-            root.transcript.push(TranscriptItem::system(format!(
-                "unknown command: {} - type /help for available commands",
-                command.original
-            )));
+            let expanded = root.expand_prompt_text(&command.original);
+            if expanded != command.original {
+                root.editor.add_to_history(&expanded);
+                root.pending_submit = Some(expanded);
+                root.action = InteractiveAction::Submit;
+            } else {
+                root.transcript.push(TranscriptItem::system(format!(
+                    "unknown command: {} - type /help for available commands",
+                    command.original
+                )));
+            }
         }
     }
 }
