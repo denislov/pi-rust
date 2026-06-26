@@ -1111,6 +1111,140 @@ mod tests {
     }
 
     #[test]
+    fn settings_menu_transport_cycles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert_eq!(root.settings.transport, "auto");
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        // Navigate from theme (item 0) down to transport (item 2)
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.settings.transport, "sse");
+        let updated = root
+            .take_settings_update()
+            .expect("transport toggle should emit settings update");
+        assert_eq!(updated.transport, "sse");
+    }
+
+    #[test]
+    fn settings_menu_steering_mode_cycles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert_eq!(root.settings.steering_mode, "one-at-a-time");
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        // Navigate from theme (0) down to steering_mode (3)
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.settings.steering_mode, "all");
+        let updated = root
+            .take_settings_update()
+            .expect("steering mode toggle should emit settings update");
+        assert_eq!(updated.steering_mode, "all");
+    }
+
+    #[test]
+    fn settings_menu_follow_up_mode_cycles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert_eq!(root.settings.follow_up_mode, "one-at-a-time");
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        // Navigate from theme (0) down to follow_up_mode (4)
+        for _ in 0..4 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.settings.follow_up_mode, "all");
+        let updated = root
+            .take_settings_update()
+            .expect("follow-up mode toggle should emit settings update");
+        assert_eq!(updated.follow_up_mode, "all");
+    }
+
+    #[test]
+    fn settings_menu_show_images_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(root.settings.terminal.show_images);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        // Navigate from theme (0) down to show_images (5)
+        for _ in 0..5 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(!root.settings.terminal.show_images);
+        let updated = root
+            .take_settings_update()
+            .expect("show images toggle should emit settings update");
+        assert!(!updated.terminal.show_images);
+    }
+
+    #[test]
+    fn settings_menu_show_progress_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert!(root.settings.terminal.show_progress);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        // Navigate from theme (0) down to show_progress (6)
+        for _ in 0..6 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(!root.settings.terminal.show_progress);
+        let updated = root
+            .take_settings_update()
+            .expect("show progress toggle should emit settings update");
+        assert!(!updated.terminal.show_progress);
+    }
+
+    #[test]
     fn settings_menu_toggles_auto_compaction_and_reports_settings_update() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),

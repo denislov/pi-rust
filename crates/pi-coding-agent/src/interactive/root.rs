@@ -791,6 +791,21 @@ impl InteractiveRoot {
             "auto_compaction" => {
                 self.settings.compaction.enabled = value == "on";
             }
+            "transport" => {
+                self.settings.transport = value.to_string();
+            }
+            "steering_mode" => {
+                self.settings.steering_mode = value.to_string();
+            }
+            "follow_up_mode" => {
+                self.settings.follow_up_mode = value.to_string();
+            }
+            "show_images" => {
+                self.settings.terminal.show_images = value == "on";
+            }
+            "show_progress" => {
+                self.settings.terminal.show_progress = value == "on";
+            }
             _ => return,
         }
         self.settings_update = Some(self.settings.clone());
@@ -1058,8 +1073,47 @@ fn build_settings_list(
             )
             .values(["on", "off"])
             .description("Automatically compact context before it exceeds the model window"),
+            SettingItem::new("transport", "Transport", &settings.transport)
+                .values(["sse", "websocket", "websocket-cached", "auto"])
+                .description("Preferred transport for provider connections"),
+            SettingItem::new(
+                "steering_mode",
+                "Steering mode",
+                &settings.steering_mode,
+            )
+            .values(["one-at-a-time", "all"])
+            .description("Enter while streaming queues steering messages ('one-at-a-time' delivers one at a time)"),
+            SettingItem::new(
+                "follow_up_mode",
+                "Follow-up mode",
+                &settings.follow_up_mode,
+            )
+            .values(["one-at-a-time", "all"])
+            .description("Queue follow-up messages until agent stops"),
+            SettingItem::new(
+                "show_images",
+                "Show images",
+                if settings.terminal.show_images {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Render images inline in terminal"),
+            SettingItem::new(
+                "show_progress",
+                "Terminal progress",
+                if settings.terminal.show_progress {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .values(["on", "off"])
+            .description("Show progress indicators in terminal tab bar"),
         ],
-        6,
+        8,
         keybindings,
         SettingsListOptions {
             enable_search: false,
