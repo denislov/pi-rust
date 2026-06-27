@@ -5,30 +5,12 @@ pub fn estimate_tokens(messages: &[AgentMessage]) -> u32 {
     let mut total: u32 = 0;
 
     for msg in messages {
-        match msg {
-            AgentMessage::UserText { text, .. } => {
-                total += (text.len() as u32) / 4;
-            }
-            AgentMessage::Assistant { message, .. } => {
-                if message.usage.total_tokens > 0 {
-                    total += message.usage.total_tokens;
-                    continue;
-                }
-                for block in &message.content {
-                    total += estimate_block_tokens(block);
-                }
-            }
-            AgentMessage::ToolResult { content, .. } => {
-                for block in content {
-                    total += estimate_block_tokens(block);
-                }
-            }
-            AgentMessage::SystemPrompt { text, .. } => {
-                total += (text.len() as u32) / 4;
-            }
-            AgentMessage::CompactionSummary { summary, .. } => {
-                total += (summary.len() as u32) / 4;
-            }
+        total = total.saturating_add(match msg {
+            AgentMessage::UserText { text, .. } => estimate_text_tokens(text),
+            AgentMessage::Assistant { message, .. } => estimate_content_tokens(&message.content),
+            AgentMessage::ToolResult { content, .. } => estimate_content_tokens(content),
+            AgentMessage::SystemPrompt { text, .. } => estimate_text_tokens(text),
+            AgentMessage::CompactionSummary { summary, .. } => estimate_text_tokens(summary),
             AgentMessage::BashExecution {
                 command,
                 output,
@@ -36,31 +18,40 @@ pub fn estimate_tokens(messages: &[AgentMessage]) -> u32 {
                 ..
             } => {
                 if !exclude_from_context {
-                    total += (command.len() as u32) / 4 + (output.len() as u32) / 4;
+                    estimate_text_tokens(command).saturating_add(estimate_text_tokens(output))
+                } else {
+                    0
                 }
             }
-            AgentMessage::Custom { content, .. } => {
-                for block in content {
-                    total += estimate_block_tokens(block);
-                }
-            }
-            AgentMessage::BranchSummary { summary, .. } => {
-                total += (summary.len() as u32) / 4;
-            }
-        }
+            AgentMessage::Custom { content, .. } => estimate_content_tokens(content),
+            AgentMessage::BranchSummary { summary, .. } => estimate_text_tokens(summary),
+        });
     }
 
     total
 }
 
+fn estimate_text_tokens(text: &str) -> u32 {
+    (text.len() as u32).div_ceil(4)
+}
+
+fn estimate_content_tokens(content: &[ContentBlock]) -> u32 {
+    content
+        .iter()
+        .map(estimate_block_tokens)
+        .fold(0u32, u32::saturating_add)
+}
+
 fn estimate_block_tokens(block: &ContentBlock) -> u32 {
     match block {
-        ContentBlock::Text { text, .. } => (text.len() as u32) / 4,
+        ContentBlock::Text { text, .. } => estimate_text_tokens(text),
         ContentBlock::ToolCall {
             name, arguments, ..
-        } => (name.len() as u32) / 4 + (arguments.to_string().len() as u32) / 4,
-        ContentBlock::Thinking { thinking, .. } => (thinking.len() as u32) / 4,
-        ContentBlock::Image { .. } => 4800 / 4,
+        } => {
+            estimate_text_tokens(name).saturating_add(estimate_text_tokens(&arguments.to_string()))
+        }
+        ContentBlock::Thinking { thinking, .. } => estimate_text_tokens(thinking),
+        ContentBlock::Image { .. } => 4800u32.div_ceil(4),
     }
 }
 
@@ -121,9 +112,9 @@ fn last_valid_assistant_usage(messages: &[AgentMessage]) -> Option<(Usage, usize
 /// - Fall back to heuristic estimation for all messages when no valid
 ///   usage exists.
 ///
-/// Unlike [`estimate_tokens`], this does NOT sum every assistant
-/// `usage.total_tokens`, which would double-count prior context on each
-/// turn.
+/// [`estimate_tokens`] is deliberately heuristic and does not read assistant
+/// usage; this function is the only compaction estimator that should use
+/// provider usage, and only for the newest valid anchor.
 pub fn estimate_context_tokens(messages: &[AgentMessage]) -> ContextUsageEstimate {
     let Some((usage, index)) = last_valid_assistant_usage(messages) else {
         let trailing = estimate_tokens(messages);
@@ -165,16 +156,20 @@ mod tests {
     }
 
     #[test]
-    fn uses_assistant_usage_when_available() {
+    fn estimate_tokens_uses_assistant_content_not_provider_usage() {
         use pi_ai::types::AssistantMessage;
         let mut msg = AssistantMessage::empty("test", "test-model");
         msg.usage.total_tokens = 42;
+        msg.content.push(ContentBlock::Text {
+            text: "tiny".into(),
+            text_signature: None,
+        });
         let msgs = vec![AgentMessage::Assistant {
             message_id: "2".into(),
             message: msg,
         }];
         let tokens = estimate_tokens(&msgs);
-        assert_eq!(tokens, 42);
+        assert_eq!(tokens, 1);
     }
 
     // ---- estimate_context_tokens (TS-parity context usage) ----
@@ -240,6 +235,8 @@ mod tests {
         let est = estimate_context_tokens(&msgs);
         assert_eq!(est.usage_tokens, 100);
         assert_eq!(est.last_usage_index, Some(0));
+        assert_eq!(est.trailing_tokens, 0);
+        assert_eq!(est.tokens, 100);
     }
 
     #[test]
@@ -251,6 +248,8 @@ mod tests {
         let est = estimate_context_tokens(&msgs);
         assert_eq!(est.usage_tokens, 100);
         assert_eq!(est.last_usage_index, Some(0));
+        assert_eq!(est.trailing_tokens, 0);
+        assert_eq!(est.tokens, 100);
     }
 
     #[test]
@@ -268,6 +267,8 @@ mod tests {
         let est = estimate_context_tokens(&msgs);
         assert_eq!(est.usage_tokens, 50);
         assert_eq!(est.last_usage_index, Some(0));
+        assert_eq!(est.trailing_tokens, 0);
+        assert_eq!(est.tokens, 50);
     }
 
     #[test]
@@ -291,6 +292,18 @@ mod tests {
         let heuristic = estimate_tokens(&msgs);
         assert_eq!(est.tokens, heuristic);
         assert_eq!(est.trailing_tokens, heuristic);
+    }
+
+    #[test]
+    fn estimate_context_fallback_does_not_count_error_usage_as_message_size() {
+        let msgs = vec![assistant_with_usage(10_000, StopReason::Error)];
+
+        let est = estimate_context_tokens(&msgs);
+
+        assert_eq!(est.last_usage_index, None);
+        assert_eq!(est.usage_tokens, 0);
+        assert_eq!(est.trailing_tokens, 0);
+        assert_eq!(est.tokens, 0);
     }
 
     #[test]

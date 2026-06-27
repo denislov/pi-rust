@@ -21,7 +21,7 @@ use crate::types::{
     AgentEvent, AgentMessage, AgentStream, AgentToolOutput, AgentToolResult,
     ProviderRequestSnapshot, ToolUpdateCallback,
 };
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, StopReason};
+use pi_ai::types::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
 
 struct PreparedToolCall {
     index: usize,
@@ -43,6 +43,31 @@ fn message_id(message: &AgentMessage) -> &str {
         | AgentMessage::Custom { message_id, .. }
         | AgentMessage::BranchSummary { message_id, .. } => message_id,
     }
+}
+
+fn clear_assistant_usage(message: &mut AgentMessage) {
+    if let AgentMessage::Assistant { message, .. } = message {
+        message.usage = Usage::default();
+    }
+}
+
+fn split_for_compaction_after_usage_anchor(
+    messages: &[AgentMessage],
+    anchor_index: Option<usize>,
+) -> (Vec<AgentMessage>, Vec<AgentMessage>) {
+    let Some(anchor_index) = anchor_index else {
+        return (vec![], messages.to_vec());
+    };
+    if messages.is_empty() {
+        return (vec![], vec![]);
+    }
+
+    let mut split = anchor_index.saturating_add(1).min(messages.len());
+    while split < messages.len() && matches!(messages[split], AgentMessage::ToolResult { .. }) {
+        split += 1;
+    }
+
+    (messages[..split].to_vec(), messages[split..].to_vec())
 }
 
 async fn compact_before_provider_request(
@@ -75,7 +100,11 @@ async fn compact_before_provider_request(
         return Ok(None);
     }
 
-    let (to_summarize, keep) = prepare_compaction(&messages, &config.settings);
+    let (mut to_summarize, mut keep) = prepare_compaction(&messages, &config.settings);
+    if to_summarize.is_empty() {
+        (to_summarize, keep) =
+            split_for_compaction_after_usage_anchor(&messages, usage_estimate.last_usage_index);
+    }
     if to_summarize.is_empty() {
         return Ok(None);
     }
@@ -100,6 +129,10 @@ async fn compact_before_provider_request(
             summary: summary.clone(),
             tokens_before,
         });
+        let mut keep = keep;
+        for message in &mut keep {
+            clear_assistant_usage(message);
+        }
         compacted.extend(keep);
         s.messages = compacted;
     }

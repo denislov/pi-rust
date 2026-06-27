@@ -191,6 +191,12 @@ fn stored_to_agent_message(_entry_id: &str, stored: StoredAgentMessage) -> Optio
     }
 }
 
+fn clear_assistant_usage(message: &mut AgentMessage) {
+    if let AgentMessage::Assistant { message, .. } = message {
+        message.usage = Usage::default();
+    }
+}
+
 fn compaction_summary_message(entry: &SessionEntry) -> Option<AgentMessage> {
     entry
         .field("summary")
@@ -203,14 +209,21 @@ fn compaction_summary_message(entry: &SessionEntry) -> Option<AgentMessage> {
         })
 }
 
-fn append_context_entry(context: &mut SessionContext, entry: &SessionEntry) {
+fn append_context_entry(
+    context: &mut SessionContext,
+    entry: &SessionEntry,
+    clear_pre_compaction_usage: bool,
+) {
     match entry.entry_type.as_str() {
         "message" => {
             if let Some(message) = entry
                 .field("message")
                 .and_then(|value| serde_json::from_value::<StoredAgentMessage>(value.clone()).ok())
             {
-                if let Some(agent_message) = stored_to_agent_message(&entry.id, message) {
+                if let Some(mut agent_message) = stored_to_agent_message(&entry.id, message) {
+                    if clear_pre_compaction_usage {
+                        clear_assistant_usage(&mut agent_message);
+                    }
                     context.messages.push(agent_message);
                 }
             }
@@ -299,15 +312,15 @@ pub fn build_session_context(
                 found_first_kept = true;
             }
             if found_first_kept {
-                append_context_entry(&mut context, entry);
+                append_context_entry(&mut context, entry, true);
             }
         }
         for entry in &path[compaction_idx + 1..] {
-            append_context_entry(&mut context, entry);
+            append_context_entry(&mut context, entry, false);
         }
     } else {
         for entry in &path {
-            append_context_entry(&mut context, entry);
+            append_context_entry(&mut context, entry, false);
         }
     }
 
@@ -337,6 +350,15 @@ mod tests {
     }
 
     fn assistant_entry(id: &str, parent: Option<&str>, text: &str) -> SessionEntry {
+        assistant_entry_with_usage(id, parent, text, 0)
+    }
+
+    fn assistant_entry_with_usage(
+        id: &str,
+        parent: Option<&str>,
+        text: &str,
+        total_tokens: u32,
+    ) -> SessionEntry {
         SessionEntry::message(
             id.into(),
             parent.map(str::to_string),
@@ -351,7 +373,14 @@ mod tests {
                 model: "faux-model".into(),
                 response_model: None,
                 response_id: None,
-                usage: crate::session::StoredUsage::default(),
+                usage: crate::session::StoredUsage {
+                    input: total_tokens,
+                    output: 0,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total: total_tokens,
+                    cost: crate::session::StoredUsageCost::default(),
+                },
                 stop_reason: pi_ai::types::StopReason::Stop,
                 error_message: None,
                 timestamp: 1,
@@ -510,7 +539,7 @@ mod tests {
             user_entry("u1", None, "old user"),
             assistant_entry("a1", Some("u1"), "old assistant"),
             user_entry("u2", Some("a1"), "kept user"),
-            assistant_entry("a2", Some("u2"), "kept assistant"),
+            assistant_entry_with_usage("a2", Some("u2"), "kept assistant", 50_000),
             SessionEntry {
                 entry_type: "compaction".into(),
                 id: "comp1".into(),
@@ -550,11 +579,53 @@ mod tests {
                     text: "kept assistant".into(),
                     text_signature: None,
                 }]
+                && message.usage.total_tokens == 0
         ));
         assert!(matches!(
             &context.messages[3],
             AgentMessage::UserText { text, .. } if text == "new user"
         ));
+    }
+
+    #[test]
+    fn context_preserves_post_compaction_assistant_usage() {
+        let entries = vec![
+            user_entry("u1", None, "old user"),
+            assistant_entry_with_usage("a1", Some("u1"), "kept assistant", 50_000),
+            SessionEntry {
+                entry_type: "compaction".into(),
+                id: "comp1".into(),
+                parent_id: Some("a1".into()),
+                timestamp: "2026-06-05T00:00:02.000Z".into(),
+                fields: {
+                    let mut m = Map::new();
+                    m.insert(
+                        "summary".into(),
+                        serde_json::Value::String("summary".into()),
+                    );
+                    m.insert(
+                        "firstKeptEntryId".into(),
+                        serde_json::Value::String("a1".into()),
+                    );
+                    m.insert("tokensBefore".into(), serde_json::Value::Number(20.into()));
+                    m
+                },
+            },
+            user_entry("u2", Some("comp1"), "new user"),
+            assistant_entry_with_usage("a2", Some("u2"), "new assistant", 123),
+        ];
+
+        let context = build_session_context(&entries, None).unwrap();
+
+        let assistant_usages = context
+            .messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::Assistant { message, .. } => Some(message.usage.total_tokens),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(assistant_usages, vec![0, 123]);
     }
 
     #[test]

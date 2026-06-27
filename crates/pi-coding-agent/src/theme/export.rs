@@ -4,7 +4,7 @@
 //! These convert resolved theme colors into CSS-compatible hex strings for
 //! `/export` HTML output.
 
-use super::{ColorValue, ExportSection, ResolvedColor, ThemeColor, ThemeJson, resolve};
+use super::{ColorValue, ResolvedColor, ThemeColor, ThemeJson, resolve};
 
 /// Whether a theme is a "light" theme. Mirrors TS `isLightTheme` (currently a
 /// name check).

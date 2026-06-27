@@ -19,19 +19,6 @@ fn user_msg(text: &str) -> AgentMessage {
     }
 }
 
-fn tool_msg(text: &str) -> AgentMessage {
-    AgentMessage::ToolResult {
-        message_id: "t".into(),
-        tool_call_id: "call".into(),
-        tool_name: "test".into(),
-        is_error: false,
-        content: vec![ContentBlock::Text {
-            text: text.into(),
-            text_signature: None,
-        }],
-    }
-}
-
 fn compaction_msg(summary: &str, tokens: u32) -> AgentMessage {
     AgentMessage::CompactionSummary {
         message_id: "cs".into(),
@@ -60,9 +47,13 @@ fn estimate_text_tokens() {
 }
 
 #[test]
-fn estimate_tokens_accumulates_assistant_usage_with_other_messages() {
+fn estimate_tokens_ignores_assistant_usage_and_uses_content_size() {
     let mut assistant = pi_ai::types::AssistantMessage::empty("test", "test-model");
-    assistant.usage.total_tokens = 30;
+    assistant.usage.total_tokens = 30_000;
+    assistant.content.push(ContentBlock::Text {
+        text: "assistant content".into(),
+        text_signature: None,
+    });
     let msgs = vec![
         user_msg(&"old context ".repeat(100)),
         AgentMessage::Assistant {
@@ -71,7 +62,12 @@ fn estimate_tokens_accumulates_assistant_usage_with_other_messages() {
         },
     ];
 
-    assert!(estimate_tokens(&msgs) > 30);
+    let without_usage = estimate_tokens(&msgs);
+    assert!(
+        without_usage < 30_000,
+        "message sizing must not use provider total_tokens: {without_usage}"
+    );
+    assert!(without_usage > 0);
 }
 
 #[test]
