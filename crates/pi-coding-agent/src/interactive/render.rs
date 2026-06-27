@@ -298,12 +298,12 @@ fn render_assistant_message(
                 &paint_with("thinking", &styles.system, color),
                 width,
             ));
+            let think_width = width.saturating_sub(2).max(1);
             for line in thinking.lines() {
-                let indented = format!("  {line}");
-                lines.push(fit_line(
-                    &paint_with(&indented, &styles.thinking, color),
-                    width,
-                ));
+                let painted = paint_with(line, &styles.thinking, color);
+                for wrapped in wrap_text_with_ansi(&painted, think_width) {
+                    lines.push(fit_line(&format!("  {wrapped}"), width));
+                }
             }
         }
         if has_body {
@@ -1026,6 +1026,59 @@ mod tests {
             !joined.contains("secret reasoning"),
             "content leaked when hidden: {joined}"
         );
+    }
+
+    #[test]
+    fn long_thinking_lines_wrap_to_width_instead_of_truncating() {
+        // Regression: thinking text must word-wrap at the available width
+        // (width − 2 for the indent) rather than being truncated with
+        // fit_line.  Before the fix, each source line was passed through
+        // fit_line which *cuts* overflow without wrapping, so long thinking
+        // content would just get clipped at the right edge.
+        let long_thought = "this is a very long thinking line that absolutely must wrap to the available terminal width";
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Assistant {
+            id: "a".to_string(),
+            markdown: String::new(),
+            thinking: long_thought.to_string(),
+            done: true,
+        });
+
+        for (color, label) in [(false, "colorless"), (true, "colored")] {
+            for width in [30, 20] {
+                let lines = render_transcript_lines(&transcript, &test_opts(width, color));
+                // First line is the "thinking" label.
+                assert!(
+                    lines[0].contains("thinking"),
+                    "{label} w={width}: label missing"
+                );
+                let think_lines: Vec<_> =
+                    lines[1..].iter().filter(|l| !l.trim().is_empty()).collect();
+                // At narrow widths, we should get at least 2 thinking lines
+                // (the text wraps), not just 1 truncated line.
+                assert!(
+                    think_lines.len() >= 2,
+                    "{label} w={width}: expected at least 2 wrapped thinking lines, got {}: {think_lines:?}",
+                    think_lines.len()
+                );
+                // Every word of the original must be present (no truncation loss).
+                let joined = lines.join("\n");
+                for word in long_thought.split_whitespace() {
+                    assert!(
+                        joined.contains(word),
+                        "{label} w={width}: word `{word}` lost: {joined}"
+                    );
+                }
+                // No line overflows width.
+                for line in &lines {
+                    assert!(
+                        visible_width(line) <= width,
+                        "{label} w={width} overflow: {:?}",
+                        line
+                    );
+                }
+            }
+        }
     }
 
     #[test]

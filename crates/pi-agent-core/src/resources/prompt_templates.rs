@@ -36,7 +36,31 @@ pub fn load_prompt_templates(paths: &[PathBuf]) -> (Vec<PromptTemplate>, Vec<Res
         }
     }
 
-    (templates, diagnostics)
+    // Deduplicate by name (first wins, TS behavior). Duplicates produce
+    // collision diagnostics so users know a later template shadowed an
+    // earlier one.
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut deduped: Vec<PromptTemplate> = Vec::new();
+    for template in templates {
+        if let Some(&existing_idx) = seen.get(&template.name) {
+            let existing_loc = deduped[existing_idx].location.clone();
+            diagnostics.push(ResourceDiagnostic {
+                severity: DiagnosticSeverity::Warning,
+                code: "prompt_collision".into(),
+                message: format!(
+                    "name \"/{}\" collision (using {}, ignoring {})",
+                    template.name, existing_loc, template.location
+                ),
+                path: PathBuf::from(&template.location),
+            });
+        } else {
+            let idx = deduped.len();
+            seen.insert(template.name.clone(), idx);
+            deduped.push(template);
+        }
+    }
+
+    (deduped, diagnostics)
 }
 
 /// Load prompt templates from sourced inputs. Mirrors
@@ -161,5 +185,20 @@ mod tests {
         assert_eq!(templates.len(), 2);
         assert_eq!(templates[0].name, "a");
         assert_eq!(templates[1].name, "b");
+    }
+
+    #[test]
+    fn deduplicates_by_name_first_wins() {
+        let dir = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("greet.md"), "hello world").unwrap();
+        std::fs::write(dir2.path().join("greet.md"), "hello again").unwrap();
+
+        let (templates, diags) =
+            load_prompt_templates(&[dir.path().to_path_buf(), dir2.path().to_path_buf()]);
+        assert_eq!(templates.len(), 1, "duplicate name should be removed");
+        assert_eq!(templates[0].content, "hello world", "first wins");
+        assert!(!diags.is_empty());
+        assert!(diags.iter().any(|d| d.message.contains("collision")));
     }
 }

@@ -23,11 +23,27 @@ pub(super) struct SessionChoice {
     pub(super) entry_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Cumulative usage statistics computed from all assistant messages in a
+/// hydrated session.  Used to initialise [`super::root::FooterStats`] so the
+/// footer shows correct token/cost numbers immediately after resume, without
+/// waiting for the next turn.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(super) struct CumulativeUsage {
+    pub input: u32,
+    pub output: u32,
+    pub cache_read: u32,
+    pub cache_write: u32,
+    pub cost: f64,
+    /// Context-token estimate from the *last* assistant message with a usage
+    /// block.  `None` means no assistant message has reported usage yet.
+    pub last_context_tokens: Option<u32>,
+}
+
 pub(super) struct HydratedSession {
     pub(super) choice: SessionChoice,
     pub(super) transcript_items: Vec<TranscriptItem>,
     pub(super) leaf_id: Option<String>,
+    pub(super) cumulative_usage: CumulativeUsage,
 }
 
 impl SessionChoice {
@@ -98,24 +114,118 @@ pub(super) fn hydrate_session_storage(
     let entries = storage.get_entries();
     let context = session::build_session_context(&entries, leaf_id.as_deref())
         .map_err(|error| CliError::SessionFailure(error.message))?;
+    let cumulative_usage = compute_cumulative_usage(&context.messages);
     let choice = session_choice_from_metadata(storage.metadata());
     Ok(HydratedSession {
         choice,
         transcript_items: transcript_items_from_messages(&context.messages),
         leaf_id,
+        cumulative_usage,
     })
 }
 
+/// Walk every [`AgentMessage::Assistant`] in the session and sum their
+/// [`Usage`] blocks into a [`CumulativeUsage`] that mirrors the running
+/// totals the [`super::event_bridge::InteractiveEventBridge`] maintains
+/// during a live conversation.
+fn compute_cumulative_usage(messages: &[AgentMessage]) -> CumulativeUsage {
+    let mut acc = CumulativeUsage::default();
+    for message in messages {
+        if let AgentMessage::Assistant { message, .. } = message {
+            let usage = &message.usage;
+            acc.input = acc.input.saturating_add(usage.input);
+            acc.output = acc.output.saturating_add(usage.output);
+            acc.cache_read = acc.cache_read.saturating_add(usage.cache_read);
+            acc.cache_write = acc.cache_write.saturating_add(usage.cache_write);
+            acc.cost += usage.cost.input
+                + usage.cost.output
+                + usage.cost.cache_read
+                + usage.cost.cache_write;
+            // Context tokens come from the *last* message's usage block, same
+            // as InteractiveEventBridge which mirrors the latest LLM response.
+            acc.last_context_tokens =
+                Some(pi_agent_core::compaction::estimate::calculate_context_tokens(usage));
+        }
+    }
+    acc
+}
+
 fn transcript_items_from_messages(messages: &[AgentMessage]) -> Vec<TranscriptItem> {
-    messages
-        .iter()
-        .enumerate()
-        .filter_map(|(index, message)| match message {
-            AgentMessage::UserText { text, .. } => Some(TranscriptItem::user(text.clone())),
+    let mut items = Vec::new();
+    // Map from tool_call_id to the arguments declared in the preceding
+    // Assistant message, so ToolResult entries can render their original
+    // invocation parameters (e.g. `read /path/to/file done`).
+    let mut tool_call_args: HashMap<String, serde_json::Value> = HashMap::new();
+
+    for (index, message) in messages.iter().enumerate() {
+        match message {
+            AgentMessage::UserText { text, .. } => {
+                items.push(TranscriptItem::user(text.clone()));
+            }
             AgentMessage::Assistant { message, .. } => {
-                let text = content_blocks_to_text(&message.content);
-                (!text.trim().is_empty())
-                    .then(|| TranscriptItem::assistant(format!("assistant_{index}"), text, true))
+                // Register tool-call arguments for later ToolResult lookup.
+                for block in &message.content {
+                    if let ContentBlock::ToolCall { id, arguments, .. } = block {
+                        tool_call_args.insert(id.clone(), arguments.clone());
+                    }
+                }
+
+                // Emit one TranscriptItem per content block, merging
+                // consecutive Text blocks into a single item.
+                let mut pending_text = String::new();
+                let flush_pending_text = |pending: &mut String, items: &mut Vec<TranscriptItem>| {
+                    let trimmed = pending.trim().to_string();
+                    pending.clear();
+                    if !trimmed.is_empty() {
+                        items.push(TranscriptItem::assistant(
+                            format!("assistant_{index}"),
+                            trimmed,
+                            true,
+                        ));
+                    }
+                };
+
+                for block in &message.content {
+                    match block {
+                        ContentBlock::Text { text, .. } => {
+                            if !pending_text.is_empty() {
+                                pending_text.push('\n');
+                            }
+                            pending_text.push_str(text);
+                        }
+                        ContentBlock::Thinking { thinking, .. } => {
+                            flush_pending_text(&mut pending_text, &mut items);
+                            let trimmed = thinking.trim().to_string();
+                            if !trimmed.is_empty() {
+                                items.push(TranscriptItem::Assistant {
+                                    id: format!("assistant_{index}"),
+                                    markdown: String::new(),
+                                    thinking: trimmed,
+                                    done: true,
+                                });
+                            }
+                        }
+                        ContentBlock::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                            ..
+                        } => {
+                            flush_pending_text(&mut pending_text, &mut items);
+                            items.push(TranscriptItem::Tool {
+                                call_id: id.clone(),
+                                name: name.clone(),
+                                args: arguments.clone(),
+                                result: None,
+                                is_error: false,
+                            });
+                        }
+                        ContentBlock::Image { .. } => {
+                            // Images are not yet rendered in the transcript.
+                        }
+                    }
+                }
+                flush_pending_text(&mut pending_text, &mut items);
             }
             AgentMessage::ToolResult {
                 tool_call_id,
@@ -123,13 +233,44 @@ fn transcript_items_from_messages(messages: &[AgentMessage]) -> Vec<TranscriptIt
                 is_error,
                 content,
                 ..
-            } => Some(TranscriptItem::Tool {
-                call_id: tool_call_id.clone(),
-                name: tool_name.clone(),
-                args: serde_json::Value::Object(Default::default()),
-                result: Some(content_blocks_to_text(content)),
-                is_error: *is_error,
-            }),
+            } => {
+                let args = tool_call_args
+                    .get(tool_call_id)
+                    .cloned()
+                    .unwrap_or_default();
+                // Find the matching tool item from the preceding Assistant
+                // message and update it in-place (mirrors `finish_tool` in
+                // the live transcript path), avoiding a duplicate header row.
+                if let Some(item) = items.iter_mut().rev().find(|item| {
+                    matches!(item,
+                        TranscriptItem::Tool { call_id, .. } if call_id == tool_call_id
+                    )
+                }) {
+                    if let TranscriptItem::Tool {
+                        result: existing,
+                        is_error: existing_error,
+                        args: existing_args,
+                        ..
+                    } = item
+                    {
+                        *existing = Some(tool_result_text(content));
+                        *existing_error = *is_error;
+                        if !args.is_null() {
+                            *existing_args = args;
+                        }
+                    }
+                } else {
+                    // Fallback: tool call not seen (e.g. tool executed outside
+                    // an assistant message).  Push a standalone item.
+                    items.push(TranscriptItem::Tool {
+                        call_id: tool_call_id.clone(),
+                        name: tool_name.clone(),
+                        args,
+                        result: Some(tool_result_text(content)),
+                        is_error: *is_error,
+                    });
+                }
+            }
             AgentMessage::BashExecution {
                 message_id,
                 command,
@@ -137,7 +278,7 @@ fn transcript_items_from_messages(messages: &[AgentMessage]) -> Vec<TranscriptIt
                 exit_code,
                 cancelled,
                 ..
-            } => Some(TranscriptItem::Tool {
+            } => items.push(TranscriptItem::Tool {
                 call_id: message_id.clone(),
                 name: "bash".to_string(),
                 args: serde_json::json!({ "command": command }),
@@ -149,26 +290,30 @@ fn transcript_items_from_messages(messages: &[AgentMessage]) -> Vec<TranscriptIt
                 content,
                 display,
                 ..
-            } if *display => Some(TranscriptItem::system(format!(
+            } if *display => items.push(TranscriptItem::system(format!(
                 "{}: {}",
                 custom_type,
-                content_blocks_to_text(content)
+                tool_result_text(content)
             ))),
             AgentMessage::BranchSummary { summary, .. }
             | AgentMessage::CompactionSummary { summary, .. } => {
-                Some(TranscriptItem::system(summary.clone()))
+                items.push(TranscriptItem::system(summary.clone()))
             }
-            AgentMessage::SystemPrompt { .. } | AgentMessage::Custom { .. } => None,
-        })
-        .collect()
+            AgentMessage::SystemPrompt { .. } | AgentMessage::Custom { .. } => {}
+        }
+    }
+
+    items
 }
 
-fn content_blocks_to_text(content: &[ContentBlock]) -> String {
+/// Extract text-only content from tool-result blocks. Tool results never
+/// contain `thinking` blocks (those belong to the assistant message), so
+/// this is a plain text concatenation.
+fn tool_result_text(content: &[ContentBlock]) -> String {
     content
         .iter()
         .filter_map(|block| match block {
             ContentBlock::Text { text, .. } => Some(text.as_str()),
-            ContentBlock::Thinking { thinking, .. } => Some(thinking.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -497,5 +642,194 @@ pub(super) fn session_choice_from_metadata(metadata: JsonlSessionMetadata) -> Se
         created_at: metadata.created_at,
         name,
         entry_count,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pi_ai::types::{AssistantMessage, Cost, Usage};
+
+    fn assistant_msg(input: u32, output: u32, total: u32) -> AgentMessage {
+        AgentMessage::Assistant {
+            message_id: "m".to_string(),
+            message: AssistantMessage {
+                content: vec![],
+                api: "test".to_string(),
+                provider: None,
+                model: "test".to_string(),
+                response_model: None,
+                response_id: None,
+                usage: Usage {
+                    input,
+                    output,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total_tokens: total,
+                    cost: Cost {
+                        input: 0.001 * input as f64,
+                        output: 0.002 * output as f64,
+                        cache_read: 0.0,
+                        cache_write: 0.0,
+                    },
+                },
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                diagnostics: None,
+                timestamp: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn empty_returns_default() {
+        let usage = compute_cumulative_usage(&[]);
+        assert_eq!(usage.input, 0);
+        assert_eq!(usage.output, 0);
+        assert_eq!(usage.cost, 0.0);
+        assert_eq!(usage.last_context_tokens, None);
+    }
+
+    #[test]
+    fn sums_multiple_assistant_messages() {
+        let messages = vec![assistant_msg(100, 50, 150), assistant_msg(200, 80, 280)];
+        let usage = compute_cumulative_usage(&messages);
+        assert_eq!(usage.input, 300);
+        assert_eq!(usage.output, 130);
+        assert!((usage.cost - 0.56).abs() < 0.001, "cost: {}", usage.cost);
+        // 0.001*100 + 0.002*50 + 0.001*200 + 0.002*80 = 0.1+0.1+0.2+0.16 = 0.56
+        // Last message had total=280, which has priority
+        assert_eq!(usage.last_context_tokens, Some(280));
+    }
+
+    #[test]
+    fn prefers_total_tokens_for_context_estimate() {
+        let messages = vec![assistant_msg(10, 20, 0)];
+        let usage = compute_cumulative_usage(&messages);
+        // total_tokens=0, so fallback to sum: 10+20+0+0=30
+        assert_eq!(usage.last_context_tokens, Some(30));
+
+        let messages = vec![assistant_msg(10, 20, 50)];
+        let usage = compute_cumulative_usage(&messages);
+        assert_eq!(usage.last_context_tokens, Some(50));
+    }
+
+    #[test]
+    fn ignores_non_assistant_messages() {
+        let messages = vec![
+            AgentMessage::UserText {
+                message_id: "u".to_string(),
+                text: "hello".to_string(),
+            },
+            assistant_msg(100, 50, 150),
+            AgentMessage::ToolResult {
+                message_id: "t".to_string(),
+                tool_call_id: "tc1".to_string(),
+                tool_name: "read".to_string(),
+                is_error: false,
+                content: vec![],
+            },
+        ];
+        let usage = compute_cumulative_usage(&messages);
+        assert_eq!(usage.input, 100);
+        assert_eq!(usage.output, 50);
+    }
+
+    #[test]
+    fn saturating_prevents_overflow() {
+        let messages = vec![assistant_msg(u32::MAX, 1, u32::MAX)];
+        let usage = compute_cumulative_usage(&messages);
+        assert_eq!(usage.input, u32::MAX);
+        assert_eq!(usage.output, 1);
+        // Second message adds 1 more; saturating keeps it at MAX
+        let messages = vec![assistant_msg(1, 0, 0), assistant_msg(u32::MAX, 0, u32::MAX)];
+        let usage = compute_cumulative_usage(&messages);
+        assert_eq!(usage.input, u32::MAX);
+    }
+
+    #[test]
+    fn tool_result_updates_existing_item_in_place() {
+        // Regression: ToolResult should NOT push a second TranscriptItem; it
+        // must update the existing Tool item that was created from the
+        // preceding ContentBlock::ToolCall.
+        let messages = vec![
+            AgentMessage::Assistant {
+                message_id: "a1".to_string(),
+                message: AssistantMessage {
+                    content: vec![ContentBlock::ToolCall {
+                        id: "call-1".to_string(),
+                        name: "read".to_string(),
+                        arguments: serde_json::json!({"path": "/tmp/x.rs"}),
+                        thought_signature: None,
+                    }],
+                    api: "test".to_string(),
+                    provider: None,
+                    model: "m".to_string(),
+                    response_model: None,
+                    response_id: None,
+                    usage: Usage::default(),
+                    stop_reason: StopReason::ToolUse,
+                    error_message: None,
+                    diagnostics: None,
+                    timestamp: 0,
+                },
+            },
+            AgentMessage::ToolResult {
+                message_id: "t1".to_string(),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "read".to_string(),
+                is_error: false,
+                content: vec![ContentBlock::Text {
+                    text: "line 1\nline 2".to_string(),
+                    text_signature: None,
+                }],
+            },
+        ];
+        let items = transcript_items_from_messages(&messages);
+        // Exactly one Tool item, not two.
+        let tool_items: Vec<_> = items
+            .iter()
+            .filter(|item| matches!(item, TranscriptItem::Tool { .. }))
+            .collect();
+        assert_eq!(
+            tool_items.len(),
+            1,
+            "expected 1 Tool item, got {}: {tool_items:#?}",
+            tool_items.len()
+        );
+        let tool = &tool_items[0];
+        if let TranscriptItem::Tool {
+            name,
+            result,
+            is_error,
+            ..
+        } = tool
+        {
+            assert_eq!(name, "read");
+            assert!(!is_error);
+            assert!(result.is_some(), "result must be populated");
+        }
+    }
+
+    #[test]
+    fn tool_result_without_preceding_tool_call_creates_standalone_item() {
+        // Edge case: ToolResult arrives without a matching ToolCall in any
+        // previous assistant message.  Should still create one item.
+        let messages = vec![AgentMessage::ToolResult {
+            message_id: "t1".to_string(),
+            tool_call_id: "orphan-1".to_string(),
+            tool_name: "grep".to_string(),
+            is_error: true,
+            content: vec![ContentBlock::Text {
+                text: "not found".to_string(),
+                text_signature: None,
+            }],
+        }];
+        let items = transcript_items_from_messages(&messages);
+        assert_eq!(items.len(), 1, "{items:#?}");
+        if let TranscriptItem::Tool { name, is_error, .. } = &items[0] {
+            assert_eq!(name, "grep");
+            assert!(*is_error);
+        }
     }
 }

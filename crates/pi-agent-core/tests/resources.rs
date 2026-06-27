@@ -53,7 +53,7 @@ fn ignored_directories_skipped() {
     std::fs::create_dir(&skill_dir).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
-        "---\nname: visible\n---\n\ncontent",
+        "---\nname: visible\ndescription: A visible skill\n---\n\ncontent",
     )
     .unwrap();
 

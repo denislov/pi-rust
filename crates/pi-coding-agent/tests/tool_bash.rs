@@ -29,8 +29,14 @@ async fn captures_stdout() {
 #[tokio::test]
 async fn supports_shell_options_prefix_and_spawn_hook() {
     let d = tempdir().unwrap();
+    let shell_path: Option<String> = if cfg!(windows) {
+        // On Windows, use default shell resolution (which finds Git Bash)
+        None
+    } else {
+        Some("/bin/sh".into())
+    };
     let options = BashOptions {
-        shell_path: Some("/bin/sh".into()),
+        shell_path: shell_path,
         command_prefix: Some("echo prefix".into()),
         spawn_hook: Some(Arc::new(|mut context: BashSpawnContext| {
             context.command = format!("{}\necho \"$PI_BASH_HOOK\"", context.command);

@@ -335,21 +335,38 @@ fn resolve_system_prompt(
         &config_paths.global_dir,
         effective_no_context_files(parsed, &config.settings),
     );
+    let has_custom = parsed.system_prompt.is_some();
     let mut system_prompt = parsed.system_prompt.clone();
     if !context_files.is_empty() || !parsed.append_system_prompt.is_empty() {
         let mut parts = Vec::new();
         if let Some(base) = system_prompt.take() {
             parts.push(base);
         }
-        for file in context_files {
-            parts.push(format!(
-                "# Context file: {}\n{}",
-                file.path.display(),
-                file.content
-            ));
+        // Wrap context files in <project_context> / <project_instructions>,
+        // mirroring TS `buildSystemPrompt` in `system-prompt.ts`.
+        if !context_files.is_empty() {
+            let mut ctx_block = String::from(
+                "<project_context>\n\nProject-specific instructions and guidelines:\n\n",
+            );
+            for file in context_files {
+                ctx_block.push_str(&format!(
+                    "<project_instructions path=\"{}\">\n{}\n</project_instructions>\n\n",
+                    file.path.display(),
+                    file.content
+                ));
+            }
+            ctx_block.push_str("</project_context>");
+            parts.push(ctx_block);
         }
         parts.extend(parsed.append_system_prompt.clone());
         system_prompt = Some(parts.join("\n\n"));
+    }
+    // Append cwd suffix, mirroring TS's date and working directory footer.
+    if let Some(ref mut prompt) = system_prompt
+        && has_custom
+    {
+        let display_cwd = cwd.display().to_string().replace('\\', "/");
+        *prompt = format!("{prompt}\nCurrent working directory: {display_cwd}");
     }
     system_prompt
 }

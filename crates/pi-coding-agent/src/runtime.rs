@@ -7,7 +7,26 @@ use pi_ai::types::{Model, StreamOptions};
 use std::path::PathBuf;
 
 pub const DEFAULT_MODEL_ID: &str = "claude-sonnet-4-5";
-pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful coding assistant.";
+
+/// Default system prompt mirroring TS `buildSystemPrompt` in
+/// `pi/packages/coding-agent/src/core/system-prompt.ts`.  Built-in tools
+/// (read, bash, edit, write) are described with one-line snippets;
+/// guidelines cover file exploration, conciseness, and path visibility.
+/// The pi documentation section mirrors TS self-referencing doc paths.
+pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+Available tools:
+- read: Read file contents
+- bash: Execute shell commands
+- edit: Precise file editing
+- write: Create or overwrite files
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+
+Guidelines:
+- Use bash for file operations like ls, rg, find
+- Be concise in your responses
+- Show file paths clearly when working with files"#;
 
 #[derive(Clone, Debug)]
 pub enum SessionMode {

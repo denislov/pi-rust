@@ -55,19 +55,23 @@ impl InputPump {
 }
 
 pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) {
-    if matches_key(event, "ctrl+c") {
+    if matches_key(event, "ctrl+c") || matches_key(event, "escape") {
         match root.status {
             InteractiveStatus::Running => {
                 root.action = InteractiveAction::AbortRunning;
                 return;
             }
             InteractiveStatus::Idle => {
-                if root.editor.text().is_empty() {
-                    root.action = InteractiveAction::Exit;
-                } else {
-                    root.editor.set_text("");
+                if matches_key(event, "ctrl+c") {
+                    if root.editor.text().is_empty() {
+                        root.action = InteractiveAction::Exit;
+                    } else {
+                        root.editor.set_text("");
+                    }
+                    return;
                 }
-                return;
+                // ESC in idle mode is handled by the per-mode handlers below
+                // (model/session/settings selection, slash suggestions)
             }
         }
     }

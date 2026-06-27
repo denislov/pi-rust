@@ -508,6 +508,17 @@ impl InteractiveRoot {
         self.session_label = hydrated.choice.display_name().to_string();
         self.active_session_path = Some(hydrated.choice.path.clone());
         self.active_leaf_id = hydrated.leaf_id;
+        // Restore cumulative token/cost stats so the footer reflects the
+        // entire session immediately after resume, without waiting for the
+        // next turn to emit a UsageUpdate event.
+        self.stats = FooterStats {
+            input: hydrated.cumulative_usage.input,
+            output: hydrated.cumulative_usage.output,
+            cache_read: hydrated.cumulative_usage.cache_read,
+            cache_write: hydrated.cumulative_usage.cache_write,
+            cost: hydrated.cumulative_usage.cost,
+            context_tokens: hydrated.cumulative_usage.last_context_tokens,
+        };
 
         let mut transcript = Transcript::new();
         if let Some(first) = self.transcript.items().first().cloned() {

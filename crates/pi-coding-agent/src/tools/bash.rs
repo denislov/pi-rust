@@ -75,6 +75,44 @@ async fn resolve_shell_path(custom_shell_path: Option<&str>) -> Result<String, S
         return Err(format!("Custom shell path not found: {shell_path}"));
     }
 
+    // On Windows, look for Git Bash in known locations and bash.exe on PATH.
+    // Mirrors TS `getShellConfig` in `pi/packages/coding-agent/src/utils/shell.ts`.
+    #[cfg(windows)]
+    {
+        // Git Bash in standard install locations
+        let candidates: &[&str] = &[
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        ];
+        for path in candidates {
+            if tokio::fs::try_exists(path).await.unwrap_or(false) {
+                return Ok(path.to_string());
+            }
+        }
+        // Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
+        if let Ok(output) = tokio::process::Command::new("where")
+            .arg("bash.exe")
+            .output()
+            .await
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(line) = stdout.lines().next() {
+                let path = line.trim();
+                if !path.is_empty() && tokio::fs::try_exists(path).await.unwrap_or(false) {
+                    return Ok(path.to_string());
+                }
+            }
+        }
+        return Err(
+            "No bash shell found. Options:\n  \
+                1. Install Git for Windows (https://git-scm.com)\n  \
+                2. Add your bash to PATH (Cygwin, MSYS2, etc.)\n  \
+                Searched Git Bash in: C:\\Program Files\\Git\\bin\\bash.exe, C:\\Program Files (x86)\\Git\\bin\\bash.exe"
+                .into(),
+        );
+    }
+
+    #[cfg(not(windows))]
     if tokio::fs::try_exists("/bin/bash").await.unwrap_or(false) {
         Ok("/bin/bash".into())
     } else {
@@ -364,6 +402,13 @@ async fn bash_execute_real(
     #[cfg(unix)]
     {
         cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let cmd_ref: &mut std::process::Command = cmd.as_std_mut();
+        cmd_ref.creation_flags(CREATE_NO_WINDOW);
     }
     let mut child = cmd
         .spawn()

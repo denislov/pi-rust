@@ -65,7 +65,11 @@ pub fn calculate_context_tokens(usage: &Usage) -> u32 {
     if usage.total_tokens > 0 {
         usage.total_tokens
     } else {
-        usage.input + usage.output + usage.cache_read + usage.cache_write
+        usage
+            .input
+            .saturating_add(usage.output)
+            .saturating_add(usage.cache_read)
+            .saturating_add(usage.cache_write)
     }
 }
 

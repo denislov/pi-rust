@@ -15,7 +15,7 @@ fn resolve_prompt_request_builds_common_headless_context() {
         global.join("settings.toml"),
         format!(
             "default_model = \"claude-haiku-4-5\"\nsession_dir = \"{}\"\n",
-            session_dir.display()
+            session_dir.display().to_string().replace('\\', "/")
         ),
     )
     .unwrap();
@@ -118,7 +118,10 @@ fn resolve_cli_context_returns_config_and_resource_diagnostics() {
     std::fs::create_dir_all(&theme_dir).unwrap();
     std::fs::write(
         global.join("settings.toml"),
-        format!("themes = [\"{}\"]\n", theme_dir.display()),
+        format!(
+            "themes = [\"{}\"]\n",
+            theme_dir.display().to_string().replace('\\', "/")
+        ),
     )
     .unwrap();
     std::fs::write(global.join("auth.toml"), "not valid toml").unwrap();

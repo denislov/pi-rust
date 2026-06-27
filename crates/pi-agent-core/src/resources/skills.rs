@@ -132,23 +132,70 @@ fn load_skill_file(
     }
     diagnostics.append(&mut meta_diags);
 
-    let name = meta
-        .get("name")
-        .and_then(|v| v.as_str())
-        .map(|s| {
-            let capped: String = s.chars().take(64).collect();
-            capped
-        })
+    let parent_dir_name = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string());
+
+    let frontmatter_name = meta.get("name").and_then(|v| v.as_str()).map(|s| {
+        let capped: String = s.chars().take(64).collect();
+        capped
+    });
+    let name = frontmatter_name
+        .clone()
         .unwrap_or_else(|| fallback_name(path));
 
-    let description = meta
-        .get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| {
-            let capped: String = s.chars().take(1024).collect();
-            capped
-        })
-        .unwrap_or_else(|| fallback_description(&body));
+    // Validate name against TS `validateName` rules.
+    if let Some(ref parent_name) = parent_dir_name {
+        if let Some(ref fm_name) = frontmatter_name
+            && fm_name.as_str() != parent_name.as_str()
+        {
+            diagnostics.push(ResourceDiagnostic {
+                severity: DiagnosticSeverity::Warning,
+                code: "invalid_metadata".into(),
+                message: format!(
+                    "name \"{fm_name}\" does not match parent directory \"{parent_name}\""
+                ),
+                path: path.clone(),
+            });
+        }
+    }
+    for error in validate_skill_name(&name) {
+        diagnostics.push(ResourceDiagnostic {
+            severity: DiagnosticSeverity::Warning,
+            code: "invalid_metadata".into(),
+            message: error,
+            path: path.clone(),
+        });
+    }
+
+    let description = meta.get("description").and_then(|v| v.as_str()).map(|s| {
+        let capped: String = s.chars().take(1024).collect();
+        capped
+    });
+
+    // Reject skills with empty description (TS behavior).
+    if description.as_deref().map_or(true, |d| d.trim().is_empty()) {
+        diagnostics.push(ResourceDiagnostic {
+            severity: DiagnosticSeverity::Warning,
+            code: "invalid_metadata".into(),
+            message: "description is required".into(),
+            path: path.clone(),
+        });
+        return None;
+    }
+
+    if let Some(ref desc) = description
+        && desc.len() > 1024
+    {
+        diagnostics.push(ResourceDiagnostic {
+            severity: DiagnosticSeverity::Warning,
+            code: "invalid_metadata".into(),
+            message: format!("description exceeds {} characters ({})", 1024, desc.len()),
+            path: path.clone(),
+        });
+    }
+    let description = description.unwrap(); // safe: we returned None above if None/empty
 
     let disable_model_invocation = meta
         .get("disable-model-invocation")
@@ -167,6 +214,33 @@ fn load_skill_file(
     })
 }
 
+/// Validate a skill name against TS `validateName` rules:
+/// - only lowercase a-z, 0-9, hyphens
+/// - no leading or trailing hyphens
+/// - no consecutive hyphens
+/// - max 64 characters
+fn validate_skill_name(name: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    if name.len() > 64 {
+        errors.push(format!("name exceeds 64 characters ({})", name.len()));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        errors.push(
+            "name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)".into(),
+        );
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        errors.push("name must not start or end with a hyphen".into());
+    }
+    if name.contains("--") {
+        errors.push("name must not contain consecutive hyphens".into());
+    }
+    errors
+}
+
 fn fallback_name(path: &PathBuf) -> String {
     if let Some(stem) = path.file_stem() {
         let s = stem.to_string_lossy();
@@ -181,12 +255,6 @@ fn fallback_name(path: &PathBuf) -> String {
         }
     }
     "unnamed".to_string()
-}
-
-fn fallback_description(body: &str) -> String {
-    let first_line = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-    let capped: String = first_line.chars().take(1024).collect();
-    capped
 }
 
 #[cfg(test)]
@@ -223,7 +291,11 @@ mod tests {
         let skill_dir = dir.path().join("visible");
         std::fs::create_dir(&skill_dir).unwrap();
         let skill_md = skill_dir.join("SKILL.md");
-        std::fs::write(&skill_md, "---\nname: visible\n---\n\ncontent").unwrap();
+        std::fs::write(
+            &skill_md,
+            "---\nname: visible\ndescription: A visible skill\n---\n\ncontent",
+        )
+        .unwrap();
 
         let hidden_dir = dir.path().join("hidden");
         std::fs::create_dir(&hidden_dir).unwrap();
@@ -241,5 +313,40 @@ mod tests {
         let (skills, diags) = load_skills(&[PathBuf::from("/nonexistent/path/12345")]);
         assert!(diags.is_empty());
         assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn rejects_skill_with_empty_description() {
+        let dir = TempDir::new().unwrap();
+        let skill_md = dir.path().join("SKILL.md");
+        std::fs::write(&skill_md, "---\nname: noskill\n---\n\ncontent").unwrap();
+        let (skills, diags) = load_skills(&[dir.path().to_path_buf()]);
+        assert!(
+            skills.is_empty(),
+            "skill with no description should be rejected"
+        );
+        assert!(!diags.is_empty());
+        assert!(diags.iter().any(|d| d.message.contains("description")));
+    }
+
+    #[test]
+    fn validates_skill_name_rules() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("bad-name");
+        std::fs::create_dir(&skill_dir).unwrap();
+        let skill_md = skill_dir.join("SKILL.md");
+        std::fs::write(
+            &skill_md,
+            "---\nname: BAD_NAME\ndescription: test\n---\n\ncontent",
+        )
+        .unwrap();
+        let (skills, diags) = load_skills(&[dir.path().to_path_buf()]);
+        // Name is invalid but skill is still loaded (TS emits warning, not rejection)
+        assert_eq!(skills.len(), 1);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("invalid characters"))
+        );
     }
 }

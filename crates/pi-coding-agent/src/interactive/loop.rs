@@ -26,6 +26,72 @@ use crate::{CliArgs, CliError, CliRunOptions};
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
 
+/// Print startup resource summary to stderr before the TUI takes over.
+/// Mirrors the TS startup banner with [Context], [Skills], [Extensions].
+/// Respects the `quiet_startup` setting.
+fn print_startup_banner(prompt_context: &PromptContext) {
+    if prompt_context.settings.quiet_startup {
+        return;
+    }
+    let cwd = prompt_context
+        .session
+        .as_ref()
+        .map(|s| s.cwd.clone())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let cwd = cwd.canonicalize().unwrap_or(cwd);
+
+    // [Context]
+    if !prompt_context.context_files.is_empty() {
+        let names: Vec<String> = prompt_context
+            .context_files
+            .iter()
+            .map(|f| {
+                // If the file's parent directory equals cwd, show just the file name.
+                if let Some(parent) = f.path.parent()
+                    && parent == cwd
+                {
+                    f.path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| f.path.display().to_string())
+                } else {
+                    f.path.display().to_string()
+                }
+            })
+            .collect();
+        eprintln!("[Context] {}", names.join(", "));
+    }
+
+    // [Skills]
+    let skill_names: Vec<&str> = prompt_context
+        .resources
+        .skills
+        .iter()
+        .filter(|s| !s.disable_model_invocation)
+        .map(|s| s.name.as_str())
+        .collect();
+    if !skill_names.is_empty() {
+        eprintln!("[Skills] {}", skill_names.join(", "));
+    }
+
+    // [Extensions] — placeholder, not yet implemented.
+}
+
+fn print_exit_resume_hint(active_session_path: Option<&std::path::Path>) {
+    if let Some(path) = active_session_path {
+        let session_id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| {
+                // Session files are `{timestamp}_{uuid}.jsonl`;
+                // the session id is the full stem.
+                s.to_string()
+            })
+            .unwrap_or_else(|| path.display().to_string());
+        eprintln!("To resume this session: pi --session {session_id}");
+    }
+}
+
 pub(super) struct LoopResult<T: Terminal> {
     pub(super) tui: Tui<T>,
     pub(super) exit_code: i32,
@@ -72,6 +138,8 @@ pub(super) async fn run_interactive_loop<T: Terminal>(
 ) -> Result<LoopResult<T>, CliError> {
     let prompt_context = build_prompt_context(&parsed, options.clone())?;
 
+    print_startup_banner(&prompt_context);
+
     terminal.start().map_err(to_cli_error)?;
     let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
 
@@ -83,6 +151,12 @@ pub(super) async fn run_interactive_loop<T: Terminal>(
         .terminal_mut()
         .drain_input(Duration::from_millis(1000), Duration::from_millis(50));
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
+
+    // Print resume hint after terminal cleanup.
+    if let Ok(root) = root_ref(&tui, root_id) {
+        print_exit_resume_hint(root.active_session_path.as_deref());
+    }
+
     match (loop_result, stop_result) {
         (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
         (Err(error), _) => Err(error),
@@ -102,6 +176,8 @@ where
 {
     let prompt_context = build_prompt_context(&parsed, options.clone())?;
 
+    print_startup_banner(&prompt_context);
+
     terminal.start().map_err(to_cli_error)?;
     let mut input = make_input();
     let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
@@ -120,6 +196,12 @@ where
         .terminal_mut()
         .drain_input(Duration::from_millis(1000), Duration::from_millis(50));
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
+
+    // Print resume hint after terminal cleanup.
+    if let Ok(root) = root_ref(&tui, root_id) {
+        print_exit_resume_hint(root.active_session_path.as_deref());
+    }
+
     match (loop_result, stop_result) {
         (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
         (Err(error), _) => Err(error),
@@ -772,6 +854,11 @@ fn root_mut<T: Terminal>(
     root_id: usize,
 ) -> Result<&mut InteractiveRoot, CliError> {
     tui.component_as_mut::<InteractiveRoot>(root_id)
+        .ok_or_else(|| CliError::AgentFailure("interactive root component missing".to_string()))
+}
+
+fn root_ref<T: Terminal>(tui: &Tui<T>, root_id: usize) -> Result<&InteractiveRoot, CliError> {
+    tui.component_as::<InteractiveRoot>(root_id)
         .ok_or_else(|| CliError::AgentFailure("interactive root component missing".to_string()))
 }
 

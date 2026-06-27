@@ -79,7 +79,7 @@ impl InteractiveEventBridge {
                 ..
             } => vec![UiEvent::ToolUpdated {
                 call_id: tool_call_id.clone(),
-                result: content_blocks_to_text(&update.content),
+                result: tool_output_text(&update.content),
             }],
             AgentEvent::ToolCallEnd {
                 tool_call_id,
@@ -87,7 +87,7 @@ impl InteractiveEventBridge {
                 ..
             } => vec![UiEvent::ToolFinished {
                 call_id: tool_call_id.clone(),
-                result: content_blocks_to_text(&result.content),
+                result: tool_output_text(&result.content),
                 is_error: result.is_error,
             }],
             AgentEvent::AgentDone { message } => {
@@ -163,12 +163,14 @@ impl InteractiveEventBridge {
     }
 }
 
-fn content_blocks_to_text(content: &[ContentBlock]) -> String {
+/// Extract text-only content from tool-result blocks. Tool results never
+/// contain `thinking` blocks (those belong to the assistant message), so
+/// this is a plain text concatenation.
+fn tool_output_text(content: &[ContentBlock]) -> String {
     content
         .iter()
         .filter_map(|block| match block {
             ContentBlock::Text { text, .. } => Some(text.as_str()),
-            ContentBlock::Thinking { thinking, .. } => Some(thinking.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
