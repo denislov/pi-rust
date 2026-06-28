@@ -5,6 +5,7 @@ pub mod compaction;
 pub mod convert;
 pub mod env;
 pub mod errors;
+pub mod flow;
 pub mod harness;
 pub mod hooks;
 mod loop_runtime;
