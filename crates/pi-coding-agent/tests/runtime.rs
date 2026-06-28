@@ -210,6 +210,8 @@ fn build_agent_config_applies_settings_retry_and_compaction() {
     );
 
     let stream = config.stream_options.unwrap();
+    assert_eq!(stream.transport.as_deref(), Some("auto"));
+    assert_eq!(stream.timeout_ms, Some(300000));
     assert_eq!(stream.max_retries, Some(7));
     assert_eq!(stream.max_retry_delay_ms, Some(4444));
 
@@ -226,6 +228,7 @@ fn build_agent_config_honors_disabled_settings_retry_and_compaction() {
     let mut settings = runtime_settings();
     settings.retry.enabled = false;
     settings.compaction.enabled = false;
+    settings.http_idle_timeout_ms = 0;
 
     let config = build_agent_config(
         model,
@@ -238,6 +241,85 @@ fn build_agent_config_honors_disabled_settings_retry_and_compaction() {
         Some(&settings),
     );
 
-    assert!(config.stream_options.is_none());
+    let stream = config.stream_options.unwrap();
+    assert_eq!(stream.transport.as_deref(), Some("auto"));
+    assert!(stream.timeout_ms.is_none());
+    assert!(stream.max_retries.is_none());
+    assert!(stream.max_retry_delay_ms.is_none());
     assert!(config.compaction.is_none());
+}
+
+#[test]
+fn build_agent_config_applies_transport_from_settings() {
+    let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
+    let model = select_model(&args, None, None, None).unwrap();
+    let mut settings = runtime_settings();
+    settings.transport = "sse".into();
+    settings.retry.enabled = false;
+    settings.compaction.enabled = false;
+    settings.http_idle_timeout_ms = 0;
+
+    let config = build_agent_config(
+        model,
+        args.system_prompt.clone(),
+        args.max_turns,
+        None,
+        None,
+        None,
+        AgentResources::default(),
+        Some(&settings),
+    );
+
+    let stream = config.stream_options.unwrap();
+    assert_eq!(stream.transport.as_deref(), Some("sse"));
+    assert!(stream.timeout_ms.is_none());
+    assert!(stream.max_retries.is_none());
+    assert!(stream.max_retry_delay_ms.is_none());
+}
+
+#[test]
+fn build_agent_config_applies_http_idle_timeout_when_retry_is_disabled() {
+    let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
+    let model = select_model(&args, None, None, None).unwrap();
+    let mut settings = runtime_settings();
+    settings.retry.enabled = false;
+    settings.http_idle_timeout_ms = 12_345;
+
+    let config = build_agent_config(
+        model,
+        args.system_prompt.clone(),
+        args.max_turns,
+        None,
+        None,
+        None,
+        AgentResources::default(),
+        Some(&settings),
+    );
+
+    let stream = config.stream_options.unwrap();
+    assert_eq!(stream.transport.as_deref(), Some("auto"));
+    assert_eq!(stream.timeout_ms, Some(12_345));
+    assert!(stream.max_retries.is_none());
+    assert!(stream.max_retry_delay_ms.is_none());
+}
+
+#[test]
+fn build_agent_config_applies_default_thinking_level_from_settings() {
+    let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
+    let model = select_model(&args, None, None, None).unwrap();
+    let mut settings = runtime_settings();
+    settings.default_thinking_level = Some("high".into());
+
+    let config = build_agent_config(
+        model,
+        args.system_prompt.clone(),
+        args.max_turns,
+        None,
+        None,
+        None,
+        AgentResources::default(),
+        Some(&settings),
+    );
+
+    assert_eq!(config.thinking_level, pi_agent_core::ThinkingLevel::High);
 }

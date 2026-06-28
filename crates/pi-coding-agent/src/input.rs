@@ -33,6 +33,33 @@ impl Default for ImageResizeOptions {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageProcessingOptions {
+    pub resize: ImageResizeOptions,
+    pub block_images: bool,
+}
+
+impl Default for ImageProcessingOptions {
+    fn default() -> Self {
+        Self {
+            resize: ImageResizeOptions::default(),
+            block_images: false,
+        }
+    }
+}
+
+impl ImageProcessingOptions {
+    pub fn from_settings(settings: &crate::config::Settings) -> Self {
+        Self {
+            resize: ImageResizeOptions {
+                enabled: settings.terminal.auto_resize_images,
+                max_dimension: 2000,
+            },
+            block_images: settings.terminal.block_images,
+        }
+    }
+}
+
 pub fn merge_stdin_prompt(prompt: &str, stdin: Option<&str>) -> String {
     let prompt = prompt.trim_end();
     let stdin = stdin.map(str::trim_end).filter(|value| !value.is_empty());
@@ -54,6 +81,21 @@ pub fn process_at_file_references_with_options(
     prompt: &str,
     cwd: &Path,
     resize_options: ImageResizeOptions,
+) -> Result<ProcessedPromptInput, CliError> {
+    process_at_file_references_with_processing_options(
+        prompt,
+        cwd,
+        ImageProcessingOptions {
+            resize: resize_options,
+            block_images: false,
+        },
+    )
+}
+
+pub fn process_at_file_references_with_processing_options(
+    prompt: &str,
+    cwd: &Path,
+    options: ImageProcessingOptions,
 ) -> Result<ProcessedPromptInput, CliError> {
     let mut text = String::new();
     let mut images = Vec::new();
@@ -106,7 +148,7 @@ pub fn process_at_file_references_with_options(
             continue;
         }
 
-        append_file_reference(&mut text, &mut images, &path, cwd, resize_options)?;
+        append_file_reference(&mut text, &mut images, &path, cwd, options)?;
     }
 
     let mut content = vec![ContentBlock::Text {
@@ -130,7 +172,7 @@ fn append_file_reference(
     images: &mut Vec<ImageAttachment>,
     path: &str,
     cwd: &Path,
-    resize_options: ImageResizeOptions,
+    options: ImageProcessingOptions,
 ) -> Result<(), CliError> {
     let path = resolve_input_path(path, cwd);
     let bytes = std::fs::read(&path).map_err(|error| {
@@ -145,7 +187,13 @@ fn append_file_reference(
     }
 
     if let Some(mime_type) = detect_image_mime(&path, &bytes) {
-        let resized = resize_image_bytes(&bytes, mime_type, resize_options)?;
+        if options.block_images {
+            text.push_str(&format!("<file name=\"{}\"></file>", path.display()));
+            text.push_str("\n[Image reading is disabled.]");
+            return Ok(());
+        }
+
+        let resized = resize_image_bytes(&bytes, mime_type, options.resize)?;
         let data = base64::engine::general_purpose::STANDARD.encode(&resized.bytes);
         images.push(ImageAttachment {
             data,

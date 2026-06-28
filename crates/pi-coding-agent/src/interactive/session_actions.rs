@@ -581,6 +581,11 @@ fn timestamp_millis() -> u64 {
         .as_millis() as u64
 }
 
+/// Get a current RFC3339 timestamp string for use in label changes etc.
+pub(super) fn current_timestamp() -> String {
+    pi_agent_core::session::create_timestamp()
+}
+
 fn html_escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for ch in text.chars() {

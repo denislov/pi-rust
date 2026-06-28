@@ -173,7 +173,11 @@ pub fn resolve_prompt_request(
     };
     let merged_prompt = input::merge_stdin_prompt(&prompt, stdin.as_deref());
     let context = resolve_cli_context(parsed, options, cwd, global_dir)?;
-    let processed_prompt = input::process_at_file_references(&merged_prompt, &context.cwd)?;
+    let processed_prompt = input::process_at_file_references_with_processing_options(
+        &merged_prompt,
+        &context.cwd,
+        input::ImageProcessingOptions::from_settings(&context.config.settings),
+    )?;
     let invocation = resolve_invocation(&context, &processed_prompt);
 
     let session_options = SessionPromptOptions {

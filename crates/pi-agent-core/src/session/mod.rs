@@ -14,8 +14,8 @@ pub use jsonl::JsonlSessionStorage;
 pub use memory::InMemorySessionStorage;
 pub use repo::JsonlSessionRepo;
 pub use types::{
-    JsonlSessionMetadata, SessionEntry, SessionHeader, SessionMetadata, StoredAgentMessage,
-    StoredUsage, StoredUsageCost,
+    JsonlSessionMetadata, SessionEntry, SessionHeader, SessionMetadata, SessionTreeNode,
+    StoredAgentMessage, StoredUsage, StoredUsageCost, TreeFilterMode,
 };
 
 pub fn agent_message_to_stored(

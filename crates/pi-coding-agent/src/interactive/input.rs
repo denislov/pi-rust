@@ -55,6 +55,19 @@ impl InputPump {
 }
 
 pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) {
+    // Tree selector has highest priority when active
+    if root.selecting_tree {
+        if matches_key(event, "ctrl+c") {
+            root.selecting_tree = false;
+            root.tree_selector = None;
+            root.selected_tree_entry_id = None;
+            root.editor.set_text("");
+            return;
+        }
+        root.handle_tree_selection_input(event);
+        return;
+    }
+
     if matches_key(event, "ctrl+c") || matches_key(event, "escape") {
         match root.status {
             InteractiveStatus::Running => {
@@ -70,8 +83,6 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
                     }
                     return;
                 }
-                // ESC in idle mode is handled by the per-mode handlers below
-                // (model/session/settings selection, slash suggestions)
             }
         }
     }
@@ -121,6 +132,26 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
     }
 
     if root.status == InteractiveStatus::Idle {
+        let before_text = root.editor.text().to_string();
+        if root.handle_slash_suggestion_input(event) {
+            root.clear_empty_editor_escape();
+            return;
+        }
+        if !root.selecting_model
+            && !root.selecting_session
+            && !root.selecting_settings
+            && matches_key(event, "escape")
+        {
+            if root.editor.text().trim().is_empty() {
+                root.handle_empty_editor_escape();
+            } else {
+                root.clear_empty_editor_escape();
+            }
+            return;
+        }
+        if !matches_key(event, "escape") {
+            root.clear_empty_editor_escape();
+        }
         if root.selecting_model {
             root.handle_model_selection_input(event);
             return;
@@ -131,10 +162,6 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         }
         if root.selecting_settings {
             root.handle_settings_input(event);
-            return;
-        }
-        let before_text = root.editor.text().to_string();
-        if root.handle_slash_suggestion_input(event) {
             return;
         }
         root.editor.handle_input(event);

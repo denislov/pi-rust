@@ -104,7 +104,8 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "logout" => handle_logout_command(root, &command.args),
         "fork" => handle_fork_command(root, &command.args),
         "compact" => handle_compact_command(root, &command.args),
-        "scoped-models" | "share" | "tree" => handle_pending_slash_command(root, &command),
+        "tree" => handle_tree_command(root),
+        "scoped-models" | "share" => handle_pending_slash_command(root, &command),
         _ => {
             let expanded = root.expand_prompt_text(&command.original);
             if expanded != command.original {
@@ -319,6 +320,46 @@ fn last_assistant_text(root: &InteractiveRoot) -> Option<String> {
         }
         None
     })
+}
+
+fn handle_tree_command(root: &mut InteractiveRoot) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before navigating the session tree.",
+        ));
+        return;
+    }
+
+    let Some(ref session_path) = root.active_session_path else {
+        root.transcript
+            .push(TranscriptItem::system("No entries in session"));
+        return;
+    };
+
+    match JsonlSessionStorage::open(session_path) {
+        Ok(storage) => {
+            let tree = storage.get_tree();
+            let leaf_id = storage.get_leaf_id().ok().flatten();
+            let filter_mode =
+                pi_agent_core::session::TreeFilterMode::from_str(&root.settings.tree_filter_mode);
+            let selector = crate::interactive::tree_selector::TreeSelectorState::new(
+                tree,
+                leaf_id,
+                filter_mode,
+                root.viewport_width,
+            );
+            root.selecting_tree = true;
+            root.tree_selector = Some(selector);
+            root.selected_tree_entry_id = None;
+            root.editor.set_text("");
+        }
+        Err(error) => {
+            root.transcript.push(TranscriptItem::system(format!(
+                "Failed to open session: {}",
+                error.message
+            )));
+        }
+    }
 }
 
 fn export_transcript(root: &InteractiveRoot, args: &str) -> Result<PathBuf, String> {

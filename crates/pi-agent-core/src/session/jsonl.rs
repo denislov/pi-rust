@@ -1,8 +1,9 @@
 use super::migrations::migrate_session_values;
 use crate::session::{
     JsonlSessionMetadata, SessionEntry, SessionError, SessionErrorCode, SessionHeader,
+    SessionTreeNode,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -243,6 +244,200 @@ impl JsonlSessionStorage {
 
     pub fn get_leaf_id(&self) -> Result<Option<String>, SessionError> {
         Ok(self.leaf_id.clone())
+    }
+
+    /// Look up an entry by its id. Returns `None` if not found.
+    pub fn get_entry(&self, id: &str) -> Option<&SessionEntry> {
+        self.by_id.get(id)
+    }
+
+    /// Build the session tree (forest) by resolving parent-child
+    /// relationships and attaching label metadata.
+    ///
+    /// Label entries are resolved onto their target nodes but not included
+    /// as separate tree nodes.  Leaf marker entries are skipped.
+    pub fn get_tree(&self) -> Vec<SessionTreeNode> {
+        // First pass: collect label info and skip bookkeeping entries.
+        let mut labels_by_target: HashMap<String, (String, String)> = HashMap::new(); // target -> (label, timestamp)
+        let mut content_entries: Vec<&SessionEntry> = Vec::new();
+
+        for entry in &self.entries {
+            match entry.entry_type.as_str() {
+                "label" => {
+                    if let (Some(target_id), Some(label)) = (
+                        entry.field("targetId").and_then(|v| v.as_str()),
+                        entry.field("label").and_then(|v| v.as_str()),
+                    ) {
+                        labels_by_target.insert(
+                            target_id.to_string(),
+                            (label.to_string(), entry.timestamp.clone()),
+                        );
+                    }
+                }
+                "leaf" => { /* skip leaf markers */ }
+                _ => {
+                    content_entries.push(entry);
+                }
+            }
+        }
+
+        // Build nodes with resolved labels using owned String keys.
+        let mut tree_nodes: HashMap<String, SessionTreeNode> = HashMap::new();
+        let mut roots: Vec<String> = Vec::new();
+
+        for entry in &content_entries {
+            let (label, label_timestamp) = labels_by_target
+                .get(&entry.id)
+                .map(|(l, ts)| (Some(l.clone()), Some(ts.clone())))
+                .unwrap_or((None, None));
+
+            tree_nodes.insert(
+                entry.id.clone(),
+                SessionTreeNode {
+                    entry: (*entry).clone(),
+                    children: Vec::new(),
+                    label,
+                    label_timestamp,
+                },
+            );
+        }
+
+        // Second pass: collect children per parent.
+        let mut children_by_parent: HashMap<String, Vec<String>> = HashMap::new();
+        for entry in &content_entries {
+            let eid = entry.id.clone();
+            let parent_id = entry.parent_id.as_deref();
+            match parent_id {
+                Some(pid) if !pid.is_empty() && pid != entry.id => {
+                    if tree_nodes.contains_key(pid) {
+                        children_by_parent
+                            .entry(pid.to_string())
+                            .or_default()
+                            .push(eid);
+                    } else {
+                        // Orphan: treat as root
+                        roots.push(eid);
+                    }
+                }
+                _ => {
+                    roots.push(eid);
+                }
+            }
+        }
+
+        // Build the tree bottom-up using recursion to avoid cloning
+        // children before their own children are attached.
+        fn build_subtree(
+            id: &str,
+            tree_nodes: &HashMap<String, SessionTreeNode>,
+            children_by_parent: &HashMap<String, Vec<String>>,
+        ) -> SessionTreeNode {
+            let mut node = tree_nodes.get(id).unwrap().clone();
+            if let Some(child_ids) = children_by_parent.get(id) {
+                let mut children: Vec<SessionTreeNode> = child_ids
+                    .iter()
+                    .map(|cid| build_subtree(cid, tree_nodes, children_by_parent))
+                    .collect();
+                children.sort_by(|a, b| a.entry.timestamp.cmp(&b.entry.timestamp));
+                node.children = children;
+            }
+            node
+        }
+
+        let mut result: Vec<SessionTreeNode> = roots
+            .into_iter()
+            .map(|id| build_subtree(&id, &tree_nodes, &children_by_parent))
+            .collect();
+        result.sort_by(|a, b| a.entry.timestamp.cmp(&b.entry.timestamp));
+        result
+    }
+
+    /// Navigate to a target entry, appending a leaf marker to the session
+    /// file so the position survives restart.
+    pub fn branch(&mut self, target_id: &str) -> Result<(), SessionError> {
+        if !self.by_id.contains_key(target_id) {
+            return Err(SessionError::new(
+                SessionErrorCode::InvalidForkTarget,
+                format!("entry not found: {}", target_id),
+            ));
+        }
+        self.append_leaf_marker(Some(target_id))
+    }
+
+    /// Reset the leaf position to "none" (before any user entry) by
+    /// appending a leaf marker with a null targetId.
+    pub fn reset_leaf(&mut self) -> Result<(), SessionError> {
+        self.append_leaf_marker(None)
+    }
+
+    /// Append a `leaf` marker entry.  When `target_id` is `None`, the
+    /// leaf is positioned before the first user message (resetting the
+    /// session context to empty).
+    pub fn append_leaf_marker(&mut self, target_id: Option<&str>) -> Result<(), SessionError> {
+        let mut fields = serde_json::Map::new();
+        match target_id {
+            Some(id) => {
+                fields.insert("targetId".into(), serde_json::Value::String(id.to_string()));
+            }
+            None => {
+                fields.insert("targetId".into(), serde_json::Value::Null);
+            }
+        }
+
+        let entry = SessionEntry {
+            entry_type: "leaf".into(),
+            id: crate::session::generate_entry_id(
+                &self.by_id.keys().cloned().collect::<HashSet<_>>(),
+            ),
+            parent_id: self.leaf_id.clone(),
+            timestamp: crate::session::create_timestamp(),
+            fields,
+        };
+
+        self.append_entry(entry)
+    }
+
+    /// Append a label change entry targeting the given `target_id`.
+    /// When `label` is `None`, the label is cleared (empty string).
+    /// The leaf position is restored after the label change so the label
+    /// entry does not become the new conversation leaf.
+    /// Returns the id of the newly appended entry.
+    pub fn append_label_change(
+        &mut self,
+        target_id: &str,
+        label: Option<&str>,
+    ) -> Result<String, SessionError> {
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            "targetId".into(),
+            serde_json::Value::String(target_id.to_string()),
+        );
+        fields.insert(
+            "label".into(),
+            serde_json::Value::String(label.unwrap_or("").to_string()),
+        );
+
+        let leaf_before = self.leaf_id.clone();
+
+        let entry = SessionEntry {
+            entry_type: "label".into(),
+            id: crate::session::generate_entry_id(
+                &self.by_id.keys().cloned().collect::<HashSet<_>>(),
+            ),
+            parent_id: self.leaf_id.clone(),
+            timestamp: crate::session::create_timestamp(),
+            fields,
+        };
+
+        let id = entry.id.clone();
+        // Append the entry (this updates leaf_id)
+        self.append_entry(entry)?;
+        // Restore the original leaf so label changes survive reopen.
+        match &leaf_before {
+            Some(before) => self.append_leaf_marker(Some(before))?,
+            None => self.append_leaf_marker(None)?,
+        }
+        Ok(id)
     }
 
     pub fn append_entry(&mut self, entry: SessionEntry) -> Result<(), SessionError> {

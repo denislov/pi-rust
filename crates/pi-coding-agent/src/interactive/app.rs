@@ -1439,30 +1439,64 @@ mod tests {
     }
 
     #[test]
-    fn settings_menu_show_progress_toggles_and_reports_update() {
+    fn settings_menu_image_width_cycles_and_reports_update() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        assert!(root.settings.terminal.show_progress);
+        assert_eq!(root.settings.terminal.image_width_cells, 60);
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "settings".to_string(),
             args: String::new(),
             original: "/settings".to_string(),
         });
-        // Navigate from theme (0) down to show_progress (6)
+        // Navigate from theme (0) down to image_width_cells (6)
         for _ in 0..6 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
 
+        assert_eq!(root.settings.terminal.image_width_cells, 80);
+        let updated = root
+            .take_settings_update()
+            .expect("image width toggle should emit settings update");
+        assert_eq!(updated.terminal.image_width_cells, 80);
+        assert_eq!(
+            root.settings_delta()
+                .terminal
+                .as_ref()
+                .and_then(|terminal| terminal.image_width_cells),
+            Some(80)
+        );
+    }
+
+    #[test]
+    fn settings_menu_show_progress_toggles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
         assert!(!root.settings.terminal.show_progress);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        // Navigate from theme (0) down to show_progress (7)
+        for _ in 0..7 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert!(root.settings.terminal.show_progress);
         let updated = root
             .take_settings_update()
             .expect("show progress toggle should emit settings update");
-        assert!(!updated.terminal.show_progress);
+        assert!(updated.terminal.show_progress);
     }
 
     #[test]
@@ -1479,7 +1513,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..7 {
+        for _ in 0..8 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1505,7 +1539,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..8 {
+        for _ in 0..9 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1531,7 +1565,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..9 {
+        for _ in 0..10 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1557,7 +1591,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..10 {
+        for _ in 0..11 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1583,7 +1617,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..11 {
+        for _ in 0..12 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1609,7 +1643,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..12 {
+        for _ in 0..13 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1635,7 +1669,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..13 {
+        for _ in 0..14 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1661,7 +1695,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..14 {
+        for _ in 0..15 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1671,32 +1705,6 @@ mod tests {
             .take_settings_update()
             .expect("double escape toggle should emit settings update");
         assert_eq!(updated.double_escape_action, "fork");
-    }
-
-    #[test]
-    fn settings_menu_tree_filter_mode_cycles_and_reports_update() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        assert_eq!(root.settings.tree_filter_mode, "default");
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "settings".to_string(),
-            args: String::new(),
-            original: "/settings".to_string(),
-        });
-        for _ in 0..15 {
-            root.handle_input(&key_event("\x1b[B"));
-        }
-        root.handle_input(&key_event("\r"));
-
-        assert_eq!(root.settings.tree_filter_mode, "no-tools");
-        let updated = root
-            .take_settings_update()
-            .expect("tree filter mode toggle should emit settings update");
-        assert_eq!(updated.tree_filter_mode, "no-tools");
     }
 
     #[test]
@@ -1750,10 +1758,41 @@ mod tests {
             Some("minimal")
         );
         assert_eq!(root.thinking_level, pi_agent_core::ThinkingLevel::Minimal);
+        assert_eq!(
+            root.take_selected_thinking_level(),
+            Some(pi_agent_core::ThinkingLevel::Minimal)
+        );
         let updated = root
             .take_settings_update()
             .expect("thinking level toggle should emit settings update");
         assert_eq!(updated.default_thinking_level.as_deref(), Some("minimal"));
+    }
+
+    #[test]
+    fn settings_menu_http_idle_timeout_cycles_and_reports_update() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        assert_eq!(root.settings.http_idle_timeout_ms, 300_000);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "settings".to_string(),
+            args: String::new(),
+            original: "/settings".to_string(),
+        });
+        for _ in 0..18 {
+            root.handle_input(&key_event("\x1b[B"));
+        }
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.settings.http_idle_timeout_ms, 0);
+        let updated = root
+            .take_settings_update()
+            .expect("HTTP idle timeout toggle should emit settings update");
+        assert_eq!(updated.http_idle_timeout_ms, 0);
+        assert_eq!(root.settings_delta().http_idle_timeout_ms, Some(0));
     }
 
     #[test]
@@ -2604,6 +2643,99 @@ mod tests {
         let text = last_system_text(&root);
         assert!(text.contains("Forked to new session"), "{text}");
         assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn double_escape_tree_action_no_session() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_input(&key_event("\x1b"));
+        root.handle_input(&key_event("\x1b"));
+
+        // No active session, so tree should show "No entries in session"
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("No entries in session"),
+            "expected 'No entries in session' but got: {text}"
+        );
+    }
+
+    #[test]
+    fn tree_selector_down_key_changes_render_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("project");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let session_path = write_test_session(temp.path(), &cwd, "hello tree");
+        let mut root = InteractiveRoot::new(cwd, "faux-model".to_string(), "session".to_string());
+        root.active_session_path = Some(session_path);
+        root.active_leaf_id = Some("entry-assistant".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "tree".to_string(),
+            args: String::new(),
+            original: "/tree".to_string(),
+        });
+
+        assert!(root.selecting_tree);
+        let before = root.render_state();
+        root.handle_input(&key_event("\x1b[B"));
+        let after = root.render_state();
+
+        assert_ne!(
+            before, after,
+            "tree selection movement must be visible to the render scheduler"
+        );
+    }
+
+    #[test]
+    fn double_escape_none_action_does_nothing() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.settings.double_escape_action = "none".to_string();
+        let initial_len = root.transcript.items().len();
+
+        root.handle_input(&key_event("\x1b"));
+        root.handle_input(&key_event("\x1b"));
+
+        assert_eq!(root.transcript.items().len(), initial_len);
+        assert!(root.take_selected_session().is_none());
+    }
+
+    #[test]
+    fn double_escape_fork_action_forks_active_leaf() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_test_session(dir.path(), dir.path(), "hello double escape fork");
+        let mut root = InteractiveRoot::new(
+            dir.path().to_path_buf(),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.settings.double_escape_action = "fork".to_string();
+        root.active_session_path = Some(source.clone());
+        root.active_leaf_id = JsonlSessionStorage::open(&source)
+            .unwrap()
+            .get_leaf_id()
+            .unwrap();
+
+        root.handle_input(&key_event("\x1b"));
+        root.handle_input(&key_event("\x1b"));
+
+        let selected = root
+            .take_selected_session()
+            .expect("double escape fork should select forked session");
+        assert_ne!(selected.path, source);
+        let forked = std::fs::read_to_string(&selected.path).unwrap();
+        assert!(forked.contains("hello double escape fork"), "{forked}");
+        assert!(forked.contains("parentSession"), "{forked}");
+        let text = last_system_text(&root);
+        assert!(text.contains("Forked to new session"), "{text}");
     }
 
     #[test]

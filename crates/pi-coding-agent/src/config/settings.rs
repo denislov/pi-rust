@@ -327,7 +327,7 @@ impl PartialSettings {
             },
             terminal: TerminalSettings {
                 show_images: t.show_images.unwrap_or(true),
-                show_progress: t.show_progress.unwrap_or(true),
+                show_progress: t.show_progress.unwrap_or(false),
                 clear_on_shrink: t.clear_on_shrink.unwrap_or(false),
                 auto_resize_images: t.auto_resize_images.unwrap_or(true),
                 block_images: t.block_images.unwrap_or(false),
@@ -700,7 +700,7 @@ mod tests {
     fn terminal_defaults_are_enabled_and_context_files_default_on() {
         let s = PartialSettings::default().resolve();
         assert!(s.terminal.show_images);
-        assert!(s.terminal.show_progress);
+        assert!(!s.terminal.show_progress);
         assert!(!s.terminal.clear_on_shrink);
         assert!(s.terminal.auto_resize_images);
         assert!(!s.terminal.block_images);

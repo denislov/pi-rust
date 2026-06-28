@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct StreamOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
     #[serde(rename = "maxTokens", skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
@@ -76,9 +78,20 @@ mod tests {
     }
 
     #[test]
+    fn stream_options_serializes_transport() {
+        let opts = StreamOptions {
+            transport: Some("sse".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&opts).unwrap();
+        assert!(json.contains(r#""transport":"sse""#));
+    }
+
+    #[test]
     fn stream_options_skips_none_retry_fields() {
         let opts = StreamOptions::default();
         let json = serde_json::to_string(&opts).unwrap();
+        assert!(!json.contains("transport"));
         assert!(!json.contains("timeoutMs"));
         assert!(!json.contains("maxRetries"));
         assert!(!json.contains("maxRetryDelayMs"));

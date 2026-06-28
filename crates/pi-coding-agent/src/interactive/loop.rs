@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pi_agent_core::session::create_session_id;
+use pi_agent_core::session::{JsonlSessionStorage, create_session_id};
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };
 
+use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
     PromptContext, build_prompt_context, resolve_prompt_api_key, session_label,
 };
@@ -669,9 +670,127 @@ fn handle_input_event<T: Terminal>(
         prompt_context.api_key = api_key;
     }
 
+    // Process tree label changes (no navigation needed, just persist).
+    {
+        let root = root_mut(tui, root_id)?;
+        if let Some((entry_id, label)) = root.take_pending_tree_label_change() {
+            if let Some(ref session_path) = root.active_session_path.clone() {
+                if let Ok(mut storage) = JsonlSessionStorage::open(session_path) {
+                    let _ = storage.append_label_change(&entry_id, label.as_deref());
+                    let choice = session_choice_from_metadata(storage.metadata());
+                    root.session_label = choice.display_name().to_string();
+                }
+            }
+        }
+    }
+
+    // Process tree navigation.
+    {
+        let root = root_mut(tui, root_id)?;
+        if let Some(target_id) = root.take_selected_tree_entry_id() {
+            if let Some(ref session_path) = root.active_session_path.clone() {
+                match JsonlSessionStorage::open(session_path) {
+                    Ok(mut storage) => {
+                        // Check if already at this point.
+                        let current_leaf = storage.get_leaf_id().ok().flatten();
+                        if current_leaf.as_deref() == Some(&target_id) {
+                            root.transcript
+                                .push(TranscriptItem::system("Already at this point".to_string()));
+                        } else {
+                            // Navigate.
+                            let target_entry = storage.get_entry(&target_id);
+                            let is_user_message = target_entry.is_some()
+                                && target_entry.unwrap().entry_type == "message"
+                                && target_entry
+                                    .unwrap()
+                                    .field("message")
+                                    .and_then(|m| m.get("role"))
+                                    .and_then(|r| r.as_str())
+                                    == Some("user");
+                            let is_custom_message = target_entry.is_some()
+                                && (target_entry.unwrap().entry_type == "custom_message"
+                                    || target_entry.unwrap().entry_type == "custom");
+
+                            if is_user_message || is_custom_message {
+                                // Set leaf to parent and extract text for editor.
+                                let parent_id = target_entry.unwrap().parent_id.clone();
+                                let text = target_entry
+                                    .unwrap()
+                                    .field("message")
+                                    .and_then(|m| m.get("content"))
+                                    .and_then(|c| c.as_array())
+                                    .and_then(|arr| arr.first())
+                                    .and_then(|b| b.get("text"))
+                                    .and_then(|t| t.as_str())
+                                    .map(str::to_string)
+                                    .unwrap_or_default();
+
+                                // Branch to parent.
+                                if let Some(ref pid) = parent_id {
+                                    let _ = storage.branch(pid);
+                                } else {
+                                    let _ = storage.reset_leaf();
+                                }
+
+                                // Reload storage to get fresh leaf_id.
+                                if let Ok(reloaded) = JsonlSessionStorage::open(session_path) {
+                                    let leaf_id = reloaded.get_leaf_id().ok().flatten();
+                                    root.active_leaf_id = leaf_id;
+                                }
+                                root.editor.set_text(text.clone());
+                            } else {
+                                // Navigate to this entry directly.
+                                let _ = storage.branch(&target_id);
+                                if let Ok(reloaded) = JsonlSessionStorage::open(session_path) {
+                                    let leaf_id = reloaded.get_leaf_id().ok().flatten();
+                                    root.active_leaf_id = leaf_id;
+                                }
+                            }
+
+                            // Update session label.
+                            let choice = session_choice_from_metadata(storage.metadata());
+                            root.session_label = choice.display_name().to_string();
+
+                            // Re-hydrate transcript.
+                            if let Ok(reopened) = JsonlSessionStorage::open(session_path) {
+                                if let Ok(hydrated) =
+                                    crate::interactive::session_actions::hydrate_session_storage(
+                                        reopened,
+                                    )
+                                {
+                                    root.apply_hydrated_session(
+                                        hydrated,
+                                        Some("Navigated to selected point".to_string()),
+                                    );
+                                }
+                            }
+
+                            // Update session_target.
+                            prompt_context.session_target =
+                                Some(ResolvedSessionTarget::OpenTarget(
+                                    session_path.display().to_string(),
+                                ));
+                        }
+                    }
+                    Err(error) => {
+                        root.transcript.push(TranscriptItem::system(format!(
+                            "Failed to navigate tree: {}",
+                            error.message
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
     match action {
         InteractiveAction::None => Ok(LoopControl::Continue(render_request)),
-        InteractiveAction::Exit => Ok(LoopControl::Exit),
+        InteractiveAction::Exit => {
+            if root_settings_show_progress(tui, root_id)? {
+                set_terminal_progress(tui, false)?;
+            }
+            Ok(LoopControl::Exit)
+        }
         InteractiveAction::AbortRunning => {
             if let Some(task) = running.as_mut() {
                 task.abort_once();
@@ -741,6 +860,18 @@ fn start_prompt_task<T: Terminal>(
     prompt: String,
     prompt_context: &PromptContext,
 ) -> Result<PromptTask, CliError> {
+    let processed_prompt = input::process_at_file_references_with_processing_options(
+        &prompt,
+        &prompt_cwd(prompt_context),
+        input::ImageProcessingOptions::from_settings(&prompt_context.settings),
+    )?;
+    let invocation = prompt_invocation_from_processed(&processed_prompt);
+    let task_prompt = match &invocation {
+        PromptInvocation::Text(text) => text.clone(),
+        PromptInvocation::Content(_) => processed_prompt.text.clone(),
+        _ => prompt.clone(),
+    };
+
     {
         let root = root_mut(tui, root_id)?;
         root.push_user(prompt.clone());
@@ -748,7 +879,6 @@ fn start_prompt_task<T: Terminal>(
     }
 
     let options = SessionPromptOptions {
-        prompt: prompt.clone(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
@@ -762,10 +892,31 @@ fn start_prompt_task<T: Terminal>(
         tool_execution: prompt_context.tool_execution,
         resources: prompt_context.resources.clone(),
         settings: Some(prompt_context.settings.clone()),
-        invocation: PromptInvocation::Text(prompt),
+        invocation,
+        prompt: task_prompt,
     };
 
-    spawn_session_prompt(options).map(PromptTask::new)
+    let task = spawn_session_prompt(options).map(PromptTask::new)?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
+}
+
+fn prompt_invocation_from_processed(processed_prompt: &ProcessedPromptInput) -> PromptInvocation {
+    if processed_prompt.images.is_empty() {
+        PromptInvocation::Text(processed_prompt.text.clone())
+    } else {
+        PromptInvocation::Content(processed_prompt.content.clone())
+    }
+}
+
+fn prompt_cwd(prompt_context: &PromptContext) -> PathBuf {
+    prompt_context
+        .session
+        .as_ref()
+        .map(|session| session.cwd.clone())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn start_compact_task<T: Terminal>(
@@ -801,7 +952,11 @@ fn start_compact_task<T: Terminal>(
         },
     };
 
-    spawn_session_prompt(options).map(PromptTask::new)
+    let task = spawn_session_prompt(options).map(PromptTask::new)?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
 }
 
 fn apply_agent_event<T: Terminal>(
@@ -823,6 +978,9 @@ fn finish_prompt<T: Terminal>(
     root_id: usize,
     result: Result<SessionPromptResult, CliError>,
 ) -> Result<(), CliError> {
+    if root_settings_show_progress(tui, root_id)? {
+        set_terminal_progress(tui, false)?;
+    }
     let root = root_mut(tui, root_id)?;
     match result {
         Ok(result) => {
@@ -843,6 +1001,19 @@ fn finish_prompt<T: Terminal>(
     }
     root.set_status(InteractiveStatus::Idle);
     Ok(())
+}
+
+fn set_terminal_progress<T: Terminal>(tui: &mut Tui<T>, active: bool) -> Result<(), CliError> {
+    tui.terminal_mut()
+        .set_progress(active)
+        .map_err(to_cli_error)
+}
+
+fn root_settings_show_progress<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+) -> Result<bool, CliError> {
+    Ok(root_mut(tui, root_id)?.settings.terminal.show_progress)
 }
 
 fn render_tui<T: Terminal>(tui: &mut Tui<T>) -> Result<(), CliError> {

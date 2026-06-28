@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use pi_agent_core::session::JsonlSessionStorage;
 use pi_ai::types::Model;
@@ -25,11 +26,21 @@ use crate::interactive::session_actions::{HydratedSession, SessionChoice};
 use crate::interactive::session_selector;
 use crate::interactive::slash::{self, ParsedSlashCommand};
 use crate::interactive::transcript::TranscriptMutation;
+use crate::interactive::tree_selector::{TreeSelectorInput, TreeSelectorState};
 use crate::interactive::{Transcript, TranscriptItem, UiEvent};
 use crate::theme::{ResolvedTheme, ThemeColor};
 
 const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
+pub(super) const DOUBLE_ESCAPE_WINDOW: Duration = Duration::from_millis(500);
+
+const HTTP_IDLE_TIMEOUT_CHOICES: [(&str, u64); 5] = [
+    ("30 sec", 30_000),
+    ("1 min", 60_000),
+    ("2 min", 120_000),
+    ("5 min", 300_000),
+    ("disabled", 0),
+];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum InteractiveAction {
     None,
@@ -70,6 +81,10 @@ pub(super) struct FooterStats {
 }
 
 pub(super) struct InteractiveRoot {
+    pub(super) selecting_tree: bool,
+    pub(super) tree_selector: Option<TreeSelectorState>,
+    pub(super) selected_tree_entry_id: Option<String>,
+    pub(super) pending_tree_label_change: Option<(String, Option<String>)>,
     pub(super) transcript: Transcript,
     render_cache: TranscriptRenderCache,
     pub(super) editor: Editor,
@@ -116,6 +131,7 @@ pub(super) struct InteractiveRoot {
     pub(super) spinner_frame: usize,
     pub(super) slash_suggestion_selected: usize,
     pub(super) slash_suggestions_dismissed_for: Option<String>,
+    last_empty_editor_escape_at: Option<Instant>,
     pub(super) theme: TuiTheme,
     pub(super) resolved_theme: Option<ResolvedTheme>,
     pub(super) prompt_templates: Vec<pi_agent_core::PromptTemplate>,
@@ -136,6 +152,8 @@ pub(super) struct InteractiveRenderState {
     slash_suggestion_selected: usize,
     slash_suggestions_dismissed_for: Option<String>,
     selecting_settings: bool,
+    selecting_tree: bool,
+    tree_selector_state: Option<crate::interactive::tree_selector::TreeSelectorRenderState>,
     settings: Settings,
     auth: AuthStore,
     theme_name: String,
@@ -213,6 +231,10 @@ impl InteractiveRoot {
         let settings_list = build_settings_list(settings.clone(), &theme, keybindings.clone());
 
         Self {
+            selecting_tree: false,
+            tree_selector: None,
+            selected_tree_entry_id: None,
+            pending_tree_label_change: None,
             transcript,
             render_cache: TranscriptRenderCache::new(),
             editor,
@@ -256,6 +278,7 @@ impl InteractiveRoot {
             spinner_frame: 0,
             slash_suggestion_selected: 0,
             slash_suggestions_dismissed_for: None,
+            last_empty_editor_escape_at: None,
             theme,
             resolved_theme: None,
             prompt_templates: Vec::new(),
@@ -299,6 +322,14 @@ impl InteractiveRoot {
 
     pub(super) fn take_selected_session_hydrate(&mut self) -> bool {
         std::mem::take(&mut self.selected_session_hydrate)
+    }
+
+    pub(super) fn take_selected_tree_entry_id(&mut self) -> Option<String> {
+        self.selected_tree_entry_id.take()
+    }
+
+    pub(super) fn take_pending_tree_label_change(&mut self) -> Option<(String, Option<String>)> {
+        self.pending_tree_label_change.take()
     }
 
     pub(super) fn take_settings_update(&mut self) -> Option<Settings> {
@@ -434,6 +465,42 @@ impl InteractiveRoot {
 
     pub(super) fn handle_slash_command(&mut self, command: ParsedSlashCommand) {
         commands::handle_slash_command(self, command);
+    }
+
+    pub(super) fn handle_empty_editor_escape(&mut self) {
+        let action = self.settings.double_escape_action.as_str();
+        if action == "none" {
+            self.last_empty_editor_escape_at = None;
+            return;
+        }
+
+        let now = Instant::now();
+        let is_double_escape = self
+            .last_empty_editor_escape_at
+            .is_some_and(|previous| now.duration_since(previous) < DOUBLE_ESCAPE_WINDOW);
+        if !is_double_escape {
+            self.last_empty_editor_escape_at = Some(now);
+            return;
+        }
+
+        self.last_empty_editor_escape_at = None;
+        match action {
+            "fork" => self.handle_slash_command(ParsedSlashCommand {
+                name: "fork".to_string(),
+                args: String::new(),
+                original: "/fork".to_string(),
+            }),
+            "tree" => self.handle_slash_command(ParsedSlashCommand {
+                name: "tree".to_string(),
+                args: String::new(),
+                original: "/tree".to_string(),
+            }),
+            _ => {}
+        }
+    }
+
+    pub(super) fn clear_empty_editor_escape(&mut self) {
+        self.last_empty_editor_escape_at = None;
     }
 
     fn set_selected_model(&mut self, model: Model) {
@@ -730,6 +797,11 @@ impl InteractiveRoot {
             slash_suggestion_selected: self.slash_suggestion_selected,
             slash_suggestions_dismissed_for: self.slash_suggestions_dismissed_for.clone(),
             selecting_settings: self.selecting_settings,
+            selecting_tree: self.selecting_tree,
+            tree_selector_state: self
+                .tree_selector
+                .as_ref()
+                .map(|selector| selector.render_state()),
             settings: self.settings.clone(),
             auth: self.auth.clone(),
             theme_name: self.theme.name.clone(),
@@ -839,6 +911,15 @@ impl InteractiveRoot {
                     .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
                     .show_progress = Some(value == "on");
             }
+            "image_width_cells" => {
+                if let Ok(width) = value.parse::<u32>() {
+                    self.settings.terminal.image_width_cells = width;
+                    self.settings_delta
+                        .terminal
+                        .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                        .image_width_cells = Some(width);
+                }
+            }
             "auto_resize_images" => {
                 self.settings.terminal.auto_resize_images = value == "on";
                 self.settings_delta
@@ -897,6 +978,16 @@ impl InteractiveRoot {
                 // Also update the active thinking level so the editor border reflects it
                 if let Ok(level) = value.parse::<pi_agent_core::ThinkingLevel>() {
                     self.thinking_level = level;
+                    self.selected_thinking_level = Some(level);
+                }
+            }
+            "http_idle_timeout" => {
+                if let Some((_, timeout_ms)) = HTTP_IDLE_TIMEOUT_CHOICES
+                    .iter()
+                    .find(|(label, _)| *label == value)
+                {
+                    self.settings.http_idle_timeout_ms = *timeout_ms;
+                    self.settings_delta.http_idle_timeout_ms = Some(*timeout_ms);
                 }
             }
             _ => return,
@@ -1109,6 +1200,39 @@ impl InteractiveRoot {
         true
     }
 
+    pub(super) fn handle_tree_selection_input(&mut self, event: &InputEvent) -> bool {
+        if !self.selecting_tree {
+            return false;
+        }
+
+        let Some(selector) = self.tree_selector.as_mut() else {
+            return false;
+        };
+
+        match selector.handle_input(&self.keybindings, event) {
+            TreeSelectorInput::Cancel => {
+                self.selecting_tree = false;
+                self.tree_selector = None;
+                self.selected_tree_entry_id = None;
+                self.editor.set_text("");
+            }
+            TreeSelectorInput::Confirm(Some(entry_id)) => {
+                self.selected_tree_entry_id = Some(entry_id);
+                self.selecting_tree = false;
+                self.tree_selector = None;
+            }
+            TreeSelectorInput::Confirm(None) => {}
+            TreeSelectorInput::EditLabel { .. } => {
+                // Label edit is handled inside the selector state
+            }
+            TreeSelectorInput::SaveLabel { entry_id, label } => {
+                self.pending_tree_label_change = Some((entry_id, label));
+            }
+            TreeSelectorInput::Handled => {}
+        }
+        true
+    }
+
     pub(super) fn handle_session_selection_input(&mut self, event: &InputEvent) -> bool {
         if !self.selecting_session {
             return false;
@@ -1153,7 +1277,11 @@ impl Component for InteractiveRoot {
         };
         let mut lines = self.transcript_lines(max_tool_result_lines);
         lines.extend(self.render_editor_box(width));
-        if self.selecting_model {
+        if self.selecting_tree {
+            if let Some(ref selector) = self.tree_selector {
+                lines.extend(selector.render(width));
+            }
+        } else if self.selecting_model {
             lines.extend(self.render_model_selector(width));
         } else if self.selecting_session {
             lines.extend(self.render_session_selector(width));
@@ -1241,6 +1369,13 @@ fn build_settings_list(
             )
             .values(["on", "off"])
             .description("Render images inline in terminal"),
+            SettingItem::new(
+                "image_width_cells",
+                "Image width",
+                settings.terminal.image_width_cells.to_string(),
+            )
+            .values(["60", "80", "120"])
+            .description("Preferred inline image width in terminal cells"),
             SettingItem::new(
                 "show_progress",
                 "Terminal progress",
@@ -1337,13 +1472,6 @@ fn build_settings_list(
             .values(["tree", "fork", "none"])
             .description("Action when pressing Escape twice with empty editor"),
             SettingItem::new(
-                "tree_filter_mode",
-                "Tree filter mode",
-                &settings.tree_filter_mode,
-            )
-            .values(["default", "no-tools", "user-only", "labeled-only", "all"])
-            .description("Default filter when opening /tree"),
-            SettingItem::new(
                 "warnings_anthropic_extra_usage",
                 "Warn: Anthropic extra usage",
                 if settings.warnings.anthropic_extra_usage {
@@ -1364,6 +1492,13 @@ fn build_settings_list(
             )
             .values(["off", "minimal", "low", "medium", "high", "xhigh"])
             .description("Default reasoning depth for thinking-capable models"),
+            SettingItem::new(
+                "http_idle_timeout",
+                "HTTP idle timeout",
+                format_http_idle_timeout_ms(settings.http_idle_timeout_ms),
+            )
+            .values(HTTP_IDLE_TIMEOUT_CHOICES.map(|(label, _)| label))
+            .description("Maximum idle gap while waiting for HTTP provider response data"),
         ],
         16,
         keybindings,
@@ -1371,4 +1506,12 @@ fn build_settings_list(
             enable_search: false,
         },
     )
+}
+
+fn format_http_idle_timeout_ms(timeout_ms: u64) -> String {
+    HTTP_IDLE_TIMEOUT_CHOICES
+        .iter()
+        .find(|(_, value)| *value == timeout_ms)
+        .map(|(label, _)| (*label).to_string())
+        .unwrap_or_else(|| format!("{} sec", timeout_ms as f64 / 1000.0))
 }

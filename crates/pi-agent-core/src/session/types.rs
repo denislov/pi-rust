@@ -1,6 +1,7 @@
 use pi_ai::types::{ContentBlock, StopReason};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionHeader {
@@ -173,4 +174,87 @@ pub struct JsonlSessionMetadata {
     pub cwd: String,
     pub path: std::path::PathBuf,
     pub parent_session_path: Option<std::path::PathBuf>,
+}
+
+/// A node in the session tree, built from a `SessionEntry` with resolved
+/// label information and child nodes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionTreeNode {
+    pub entry: SessionEntry,
+    pub children: Vec<SessionTreeNode>,
+    pub label: Option<String>,
+    pub label_timestamp: Option<String>,
+}
+
+/// Filter mode for the `/tree` selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeFilterMode {
+    Default,
+    NoTools,
+    UserOnly,
+    LabeledOnly,
+    All,
+}
+
+impl TreeFilterMode {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "default" => Self::Default,
+            "no-tools" => Self::NoTools,
+            "user-only" => Self::UserOnly,
+            "labeled-only" => Self::LabeledOnly,
+            "all" => Self::All,
+            _ => Self::Default,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::NoTools => "no-tools",
+            Self::UserOnly => "user-only",
+            Self::LabeledOnly => "labeled-only",
+            Self::All => "all",
+        }
+    }
+}
+
+impl fmt::Display for TreeFilterMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tree_filter_mode_from_str() {
+        assert_eq!(TreeFilterMode::from_str("default"), TreeFilterMode::Default);
+        assert_eq!(
+            TreeFilterMode::from_str("no-tools"),
+            TreeFilterMode::NoTools
+        );
+        assert_eq!(
+            TreeFilterMode::from_str("user-only"),
+            TreeFilterMode::UserOnly
+        );
+        assert_eq!(
+            TreeFilterMode::from_str("labeled-only"),
+            TreeFilterMode::LabeledOnly
+        );
+        assert_eq!(TreeFilterMode::from_str("all"), TreeFilterMode::All);
+        assert_eq!(TreeFilterMode::from_str("invalid"), TreeFilterMode::Default);
+        assert_eq!(TreeFilterMode::from_str(""), TreeFilterMode::Default);
+    }
+
+    #[test]
+    fn tree_filter_mode_display() {
+        assert_eq!(TreeFilterMode::Default.to_string(), "default");
+        assert_eq!(TreeFilterMode::NoTools.to_string(), "no-tools");
+        assert_eq!(TreeFilterMode::UserOnly.to_string(), "user-only");
+        assert_eq!(TreeFilterMode::LabeledOnly.to_string(), "labeled-only");
+        assert_eq!(TreeFilterMode::All.to_string(), "all");
+    }
 }

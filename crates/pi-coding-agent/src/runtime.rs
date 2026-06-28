@@ -180,6 +180,16 @@ pub fn build_agent_config(
         opts.max_retries = Some(settings.retry.max_retries);
         opts.max_retry_delay_ms = Some(settings.retry.base_delay_ms);
     }
+    if let Some(settings) = settings {
+        let opts = stream_options.get_or_insert_with(StreamOptions::default);
+        opts.transport = Some(settings.transport.clone());
+    }
+    if let Some(settings) = settings
+        && settings.http_idle_timeout_ms > 0
+    {
+        let opts = stream_options.get_or_insert_with(StreamOptions::default);
+        opts.timeout_ms = Some(settings.http_idle_timeout_ms);
+    }
     let mut config = AgentConfig::new(model);
     config.system_prompt = Some(system_prompt.unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()));
     config.max_turns = max_turns;
@@ -206,7 +216,10 @@ pub fn build_agent_config(
             .parse()
             .unwrap_or(pi_agent_core::QueueMode::OneAtATime);
     }
-    if let Some(tl) = thinking_level {
+    let settings_thinking_level = settings
+        .and_then(|settings| settings.default_thinking_level.as_deref())
+        .and_then(|level| level.parse::<ThinkingLevel>().ok());
+    if let Some(tl) = thinking_level.or(settings_thinking_level) {
         config.thinking_level = tl;
     }
     if let Some(te) = tool_execution {

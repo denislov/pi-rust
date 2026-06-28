@@ -6,9 +6,10 @@ use pi_ai::types::{
     StopReason, StreamOptions,
 };
 use pi_coding_agent::input::{
-    ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
-    process_at_file_references_with_options,
+    ImageProcessingOptions, ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
+    process_at_file_references_with_options, process_at_file_references_with_processing_options,
 };
+use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
 use pi_coding_agent::models::parse_model_rotation;
 use pi_coding_agent::parse_args;
 use pi_coding_agent::resources::{
@@ -260,6 +261,75 @@ fn image_file_references_resize_large_images() {
 }
 
 #[test]
+fn image_file_references_preserve_original_when_resize_is_disabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let png_path = temp.path().join("wide.png");
+    let mut image = image::RgbImage::new(4, 2);
+    for pixel in image.pixels_mut() {
+        *pixel = image::Rgb([0, 255, 0]);
+    }
+    image.save(&png_path).unwrap();
+
+    let processed = process_at_file_references_with_processing_options(
+        &format!("@{}", png_path.display()),
+        temp.path(),
+        ImageProcessingOptions {
+            resize: ImageResizeOptions {
+                max_dimension: 2,
+                enabled: false,
+            },
+            block_images: false,
+        },
+    )
+    .unwrap();
+
+    let data = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &processed.images[0].data,
+    )
+    .unwrap();
+    let original = image::load_from_memory(&data).unwrap();
+    assert_eq!((original.width(), original.height()), (4, 2));
+    assert!(!processed.text.contains("resized from"));
+}
+
+#[test]
+fn image_file_references_are_blocked_when_image_input_is_disabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let png_path = temp.path().join("blocked.png");
+    std::fs::write(
+        &png_path,
+        [
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', b'i', b'm', b'g',
+        ],
+    )
+    .unwrap();
+
+    let processed = process_at_file_references_with_processing_options(
+        &format!("inspect @{}", png_path.display()),
+        temp.path(),
+        ImageProcessingOptions {
+            resize: ImageResizeOptions {
+                max_dimension: 2,
+                enabled: true,
+            },
+            block_images: true,
+        },
+    )
+    .unwrap();
+
+    assert!(processed.images.is_empty());
+    assert!(processed.text.contains("inspect"));
+    assert!(processed.text.contains("[Image reading is disabled.]"));
+    assert!(
+        !processed
+            .content
+            .iter()
+            .any(|block| { matches!(block, ContentBlock::Image { .. }) })
+    );
+}
+
+#[test]
 fn at_file_references_support_quoted_paths_with_spaces() {
     let temp = tempfile::tempdir().unwrap();
     let text_path = temp.path().join("notes with spaces.txt");
@@ -357,6 +427,35 @@ async fn multimodal_prompt_content_reaches_provider_context() {
     registry::unregister(api);
 
     assert_eq!(output, "ok");
+    let contexts = contexts.lock().unwrap();
+    let first_message = contexts[0].messages.first().expect("first message");
+    let content = match first_message {
+        pi_ai::types::Message::User { content } => content,
+        _ => panic!("expected user message"),
+    };
+    assert!(content.iter().any(
+        |block| matches!(block, ContentBlock::Image { mime_type, .. } if mime_type == "image/png")
+    ));
+}
+
+#[tokio::test]
+async fn interactive_prompt_file_image_reaches_provider_context() {
+    let temp = tempfile::tempdir().unwrap();
+    let png_path = temp.path().join("inline.png");
+    image::RgbImage::from_pixel(1, 1, image::Rgb([0, 0, 255]))
+        .save(&png_path)
+        .unwrap();
+
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(RecordingProvider {
+        contexts: contexts.clone(),
+    });
+    let input = format!("inspect @{}\r", png_path.display());
+
+    run_scripted_interactive_with_provider_chunks(provider, vec![input.as_str()])
+        .await
+        .unwrap();
+
     let contexts = contexts.lock().unwrap();
     let first_message = contexts[0].messages.first().expect("first message");
     let content = match first_message {

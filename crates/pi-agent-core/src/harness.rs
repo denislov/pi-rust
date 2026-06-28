@@ -88,6 +88,7 @@ pub enum HeaderPatch {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamOptionsPatch {
     pub temperature: Option<Patch<f64>>,
+    pub transport: Option<Patch<String>>,
     pub max_tokens: Option<Patch<u32>>,
     pub api_key: Option<Patch<String>>,
     pub cache_retention: Option<Patch<serde_json::Value>>,
@@ -907,6 +908,7 @@ pub fn apply_stream_options_patch(
     patch: StreamOptionsPatch,
 ) -> StreamOptions {
     apply_patch_value(&mut base.temperature, patch.temperature);
+    apply_patch_value(&mut base.transport, patch.transport);
     apply_patch_value(&mut base.max_tokens, patch.max_tokens);
     apply_patch_value(&mut base.api_key, patch.api_key);
     apply_patch_value(&mut base.cache_retention, patch.cache_retention);

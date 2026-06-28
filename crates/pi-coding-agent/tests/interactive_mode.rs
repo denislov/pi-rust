@@ -42,6 +42,24 @@ async fn scripted_interactive_prompt_renders_assistant_text() {
 }
 
 #[tokio::test]
+async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
+    let provider = FauxProvider::new(vec![text_response("progress done")]);
+    let output = run_scripted_interactive(provider, "show progress\r")
+        .await
+        .unwrap();
+
+    let progress_ops = output
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            TerminalOp::SetProgress(active) => Some(*active),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(progress_ops.is_empty(), "{:?}", output.ops);
+}
+
+#[tokio::test]
 async fn scripted_interactive_clone_after_prompt_forks_current_session() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response("assistant reply")]);
