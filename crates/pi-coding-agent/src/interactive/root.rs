@@ -18,12 +18,13 @@ use crate::interactive::git_branch::GitBranchProvider;
 use crate::interactive::input;
 use crate::interactive::model_selector;
 use crate::interactive::render::{
-    TranscriptRenderOptions, TranscriptStyles, WARNING, abbreviate_cwd, editor_border_line,
-    fit_line, format_tokens, render_transcript_lines, running_status_text,
+    TranscriptRenderCache, TranscriptRenderOptions, TranscriptRowSnapshot, TranscriptStyles,
+    WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens, running_status_text,
 };
 use crate::interactive::session_actions::{HydratedSession, SessionChoice};
 use crate::interactive::session_selector;
 use crate::interactive::slash::{self, ParsedSlashCommand};
+use crate::interactive::transcript::TranscriptMutation;
 use crate::interactive::{Transcript, TranscriptItem, UiEvent};
 use crate::theme::{ResolvedTheme, ThemeColor};
 
@@ -70,6 +71,7 @@ pub(super) struct FooterStats {
 
 pub(super) struct InteractiveRoot {
     pub(super) transcript: Transcript,
+    render_cache: TranscriptRenderCache,
     pub(super) editor: Editor,
     pub(super) keybindings: KeybindingsManager,
     pub(super) submitted: Arc<Mutex<Option<String>>>,
@@ -125,7 +127,7 @@ pub(super) struct InteractiveRoot {
 pub(super) struct InteractiveRenderState {
     editor_text: String,
     editor_cursor: usize,
-    transcript: Vec<TranscriptItem>,
+    transcript_revision: u64,
     transcript_scroll_offset: usize,
     transcript_has_new_output_below: bool,
     status: InteractiveStatus,
@@ -212,6 +214,7 @@ impl InteractiveRoot {
 
         Self {
             transcript,
+            render_cache: TranscriptRenderCache::new(),
             editor,
             keybindings,
             submitted,
@@ -342,6 +345,7 @@ impl InteractiveRoot {
         self.settings = prompt_context.settings.clone();
         self.settings_list =
             build_settings_list(self.settings.clone(), &self.theme, self.keybindings.clone());
+        self.render_cache.clear();
         self.auth = prompt_context.auth.clone();
         self.git_branch.set_cwd(&self.cwd);
         self.prompt_templates = prompt_context.resources.prompt_templates.clone();
@@ -383,14 +387,11 @@ impl InteractiveRoot {
     pub(super) fn apply_events(&mut self, events: Vec<UiEvent>) {
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = if previous_scroll_offset > 0 {
-            render_transcript_lines(
-                &self.transcript,
-                &self.transcript_render_options(MAX_TOOL_RESULT_LINES),
-            )
-            .len()
+            Some(self.transcript_row_snapshot(MAX_TOOL_RESULT_LINES))
         } else {
-            0
+            None
         };
+        let mut mutation = TranscriptMutation::default();
         for event in events {
             match event {
                 UiEvent::UsageUpdate {
@@ -410,19 +411,17 @@ impl InteractiveRoot {
                         context_tokens,
                     };
                 }
-                other => self.transcript.apply_event(other),
+                other => mutation.extend(self.transcript.apply_event_with_mutation(other)),
             }
         }
-        if previous_scroll_offset > 0 {
-            let current_rows = render_transcript_lines(
-                &self.transcript,
-                &self.transcript_render_options(MAX_TOOL_RESULT_LINES),
-            )
-            .len();
-            self.transcript.preserve_scrolled_view_after_hidden_change(
-                previous_scroll_offset,
-                current_rows.saturating_sub(previous_rows),
+        if let Some(previous_rows) = previous_rows {
+            let added_rows = self.transcript_row_delta_since(
+                previous_rows,
+                mutation.changed_indices(),
+                MAX_TOOL_RESULT_LINES,
             );
+            self.transcript
+                .preserve_scrolled_view_after_hidden_change(previous_scroll_offset, added_rows);
         }
     }
 
@@ -531,6 +530,7 @@ impl InteractiveRoot {
             transcript.push(TranscriptItem::system(notice));
         }
         self.transcript = transcript;
+        self.render_cache.clear();
     }
 
     pub(super) fn footer(&self, width: usize) -> Vec<String> {
@@ -721,7 +721,7 @@ impl InteractiveRoot {
         InteractiveRenderState {
             editor_text: self.editor.text().to_string(),
             editor_cursor: self.editor.cursor(),
-            transcript: self.transcript.items().to_vec(),
+            transcript_revision: self.transcript.revision(),
             transcript_scroll_offset: self.transcript.scroll_offset(),
             transcript_has_new_output_below: self.transcript.has_new_output_below(),
             status: self.status,
@@ -916,6 +916,7 @@ impl InteractiveRoot {
             _ => crate::theme::builtin_dark(),
         };
         self.resolved_theme = Some(json.resolve_colors().expect("built-in theme resolves"));
+        self.render_cache.clear();
     }
 
     /// Apply a hot-reloaded custom theme: update the resolved 51-token theme
@@ -927,6 +928,7 @@ impl InteractiveRoot {
             // Refresh the palette bridge so non-thinking borders also track
             // the reloaded theme.
             self.theme = crate::resources::tui_theme_from_resolved_json(&name, &theme);
+            self.render_cache.clear();
         }
     }
 
@@ -953,7 +955,7 @@ impl InteractiveRoot {
     fn transcript_render_options(
         &self,
         max_tool_result_lines: usize,
-    ) -> TranscriptRenderOptions<'_> {
+    ) -> TranscriptRenderOptions<'static> {
         TranscriptRenderOptions {
             width: self.viewport_width,
             max_tool_result_lines,
@@ -1027,6 +1029,39 @@ impl InteractiveRoot {
         }
         lines.push(border);
         lines
+    }
+
+    fn transcript_lines(&mut self, max_tool_result_lines: usize) -> Vec<String> {
+        let opts = self.transcript_render_options(max_tool_result_lines);
+        self.render_cache.render_lines(&self.transcript, &opts)
+    }
+
+    fn transcript_row_snapshot(&mut self, max_tool_result_lines: usize) -> TranscriptRowSnapshot {
+        let opts = self.transcript_render_options(max_tool_result_lines);
+        self.render_cache.row_snapshot(&self.transcript, &opts)
+    }
+
+    fn transcript_row_delta_since(
+        &mut self,
+        snapshot: TranscriptRowSnapshot,
+        changed_indices: &[usize],
+        max_tool_result_lines: usize,
+    ) -> usize {
+        let opts = self.transcript_render_options(max_tool_result_lines);
+        self.render_cache
+            .row_delta_since(&self.transcript, &opts, snapshot, changed_indices)
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_render_cache_stats(&mut self) {
+        self.render_cache.reset_stats();
+    }
+
+    #[cfg(test)]
+    pub(super) fn render_cache_stats(
+        &self,
+    ) -> crate::interactive::render::TranscriptRenderCacheStats {
+        self.render_cache.stats()
     }
 
     pub(super) fn handle_slash_suggestion_input(&mut self, event: &InputEvent) -> bool {
@@ -1116,10 +1151,7 @@ impl Component for InteractiveRoot {
         } else {
             MAX_TOOL_RESULT_LINES
         };
-        let mut lines = render_transcript_lines(
-            &self.transcript,
-            &self.transcript_render_options(max_tool_result_lines),
-        );
+        let mut lines = self.transcript_lines(max_tool_result_lines);
         lines.extend(self.render_editor_box(width));
         if self.selecting_model {
             lines.extend(self.render_model_selector(width));

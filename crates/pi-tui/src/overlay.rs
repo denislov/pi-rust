@@ -33,7 +33,14 @@ pub struct OverlayMargin {
     pub left: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Visibility predicate for overlays.
+/// Return `true` to show the overlay, `false` to hide it.
+/// Called each render cycle with the current terminal dimensions.
+pub type OverlayVisibleFn = Box<dyn FnMut(usize, usize) -> bool>;
+
+/// Options for overlay positioning and sizing.
+///
+/// Mirrors TS `OverlayOptions` in `pi/packages/tui/src/tui.ts`.
 pub struct OverlayOptions {
     pub width: Option<SizeValue>,
     pub min_width: Option<usize>,
@@ -45,6 +52,34 @@ pub struct OverlayOptions {
     pub col: Option<SizeValue>,
     pub margin: OverlayMargin,
     pub non_capturing: bool,
+    /// Optional visibility callback.
+    /// If provided, the overlay is only rendered when this returns `true`.
+    /// Called each render cycle with `(term_width, term_height)`.
+    pub visible: Option<OverlayVisibleFn>,
+}
+
+impl std::fmt::Debug for OverlayOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OverlayOptions")
+            .field("width", &self.width)
+            .field("min_width", &self.min_width)
+            .field("max_height", &self.max_height)
+            .field("anchor", &self.anchor)
+            .field("offset_x", &self.offset_x)
+            .field("offset_y", &self.offset_y)
+            .field("row", &self.row)
+            .field("col", &self.col)
+            .field("margin", &self.margin)
+            .field("non_capturing", &self.non_capturing)
+            .field(
+                "visible",
+                &self
+                    .visible
+                    .as_ref()
+                    .map(|_| &"<fn>" as &dyn std::fmt::Debug),
+            )
+            .finish()
+    }
 }
 
 impl Default for OverlayOptions {
@@ -60,6 +95,7 @@ impl Default for OverlayOptions {
             col: None,
             margin: OverlayMargin::default(),
             non_capturing: false,
+            visible: None,
         }
     }
 }
@@ -94,4 +130,19 @@ pub(crate) struct OverlayEntry {
     pub options: OverlayOptions,
     pub hidden: bool,
     pub restore_focus: Option<ComponentId>,
+}
+
+impl OverlayEntry {
+    /// Check whether this overlay is currently visible.
+    /// Returns `false` if `hidden` is set, or if the `visible` callback returns `false`.
+    pub fn is_visible(&mut self, term_width: usize, term_height: usize) -> bool {
+        if self.hidden {
+            return false;
+        }
+        if let Some(ref mut visible_fn) = self.options.visible {
+            visible_fn(term_width, term_height)
+        } else {
+            true
+        }
+    }
 }

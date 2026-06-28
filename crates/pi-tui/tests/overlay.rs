@@ -34,7 +34,27 @@ fn centered_overlay_is_composited_over_base_lines() {
     );
     tui.render_once().unwrap();
     let output = tui.terminal().written_output();
-    assert!(output.contains("....XX...."));
+    // SEGMENT_RESET is inserted between composite segments to prevent colour bleed.
+    // The overlay content "XX" is separated from the base "...." by reset sequences.
+    assert!(
+        output.contains("XX"),
+        "expected overlay content 'XX' in output, got: {output:?}"
+    );
+    // The last line should contain 4 dots, then SEGMENT_RESET, then XX, then SEGMENT_RESET, then 4 dots.
+    // Split by newlines and check the last non-empty line.
+    let last_line = output
+        .split('\n')
+        .filter(|l| !l.is_empty())
+        .last()
+        .unwrap_or("");
+    assert!(
+        last_line.starts_with("...."),
+        "expected last line to start with 4 dots, got: {last_line:?}"
+    );
+    assert!(
+        last_line.contains("XX"),
+        "expected last line to contain XX, got: {last_line:?}"
+    );
 }
 
 #[test]

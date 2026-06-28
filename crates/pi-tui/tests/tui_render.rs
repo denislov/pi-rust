@@ -179,7 +179,8 @@ fn second_render_updates_from_first_changed_line_without_full_clear() {
     assert_eq!(
         outcome.strategy,
         RenderStrategy::Differential {
-            first_changed_line: 1
+            first_changed_line: 1,
+            last_changed_line: 1
         }
     );
     assert_no_global_clear(tui.terminal());
@@ -205,7 +206,8 @@ fn differential_render_writes_growth_beyond_terminal_height() {
     assert_eq!(
         outcome.strategy,
         RenderStrategy::Differential {
-            first_changed_line: 1
+            first_changed_line: 1,
+            last_changed_line: 8
         }
     );
     assert_no_global_clear(tui.terminal());
@@ -213,6 +215,59 @@ fn differential_render_writes_growth_beyond_terminal_height() {
     assert!(written.contains("one"), "{written:?}");
     assert!(written.contains("six"), "{written:?}");
     assert!(written.contains("footer"), "{written:?}");
+}
+
+#[test]
+fn differential_render_only_rewrites_changed_range() {
+    let terminal = VirtualTerminal::new(20, 5);
+    let mut tui = Tui::new(terminal);
+    tui.add_child(Box::new(RawComponent::new(&[
+        "header", "working", "footer",
+    ])));
+    tui.render_once().unwrap();
+    tui.terminal_mut().clear_ops();
+
+    tui.clear_children();
+    tui.add_child(Box::new(RawComponent::new(&["header", "done", "footer"])));
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(
+        outcome.strategy,
+        RenderStrategy::Differential {
+            first_changed_line: 1,
+            last_changed_line: 1
+        }
+    );
+    let written = tui.terminal().written_output();
+    assert!(written.contains("done"), "{written:?}");
+    assert!(!written.contains("footer"), "{written:?}");
+}
+
+#[test]
+fn kitty_image_cleanup_tracks_latest_rendered_frame() {
+    let terminal = VirtualTerminal::new(80, 10);
+    let mut tui = Tui::new(terminal);
+    tui.add_child(Box::new(RawComponent::new(&["\x1b_Gi=42;payload\x1b\\"])));
+    tui.render_once().unwrap();
+    tui.terminal_mut().clear_ops();
+
+    tui.clear_children();
+    tui.add_child(Box::new(RawComponent::new(&["plain"])));
+    tui.render_once().unwrap();
+
+    let written = tui.terminal().written_output();
+    assert!(
+        written.contains("\x1b_Ga=d,d=I,i=42,q=2\x1b\\"),
+        "{written:?}"
+    );
+
+    tui.terminal_mut().clear_ops();
+    tui.render_once().unwrap();
+    let written = tui.terminal().written_output();
+    assert!(
+        !written.contains("\x1b_Ga=d,d=I,i=42,q=2\x1b\\"),
+        "{written:?}"
+    );
 }
 
 #[test]

@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use pi_tui::{
@@ -5,7 +7,7 @@ use pi_tui::{
     paint_with, truncate_to_width, visible_width, wrap_text_with_ansi,
 };
 
-use crate::interactive::transcript::{Transcript, TranscriptItem};
+use crate::interactive::transcript::{Transcript, TranscriptItem, TranscriptRenderKey};
 use crate::theme::{ResolvedColor, ResolvedTheme, ThemeBg, ThemeColor};
 
 /// Resolved visual styles for transcript blocks, derived from a
@@ -124,6 +126,462 @@ pub(super) struct TranscriptRenderOptions<'a> {
     pub styles: TranscriptStyles,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TranscriptBlockCacheKey {
+    transcript_id: u64,
+    item_id: u64,
+    item_revision: u64,
+    profile_hash: u64,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptBlockCacheEntry {
+    lines: Vec<String>,
+    line_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TranscriptRowMetadataKey {
+    transcript_id: u64,
+    profile_hash: u64,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptRowMetadataEntry {
+    item_id: u64,
+    contribution_line_count: usize,
+    has_visible_rows: bool,
+    separator_before: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptRowMetadata {
+    content_revision: u64,
+    total_rows: usize,
+    has_visible_rows: bool,
+    entries: Vec<TranscriptRowMetadataEntry>,
+}
+
+impl TranscriptRowMetadata {
+    fn new(content_revision: u64) -> Self {
+        Self {
+            content_revision,
+            total_rows: 0,
+            has_visible_rows: false,
+            entries: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TranscriptRowSnapshot {
+    key: TranscriptRowMetadataKey,
+    content_revision: u64,
+    total_rows: usize,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TranscriptRenderCacheStats {
+    pub block_hits: usize,
+    pub block_misses: usize,
+    pub line_count_hits: usize,
+    pub line_count_misses: usize,
+    pub row_metadata_hits: usize,
+    pub row_metadata_misses: usize,
+    pub row_delta_hits: usize,
+    pub row_delta_fallbacks: usize,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct TranscriptRenderCache {
+    blocks: HashMap<TranscriptBlockCacheKey, TranscriptBlockCacheEntry>,
+    row_metadata: HashMap<TranscriptRowMetadataKey, TranscriptRowMetadata>,
+    #[cfg(test)]
+    stats: TranscriptRenderCacheStats,
+}
+
+impl TranscriptRenderCache {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.blocks.clear();
+        self.row_metadata.clear();
+        #[cfg(test)]
+        self.reset_stats();
+    }
+
+    pub(super) fn render_lines(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+    ) -> Vec<String> {
+        let mut lines = Vec::new();
+        let profile_hash = render_profile_hash(opts);
+        let mut metadata = TranscriptRowMetadata::new(transcript.content_revision());
+        let mut used_keys = HashSet::new();
+
+        for (render_key, item) in transcript.render_entries() {
+            let block_key = block_cache_key(render_key, profile_hash);
+            used_keys.insert(block_key.clone());
+            let block = self.render_block(&block_key, item, opts);
+            let entry = row_metadata_entry(
+                render_key,
+                item,
+                block.line_count,
+                metadata.has_visible_rows,
+            );
+            if entry.separator_before {
+                lines.push(String::new());
+            }
+            lines.extend(block.lines);
+            metadata.total_rows += entry.contribution_line_count;
+            metadata.has_visible_rows |= entry.has_visible_rows;
+            metadata.entries.push(entry);
+        }
+
+        self.retain_used_blocks(&used_keys);
+        self.record_row_metadata(transcript, profile_hash, metadata);
+        lines
+    }
+
+    #[cfg(test)]
+    pub(super) fn line_count(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+    ) -> usize {
+        let profile_hash = render_profile_hash(opts);
+        if let Some(count) = self.cached_line_count_for_profile(transcript, profile_hash) {
+            #[cfg(test)]
+            {
+                self.stats.line_count_hits += 1;
+            }
+            return count;
+        }
+        #[cfg(test)]
+        {
+            self.stats.line_count_misses += 1;
+        }
+
+        self.rebuild_row_metadata(transcript, opts, profile_hash)
+            .total_rows
+    }
+
+    pub(super) fn row_snapshot(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+    ) -> TranscriptRowSnapshot {
+        let profile_hash = render_profile_hash(opts);
+        let key = self.row_metadata_key(transcript, profile_hash);
+        if let Some(metadata) = self
+            .row_metadata
+            .get(&key)
+            .filter(|metadata| metadata.content_revision == transcript.content_revision())
+        {
+            #[cfg(test)]
+            {
+                self.stats.row_metadata_hits += 1;
+            }
+            return TranscriptRowSnapshot {
+                key,
+                content_revision: metadata.content_revision,
+                total_rows: metadata.total_rows,
+            };
+        }
+
+        #[cfg(test)]
+        {
+            self.stats.row_metadata_misses += 1;
+        }
+        let metadata = self.rebuild_row_metadata(transcript, opts, profile_hash);
+        TranscriptRowSnapshot {
+            key,
+            content_revision: metadata.content_revision,
+            total_rows: metadata.total_rows,
+        }
+    }
+
+    pub(super) fn row_delta_since(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+        before: TranscriptRowSnapshot,
+        changed_indices: &[usize],
+    ) -> usize {
+        let profile_hash = render_profile_hash(opts);
+        let key = self.row_metadata_key(transcript, profile_hash);
+        if key != before.key {
+            return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+        }
+        if before.content_revision == transcript.content_revision() {
+            return 0;
+        }
+        if self
+            .row_metadata
+            .get(&key)
+            .is_none_or(|metadata| metadata.content_revision != before.content_revision)
+        {
+            return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+        }
+
+        let mut indices = changed_indices.to_vec();
+        indices.sort_unstable();
+        indices.dedup();
+        if indices.is_empty() {
+            return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+        }
+
+        let mut signed_delta = 0isize;
+        for index in indices {
+            let Some((render_key, item)) = transcript.render_entry_at(index) else {
+                return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+            };
+            let old_entry = self
+                .row_metadata
+                .get(&key)
+                .and_then(|metadata| metadata.entries.get(index))
+                .cloned();
+            let separator_before = match old_entry.as_ref() {
+                Some(entry) => {
+                    if entry.item_id != render_key.item_id {
+                        return self.row_delta_fallback(
+                            transcript,
+                            opts,
+                            profile_hash,
+                            before.total_rows,
+                        );
+                    }
+                    entry.separator_before
+                }
+                None => {
+                    let metadata = self
+                        .row_metadata
+                        .get(&key)
+                        .expect("row metadata exists after earlier guard");
+                    if index != metadata.entries.len() {
+                        return self.row_delta_fallback(
+                            transcript,
+                            opts,
+                            profile_hash,
+                            before.total_rows,
+                        );
+                    }
+                    metadata.has_visible_rows
+                }
+            };
+
+            let block_key = block_cache_key(render_key, profile_hash);
+            let block = self.render_block(&block_key, item, opts);
+            let new_entry =
+                row_metadata_entry(render_key, item, block.line_count, separator_before);
+            let metadata = self
+                .row_metadata
+                .get_mut(&key)
+                .expect("row metadata exists after earlier guard");
+
+            if let Some(old_entry) = old_entry {
+                if old_entry.has_visible_rows != new_entry.has_visible_rows {
+                    return self.row_delta_fallback(
+                        transcript,
+                        opts,
+                        profile_hash,
+                        before.total_rows,
+                    );
+                }
+                let delta = new_entry.contribution_line_count as isize
+                    - old_entry.contribution_line_count as isize;
+                signed_delta += delta;
+                metadata.total_rows = add_signed_usize(metadata.total_rows, delta);
+                metadata.entries[index] = new_entry;
+            } else {
+                signed_delta += new_entry.contribution_line_count as isize;
+                metadata.total_rows = metadata
+                    .total_rows
+                    .saturating_add(new_entry.contribution_line_count);
+                metadata.has_visible_rows |= new_entry.has_visible_rows;
+                metadata.entries.push(new_entry);
+            }
+        }
+
+        if let Some(metadata) = self.row_metadata.get_mut(&key) {
+            metadata.content_revision = transcript.content_revision();
+        }
+        #[cfg(test)]
+        {
+            self.stats.row_delta_hits += 1;
+        }
+        signed_delta.max(0) as usize
+    }
+
+    fn render_block(
+        &mut self,
+        key: &TranscriptBlockCacheKey,
+        item: &TranscriptItem,
+        opts: &TranscriptRenderOptions<'_>,
+    ) -> TranscriptBlockCacheEntry {
+        if let Some(entry) = self.blocks.get(key) {
+            #[cfg(test)]
+            {
+                self.stats.block_hits += 1;
+            }
+            return entry.clone();
+        }
+        #[cfg(test)]
+        {
+            self.stats.block_misses += 1;
+        }
+
+        let block = render_block(
+            item,
+            opts.width,
+            opts.max_tool_result_lines,
+            opts.color,
+            &opts.markdown_theme,
+            opts.hide_thinking_block,
+            opts.hidden_thinking_label,
+            opts.styles,
+        );
+        let entry = TranscriptBlockCacheEntry {
+            line_count: block.len(),
+            lines: block,
+        };
+        self.blocks.insert(key.clone(), entry.clone());
+        entry
+    }
+
+    fn retain_used_blocks(&mut self, used_keys: &HashSet<TranscriptBlockCacheKey>) {
+        self.blocks.retain(|key, _| used_keys.contains(key));
+    }
+
+    fn rebuild_row_metadata(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+        profile_hash: u64,
+    ) -> TranscriptRowMetadata {
+        let mut metadata = TranscriptRowMetadata::new(transcript.content_revision());
+        let mut used_keys = HashSet::new();
+
+        for (render_key, item) in transcript.render_entries() {
+            let block_key = block_cache_key(render_key, profile_hash);
+            used_keys.insert(block_key.clone());
+            let block = self.render_block(&block_key, item, opts);
+            let entry = row_metadata_entry(
+                render_key,
+                item,
+                block.line_count,
+                metadata.has_visible_rows,
+            );
+            metadata.total_rows += entry.contribution_line_count;
+            metadata.has_visible_rows |= entry.has_visible_rows;
+            metadata.entries.push(entry);
+        }
+
+        self.retain_used_blocks(&used_keys);
+        self.record_row_metadata(transcript, profile_hash, metadata.clone());
+        metadata
+    }
+
+    fn row_delta_fallback(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+        profile_hash: u64,
+        previous_total_rows: usize,
+    ) -> usize {
+        #[cfg(test)]
+        {
+            self.stats.row_delta_fallbacks += 1;
+        }
+        self.rebuild_row_metadata(transcript, opts, profile_hash)
+            .total_rows
+            .saturating_sub(previous_total_rows)
+    }
+
+    fn record_row_metadata(
+        &mut self,
+        transcript: &Transcript,
+        profile_hash: u64,
+        metadata: TranscriptRowMetadata,
+    ) {
+        let key = self.row_metadata_key(transcript, profile_hash);
+        self.row_metadata.insert(key, metadata);
+    }
+
+    #[cfg(test)]
+    fn cached_line_count_for_profile(
+        &self,
+        transcript: &Transcript,
+        profile_hash: u64,
+    ) -> Option<usize> {
+        let key = self.row_metadata_key(transcript, profile_hash);
+        self.row_metadata
+            .get(&key)
+            .filter(|metadata| metadata.content_revision == transcript.content_revision())
+            .map(|metadata| metadata.total_rows)
+    }
+
+    fn row_metadata_key(
+        &self,
+        transcript: &Transcript,
+        profile_hash: u64,
+    ) -> TranscriptRowMetadataKey {
+        TranscriptRowMetadataKey {
+            transcript_id: transcript.render_cache_id(),
+            profile_hash,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn stats(&self) -> TranscriptRenderCacheStats {
+        self.stats
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_stats(&mut self) {
+        self.stats = TranscriptRenderCacheStats::default();
+    }
+}
+
+fn block_cache_key(render_key: TranscriptRenderKey, profile_hash: u64) -> TranscriptBlockCacheKey {
+    TranscriptBlockCacheKey {
+        transcript_id: render_key.transcript_id,
+        item_id: render_key.item_id,
+        item_revision: render_key.item_revision,
+        profile_hash,
+    }
+}
+
+fn row_metadata_entry(
+    render_key: TranscriptRenderKey,
+    item: &TranscriptItem,
+    block_line_count: usize,
+    has_visible_rows_before: bool,
+) -> TranscriptRowMetadataEntry {
+    let is_visible_block = !matches!(item, TranscriptItem::System { .. });
+    let has_visible_rows = is_visible_block && block_line_count > 0;
+    let separator_before = has_visible_rows && has_visible_rows_before;
+    TranscriptRowMetadataEntry {
+        item_id: render_key.item_id,
+        contribution_line_count: block_line_count + usize::from(separator_before),
+        has_visible_rows,
+        separator_before,
+    }
+}
+
+fn add_signed_usize(value: usize, delta: isize) -> usize {
+    if delta >= 0 {
+        value.saturating_add(delta as usize)
+    } else {
+        value.saturating_sub((-delta) as usize)
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn render_transcript_lines(
     transcript: &Transcript,
     opts: &TranscriptRenderOptions<'_>,
@@ -170,6 +628,18 @@ pub(super) fn render_transcript_lines(
     }
 
     lines
+}
+
+fn render_profile_hash(opts: &TranscriptRenderOptions<'_>) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    opts.width.hash(&mut hasher);
+    opts.max_tool_result_lines.hash(&mut hasher);
+    opts.color.hash(&mut hasher);
+    opts.hide_thinking_block.hash(&mut hasher);
+    opts.hidden_thinking_label.hash(&mut hasher);
+    format!("{:?}", opts.markdown_theme).hash(&mut hasher);
+    format!("{:?}", opts.styles).hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Render a single transcript item into zero or more lines. Each visible

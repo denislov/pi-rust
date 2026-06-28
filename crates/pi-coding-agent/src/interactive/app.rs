@@ -28,8 +28,8 @@ use crate::interactive::r#loop::{
 };
 #[cfg(test)]
 use crate::interactive::render::{
-    TranscriptRenderOptions, TranscriptStyles, format_tokens, render_transcript_lines,
-    running_status_text,
+    TranscriptRenderCache, TranscriptRenderOptions, TranscriptStyles, format_tokens,
+    render_transcript_lines, running_status_text,
 };
 #[cfg(test)]
 use crate::interactive::root::{
@@ -381,6 +381,172 @@ mod tests {
             modifiers,
             kind: pi_tui::KeyEventKind::Press,
         })
+    }
+
+    #[test]
+    fn transcript_render_cache_reuses_history_and_misses_changed_block_only() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::system("welcome"));
+        transcript.push(TranscriptItem::user("hello"));
+        transcript.apply_event(UiEvent::AssistantDelta {
+            text: "first reply".to_string(),
+        });
+
+        let mut cache = TranscriptRenderCache::new();
+        let opts = opts(80, 3);
+        let first = cache.render_lines(&transcript, &opts);
+        assert!(first.join("\n").contains("first reply"));
+        assert_eq!(cache.stats().block_misses, 3);
+
+        cache.reset_stats();
+        let second = cache.render_lines(&transcript, &opts);
+        assert_eq!(second, first);
+        assert_eq!(cache.stats().block_hits, 3);
+        assert_eq!(cache.stats().block_misses, 0);
+
+        transcript.apply_event(UiEvent::AssistantDelta {
+            text: " plus delta".to_string(),
+        });
+        cache.reset_stats();
+        let updated = cache.render_lines(&transcript, &opts);
+        let stats = cache.stats();
+        assert!(updated.join("\n").contains("first reply plus delta"));
+        assert_eq!(stats.block_hits, 2, "{stats:?}");
+        assert_eq!(stats.block_misses, 1, "{stats:?}");
+    }
+
+    #[test]
+    fn scrolled_streaming_uses_per_block_row_delta() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "model".to_string(),
+            "session".to_string(),
+        );
+        for index in 0..40 {
+            root.transcript
+                .push(TranscriptItem::user(format!("message {index}")));
+        }
+        root.transcript.scroll_page_up(12);
+        let _ = root.render(100);
+
+        root.reset_render_cache_stats();
+        root.apply_events(vec![UiEvent::AssistantDelta {
+            text: "streaming reply".to_string(),
+        }]);
+
+        let stats = root.render_cache_stats();
+        assert_eq!(stats.row_metadata_hits, 1, "{stats:?}");
+        assert_eq!(stats.row_delta_hits, 1, "{stats:?}");
+        assert_eq!(stats.row_delta_fallbacks, 0, "{stats:?}");
+        assert_eq!(stats.line_count_hits, 0, "{stats:?}");
+        assert_eq!(stats.line_count_misses, 0, "{stats:?}");
+        assert_eq!(stats.block_misses, 1, "{stats:?}");
+        assert_eq!(stats.block_hits, 0, "{stats:?}");
+        assert!(root.transcript.scroll_offset() > 12);
+    }
+
+    #[test]
+    fn scrolled_streaming_preserves_exact_wrapped_row_delta() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "model".to_string(),
+            "session".to_string(),
+        );
+        root.set_viewport_size(24, 24);
+        for index in 0..8 {
+            root.transcript
+                .push(TranscriptItem::user(format!("message {index}")));
+        }
+        root.transcript.scroll_page_up(4);
+        let _ = root.render(24);
+
+        let before = root.transcript.clone();
+        let previous_offset = root.transcript.scroll_offset();
+        root.apply_events(vec![UiEvent::AssistantDelta {
+            text: "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda".to_string(),
+        }]);
+
+        let mut check_cache = TranscriptRenderCache::new();
+        let before_rows = check_cache.render_lines(&before, &opts(24, 3)).len();
+        let after_rows = check_cache
+            .render_lines(&root.transcript, &opts(24, 3))
+            .len();
+        let expected_delta = after_rows.saturating_sub(before_rows);
+        assert!(
+            expected_delta > 1,
+            "expected wrapped output: {expected_delta}"
+        );
+        assert_eq!(
+            root.transcript.scroll_offset(),
+            previous_offset + expected_delta
+        );
+    }
+
+    #[test]
+    #[ignore = "local performance baseline; prints render timings and cache stats"]
+    fn stress_interactive_transcript_render_baseline() {
+        fn elapsed_ms(start: std::time::Instant) -> f64 {
+            start.elapsed().as_secs_f64() * 1000.0
+        }
+
+        for item_count in [100usize, 1_000, 5_000] {
+            let mut transcript = Transcript::new();
+            transcript.push(TranscriptItem::system("welcome"));
+            for index in 0..item_count {
+                if index % 2 == 0 {
+                    transcript.push(TranscriptItem::user(format!(
+                        "user message {index}\n\n- one\n- two\n- three"
+                    )));
+                } else {
+                    transcript.push(TranscriptItem::assistant(
+                        format!("assistant_{index}"),
+                        format!(
+                            "assistant message {index}\n\n```rust\nfn main() {{ println!(\"{index}\"); }}\n```"
+                        ),
+                        true,
+                    ));
+                }
+            }
+
+            let opts = opts(120, 3);
+            let mut cache = TranscriptRenderCache::new();
+            let first_start = std::time::Instant::now();
+            let first = cache.render_lines(&transcript, &opts);
+            let first_ms = elapsed_ms(first_start);
+            cache.reset_stats();
+            let second_start = std::time::Instant::now();
+            let second = cache.render_lines(&transcript, &opts);
+            let second_ms = elapsed_ms(second_start);
+            let second_stats = cache.stats();
+            assert_eq!(first, second);
+
+            cache.reset_stats();
+            let count_start = std::time::Instant::now();
+            let rows = cache.line_count(&transcript, &opts);
+            let count_ms = elapsed_ms(count_start);
+            let count_stats = cache.stats();
+
+            println!(
+                "items={item_count} rows={} first_ms={first_ms:.3} second_ms={second_ms:.3} count_ms={count_ms:.3} second_stats={second_stats:?} count_stats={count_stats:?}",
+                rows
+            );
+        }
+
+        let mut streaming = Transcript::new();
+        streaming.push(TranscriptItem::system("welcome"));
+        streaming.apply_event(UiEvent::AssistantDelta {
+            text: "start".to_string(),
+        });
+        let opts = opts(120, 3);
+        let mut cache = TranscriptRenderCache::new();
+        let start = std::time::Instant::now();
+        for delta in 0..100 {
+            streaming.apply_event(UiEvent::AssistantDelta {
+                text: format!(" delta-{delta}"),
+            });
+            let _ = cache.render_lines(&streaming, &opts);
+        }
+        println!("streaming_deltas=100 total_ms={:.3}", elapsed_ms(start));
     }
 
     #[test]

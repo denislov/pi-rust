@@ -54,3 +54,35 @@ fn system_item_scrolls_like_other_items() {
     transcript.scroll_to_bottom();
     assert_eq!(transcript.scroll_offset(), 0);
 }
+
+#[test]
+fn transcript_revision_changes_only_on_real_mutation() {
+    let mut transcript = Transcript::new();
+    let initial = transcript.revision();
+
+    transcript.apply_event(UiEvent::UsageUpdate {
+        input: 1,
+        output: 2,
+        cache_read: 3,
+        cache_write: 4,
+        cost: 0.5,
+        context_tokens: Some(10),
+    });
+    assert_eq!(transcript.revision(), initial);
+
+    transcript.push(TranscriptItem::user("hello"));
+    let after_push = transcript.revision();
+    assert!(after_push > initial);
+
+    transcript.scroll_page_down(1);
+    assert_eq!(transcript.revision(), after_push);
+
+    transcript.scroll_page_up(1);
+    let after_scroll = transcript.revision();
+    assert!(after_scroll > after_push);
+
+    transcript.apply_event(UiEvent::AssistantDelta {
+        text: "reply".to_string(),
+    });
+    assert!(transcript.revision() > after_scroll);
+}

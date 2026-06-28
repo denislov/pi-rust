@@ -1,6 +1,6 @@
 use pi_agent_core::AgentResources;
 use pi_coding_agent::config::settings::{
-    CompactionSettings, RetrySettings, Settings, TerminalSettings, WarningsSettings,
+    CompactionSettings, RetrySettings, Settings, TerminalSettings,
 };
 use pi_coding_agent::{
     CliError, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config, parse_args, select_model,

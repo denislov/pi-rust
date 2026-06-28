@@ -1,7 +1,29 @@
+use std::sync::{Mutex, MutexGuard};
+
 use pi_tui::{
     InputEvent, Key, KeyEventKind, KeyModifiers, StdinBuffer, matches_key, parse_key,
     set_kitty_protocol_active,
 };
+
+static KITTY_PROTOCOL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+struct KittyProtocolGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl KittyProtocolGuard {
+    fn active() -> Self {
+        let guard = KITTY_PROTOCOL_TEST_LOCK.lock().unwrap();
+        set_kitty_protocol_active(true);
+        Self { _guard: guard }
+    }
+}
+
+impl Drop for KittyProtocolGuard {
+    fn drop(&mut self) {
+        set_kitty_protocol_active(false);
+    }
+}
 
 #[test]
 fn stdin_buffer_splits_batched_escape_sequences() {
@@ -161,7 +183,7 @@ fn space_key_roundtrip() {
 
 #[test]
 fn kitty_active_changes_newline_semantics() {
-    set_kitty_protocol_active(true);
+    let _kitty = KittyProtocolGuard::active();
     assert!(matches_key(
         &InputEvent::Key(parse_key("\n").unwrap()),
         "ctrl+j"
@@ -184,7 +206,7 @@ fn kitty_active_changes_newline_semantics() {
 
 #[test]
 fn kitty_active_changes_alt_enter_semantics() {
-    set_kitty_protocol_active(true);
+    let _kitty = KittyProtocolGuard::active();
     assert!(matches_key(
         &InputEvent::Key(parse_key("\x1b\r").unwrap()),
         "shift+enter"

@@ -122,7 +122,7 @@ impl Style {
         self
     }
 
-    fn has_any(&self) -> bool {
+    pub fn has_any(&self) -> bool {
         self.fg != Color::Default
             || self.bg != Color::Default
             || self.bold

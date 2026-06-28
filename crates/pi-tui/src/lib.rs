@@ -9,6 +9,7 @@ pub mod overlay;
 pub mod runtime;
 pub mod style;
 pub mod terminal;
+pub mod terminal_colors;
 pub mod terminal_image;
 pub mod theme;
 pub mod tui;
@@ -23,9 +24,10 @@ pub use autocomplete::{
 };
 pub use component::{Component, ComponentId, Container};
 pub use components::{
-    BackgroundFn, Box, CancellableLoader, Editor, Image, Input, Loader, LoaderIndicatorOptions,
-    Markdown, SelectItem, SelectList, SelectorDialog, SelectorDialogOptions, SettingItem,
-    SettingsList, SettingsListOptions, SettingsSubmenuDone, Spacer, Text, TruncatedText,
+    BackgroundFn, Box, CancellableLoader, DefaultTextStyle, Editor, Image, Input, Loader,
+    LoaderIndicatorOptions, Markdown, SelectItem, SelectList, SelectorDialog,
+    SelectorDialogOptions, SettingItem, SettingsList, SettingsListOptions, SettingsSubmenuDone,
+    Spacer, Text, TruncatedText,
 };
 pub use cursor::{CURSOR_MARKER, CursorPosition, extract_cursor_marker};
 pub use fuzzy::{FuzzyMatch, fuzzy_filter_indices, fuzzy_match};
@@ -34,14 +36,24 @@ pub use input::{
     KeybindingDefinition, KeybindingsConfig, KeybindingsManager, StdinBuffer, TUI_KEYBINDINGS,
     is_key_release, is_kitty_protocol_active, matches_key, parse_key, set_kitty_protocol_active,
 };
-pub use overlay::{OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, SizeValue};
+pub use overlay::{
+    OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, OverlayVisibleFn, SizeValue,
+};
 pub use runtime::RenderScheduler;
 pub use style::{
     Color, ColorLevel, ERROR, PATH, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR,
     TOOL_NAME, USER, color_enabled, color_level, detect_color_level_from_env, paint, paint_with,
     paint_with_level,
 };
-pub use terminal::{NegotiationResult, ProcessTerminal, Terminal, TerminalSize};
+pub use terminal::{
+    NegotiationResult, ProcessTerminal, Terminal, TerminalSize, is_apple_terminal_session,
+    normalize_apple_terminal_input,
+};
+pub use terminal_colors::{
+    RgbColor, TerminalColorScheme, is_color_scheme_report, is_osc11_background_color_response,
+    parse_color_scheme_report, parse_osc11_background_color, query_background_color,
+    query_color_scheme, set_color_scheme_notifications,
+};
 pub use terminal_image::{
     CellDimensions, ImageCellSize, ImageDimensions, ImageProtocol, ImageRenderOptions,
     RenderedImage, TerminalCapabilities, calculate_image_cell_size, delete_all_kitty_images,
@@ -53,7 +65,7 @@ pub use theme::{
     EditorTheme, ImageTheme, MarkdownTheme, SelectListTheme, SettingsListTheme, ThemeMode,
     ThemePalette, TuiTheme, dark_theme, light_theme,
 };
-pub use tui::{RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError};
+pub use tui::{InputListenerResult, RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError};
 pub use utils::{
     truncate_to_width, truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
 };

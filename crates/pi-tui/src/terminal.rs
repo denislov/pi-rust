@@ -37,6 +37,32 @@ mod win32 {
 const KITTY_KEYBOARD_PROTOCOL_QUERY: &str = "\x1b[>7u\x1b[?u\x1b[c";
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS: u64 = 150;
 
+/// Apple Terminal Shift+Enter sequence (sent when Shift is pressed with Enter).
+const APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE: &str = "\x1b[13;2u";
+
+/// Detect whether the current session is Apple Terminal.
+pub fn is_apple_terminal_session() -> bool {
+    std::env::var("TERM_PROGRAM").as_deref() == Ok("Apple_Terminal")
+}
+
+/// Normalize Apple Terminal input.
+///
+/// Apple Terminal does not send unique escape sequences for Shift+Enter
+/// (both Enter and Shift+Enter send `\r`). This function rewrites `\r`
+/// to `\x1b[13;2u` when the Shift key is held.
+///
+/// The `shift_pressed` parameter should come from a platform-specific
+/// native modifier detector (e.g. `CGEventSourceFlagsState` on macOS).
+/// When no native detector is available, pass `false` — Shift+Enter
+/// will fall through as plain Enter, which is the safest behaviour.
+pub fn normalize_apple_terminal_input(data: &str, shift_pressed: bool) -> String {
+    if is_apple_terminal_session() && data == "\r" && shift_pressed {
+        APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE.to_string()
+    } else {
+        data.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalSize {
     pub columns: usize,
