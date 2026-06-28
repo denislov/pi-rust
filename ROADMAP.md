@@ -1,6 +1,6 @@
 # pi → Rust 移植路线图（索引）
 
-> 状态：M0–M11 完成 · 最后核对：2026-06-22
+> 状态：M0–M11 完成 · 最后核对：2026-06-28
 > 适用范围：`pi-rust/` 工作区（把 TypeScript `pi` monorepo 移植为 Rust）
 > 参考基准：`pi/`（上游 TS 实现，行为权威来源）
 
@@ -25,15 +25,18 @@
 
 | 包 / crate | TS 源码 | Rust 源码 | 粗略覆盖 | 状态 |
 |---|---:|---:|---:|---|
-| `pi-ai` | 30,553 | 27,523 | ~90% | ✅ M2+M8，缺 Vertex provider（见下方风险） |
-| `pi-agent-core` | 8,067 | 7,310 | 内核+harness 完整 | ✅ M4+M9 |
-| `pi-coding-agent` | 48,013 | 10,100 | 引擎+CLI 完整 | ✅ M5/M7/M10，生态/扩展待补（M12/M13） |
-| `pi-tui` | 11,696 | 7,063 | ~80% | ✅ M6+M11 基础设施，交互 polish 持续 |
+| `pi-ai` | 30,553 | 30,694¹ | ~90% | ✅ M2+M8，缺 Vertex provider（见下方风险） |
+| `pi-agent-core` | 8,067 | 10,187 | ~126%² | ✅ M4+M9 |
+| `pi-coding-agent` | 48,013 | 24,019 | ~50% | ✅ M5/M7/M10，生态/扩展待补（M12/M13） |
+| `pi-tui` | 11,696 | 10,616 | ~91% | ✅ M6+M11 基础设施，交互 polish 持续 |
 | `pi-mom`/`pi-pods`/`pi-web-ui` | — | 各 14 | — | ⬜ 空壳，范围未定（[cross-cutting](docs/roadmap/cross-cutting.md)） |
-| **合计** | **~98K** | **~52.0K** | **~53%** | — |
+| **合计** | **~98K** | **~75.5K** | **~77%** | — |
 
-> "TS 源码"为 `src/**/*.ts`（去 `*.test.ts`）行数；`pi-ai` 含 ~18.7K 行生成的模型注册表。
-> 健康度：截至 2026-06-22 核对工作区编译通过，`cargo fmt --check`、
+> ¹ `pi-ai` 中 9,591 行 `.rs` + 21,103 行 `models_generated.json`。
+> ² `pi-agent-core` Rust 行数多于 TS 是因为额外实现了 harness、compaction、
+>   skills/prompt templates 加载等 TS 中分布在多个包的逻辑。
+> "TS 源码"为 `src/**/*.ts`（去 `*.test.ts`）行数，来自上游 `pi/` 仓库。
+> 健康度：截至 2026-06-28 核对工作区编译通过，`cargo fmt --check`、
 > `cargo check --workspace`、`cargo test --workspace`、`scripts/tui-smoke.sh` 全绿。
 > 完成信号以实际代码与 Git 提交为准。
 
