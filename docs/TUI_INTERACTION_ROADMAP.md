@@ -17,7 +17,7 @@ All stability milestones (TUI-0 through TUI-6) are complete with green tests:
 
 **TUI-7 complete** (2026-06-20): `scripts/tui-smoke.sh` runs interactive mode in tmux, captures startup, first character, clear-text Ctrl+C, wide Unicode, narrow/wide resize, `/help`, optional real provider streaming, and exit cleanup. `docs/tui-smoke.md` contains the cross-terminal review table.
 
-**TUI-8 current slice complete** (2026-06-20): 8-color semantic styling, 256/RGB SGR output, color capability detection, Markdown polish, reusable Loader/CancellableLoader, SelectList fuzzy menus, and dark/light/custom theme structures. Markdown and SelectList accept component themes; SettingsList and Editor have theme structs ready for deeper integration. See `docs/superpowers/specs/2026-06-19-pi-tui-tui8-color-and-markdown-design.md`.
+**TUI-8 current slice complete** (2026-06-20): 8-color semantic styling, 256/RGB SGR output, color capability detection, Markdown polish, reusable Loader/CancellableLoader, SelectList fuzzy menus, and dark/light/custom theme structures. Markdown and SelectList accept component themes; SettingsList and Editor have theme structs ready for deeper integration.
 
 **Remaining polish work**: wire additional theme fields through every component render path, add more business selectors in `pi-coding-agent`, and broaden terminal smoke records across real emulators.
 
@@ -93,8 +93,7 @@ Done:
 - `Loader` / `CancellableLoader` reusable components; `pi-coding-agent` footer spinner uses `pi_tui::Loader`.
 - `SelectList` fuzzy filtering and `SelectorDialog` foundation for model/session/status style menus.
 - `TuiTheme` with dark/light/custom palette plus Markdown/SelectList/SettingsList/Editor theme structures; Markdown and SelectList accept themes.
-- Spec: `docs/superpowers/specs/2026-06-19-pi-tui-tui8-color-and-markdown-design.md`.
-- Plan: `docs/superpowers/plans/2026-06-19-pi-tui-tui8-color-and-markdown.md`.
+_(Design spec and implementation plan archived — code merged as TUI-8.)_
 
 Remaining:
 - Wire theme fields through the remaining component render paths.
