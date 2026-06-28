@@ -35,7 +35,7 @@
 > "TS 源码"为 `src/**/*.ts`（去 `*.test.ts`）行数；`pi-ai` 含 ~18.7K 行生成的模型注册表。
 > 健康度：截至 2026-06-22 核对工作区编译通过，`cargo fmt --check`、
 > `cargo check --workspace`、`cargo test --workspace`、`scripts/tui-smoke.sh` 全绿。
-> `docs/superpowers/plans/*.md` 复选框**不能**作完成信号。
+> 完成信号以实际代码与 Git 提交为准。
 
 **已完成项** → [docs/roadmap/done.md](docs/roadmap/done.md)
 
