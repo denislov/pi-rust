@@ -24,7 +24,7 @@ use super::session_log::event::{
     SessionEventEnvelope,
 };
 use super::session_log::id::{SystemClock, SystemIdGenerator};
-use super::session_log::replay::SessionReplay;
+use super::session_log::replay::{MessageStatus, SessionReplay, TranscriptItem};
 use super::session_log::store::{SessionHandle, SessionLogStore};
 use super::session_log::transaction::TurnTransaction;
 
@@ -375,6 +375,7 @@ pub(crate) struct PromptTurnContext {
     loaded_resources: Option<AgentResources>,
     replay: Option<SessionReplay>,
     session_id: Option<String>,
+    non_persistent_runtime_id: Option<String>,
     agent: Option<Agent>,
     transaction: Option<PromptTurnTransaction>,
     final_message: Option<AssistantMessage>,
@@ -397,6 +398,7 @@ impl PromptTurnContext {
             loaded_resources: None,
             replay: None,
             session_id: None,
+            non_persistent_runtime_id: None,
             agent: None,
             transaction: None,
             final_message: None,
@@ -534,12 +536,34 @@ impl PromptTurnContext {
         self.replay.as_ref()
     }
 
+    pub(crate) fn set_non_persistent_session(
+        &mut self,
+        runtime_id: impl Into<String>,
+        transcript: Vec<TranscriptItem>,
+    ) {
+        let runtime_id = runtime_id.into();
+        self.non_persistent_runtime_id = Some(runtime_id.clone());
+        self.session_id = None;
+        self.transaction = None;
+        self.replay = Some(SessionReplay {
+            session_id: runtime_id,
+            active_leaf_id: None,
+            transcript,
+            diagnostics: Vec::new(),
+        });
+    }
+
+    pub(crate) fn non_persistent_runtime_id(&self) -> Option<&str> {
+        self.non_persistent_runtime_id.as_deref()
+    }
+
     pub(crate) fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
 
     pub(crate) fn set_session_id(&mut self, session_id: impl Into<String>) {
         self.session_id = Some(session_id.into());
+        self.non_persistent_runtime_id = None;
     }
 
     pub(crate) fn set_agent(&mut self, agent: Agent) {
@@ -592,6 +616,36 @@ impl PromptTurnContext {
             .as_ref()
             .map(TurnTransaction::pending_events)
             .unwrap_or_default()
+    }
+
+    pub(crate) fn completed_transcript_items(&self) -> Vec<TranscriptItem> {
+        let mut transcript = Vec::new();
+
+        if let Some(input) = self.prepared_input.as_deref() {
+            let text = persisted_content_blocks_text(input);
+            if !text.is_empty() {
+                transcript.push(TranscriptItem::UserInput {
+                    turn_id: self.turn_id().to_owned(),
+                    text,
+                });
+            }
+        }
+
+        if let Some(message) = self.final_message.as_ref() {
+            let text = assistant_text(message);
+            if !text.is_empty() {
+                transcript.push(TranscriptItem::AssistantMessage {
+                    message_id: self
+                        .assistant_session_message_id
+                        .clone()
+                        .unwrap_or_else(|| format!("msg_{}", self.turn_id())),
+                    text,
+                    status: MessageStatus::Completed,
+                });
+            }
+        }
+
+        transcript
     }
 
     pub(crate) fn record_user_input(&mut self) -> Result<(), CodingSessionError> {
@@ -949,6 +1003,17 @@ fn persisted_content_block(content: &ContentBlock) -> PersistedContentBlock {
             text: format!("[tool_call:{name} {arguments}]"),
         },
     }
+}
+
+fn persisted_content_blocks_text(content: &[PersistedContentBlock]) -> String {
+    content
+        .iter()
+        .map(|block| match block {
+            PersistedContentBlock::Text { text } => text.clone(),
+            PersistedContentBlock::Image { mime_type, .. } => format!("[image:{mime_type}]"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn content_blocks_text(content: &[ContentBlock]) -> String {

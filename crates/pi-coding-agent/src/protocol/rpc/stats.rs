@@ -40,12 +40,9 @@ impl RpcState {
     pub(super) fn capabilities(&self) -> CodingAgentCapabilities {
         let mut capabilities =
             CodingAgentCapabilities::phase_3(self.is_streaming().then_some("prompt"));
-        let legacy_running = matches!(self.running, Some(RunningPrompt::Legacy(_)));
         let coding_running = matches!(self.running, Some(RunningPrompt::Coding(_)));
 
-        capabilities.abort = if legacy_running {
-            CapabilityStatus::Available
-        } else if coding_running {
+        capabilities.abort = if coding_running {
             CapabilityStatus::Disabled {
                 reason: "operation abort awaits CodingAgentSession operation handles".into(),
             }
@@ -54,9 +51,7 @@ impl RpcState {
                 reason: "no prompt is running".into(),
             }
         };
-        capabilities.steer = if legacy_running {
-            CapabilityStatus::Available
-        } else if coding_running {
+        capabilities.steer = if coding_running {
             CapabilityStatus::Disabled {
                 reason: "agent turn steering awaits AgentTurnFlow".into(),
             }

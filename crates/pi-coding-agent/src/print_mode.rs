@@ -3,7 +3,7 @@ use crate::coding_session::{
     CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PromptTurnOptions,
     PromptTurnOutcome,
 };
-use crate::protocol::session_runner::{SessionPromptOptions, assistant_text, run_session_prompt};
+use crate::protocol::session_runner::SessionPromptOptions;
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
 use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
@@ -74,13 +74,8 @@ impl From<SessionPromptOptions> for PrintModeOptions {
 
 pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliError> {
     let options = session_prompt_options_from_print_options(options);
-    match run_print_mode_with_coding_session(options).await? {
-        PrintModeRoute::Handled(text) => Ok(text),
-        PrintModeRoute::Legacy(options) => {
-            let result = run_session_prompt(options, None).await?;
-            Ok(assistant_text(&result.final_message))
-        }
-    }
+    let outcome = run_print_mode_with_coding_session(options).await?;
+    print_text_from_prompt_outcome(outcome)
 }
 
 fn session_prompt_options_from_print_options(options: PrintModeOptions) -> SessionPromptOptions {
@@ -105,12 +100,12 @@ fn session_prompt_options_from_print_options(options: PrintModeOptions) -> Sessi
 
 async fn run_print_mode_with_coding_session(
     options: SessionPromptOptions,
-) -> Result<PrintModeRoute, CliError> {
+) -> Result<PromptTurnOutcome, CliError> {
     let Some(session_options) = options.session.as_ref() else {
-        return Ok(PrintModeRoute::Legacy(options));
+        return run_non_persistent_print_mode(options).await;
     };
     if !matches!(session_options.mode, SessionMode::Enabled) {
-        return Ok(PrintModeRoute::Legacy(options));
+        return run_non_persistent_print_mode(options).await;
     }
 
     let session_root = print_coding_session_root(session_options)?;
@@ -121,9 +116,28 @@ async fn run_print_mode_with_coding_session(
     let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
 
     let outcome = session.prompt(prompt_options).await?;
-    Ok(PrintModeRoute::Handled(print_text_from_prompt_outcome(
-        outcome,
-    )?))
+    Ok(outcome)
+}
+
+async fn run_non_persistent_print_mode(
+    options: SessionPromptOptions,
+) -> Result<PromptTurnOutcome, CliError> {
+    ensure_non_persistent_print_target(options.session_target.as_ref())?;
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new()).await?;
+    let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
+    Ok(session.prompt(prompt_options).await?)
+}
+
+fn ensure_non_persistent_print_target(
+    target: Option<&ResolvedSessionTarget>,
+) -> Result<(), CliError> {
+    match target {
+        None | Some(ResolvedSessionTarget::New) => Ok(()),
+        Some(_) => Err(CodingSessionError::UnsupportedCapability {
+            capability: "persistent session target in non-persistent print mode".into(),
+        }
+        .into()),
+    }
 }
 
 async fn open_print_coding_session(
@@ -166,11 +180,19 @@ fn print_text_from_prompt_outcome(outcome: PromptTurnOutcome) -> Result<String, 
     match outcome {
         PromptTurnOutcome::Success { final_text, .. } => Ok(final_text),
         PromptTurnOutcome::Aborted { reason, .. } => Err(CliError::SessionFailure(reason)),
-        PromptTurnOutcome::Failed { error, .. } => Err(CliError::from(error)),
+        PromptTurnOutcome::Failed { error, .. } => Err(print_cli_error_from_prompt_error(error)),
     }
 }
 
-enum PrintModeRoute {
-    Handled(String),
-    Legacy(SessionPromptOptions),
+fn print_cli_error_from_prompt_error(error: CodingSessionError) -> CliError {
+    match error {
+        CodingSessionError::Provider { message } => CliError::AgentFailure(message),
+        CodingSessionError::Flow { message } => {
+            match message.strip_prefix("flow node 'run_agent_turn' failed: provider error: ") {
+                Some(provider_message) => CliError::AgentFailure(provider_message.into()),
+                None => CliError::SessionFailure(message),
+            }
+        }
+        other => CliError::from(other),
+    }
 }

@@ -270,8 +270,8 @@ async fn rpc_state_reports_prompt_busy_while_running() {
     let capabilities = &state["data"]["capabilities"];
     assert_eq!(capabilities["prompt"]["status"], "busy");
     assert_eq!(capabilities["prompt"]["operation"], "prompt");
-    assert_eq!(capabilities["abort"]["status"], "available");
-    assert_eq!(capabilities["steer"]["status"], "available");
+    assert_eq!(capabilities["abort"]["status"], "disabled");
+    assert_eq!(capabilities["steer"]["status"], "disabled");
     registry::unregister(api);
 }
 
@@ -530,12 +530,13 @@ async fn rpc_abort_cancels_running_prompt() {
     let abort_response = abort_response.expect("abort response while prompt is running");
     assert_eq!(abort_response["id"], "a1");
     assert_eq!(abort_response["success"], true);
-    assert!(cancelled.load(Ordering::SeqCst));
+    assert_eq!(abort_response["data"]["cancelled"], false);
+    assert!(!cancelled.load(Ordering::SeqCst));
     registry::unregister(api);
 }
 
 #[tokio::test]
-async fn rpc_steer_while_running_updates_queue() {
+async fn rpc_steer_while_coding_prompt_running_returns_error() {
     let api = "pi-coding-rpc-steer-live";
     let release = Arc::new(Notify::new());
     registry::register(
@@ -577,21 +578,25 @@ async fn rpc_steer_while_running_updates_queue() {
         .await
         .unwrap();
 
-    let queue_update = tokio::time::timeout(Duration::from_millis(250), async {
+    let response = tokio::time::timeout(Duration::from_millis(250), async {
         loop {
             let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before queue update");
+                panic!("rpc output closed before steer response");
             };
             let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "queue_update" {
+            if value["type"] == "response" && value["command"] == "steer" {
                 break value;
             }
         }
     })
     .await;
 
-    let queue_update = queue_update.expect("queue update while prompt is running");
-    assert_eq!(queue_update["steering"], serde_json::json!(["look here"]));
+    let response = response.expect("steer response while prompt is running");
+    assert_eq!(response["success"], false);
+    assert_eq!(
+        response["error"],
+        "agent is streaming; steer awaits AgentTurnFlow"
+    );
     release.notify_one();
     drop(input_writer);
     tokio::time::timeout(Duration::from_millis(500), async {
@@ -612,7 +617,7 @@ async fn rpc_steer_while_running_updates_queue() {
 }
 
 #[tokio::test]
-async fn rpc_follow_up_prompt_while_running_updates_queue() {
+async fn rpc_follow_up_prompt_while_coding_prompt_running_returns_error() {
     let api = "pi-coding-rpc-follow-up-live";
     let release = Arc::new(Notify::new());
     registry::register(
@@ -656,21 +661,25 @@ async fn rpc_follow_up_prompt_while_running_updates_queue() {
         .await
         .unwrap();
 
-    let queue_update = tokio::time::timeout(Duration::from_millis(250), async {
+    let response = tokio::time::timeout(Duration::from_millis(250), async {
         loop {
             let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before queue update");
+                panic!("rpc output closed before follow-up response");
             };
             let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "queue_update" {
+            if value["type"] == "response" && value["id"] == "f1" {
                 break value;
             }
         }
     })
     .await;
 
-    let queue_update = queue_update.expect("follow-up queue update while prompt is running");
-    assert_eq!(queue_update["followUp"], serde_json::json!(["next"]));
+    let response = response.expect("follow-up response while prompt is running");
+    assert_eq!(response["success"], false);
+    assert_eq!(
+        response["error"],
+        "agent is streaming; steer and follow-up await AgentTurnFlow"
+    );
     release.notify_one();
     drop(input_writer);
     tokio::time::timeout(Duration::from_millis(500), async {
@@ -754,7 +763,7 @@ async fn rpc_plain_prompt_while_running_returns_error() {
     assert_eq!(response["success"], false);
     assert_eq!(
         response["error"],
-        "agent is streaming; set streamingBehavior to steer or followUp"
+        "agent is streaming; steer and follow-up await AgentTurnFlow"
     );
     registry::unregister(api);
 }

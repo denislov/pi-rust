@@ -6,10 +6,8 @@ mod stats;
 mod wire;
 
 use crate::protocol::jsonl::JsonlLineReader;
-use crate::protocol::session_runner::SessionPromptResult;
 use crate::protocol::types::{RpcCommand, RpcResponse};
 use crate::{CliError, CliRunOptions};
-use pi_agent_core::AgentEvent;
 use serde_json::Value;
 use state::{CodingPromptTaskResult, RpcState, RunningPrompt};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -36,28 +34,6 @@ where
         }
 
         let event = match (input_closed, state.running.as_mut()) {
-            (false, Some(RunningPrompt::Legacy(running))) if !running.events_closed => {
-                tokio::select! {
-                    line = lines.read_next_line() => RpcLoopEvent::Input(line),
-                    event = running.events.recv() => RpcLoopEvent::AgentEvent(event),
-                    done = &mut running.done => RpcLoopEvent::LegacyPromptDone(done),
-                }
-            }
-            (false, Some(RunningPrompt::Legacy(running))) => {
-                tokio::select! {
-                    line = lines.read_next_line() => RpcLoopEvent::Input(line),
-                    done = &mut running.done => RpcLoopEvent::LegacyPromptDone(done),
-                }
-            }
-            (true, Some(RunningPrompt::Legacy(running))) if !running.events_closed => {
-                tokio::select! {
-                    event = running.events.recv() => RpcLoopEvent::AgentEvent(event),
-                    done = &mut running.done => RpcLoopEvent::LegacyPromptDone(done),
-                }
-            }
-            (true, Some(RunningPrompt::Legacy(running))) => {
-                RpcLoopEvent::LegacyPromptDone((&mut running.done).await)
-            }
             (false, Some(RunningPrompt::Coding(running))) if !running.events_closed => {
                 tokio::select! {
                     line = lines.read_next_line() => RpcLoopEvent::Input(line),
@@ -92,14 +68,6 @@ where
                 };
                 handle_input_line(&mut state, &line, writer).await?;
             }
-            RpcLoopEvent::AgentEvent(Some(event)) => {
-                state.write_agent_event(event, writer).await?;
-            }
-            RpcLoopEvent::AgentEvent(None) => {
-                if let Some(RunningPrompt::Legacy(running)) = state.running.as_mut() {
-                    running.events_closed = true;
-                }
-            }
             RpcLoopEvent::CodingEvent(Some(event)) => {
                 state.write_coding_event(event, writer).await?;
             }
@@ -107,9 +75,6 @@ where
                 if let Some(RunningPrompt::Coding(running)) = state.running.as_mut() {
                     running.events_closed = true;
                 }
-            }
-            RpcLoopEvent::LegacyPromptDone(result) => {
-                state.finish_legacy_running_prompt(result, writer).await?;
             }
             RpcLoopEvent::CodingPromptDone(result) => {
                 state.finish_coding_running_prompt(result, writer).await?;
@@ -122,9 +87,7 @@ where
 
 enum RpcLoopEvent {
     Input(Result<Option<String>, std::io::Error>),
-    AgentEvent(Option<AgentEvent>),
     CodingEvent(Option<crate::coding_session::CodingAgentEvent>),
-    LegacyPromptDone(Result<Result<SessionPromptResult, CliError>, oneshot::error::RecvError>),
     CodingPromptDone(Result<CodingPromptTaskResult, oneshot::error::RecvError>),
 }
 

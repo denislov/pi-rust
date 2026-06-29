@@ -41,6 +41,18 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
+                if matches!(self.running, Some(RunningPrompt::Coding(_))) {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(
+                            id,
+                            "steer",
+                            "agent is streaming; steer awaits AgentTurnFlow",
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 self.enqueue_steer(message);
                 write_rpc_response(writer, RpcResponse::success(id, "steer", None)).await?;
                 self.emit_queue_update(writer).await
@@ -62,27 +74,29 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
+                if matches!(self.running, Some(RunningPrompt::Coding(_))) {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(
+                            id,
+                            "follow_up",
+                            "agent is streaming; follow-up awaits AgentTurnFlow",
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 self.enqueue_follow_up(message);
                 write_rpc_response(writer, RpcResponse::success(id, "follow_up", None)).await?;
                 self.emit_queue_update(writer).await
             }
             RpcCommand::Abort { id } => {
-                let cancelled = if let Some(RunningPrompt::Legacy(running)) = self.running.as_mut()
-                {
-                    if !running.abort_requested {
-                        running.control.abort();
-                        running.abort_requested = true;
-                    }
-                    true
-                } else {
-                    false
-                };
                 write_rpc_response(
                     writer,
                     RpcResponse::success(
                         id,
                         "abort",
-                        Some(serde_json::json!({ "cancelled": cancelled })),
+                        Some(serde_json::json!({ "cancelled": false })),
                     ),
                 )
                 .await

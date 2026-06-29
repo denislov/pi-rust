@@ -30,17 +30,41 @@ use flow_service::FlowService;
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
+use session_log::id::{IdGenerator, SystemIdGenerator};
+use session_log::replay::TranscriptItem;
 use session_service::{FinalizedSessionWrite, SessionService};
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
-    session_service: SessionService,
+    persistence: SessionPersistence,
     runtime_service: RuntimeService,
     flow_service: FlowService,
     event_service: EventService,
     capability_service: CapabilityService,
     plugin_service: PluginService,
     active_operation: Option<String>,
+}
+
+#[derive(Debug)]
+enum SessionPersistence {
+    Persistent(SessionService),
+    NonPersistent(TransientSessionState),
+}
+
+#[derive(Debug)]
+struct TransientSessionState {
+    runtime_id: String,
+    transcript: Vec<TranscriptItem>,
+}
+
+impl TransientSessionState {
+    fn new() -> Self {
+        let mut ids = SystemIdGenerator;
+        Self {
+            runtime_id: format!("runtime_{}", ids.next_session_id()),
+            transcript: Vec::new(),
+        }
+    }
 }
 
 impl CodingAgentSession {
@@ -59,6 +83,17 @@ impl CodingAgentSession {
     ) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::open_or_create(&options)?;
         Self::from_services(session_service)
+    }
+
+    pub async fn non_persistent(
+        options: CodingAgentSessionOptions,
+    ) -> Result<Self, CodingSessionError> {
+        if options.session_id().is_some() || options.session_path().is_some() {
+            return Err(CodingSessionError::Input {
+                message: "non-persistent coding sessions do not accept a session id or path".into(),
+            });
+        }
+        Self::from_transient(TransientSessionState::new())
     }
 
     pub fn list(
@@ -82,7 +117,12 @@ impl CodingAgentSession {
             &self.flow_service,
             &self.plugin_service,
         );
-        self.session_service.view()
+        match &self.persistence {
+            SessionPersistence::Persistent(session_service) => session_service.view(),
+            SessionPersistence::NonPersistent(state) => CodingAgentSessionView {
+                session_id: state.runtime_id.clone(),
+            },
+        }
     }
 
     pub async fn prompt(
@@ -107,10 +147,22 @@ impl CodingAgentSession {
         });
 
         Ok(Self {
-            session_service,
+            persistence: SessionPersistence::Persistent(session_service),
             runtime_service: RuntimeService::new(),
             flow_service: FlowService::new(),
             event_service,
+            capability_service: CapabilityService::new(),
+            plugin_service: PluginService::new(),
+            active_operation: None,
+        })
+    }
+
+    fn from_transient(state: TransientSessionState) -> Result<Self, CodingSessionError> {
+        Ok(Self {
+            persistence: SessionPersistence::NonPersistent(state),
+            runtime_service: RuntimeService::new(),
+            flow_service: FlowService::new(),
+            event_service: EventService::new(),
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
             active_operation: None,
@@ -126,17 +178,9 @@ impl CodingAgentSession {
                 message: "prompt turn options do not include a runtime snapshot".into(),
             });
         }
-        let replay = self.session_service.replay()?;
-        let transaction = self.session_service.begin_prompt_transaction();
-        let operation_id = transaction.operation_id().to_owned();
-        let turn_id = transaction.turn_id().to_owned();
-        let mut context = PromptTurnContext::new(
-            PromptTurnIds::new(operation_id.clone(), turn_id.clone()),
-            options,
-        );
-        context.set_session_id(self.session_service.session_id().to_owned());
-        context.set_replay(replay);
-        context.set_transaction(transaction);
+        let mut context = self.prepare_prompt_context(options)?;
+        let operation_id = context.operation_id().to_owned();
+        let turn_id = context.turn_id().to_owned();
 
         self.event_service.emit(CodingAgentEvent::PromptStarted {
             operation_id,
@@ -163,6 +207,36 @@ impl CodingAgentSession {
         Ok(outcome)
     }
 
+    fn prepare_prompt_context(
+        &mut self,
+        options: PromptTurnOptions,
+    ) -> Result<PromptTurnContext, CodingSessionError> {
+        match &mut self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                let replay = session_service.replay()?;
+                let transaction = session_service.begin_prompt_transaction();
+                let operation_id = transaction.operation_id().to_owned();
+                let turn_id = transaction.turn_id().to_owned();
+                let mut context =
+                    PromptTurnContext::new(PromptTurnIds::new(operation_id, turn_id), options);
+                context.set_session_id(session_service.session_id().to_owned());
+                context.set_replay(replay);
+                context.set_transaction(transaction);
+                Ok(context)
+            }
+            SessionPersistence::NonPersistent(state) => {
+                let mut ids = SystemIdGenerator;
+                let mut context = PromptTurnContext::new(
+                    PromptTurnIds::new(ids.next_operation_id(), ids.next_turn_id()),
+                    options,
+                );
+                context
+                    .set_non_persistent_session(state.runtime_id.clone(), state.transcript.clone());
+                Ok(context)
+            }
+        }
+    }
+
     fn finalize_prompt_transaction(
         &mut self,
         context: &mut PromptTurnContext,
@@ -170,21 +244,30 @@ impl CodingAgentSession {
     ) -> Result<FinalizedSessionWrite, CodingSessionError> {
         let operation_id = context.operation_id().to_owned();
         let transaction = context.take_transaction();
-        match outcome {
-            PromptTurnOutcome::Success { .. } => {
-                self.session_service
-                    .commit_prompt_transaction(transaction, operation_id, None)
-            }
-            PromptTurnOutcome::Aborted { reason, .. } => self
-                .session_service
-                .abort_prompt_transaction(transaction, operation_id, reason.clone()),
-            PromptTurnOutcome::Failed { error, .. } => {
-                self.session_service.fail_prompt_transaction(
+        match &mut self.persistence {
+            SessionPersistence::Persistent(session_service) => match outcome {
+                PromptTurnOutcome::Success { .. } => {
+                    session_service.commit_prompt_transaction(transaction, operation_id, None)
+                }
+                PromptTurnOutcome::Aborted { reason, .. } => session_service
+                    .abort_prompt_transaction(transaction, operation_id, reason.clone()),
+                PromptTurnOutcome::Failed { error, .. } => session_service.fail_prompt_transaction(
                     transaction,
                     operation_id,
                     error.code(),
                     error.to_string(),
-                )
+                ),
+            },
+            SessionPersistence::NonPersistent(state) => {
+                if matches!(outcome, PromptTurnOutcome::Success { .. }) {
+                    state
+                        .transcript
+                        .extend(context.completed_transcript_items());
+                }
+                Ok(SessionService::skip_prompt_transaction(
+                    operation_id,
+                    "session persistence disabled",
+                ))
             }
         }
     }
@@ -230,6 +313,16 @@ impl CodingAgentSession {
                 operation_id: operation_id.clone(),
                 error: error.clone(),
             }),
+        }
+    }
+
+    #[cfg(test)]
+    fn persistent_session_service(&self) -> &SessionService {
+        match &self.persistence {
+            SessionPersistence::Persistent(session_service) => session_service,
+            SessionPersistence::NonPersistent(_) => {
+                panic!("expected persistent coding agent session")
+            }
         }
     }
 }
@@ -415,7 +508,7 @@ mod tests {
             1
         );
 
-        let replay = session.session_service.replay().unwrap();
+        let replay = session.persistent_session_service().replay().unwrap();
         assert!(matches!(
             replay.transcript.as_slice(),
             [
@@ -458,12 +551,120 @@ mod tests {
         assert!(error.to_string().contains("runtime snapshot"));
         assert!(
             session
-                .session_service
+                .persistent_session_service()
                 .replay()
                 .unwrap()
                 .transcript
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn non_persistent_constructor_does_not_create_session_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+
+        assert!(session.view().session_id.starts_with("runtime_sess_"));
+        assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
+    }
+
+    #[tokio::test]
+    async fn non_persistent_prompt_emits_skipped_write_before_completion() {
+        let api = "coding-session-non-persistent-prompt";
+        registry::register(api, Arc::new(FauxProvider::simple_text("transient answer")));
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let mut events = session.subscribe();
+
+        let outcome = session.prompt(prompt_options(api, "hello")).await.unwrap();
+
+        assert!(matches!(
+            &outcome,
+            PromptTurnOutcome::Success {
+                final_text,
+                session_id: None,
+                leaf_id: None,
+                ..
+            } if final_text == "transient answer"
+        ));
+        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert_event_order(
+            &emitted_events,
+            &["session_write_skipped", "prompt_completed"],
+        );
+        assert!(emitted_events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::SessionWriteSkipped { reason, .. }
+                if reason == "session persistence disabled"
+        )));
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn non_persistent_prompt_hydrates_owner_lifetime_transcript() {
+        let first_api = "coding-session-non-persistent-first";
+        registry::register(
+            first_api,
+            Arc::new(FauxProvider::simple_text("first answer")),
+        );
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+
+        session
+            .prompt(prompt_options(first_api, "first question"))
+            .await
+            .unwrap();
+        registry::unregister(first_api);
+
+        let second_api = "coding-session-non-persistent-second";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        registry::register(
+            second_api,
+            Arc::new(RecordingProvider::new(
+                Arc::clone(&contexts),
+                "second answer",
+            )),
+        );
+
+        session
+            .prompt(prompt_options(second_api, "second question"))
+            .await
+            .unwrap();
+
+        let contexts = contexts.lock().unwrap();
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].messages.len(), 3);
+        assert!(matches!(
+            &contexts[0].messages[0],
+            Message::User { content }
+                if content == &vec![ContentBlock::Text {
+                    text: "first question".into(),
+                    text_signature: None,
+                }]
+        ));
+        assert!(matches!(
+            &contexts[0].messages[1],
+            Message::Assistant { content }
+                if content == &vec![ContentBlock::Text {
+                    text: "first answer".into(),
+                    text_signature: None,
+                }]
+        ));
+        assert!(matches!(
+            &contexts[0].messages[2],
+            Message::User { content }
+                if content == &vec![ContentBlock::Text {
+                    text: "second question".into(),
+                    text_signature: None,
+                }]
+        ));
+        registry::unregister(second_api);
     }
 
     #[tokio::test]
@@ -506,7 +707,7 @@ mod tests {
         );
         assert!(
             session
-                .session_service
+                .persistent_session_service()
                 .replay()
                 .unwrap()
                 .diagnostics

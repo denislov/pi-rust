@@ -141,6 +141,48 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
     registry::unregister(api);
 }
 
+#[tokio::test]
+async fn rpc_disabled_session_prompt_uses_non_persistent_runtime_without_session_files() {
+    let dir = tempdir().unwrap();
+    let cwd = dir.path().join("project");
+    let sessions = dir.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-disabled-session";
+    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let mut session_options = SessionRunOptions::disabled(cwd);
+    session_options.session_dir = Some(sessions.clone());
+
+    let input = b"{\"id\":\"p1\",\"type\":\"prompt\",\"message\":\"hello\"}\n\
+                  {\"id\":\"s1\",\"type\":\"get_state\"}\n";
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = String::from_utf8_lossy(&output)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(lines.iter().any(|line| line["type"] == "agent_end"));
+    let state = lines
+        .iter()
+        .find(|line| line["type"] == "response" && line["command"] == "get_state")
+        .expect("get_state response after prompt");
+    assert_eq!(state["data"]["sessionId"], "in-memory");
+    assert!(state["data"]["sessionFile"].is_null());
+    assert!(collect_native_session_dirs(&sessions).is_empty());
+    registry::unregister(api);
+}
+
 fn collect_native_session_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
     collect_native_session_dirs_inner(root, &mut dirs);

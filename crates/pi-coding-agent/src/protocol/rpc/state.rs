@@ -1,12 +1,10 @@
-use crate::protocol::events::ProtocolEventAdapter;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
-use crate::protocol::session_runner::{SessionPromptAbortHandle, SessionPromptResult};
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::CodingAgentEvent,
     coding_session::CodingAgentSession, coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::session::StoredAgentMessage;
-use pi_agent_core::{AgentEvent, QueueMode, ThinkingLevel};
+use pi_agent_core::{QueueMode, ThinkingLevel};
 use pi_ai::types::Model;
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
@@ -32,17 +30,7 @@ pub(super) struct RpcState {
 }
 
 pub(super) enum RunningPrompt {
-    Legacy(LegacyRunningPrompt),
     Coding(CodingRunningPrompt),
-}
-
-pub(super) struct LegacyRunningPrompt {
-    pub(super) control: SessionPromptAbortHandle,
-    pub(super) events: mpsc::UnboundedReceiver<AgentEvent>,
-    pub(super) done: oneshot::Receiver<Result<SessionPromptResult, CliError>>,
-    pub(super) adapter: ProtocolEventAdapter,
-    pub(super) abort_requested: bool,
-    pub(super) events_closed: bool,
 }
 
 pub(super) struct CodingRunningPrompt {
@@ -54,7 +42,7 @@ pub(super) struct CodingRunningPrompt {
 
 pub(super) struct CodingPromptTaskResult {
     pub(super) session: CodingAgentSession,
-    pub(super) session_root: PathBuf,
+    pub(super) session_root: Option<PathBuf>,
     pub(super) outcome: Result<PromptTurnOutcome, CliError>,
 }
 

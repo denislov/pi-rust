@@ -210,21 +210,36 @@ fn load_resources(ctx: &mut PromptTurnContext) -> Result<Action, String> {
 }
 
 fn open_session(ctx: &mut PromptTurnContext) -> Result<Action, String> {
+    if ctx.session_id().is_some() {
+        if ctx.replay().is_none() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn cannot continue before session replay is loaded".into(),
+            }
+            .to_string());
+        }
+        if !ctx.has_active_transaction() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn cannot continue before a turn transaction is active".into(),
+            }
+            .to_string());
+        }
+        return default_action();
+    }
+
+    if ctx.non_persistent_runtime_id().is_some() {
+        if ctx.replay().is_none() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn cannot continue before non-persistent replay is loaded"
+                    .into(),
+            }
+            .to_string());
+        }
+        return default_action();
+    }
+
     if ctx.session_id().is_none() {
         return Err(CodingSessionError::Session {
             message: "prompt turn cannot continue before a session is opened".into(),
-        }
-        .to_string());
-    }
-    if ctx.replay().is_none() {
-        return Err(CodingSessionError::Session {
-            message: "prompt turn cannot continue before session replay is loaded".into(),
-        }
-        .to_string());
-    }
-    if !ctx.has_active_transaction() {
-        return Err(CodingSessionError::Session {
-            message: "prompt turn cannot continue before a turn transaction is active".into(),
         }
         .to_string());
     }
@@ -302,25 +317,38 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
         }
         .to_string());
     }
-    if ctx.session_id().is_none() {
-        return Err(CodingSessionError::Session {
-            message: "prompt turn cannot finalize before a session is opened".into(),
+
+    if ctx.session_id().is_some() {
+        if ctx.replay().is_none() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn cannot finalize before session replay is loaded".into(),
+            }
+            .to_string());
         }
-        .to_string());
-    }
-    if ctx.replay().is_none() {
-        return Err(CodingSessionError::Session {
-            message: "prompt turn cannot finalize before session replay is loaded".into(),
+        if !ctx.has_active_transaction() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn cannot finalize before a turn transaction is active".into(),
+            }
+            .to_string());
         }
-        .to_string());
+        return default_action();
     }
-    if !ctx.has_active_transaction() {
-        return Err(CodingSessionError::Session {
-            message: "prompt turn cannot finalize before a turn transaction is active".into(),
+
+    if ctx.non_persistent_runtime_id().is_some() {
+        if ctx.replay().is_none() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn cannot finalize before non-persistent replay is loaded"
+                    .into(),
+            }
+            .to_string());
         }
-        .to_string());
+        return default_action();
     }
-    default_action()
+
+    return Err(CodingSessionError::Session {
+        message: "prompt turn cannot finalize before a session is opened".into(),
+    }
+    .to_string());
 }
 
 fn emit_completion(ctx: &mut PromptTurnContext) -> Result<Action, String> {

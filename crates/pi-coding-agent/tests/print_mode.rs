@@ -131,6 +131,44 @@ async fn prints_single_turn_text_response() {
 }
 
 #[tokio::test]
+async fn disabled_session_print_uses_non_persistent_runtime_without_session_files() {
+    let api = "pi-coding-print-disabled-session";
+    registry::register(api, Arc::new(FauxProvider::simple_text("No files")));
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let output = run_print_mode(PrintModeOptions {
+        prompt: "hi".into(),
+        model: faux_model(api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Disabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("hi".into()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(output, "No files");
+    assert!(!sessions_dir.exists());
+    registry::unregister(api);
+}
+
+#[tokio::test]
 async fn treats_length_as_successful_final_text() {
     let api = "pi-coding-print-length";
     registry::register(
