@@ -1,3 +1,5 @@
+mod coding_session;
+
 pub mod args;
 pub mod config;
 pub mod error;
@@ -31,6 +33,12 @@ pub use tools::builtin_tools;
 /// should prefer this module for APIs that are intended to stay stable.
 pub mod api {
     pub use crate::args::{CliArgs, CliMode, help_text, parse_args};
+    pub use crate::coding_session::{
+        CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver, CodingAgentSession,
+        CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
+        CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError, PromptTurnMode,
+        PromptTurnOptions, PromptTurnOutcome,
+    };
     pub use crate::error::CliError;
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};
     pub use crate::protocol::session_runner::{

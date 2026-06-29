@@ -119,3 +119,37 @@ async fn json_mode_emits_tool_execution_events() {
     );
     registry::unregister(api);
 }
+
+#[tokio::test]
+async fn json_mode_maps_provider_failure_to_error_output() {
+    let api = "pi-coding-json-error";
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
+            responses: vec![FauxResponse {
+                text_deltas: Vec::new(),
+                thinking_deltas: Vec::new(),
+                tool_calls: Vec::new(),
+            }],
+            stop_reason: StopReason::Error,
+        }])),
+    );
+
+    let output = run_cli_with_options(
+        vec!["--mode".to_string(), "json".to_string(), "fail".to_string()],
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 1);
+    assert!(output.stderr.contains("LLM error"));
+    let lines = json_lines(&output.stdout);
+    assert!(lines.iter().any(|line| line["type"] == "agent_start"));
+    assert!(lines.iter().any(|line| line["type"] == "agent_end"));
+    registry::unregister(api);
+}

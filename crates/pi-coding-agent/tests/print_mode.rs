@@ -2,7 +2,10 @@ use pi_agent_core::{AgentTool, AgentToolOutput};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::registry;
 use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
-use pi_coding_agent::{CliError, PrintModeOptions, PromptInvocation, run_print_mode};
+use pi_coding_agent::{
+    CliError, PrintModeOptions, PromptInvocation, ResolvedSessionTarget, SessionMode,
+    SessionRunOptions, run_print_mode,
+};
 use std::sync::Arc;
 
 fn faux_model(api: &str) -> Model {
@@ -209,5 +212,55 @@ async fn supports_tool_call_loop_with_injected_tool() {
     .unwrap();
 
     assert_eq!(output, "Tool completed");
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn explicit_new_session_writes_rust_native_session_events() {
+    let api = "pi-coding-print-rust-native-new-session";
+    registry::register(api, Arc::new(FauxProvider::simple_text("Generated")));
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let output = run_print_mode(PrintModeOptions {
+        prompt: "hi".into(),
+        model: faux_model(api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: Some(ResolvedSessionTarget::New),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("hi".into()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(output, "Generated");
+
+    let session_dirs = std::fs::read_dir(&sessions_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    assert_eq!(session_dirs.len(), 1);
+    assert!(session_dirs[0].join("session.json").is_file());
+    let events = std::fs::read_to_string(session_dirs[0].join("events.jsonl")).unwrap();
+    assert!(events.contains(r#""kind":"session.created""#));
+    assert!(events.contains(r#""kind":"operation.committed""#));
+    assert!(events.contains(r#""kind":"message.completed""#));
+    assert!(!events.contains(r#""type":"session""#));
     registry::unregister(api);
 }

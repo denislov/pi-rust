@@ -1,3 +1,4 @@
+use crate::coding_session::CodingAgentEvent;
 use crate::protocol::types::{
     CompactionProtocolResult, CompactionReason, ProtocolEvent, ToolExecutionResult,
 };
@@ -245,6 +246,276 @@ impl ProtocolEventAdapter {
     }
 }
 
+pub struct CodingProtocolEventAdapter {
+    api: String,
+    provider: String,
+    model: String,
+    messages: Vec<StoredAgentMessage>,
+    current_assistant: Option<AssistantMessage>,
+    current_tool_results: Vec<StoredAgentMessage>,
+    assistant_open: bool,
+}
+
+impl CodingProtocolEventAdapter {
+    pub fn new_with_provider(api: String, provider: String, model: String) -> Self {
+        Self {
+            api,
+            provider,
+            model,
+            messages: Vec::new(),
+            current_assistant: None,
+            current_tool_results: Vec::new(),
+            assistant_open: false,
+        }
+    }
+
+    pub fn push(&mut self, event: &CodingAgentEvent) -> Vec<ProtocolEvent> {
+        match event {
+            CodingAgentEvent::AgentTurnStarted { .. } => {
+                let mut events = self.finish_current_turn();
+                events.push(ProtocolEvent::TurnStart);
+                events
+            }
+            CodingAgentEvent::ProviderRequestStarted {
+                provider, model, ..
+            } => {
+                self.provider = provider.clone();
+                self.model = model.clone();
+                Vec::new()
+            }
+            CodingAgentEvent::AssistantMessageStarted { .. } => {
+                let message = self.ensure_assistant();
+                self.assistant_open = true;
+                vec![ProtocolEvent::MessageStart {
+                    message: stored_assistant(&message),
+                }]
+            }
+            CodingAgentEvent::AssistantMessageDelta { text, .. } => {
+                let message = self.append_assistant_text(text);
+                let mut events = Vec::new();
+                if !self.assistant_open {
+                    self.assistant_open = true;
+                    events.push(ProtocolEvent::MessageStart {
+                        message: stored_assistant(&message),
+                    });
+                }
+                events.push(ProtocolEvent::MessageUpdate {
+                    message: stored_assistant(&message),
+                    assistant_message_event: AssistantMessageEvent::TextDelta {
+                        content_index: 0,
+                        delta: text.clone(),
+                        partial: message,
+                    },
+                });
+                events
+            }
+            CodingAgentEvent::AssistantMessageCompleted { final_text, .. } => {
+                let message = self.assistant_message(final_text);
+                let mut events = Vec::new();
+                if !self.assistant_open {
+                    self.assistant_open = true;
+                    events.push(ProtocolEvent::MessageStart {
+                        message: stored_assistant(&message),
+                    });
+                }
+                self.current_assistant = Some(message);
+                events
+            }
+            CodingAgentEvent::ToolCallStarted {
+                tool_call_id,
+                name,
+                arguments_json,
+                ..
+            } => vec![ProtocolEvent::ToolExecutionStart {
+                tool_call_id: tool_call_id.clone(),
+                tool_name: name.clone(),
+                args: serde_json::from_str(arguments_json).unwrap_or(serde_json::Value::Null),
+            }],
+            CodingAgentEvent::ToolCallUpdated {
+                tool_call_id,
+                name,
+                message,
+                ..
+            } => vec![ProtocolEvent::ToolExecutionUpdate {
+                tool_call_id: tool_call_id.clone(),
+                tool_name: name.clone(),
+                result: ToolExecutionResult {
+                    content: text_content(message),
+                    terminate: false,
+                    details: None,
+                },
+            }],
+            CodingAgentEvent::ToolCallCompleted {
+                tool_call_id,
+                name,
+                summary,
+                ..
+            } => self.push_tool_result(tool_call_id, name, summary, false),
+            CodingAgentEvent::ToolCallFailed {
+                tool_call_id,
+                name,
+                message,
+                ..
+            } => self.push_tool_result(tool_call_id, name, message, true),
+            CodingAgentEvent::RuntimeCompactionCompleted {
+                summary,
+                first_kept_message_id,
+                tokens_before,
+                ..
+            } => vec![
+                ProtocolEvent::CompactionStart {
+                    reason: CompactionReason::Threshold,
+                },
+                ProtocolEvent::CompactionEnd {
+                    reason: CompactionReason::Threshold,
+                    result: Some(CompactionProtocolResult {
+                        summary: summary.clone(),
+                        first_kept_message_id: first_kept_message_id.clone(),
+                        tokens_before: *tokens_before,
+                        details: None,
+                    }),
+                    aborted: false,
+                    will_retry: false,
+                    error_message: None,
+                },
+            ],
+            CodingAgentEvent::PromptCompleted { .. } => {
+                let mut events = self.finish_current_turn();
+                events.push(ProtocolEvent::AgentEnd {
+                    messages: self.messages.clone(),
+                });
+                events
+            }
+            CodingAgentEvent::PromptFailed { error, .. } => {
+                self.push_prompt_failed_message(&error.to_string())
+            }
+            CodingAgentEvent::PromptAborted { reason, .. } => {
+                self.push_prompt_failed_message(reason)
+            }
+            CodingAgentEvent::SessionOpened { .. }
+            | CodingAgentEvent::SessionWritePending { .. }
+            | CodingAgentEvent::SessionWriteCommitted { .. }
+            | CodingAgentEvent::SessionWriteSkipped { .. }
+            | CodingAgentEvent::PromptStarted { .. }
+            | CodingAgentEvent::Diagnostic { .. }
+            | CodingAgentEvent::CapabilityChanged => Vec::new(),
+        }
+    }
+
+    fn ensure_assistant(&mut self) -> AssistantMessage {
+        if self.current_assistant.is_none() {
+            self.current_assistant = Some(self.assistant_message(""));
+        }
+        self.current_assistant
+            .clone()
+            .expect("assistant was inserted when missing")
+    }
+
+    fn append_assistant_text(&mut self, text: &str) -> AssistantMessage {
+        let mut message = self.ensure_assistant();
+        append_text_content(&mut message, text);
+        self.current_assistant = Some(message.clone());
+        message
+    }
+
+    fn assistant_message(&self, text: &str) -> AssistantMessage {
+        let mut message = AssistantMessage::empty(&self.api, &self.model);
+        if !self.provider.is_empty() {
+            message.provider = Some(self.provider.clone());
+        }
+        if !text.is_empty() {
+            message.content = text_content(text);
+        }
+        message
+    }
+
+    fn push_tool_result(
+        &mut self,
+        tool_call_id: &str,
+        tool_name: &str,
+        text: &str,
+        is_error: bool,
+    ) -> Vec<ProtocolEvent> {
+        let content = text_content(text);
+        let tool_result = StoredAgentMessage::ToolResult {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            content: content.clone(),
+            is_error,
+            timestamp: 0,
+        };
+        self.current_tool_results.push(tool_result.clone());
+
+        vec![
+            ProtocolEvent::ToolExecutionEnd {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                result: ToolExecutionResult {
+                    content,
+                    terminate: false,
+                    details: None,
+                },
+                is_error,
+            },
+            ProtocolEvent::MessageStart {
+                message: tool_result.clone(),
+            },
+            ProtocolEvent::MessageEnd {
+                message: tool_result,
+            },
+        ]
+    }
+
+    fn push_prompt_failed_message(&mut self, error: &str) -> Vec<ProtocolEvent> {
+        let message = stored_error_assistant(&self.api, &self.provider, &self.model, error);
+        self.messages.push(message.clone());
+        vec![
+            ProtocolEvent::MessageStart {
+                message: message.clone(),
+            },
+            ProtocolEvent::MessageEnd {
+                message: message.clone(),
+            },
+            ProtocolEvent::TurnEnd {
+                message,
+                tool_results: Vec::new(),
+            },
+            ProtocolEvent::AgentEnd {
+                messages: self.messages.clone(),
+            },
+        ]
+    }
+
+    fn finish_current_turn(&mut self) -> Vec<ProtocolEvent> {
+        let Some(message) = self.current_assistant.take() else {
+            return Vec::new();
+        };
+
+        let stored = stored_assistant(&message);
+        if !self.messages.contains(&stored) {
+            self.messages.push(stored.clone());
+        }
+        for tool_result in &self.current_tool_results {
+            if !self.messages.contains(tool_result) {
+                self.messages.push(tool_result.clone());
+            }
+        }
+
+        let events = vec![
+            ProtocolEvent::MessageEnd {
+                message: stored.clone(),
+            },
+            ProtocolEvent::TurnEnd {
+                message: stored,
+                tool_results: self.current_tool_results.clone(),
+            },
+        ];
+        self.current_tool_results.clear();
+        self.assistant_open = false;
+        events
+    }
+}
+
 fn assistant_event_partial(event: &AssistantMessageEvent) -> Option<&AssistantMessage> {
     match event {
         AssistantMessageEvent::Start { partial, .. }
@@ -259,6 +530,27 @@ fn assistant_event_partial(event: &AssistantMessageEvent) -> Option<&AssistantMe
         | AssistantMessageEvent::ToolcallEnd { partial, .. } => Some(partial),
         AssistantMessageEvent::Done { message, .. }
         | AssistantMessageEvent::Error { message, .. } => Some(message),
+    }
+}
+
+fn append_text_content(message: &mut AssistantMessage, text: &str) {
+    match message.content.last_mut() {
+        Some(ContentBlock::Text { text: existing, .. }) => existing.push_str(text),
+        _ => message.content.push(ContentBlock::Text {
+            text: text.to_string(),
+            text_signature: None,
+        }),
+    }
+}
+
+fn text_content(text: &str) -> Vec<ContentBlock> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![ContentBlock::Text {
+            text: text.to_string(),
+            text_signature: None,
+        }]
     }
 }
 

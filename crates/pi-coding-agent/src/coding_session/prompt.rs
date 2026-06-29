@@ -1,0 +1,1101 @@
+#![allow(dead_code)]
+
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::path::Path;
+
+use pi_agent_core::{
+    Agent, AgentEvent, AgentResources, AgentTool, AgentToolResult, ThinkingLevel, ToolExecutionMode,
+};
+use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Model};
+
+use crate::args::CliMode;
+use crate::config::Settings;
+use crate::protocol::session_runner::{SessionPromptOptions, assistant_text};
+use crate::request::ResolvedPromptRequest;
+use crate::runtime::{PromptInvocation, SessionRunOptions};
+use crate::session::ResolvedSessionTarget;
+
+use super::CodingSessionError;
+use super::event::CodingAgentEvent;
+use super::event_service::{AgentEventMappingContext, map_agent_event};
+use super::session_log::event::{
+    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
+    SessionEventEnvelope,
+};
+use super::session_log::id::{SystemClock, SystemIdGenerator};
+use super::session_log::replay::SessionReplay;
+use super::session_log::store::{SessionHandle, SessionLogStore};
+use super::session_log::transaction::TurnTransaction;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptTurnMode {
+    Print,
+    Json,
+    Rpc,
+}
+
+impl From<CliMode> for PromptTurnMode {
+    fn from(mode: CliMode) -> Self {
+        match mode {
+            CliMode::Print => Self::Print,
+            CliMode::Json => Self::Json,
+            CliMode::Rpc => Self::Rpc,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PromptTurnOptions {
+    invocation: PromptInvocation,
+    mode: PromptTurnMode,
+    session_target: Option<ResolvedSessionTarget>,
+    session_name: Option<String>,
+    runtime: Option<RuntimeSnapshot>,
+}
+
+impl PromptTurnOptions {
+    pub fn new(invocation: PromptInvocation) -> Self {
+        Self {
+            invocation,
+            mode: PromptTurnMode::Print,
+            session_target: None,
+            session_name: None,
+            runtime: None,
+        }
+    }
+
+    pub fn with_mode(mut self, mode: PromptTurnMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    pub fn with_session_target(mut self, target: ResolvedSessionTarget) -> Self {
+        self.session_target = Some(target);
+        self
+    }
+
+    pub fn with_session_name(mut self, name: impl Into<String>) -> Self {
+        self.session_name = Some(name.into());
+        self
+    }
+
+    pub fn invocation(&self) -> &PromptInvocation {
+        &self.invocation
+    }
+
+    pub fn mode(&self) -> PromptTurnMode {
+        self.mode
+    }
+
+    pub fn session_target(&self) -> Option<&ResolvedSessionTarget> {
+        self.session_target.as_ref()
+    }
+
+    pub fn session_name(&self) -> Option<&str> {
+        self.session_name.as_deref()
+    }
+
+    pub(crate) fn from_session_prompt_options(options: SessionPromptOptions) -> Self {
+        let invocation = options.invocation.clone();
+        let session_target = options.session_target.clone();
+        let session_name = options.session_name.clone();
+        let runtime = RuntimeSnapshot::from_session_prompt_options(options);
+        Self {
+            invocation,
+            mode: PromptTurnMode::Print,
+            session_target,
+            session_name,
+            runtime: Some(runtime),
+        }
+    }
+
+    pub(crate) fn runtime(&self) -> Option<&RuntimeSnapshot> {
+        self.runtime.as_ref()
+    }
+}
+
+impl TryFrom<&ResolvedPromptRequest> for PromptTurnOptions {
+    type Error = Infallible;
+
+    fn try_from(request: &ResolvedPromptRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            invocation: request.invocation.clone(),
+            mode: request.context.parsed.mode.into(),
+            session_target: request.context.session_target.clone(),
+            session_name: request.context.session_name.clone(),
+            runtime: None,
+        })
+    }
+}
+
+impl TryFrom<ResolvedPromptRequest> for PromptTurnOptions {
+    type Error = Infallible;
+
+    fn try_from(request: ResolvedPromptRequest) -> Result<Self, Self::Error> {
+        let mut options = PromptTurnOptions::try_from(&request)?;
+        options.runtime = Some(RuntimeSnapshot::from_session_prompt_options(
+            request.session_options,
+        ));
+        Ok(options)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodingDiagnosticSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingDiagnostic {
+    pub severity: CodingDiagnosticSeverity,
+    pub message: String,
+    pub source: Option<std::path::PathBuf>,
+    pub code: Option<String>,
+}
+
+impl CodingDiagnostic {
+    pub fn info(message: impl Into<String>) -> Self {
+        Self {
+            severity: CodingDiagnosticSeverity::Info,
+            message: message.into(),
+            source: None,
+            code: None,
+        }
+    }
+
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self {
+            severity: CodingDiagnosticSeverity::Warning,
+            message: message.into(),
+            source: None,
+            code: None,
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            severity: CodingDiagnosticSeverity::Error,
+            message: message.into(),
+            source: None,
+            code: None,
+        }
+    }
+
+    pub fn with_source(mut self, source: impl AsRef<Path>) -> Self {
+        self.source = Some(source.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromptTurnOutcome {
+    Success {
+        operation_id: String,
+        turn_id: String,
+        session_id: Option<String>,
+        leaf_id: Option<String>,
+        final_text: String,
+        final_message: AssistantMessage,
+        diagnostics: Vec<CodingDiagnostic>,
+    },
+    Aborted {
+        operation_id: String,
+        turn_id: Option<String>,
+        reason: String,
+        session_id: Option<String>,
+    },
+    Failed {
+        operation_id: String,
+        turn_id: Option<String>,
+        error: CodingSessionError,
+        diagnostics: Vec<CodingDiagnostic>,
+    },
+}
+
+pub(crate) type PromptTurnTransaction = TurnTransaction<SystemIdGenerator, SystemClock>;
+
+#[derive(Debug, Clone)]
+pub(crate) struct AgentRunObservation {
+    event: AgentEvent,
+    coding_events: Vec<CodingAgentEvent>,
+}
+
+impl AgentRunObservation {
+    pub(crate) fn event(&self) -> &AgentEvent {
+        &self.event
+    }
+
+    pub(crate) fn coding_events(&self) -> &[CodingAgentEvent] {
+        &self.coding_events
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeSnapshot {
+    model: Model,
+    api_key: Option<String>,
+    system_prompt: Option<String>,
+    max_turns: Option<u32>,
+    tools: Vec<AgentTool>,
+    register_builtins: bool,
+    resources: AgentResources,
+    settings: Option<Settings>,
+    thinking_level: Option<ThinkingLevel>,
+    tool_execution: Option<ToolExecutionMode>,
+    session_run_options: Option<SessionRunOptions>,
+}
+
+impl std::fmt::Debug for RuntimeSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeSnapshot")
+            .field("model", &self.model)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("system_prompt", &self.system_prompt)
+            .field("max_turns", &self.max_turns)
+            .field("tools_len", &self.tools.len())
+            .field("register_builtins", &self.register_builtins)
+            .field("resources", &self.resources)
+            .field("settings", &self.settings)
+            .field("thinking_level", &self.thinking_level)
+            .field("tool_execution", &self.tool_execution)
+            .field("session_run_options", &self.session_run_options)
+            .finish()
+    }
+}
+
+impl RuntimeSnapshot {
+    pub(crate) fn from_session_prompt_options(options: SessionPromptOptions) -> Self {
+        let SessionPromptOptions {
+            prompt: _,
+            model,
+            api_key,
+            system_prompt,
+            max_turns,
+            tools,
+            register_builtins,
+            session,
+            session_target: _,
+            session_name: _,
+            thinking_level,
+            tool_execution,
+            resources,
+            settings,
+            invocation: _,
+        } = options;
+
+        Self {
+            model,
+            api_key,
+            system_prompt,
+            max_turns,
+            tools,
+            register_builtins,
+            resources,
+            settings,
+            thinking_level,
+            tool_execution,
+            session_run_options: session,
+        }
+    }
+
+    pub(crate) fn model(&self) -> &Model {
+        &self.model
+    }
+
+    pub(crate) fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
+    }
+
+    pub(crate) fn system_prompt(&self) -> Option<&str> {
+        self.system_prompt.as_deref()
+    }
+
+    pub(crate) fn max_turns(&self) -> Option<u32> {
+        self.max_turns
+    }
+
+    pub(crate) fn tools(&self) -> &[AgentTool] {
+        &self.tools
+    }
+
+    pub(crate) fn register_builtins(&self) -> bool {
+        self.register_builtins
+    }
+
+    pub(crate) fn resources(&self) -> &AgentResources {
+        &self.resources
+    }
+
+    pub(crate) fn settings(&self) -> Option<&Settings> {
+        self.settings.as_ref()
+    }
+
+    pub(crate) fn thinking_level(&self) -> Option<ThinkingLevel> {
+        self.thinking_level
+    }
+
+    pub(crate) fn tool_execution(&self) -> Option<ToolExecutionMode> {
+        self.tool_execution
+    }
+
+    pub(crate) fn session_run_options(&self) -> Option<&SessionRunOptions> {
+        self.session_run_options.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromptTurnIds {
+    operation_id: String,
+    turn_id: String,
+}
+
+impl PromptTurnIds {
+    pub(crate) fn new(operation_id: impl Into<String>, turn_id: impl Into<String>) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            turn_id: turn_id.into(),
+        }
+    }
+}
+
+pub(crate) struct PromptTurnContext {
+    ids: PromptTurnIds,
+    options: PromptTurnOptions,
+    runtime: Option<RuntimeSnapshot>,
+    prepared_input: Option<Vec<PersistedContentBlock>>,
+    loaded_resources: Option<AgentResources>,
+    replay: Option<SessionReplay>,
+    session_id: Option<String>,
+    agent: Option<Agent>,
+    transaction: Option<PromptTurnTransaction>,
+    final_message: Option<AssistantMessage>,
+    agent_observations: Vec<AgentRunObservation>,
+    coding_events: Vec<CodingAgentEvent>,
+    assistant_session_message_id: Option<String>,
+    assistant_session_delta_seen: bool,
+    tool_session_call_ids: HashMap<String, String>,
+    diagnostics: Vec<CodingDiagnostic>,
+}
+
+impl PromptTurnContext {
+    pub(crate) fn new(ids: PromptTurnIds, options: PromptTurnOptions) -> Self {
+        Self {
+            ids,
+            options,
+            runtime: None,
+            prepared_input: None,
+            loaded_resources: None,
+            replay: None,
+            session_id: None,
+            agent: None,
+            transaction: None,
+            final_message: None,
+            agent_observations: Vec::new(),
+            coding_events: Vec::new(),
+            assistant_session_message_id: None,
+            assistant_session_delta_seen: false,
+            tool_session_call_ids: HashMap::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub(crate) fn from_resolved_request(
+        ids: PromptTurnIds,
+        request: ResolvedPromptRequest,
+    ) -> Result<Self, CodingSessionError> {
+        let options = PromptTurnOptions::try_from(request).map_err(|error| match error {})?;
+        Ok(Self::new(ids, options))
+    }
+
+    pub(crate) fn operation_id(&self) -> &str {
+        &self.ids.operation_id
+    }
+
+    pub(crate) fn turn_id(&self) -> &str {
+        &self.ids.turn_id
+    }
+
+    pub(crate) fn options(&self) -> &PromptTurnOptions {
+        &self.options
+    }
+
+    pub(crate) fn set_runtime(&mut self, runtime: RuntimeSnapshot) {
+        self.runtime = Some(runtime);
+    }
+
+    pub(crate) fn resolve_runtime_from_options(&mut self) -> Result<(), CodingSessionError> {
+        if self.runtime.is_some() {
+            return Ok(());
+        }
+        let runtime =
+            self.options
+                .runtime()
+                .cloned()
+                .ok_or_else(|| CodingSessionError::Config {
+                    message: "prompt turn options do not include a runtime snapshot".into(),
+                })?;
+        self.set_runtime(runtime);
+        Ok(())
+    }
+
+    pub(crate) fn runtime(&self) -> Option<&RuntimeSnapshot> {
+        self.runtime.as_ref()
+    }
+
+    pub(crate) fn prepare_input(&mut self) -> Result<(), CodingSessionError> {
+        if self.prepared_input.is_some() {
+            return Ok(());
+        }
+        self.prepared_input = Some(persisted_content_blocks_from_invocation(
+            self.options.invocation(),
+        )?);
+        Ok(())
+    }
+
+    pub(crate) fn prepared_input(&self) -> Option<&[PersistedContentBlock]> {
+        self.prepared_input.as_deref()
+    }
+
+    pub(crate) fn load_resources_from_runtime(&mut self) -> Result<(), CodingSessionError> {
+        if self.loaded_resources.is_some() {
+            return Ok(());
+        }
+        let resources = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| CodingSessionError::Config {
+                message: "prompt turn cannot load resources without a runtime snapshot".into(),
+            })?
+            .resources()
+            .clone();
+        self.loaded_resources = Some(resources);
+        Ok(())
+    }
+
+    pub(crate) fn loaded_resources(&self) -> Option<&AgentResources> {
+        self.loaded_resources.as_ref()
+    }
+
+    pub(crate) fn set_replay(&mut self, replay: SessionReplay) {
+        self.replay = Some(replay);
+    }
+
+    pub(crate) fn replay(&self) -> Option<&SessionReplay> {
+        self.replay.as_ref()
+    }
+
+    pub(crate) fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    pub(crate) fn set_session_id(&mut self, session_id: impl Into<String>) {
+        self.session_id = Some(session_id.into());
+    }
+
+    pub(crate) fn set_agent(&mut self, agent: Agent) {
+        self.agent = Some(agent);
+    }
+
+    pub(crate) fn agent(&self) -> Option<&Agent> {
+        self.agent.as_ref()
+    }
+
+    pub(crate) fn begin_transaction(
+        &mut self,
+        store: &SessionLogStore,
+        handle: SessionHandle,
+    ) -> Result<(), CodingSessionError> {
+        if self.transaction.is_some() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn already has an active transaction".into(),
+            });
+        }
+        self.session_id = Some(handle.manifest().session_id.clone());
+        self.transaction = Some(TurnTransaction::begin(
+            store,
+            handle,
+            SystemIdGenerator,
+            SystemClock,
+            OperationKind::Prompt,
+        ));
+        Ok(())
+    }
+
+    pub(crate) fn set_transaction(&mut self, transaction: PromptTurnTransaction) {
+        self.transaction = Some(transaction);
+    }
+
+    pub(crate) fn transaction_mut(&mut self) -> Option<&mut PromptTurnTransaction> {
+        self.transaction.as_mut()
+    }
+
+    pub(crate) fn commit_transaction(
+        &mut self,
+        new_leaf_id: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.commit(new_leaf_id)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn fail_transaction(
+        &mut self,
+        error_code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<(), CodingSessionError> {
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.fail(error_code, message)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn pending_session_events(&self) -> &[SessionEventEnvelope] {
+        self.transaction
+            .as_ref()
+            .map(TurnTransaction::pending_events)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn record_user_input(&mut self) -> Result<(), CodingSessionError> {
+        let content = self
+            .prepared_input
+            .clone()
+            .ok_or_else(|| CodingSessionError::Session {
+                message: "prompt turn input has not been prepared".into(),
+            })?;
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.record_user_input(content)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn record_diagnostic(&mut self, diagnostic: CodingDiagnostic) {
+        self.diagnostics.push(diagnostic);
+    }
+
+    pub(crate) fn diagnostics(&self) -> &[CodingDiagnostic] {
+        &self.diagnostics
+    }
+
+    pub(crate) fn record_final_message(&mut self, message: AssistantMessage) {
+        self.final_message = Some(message);
+    }
+
+    pub(crate) fn final_message(&self) -> Option<&AssistantMessage> {
+        self.final_message.as_ref()
+    }
+
+    pub(crate) fn record_agent_event(
+        &mut self,
+        event: AgentEvent,
+    ) -> Result<Vec<CodingAgentEvent>, CodingSessionError> {
+        let mapping_context = AgentEventMappingContext::new(
+            self.operation_id().to_owned(),
+            self.turn_id().to_owned(),
+        );
+        let coding_events = map_agent_event(&mapping_context, &event);
+        self.record_agent_event_to_transaction(&event)?;
+        self.coding_events.extend(coding_events.clone());
+        self.agent_observations.push(AgentRunObservation {
+            event,
+            coding_events: coding_events.clone(),
+        });
+        Ok(coding_events)
+    }
+
+    pub(crate) fn agent_observations(&self) -> &[AgentRunObservation] {
+        &self.agent_observations
+    }
+
+    pub(crate) fn coding_events(&self) -> &[CodingAgentEvent] {
+        &self.coding_events
+    }
+
+    pub(crate) fn record_prompt_completed(&mut self) -> Result<(), CodingSessionError> {
+        if self.final_message.is_none() {
+            return Err(CodingSessionError::Session {
+                message: "prompt turn cannot emit completion without a final assistant message"
+                    .into(),
+            });
+        }
+
+        if self.coding_events.iter().any(|event| {
+            matches!(
+                event,
+                CodingAgentEvent::PromptCompleted {
+                    operation_id,
+                    turn_id,
+                } if operation_id == self.operation_id() && turn_id == self.turn_id()
+            )
+        }) {
+            return Ok(());
+        }
+
+        self.coding_events.push(CodingAgentEvent::PromptCompleted {
+            operation_id: self.operation_id().to_owned(),
+            turn_id: self.turn_id().to_owned(),
+        });
+        Ok(())
+    }
+
+    fn record_agent_event_to_transaction(
+        &mut self,
+        event: &AgentEvent,
+    ) -> Result<(), CodingSessionError> {
+        if self.transaction.is_none() {
+            return Ok(());
+        }
+
+        match event {
+            AgentEvent::LlmEvent(event) => self.record_assistant_event_to_transaction(event),
+            AgentEvent::ToolCallStart {
+                tool_call_id,
+                tool_name,
+                arguments,
+                ..
+            } => {
+                self.ensure_tool_session_call_started(tool_call_id, tool_name, Some(arguments))?;
+                Ok(())
+            }
+            AgentEvent::ToolCallUpdate {
+                tool_call_id,
+                tool_name,
+                update,
+            } => {
+                let session_tool_call_id =
+                    self.ensure_tool_session_call_started(tool_call_id, tool_name, None)?;
+                let message = content_blocks_text(&update.content);
+                self.transaction_mut_required()?
+                    .record_tool_updated(session_tool_call_id, message)
+            }
+            AgentEvent::ToolCallEnd {
+                tool_call_id,
+                tool_name,
+                result,
+            } => self.record_tool_result_to_transaction(tool_call_id, tool_name, result),
+            AgentEvent::AgentDone { message } => {
+                let message_id = self.ensure_assistant_session_message_started()?;
+                if !self.assistant_session_delta_seen {
+                    let final_text = assistant_text(message);
+                    if !final_text.is_empty() {
+                        self.transaction_mut_required()?
+                            .append_assistant_delta(&message_id, final_text)?;
+                        self.assistant_session_delta_seen = true;
+                    }
+                }
+                self.transaction_mut_required()?
+                    .complete_assistant_message(message_id, stop_reason_string(message))
+            }
+            AgentEvent::AgentError { error } => self
+                .transaction_mut_required()?
+                .emit_diagnostic(DiagnosticLevel::Error, error.clone()),
+            AgentEvent::TurnStart { .. }
+            | AgentEvent::BeforeProviderRequest { .. }
+            | AgentEvent::SessionCompacted { .. } => Ok(()),
+        }
+    }
+
+    fn record_assistant_event_to_transaction(
+        &mut self,
+        event: &AssistantMessageEvent,
+    ) -> Result<(), CodingSessionError> {
+        match event {
+            AssistantMessageEvent::Start { .. } | AssistantMessageEvent::TextStart { .. } => {
+                self.ensure_assistant_session_message_started()?;
+                Ok(())
+            }
+            AssistantMessageEvent::TextDelta { delta, .. } => {
+                let message_id = self.ensure_assistant_session_message_started()?;
+                self.transaction_mut_required()?
+                    .append_assistant_delta(message_id, delta.clone())?;
+                self.assistant_session_delta_seen = true;
+                Ok(())
+            }
+            AssistantMessageEvent::Error { message, .. } => {
+                self.transaction_mut_required()?.emit_diagnostic(
+                    DiagnosticLevel::Error,
+                    message
+                        .error_message
+                        .clone()
+                        .unwrap_or_else(|| "assistant stream failed".into()),
+                )
+            }
+            AssistantMessageEvent::Done { .. }
+            | AssistantMessageEvent::TextEnd { .. }
+            | AssistantMessageEvent::ThinkingStart { .. }
+            | AssistantMessageEvent::ThinkingDelta { .. }
+            | AssistantMessageEvent::ThinkingEnd { .. }
+            | AssistantMessageEvent::ToolcallStart { .. }
+            | AssistantMessageEvent::ToolcallDelta { .. }
+            | AssistantMessageEvent::ToolcallEnd { .. } => Ok(()),
+        }
+    }
+
+    fn record_tool_result_to_transaction(
+        &mut self,
+        agent_tool_call_id: &str,
+        tool_name: &str,
+        result: &AgentToolResult,
+    ) -> Result<(), CodingSessionError> {
+        let session_tool_call_id =
+            self.ensure_tool_session_call_started(agent_tool_call_id, tool_name, None)?;
+        self.tool_session_call_ids.remove(agent_tool_call_id);
+        if result.is_error {
+            self.transaction_mut_required()?
+                .record_tool_failed(session_tool_call_id, content_blocks_text(&result.content))
+        } else {
+            self.transaction_mut_required()?
+                .record_tool_completed(session_tool_call_id, persisted_tool_result(&result.content))
+        }
+    }
+
+    fn ensure_assistant_session_message_started(&mut self) -> Result<String, CodingSessionError> {
+        if let Some(message_id) = &self.assistant_session_message_id {
+            return Ok(message_id.clone());
+        }
+        let message_id = self.transaction_mut_required()?.start_assistant_message()?;
+        self.assistant_session_message_id = Some(message_id.clone());
+        Ok(message_id)
+    }
+
+    fn ensure_tool_session_call_started(
+        &mut self,
+        agent_tool_call_id: &str,
+        tool_name: &str,
+        arguments: Option<&serde_json::Value>,
+    ) -> Result<String, CodingSessionError> {
+        if let Some(tool_call_id) = self.tool_session_call_ids.get(agent_tool_call_id) {
+            return Ok(tool_call_id.clone());
+        }
+        let arguments = arguments.cloned().unwrap_or_else(|| serde_json::json!({}));
+        let tool_call_id = self
+            .transaction_mut_required()?
+            .record_tool_started(tool_name, arguments)?;
+        self.tool_session_call_ids
+            .insert(agent_tool_call_id.to_owned(), tool_call_id.clone());
+        Ok(tool_call_id)
+    }
+
+    fn transaction_mut_required(
+        &mut self,
+    ) -> Result<&mut PromptTurnTransaction, CodingSessionError> {
+        self.transaction
+            .as_mut()
+            .ok_or_else(|| CodingSessionError::Session {
+                message: "prompt turn has no active transaction".into(),
+            })
+    }
+
+    pub(crate) fn finish_success(
+        &self,
+        session_id: Option<String>,
+        leaf_id: Option<String>,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        let final_message =
+            self.final_message
+                .clone()
+                .ok_or_else(|| CodingSessionError::Session {
+                    message: "prompt turn cannot finish successfully without a final message"
+                        .into(),
+                })?;
+        Ok(PromptTurnOutcome::Success {
+            operation_id: self.operation_id().to_owned(),
+            turn_id: self.turn_id().to_owned(),
+            session_id,
+            leaf_id,
+            final_text: assistant_text(&final_message),
+            final_message,
+            diagnostics: self.diagnostics.clone(),
+        })
+    }
+
+    pub(crate) fn finish_abort(
+        &self,
+        reason: impl Into<String>,
+        session_id: Option<String>,
+    ) -> PromptTurnOutcome {
+        PromptTurnOutcome::Aborted {
+            operation_id: self.operation_id().to_owned(),
+            turn_id: Some(self.turn_id().to_owned()),
+            reason: reason.into(),
+            session_id,
+        }
+    }
+
+    pub(crate) fn finish_failure(&self, error: CodingSessionError) -> PromptTurnOutcome {
+        PromptTurnOutcome::Failed {
+            operation_id: self.operation_id().to_owned(),
+            turn_id: Some(self.turn_id().to_owned()),
+            error,
+            diagnostics: self.diagnostics.clone(),
+        }
+    }
+}
+
+fn stop_reason_string(message: &AssistantMessage) -> Option<String> {
+    serde_json::to_value(&message.stop_reason)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+}
+
+fn persisted_tool_result(content: &[ContentBlock]) -> PersistedToolResult {
+    PersistedToolResult::Text {
+        text: content_blocks_text(content),
+    }
+}
+
+fn persisted_content_blocks_from_invocation(
+    invocation: &PromptInvocation,
+) -> Result<Vec<PersistedContentBlock>, CodingSessionError> {
+    match invocation {
+        PromptInvocation::Text(text) if !text.is_empty() => {
+            Ok(vec![PersistedContentBlock::Text { text: text.clone() }])
+        }
+        PromptInvocation::Text(_) => Err(CodingSessionError::Input {
+            message: "prompt turn requires non-empty text input".into(),
+        }),
+        PromptInvocation::Content(content) if !content.is_empty() => {
+            Ok(content.iter().map(persisted_content_block).collect())
+        }
+        PromptInvocation::Content(_) => Err(CodingSessionError::Input {
+            message: "prompt turn requires non-empty content input".into(),
+        }),
+        PromptInvocation::Skill {
+            name,
+            additional_instructions,
+        } => {
+            let text = match additional_instructions {
+                Some(instructions) if !instructions.is_empty() => {
+                    format!("skill:{name}\n{instructions}")
+                }
+                _ => format!("skill:{name}"),
+            };
+            Ok(vec![PersistedContentBlock::Text { text }])
+        }
+        PromptInvocation::PromptTemplate { name, args } => {
+            let text = if args.is_empty() {
+                format!("prompt_template:{name}")
+            } else {
+                format!("prompt_template:{name}\n{}", args.join("\n"))
+            };
+            Ok(vec![PersistedContentBlock::Text { text }])
+        }
+        PromptInvocation::Compact { .. } => Err(CodingSessionError::UnsupportedCapability {
+            capability: "manual compaction in PromptTurnFlow".into(),
+        }),
+    }
+}
+
+fn persisted_content_block(content: &ContentBlock) -> PersistedContentBlock {
+    match content {
+        ContentBlock::Text { text, .. } => PersistedContentBlock::Text { text: text.clone() },
+        ContentBlock::Image { mime_type, data } => PersistedContentBlock::Image {
+            mime_type: mime_type.clone(),
+            data: data.clone(),
+        },
+        ContentBlock::Thinking { thinking, .. } => PersistedContentBlock::Text {
+            text: thinking.clone(),
+        },
+        ContentBlock::ToolCall {
+            name, arguments, ..
+        } => PersistedContentBlock::Text {
+            text: format!("[tool_call:{name} {arguments}]"),
+        },
+    }
+}
+
+fn content_blocks_text(content: &[ContentBlock]) -> String {
+    content
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text { text, .. } => text.clone(),
+            ContentBlock::Thinking { thinking, .. } => thinking.clone(),
+            ContentBlock::Image { mime_type, .. } => format!("[image:{mime_type}]"),
+            ContentBlock::ToolCall { name, .. } => format!("[tool_call:{name}]"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use pi_agent_core::{AgentResources, ToolExecutionMode};
+    use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
+
+    use super::*;
+    use crate::runtime::{SessionMode, SessionRunOptions};
+
+    fn model() -> Model {
+        Model {
+            id: "test-model".into(),
+            name: "Test Model".into(),
+            api: "messages".into(),
+            provider: "test".into(),
+            base_url: String::new(),
+            reasoning: false,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost {
+                input: 0.0,
+                output: 0.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+            context_window: 0,
+            max_tokens: 0,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    fn session_prompt_options() -> SessionPromptOptions {
+        SessionPromptOptions {
+            prompt: "hello".into(),
+            model: model(),
+            api_key: Some("key".into()),
+            system_prompt: Some("system".into()),
+            max_turns: Some(3),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: Some(SessionRunOptions {
+                mode: SessionMode::Enabled,
+                cwd: ".".into(),
+                session_dir: Some("sessions".into()),
+            }),
+            session_target: Some(ResolvedSessionTarget::New),
+            session_name: Some("test".into()),
+            thinking_level: None,
+            tool_execution: Some(ToolExecutionMode::Sequential),
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text("hello".into()),
+        }
+    }
+
+    #[test]
+    fn prompt_turn_options_tracks_invocation_mode_and_session_metadata() {
+        let options = PromptTurnOptions::new(PromptInvocation::Text("hello".into()))
+            .with_mode(PromptTurnMode::Json)
+            .with_session_target(ResolvedSessionTarget::New)
+            .with_session_name("named");
+
+        assert!(matches!(
+            options.invocation(),
+            PromptInvocation::Text(text) if text == "hello"
+        ));
+        assert_eq!(options.mode(), PromptTurnMode::Json);
+        assert!(matches!(
+            options.session_target(),
+            Some(ResolvedSessionTarget::New)
+        ));
+        assert_eq!(options.session_name(), Some("named"));
+    }
+
+    #[test]
+    fn runtime_snapshot_moves_existing_session_prompt_runtime_inputs() {
+        let snapshot = RuntimeSnapshot::from_session_prompt_options(session_prompt_options());
+
+        assert_eq!(snapshot.model().id, "test-model");
+        assert_eq!(snapshot.api_key(), Some("key"));
+        assert_eq!(snapshot.system_prompt(), Some("system"));
+        assert_eq!(snapshot.max_turns(), Some(3));
+        assert!(snapshot.tools().is_empty());
+        assert!(!snapshot.register_builtins());
+        assert!(snapshot.resources().is_empty());
+        assert!(snapshot.settings().is_none());
+        assert_eq!(snapshot.thinking_level(), None);
+        assert_eq!(
+            snapshot.tool_execution(),
+            Some(ToolExecutionMode::Sequential)
+        );
+        assert!(matches!(
+            snapshot.session_run_options().map(|options| &options.mode),
+            Some(SessionMode::Enabled)
+        ));
+    }
+
+    #[test]
+    fn prompt_turn_context_records_diagnostics_and_success_outcome() {
+        let mut context = PromptTurnContext::new(
+            PromptTurnIds::new("op_1", "turn_1"),
+            PromptTurnOptions::new(PromptInvocation::Text("hello".into())),
+        );
+        context.record_diagnostic(CodingDiagnostic::info("prepared"));
+        let mut message = AssistantMessage::empty("messages", "test-model");
+        message.content.push(ContentBlock::Text {
+            text: "hi".into(),
+            text_signature: None,
+        });
+        context.record_final_message(message.clone());
+
+        let outcome = context
+            .finish_success(Some("sess_1".into()), Some("leaf_1".into()))
+            .unwrap();
+
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.final_message(), Some(&message));
+        assert_eq!(
+            outcome,
+            PromptTurnOutcome::Success {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                session_id: Some("sess_1".into()),
+                leaf_id: Some("leaf_1".into()),
+                final_text: "hi".into(),
+                final_message: message,
+                diagnostics: vec![CodingDiagnostic::info("prepared")],
+            }
+        );
+    }
+
+    #[test]
+    fn prompt_turn_context_requires_final_message_for_success() {
+        let context = PromptTurnContext::new(
+            PromptTurnIds::new("op_1", "turn_1"),
+            PromptTurnOptions::new(PromptInvocation::Text("hello".into())),
+        );
+
+        let error = context.finish_success(None, None).unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot finish successfully without a final message")
+        );
+    }
+
+    #[test]
+    fn prompt_turn_context_builds_failure_outcome_with_diagnostics() {
+        let mut context = PromptTurnContext::new(
+            PromptTurnIds::new("op_1", "turn_1"),
+            PromptTurnOptions::new(PromptInvocation::Text("hello".into())),
+        );
+        context.record_diagnostic(CodingDiagnostic::error("provider failed"));
+
+        let outcome = context.finish_failure(CodingSessionError::Provider {
+            message: "stream failed".into(),
+        });
+
+        assert_eq!(
+            outcome,
+            PromptTurnOutcome::Failed {
+                operation_id: "op_1".into(),
+                turn_id: Some("turn_1".into()),
+                error: CodingSessionError::Provider {
+                    message: "stream failed".into(),
+                },
+                diagnostics: vec![CodingDiagnostic::error("provider failed")],
+            }
+        );
+    }
+}

@@ -1,4 +1,5 @@
-use crate::protocol::events::ProtocolEventAdapter;
+use crate::coding_session::{AgentEventMappingContext, CodingAgentEvent, map_agent_event};
+use crate::protocol::events::CodingProtocolEventAdapter;
 use crate::protocol::jsonl::serialize_json_line;
 use crate::protocol::session_runner::{SessionPromptOptions, run_session_prompt};
 use crate::protocol::types::ProtocolEvent;
@@ -40,7 +41,10 @@ pub async fn run_json_mode(options: SessionPromptOptions) -> CliOutput {
         }
     }
 
-    let mut adapter = ProtocolEventAdapter::new_with_provider(
+    let operation_id = "json_prompt".to_string();
+    let turn_id = "json_turn".to_string();
+    let mapping_context = AgentEventMappingContext::new(operation_id.clone(), turn_id.clone());
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
         options.model.api.clone(),
         options.model.provider.clone(),
         options.model.id.clone(),
@@ -48,11 +52,8 @@ pub async fn run_json_mode(options: SessionPromptOptions) -> CliOutput {
     let run = run_session_prompt(
         options,
         Some(&mut |event| {
-            for protocol_event in adapter.push(event) {
-                stdout.push_str(
-                    &serialize_json_line(&protocol_event)
-                        .map_err(|error| CliError::AgentFailure(error.to_string()))?,
-                );
+            for coding_event in map_agent_event(&mapping_context, event) {
+                push_coding_protocol_events(&mut stdout, &mut adapter, &coding_event)?;
             }
             Ok(())
         }),
@@ -60,15 +61,42 @@ pub async fn run_json_mode(options: SessionPromptOptions) -> CliOutput {
     .await;
 
     match run {
-        Ok(_) => CliOutput {
-            exit_code: 0,
-            stdout,
-            stderr: String::new(),
-        },
+        Ok(_) => {
+            let completed = CodingAgentEvent::PromptCompleted {
+                operation_id,
+                turn_id,
+            };
+            if let Err(error) = push_coding_protocol_events(&mut stdout, &mut adapter, &completed) {
+                return CliOutput {
+                    exit_code: 1,
+                    stdout,
+                    stderr: format!("{error}\n"),
+                };
+            }
+            CliOutput {
+                exit_code: 0,
+                stdout,
+                stderr: String::new(),
+            }
+        }
         Err(error) => CliOutput {
             exit_code: 1,
             stdout,
             stderr: format!("{error}\n"),
         },
     }
+}
+
+fn push_coding_protocol_events(
+    stdout: &mut String,
+    adapter: &mut CodingProtocolEventAdapter,
+    event: &CodingAgentEvent,
+) -> Result<(), CliError> {
+    for protocol_event in adapter.push(event) {
+        stdout.push_str(
+            &serialize_json_line(&protocol_event)
+                .map_err(|error| CliError::AgentFailure(error.to_string()))?,
+        );
+    }
+    Ok(())
 }

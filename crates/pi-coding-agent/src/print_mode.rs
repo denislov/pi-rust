@@ -1,9 +1,13 @@
 use crate::CliError;
+use crate::coding_session::{
+    CodingAgentSession, CodingAgentSessionOptions, PromptTurnOptions, PromptTurnOutcome,
+};
 use crate::protocol::session_runner::{SessionPromptOptions, assistant_text, run_session_prompt};
-use crate::runtime::{PromptInvocation, SessionRunOptions};
-use crate::session::ResolvedSessionTarget;
+use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
+use crate::session::{ResolvedSessionTarget, resolve_session_dir};
 use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
 use pi_ai::types::Model;
+use std::path::PathBuf;
 
 pub struct PrintModeOptions {
     pub prompt: String,
@@ -68,26 +72,79 @@ impl From<SessionPromptOptions> for PrintModeOptions {
 }
 
 pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliError> {
-    let result = run_session_prompt(
-        SessionPromptOptions {
-            prompt: options.prompt,
-            model: options.model,
-            api_key: options.api_key,
-            system_prompt: options.system_prompt,
-            max_turns: options.max_turns,
-            tools: options.tools,
-            register_builtins: options.register_builtins,
-            session: options.session,
-            session_target: options.session_target,
-            session_name: options.session_name,
-            thinking_level: options.thinking_level,
-            tool_execution: options.tool_execution,
-            resources: options.resources,
-            settings: options.settings,
-            invocation: options.invocation,
-        },
-        None,
-    )
-    .await?;
-    Ok(assistant_text(&result.final_message))
+    let options = session_prompt_options_from_print_options(options);
+    match run_print_mode_with_coding_session(options).await? {
+        PrintModeRoute::Handled(text) => Ok(text),
+        PrintModeRoute::Legacy(options) => {
+            let result = run_session_prompt(options, None).await?;
+            Ok(assistant_text(&result.final_message))
+        }
+    }
+}
+
+fn session_prompt_options_from_print_options(options: PrintModeOptions) -> SessionPromptOptions {
+    SessionPromptOptions {
+        prompt: options.prompt,
+        model: options.model,
+        api_key: options.api_key,
+        system_prompt: options.system_prompt,
+        max_turns: options.max_turns,
+        tools: options.tools,
+        register_builtins: options.register_builtins,
+        session: options.session,
+        session_target: options.session_target,
+        session_name: options.session_name,
+        thinking_level: options.thinking_level,
+        tool_execution: options.tool_execution,
+        resources: options.resources,
+        settings: options.settings,
+        invocation: options.invocation,
+    }
+}
+
+async fn run_print_mode_with_coding_session(
+    options: SessionPromptOptions,
+) -> Result<PrintModeRoute, CliError> {
+    let Some(session_options) = options.session.as_ref() else {
+        return Ok(PrintModeRoute::Legacy(options));
+    };
+    if !matches!(session_options.mode, SessionMode::Enabled) {
+        return Ok(PrintModeRoute::Legacy(options));
+    }
+
+    match options.session_target.as_ref() {
+        Some(ResolvedSessionTarget::New) => {}
+        _ => return Ok(PrintModeRoute::Legacy(options)),
+    }
+
+    let session_root = print_coding_session_root(session_options)?;
+    let session_options = CodingAgentSessionOptions::new().with_session_log_root(session_root);
+
+    let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
+    let mut session = CodingAgentSession::create(session_options).await?;
+
+    let outcome = session.prompt(prompt_options).await?;
+    Ok(PrintModeRoute::Handled(print_text_from_prompt_outcome(
+        outcome,
+    )?))
+}
+
+fn print_coding_session_root(options: &SessionRunOptions) -> Result<PathBuf, CliError> {
+    match options.session_dir.as_ref() {
+        Some(root) => Ok(root.clone()),
+        None => resolve_session_dir(&options.cwd, None, None),
+    }
+}
+
+fn print_text_from_prompt_outcome(outcome: PromptTurnOutcome) -> Result<String, CliError> {
+    match outcome {
+        PromptTurnOutcome::Success { final_text, .. } => Ok(final_text),
+        PromptTurnOutcome::Aborted { reason, .. } => Err(CliError::SessionFailure(reason)),
+        PromptTurnOutcome::Failed { error, .. } => Err(CliError::from(error)),
+    }
+}
+
+enum PrintModeRoute {
+    Handled(String),
+    Legacy(SessionPromptOptions),
 }

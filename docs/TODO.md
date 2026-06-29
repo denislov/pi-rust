@@ -36,8 +36,8 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [x] Design the Flow-centered runtime architecture.
 - [x] Write the implementation plan.
 - [x] Write detailed phase implementation guides.
-- [ ] Implement Phase 1: `CodingAgentSession` skeleton and Rust-native session log.
-- [ ] Implement Phase 2: `PromptTurnFlow` on headless/json path.
+- [x] Implement Phase 1: `CodingAgentSession` skeleton and Rust-native session log. Product runtime shell/API boundary, typed session log schema, filesystem store, turn transactions, owner create/open persistence, and replay/fold transcript support are in place.
+- [~] Implement Phase 2: `PromptTurnFlow` on headless/json path. Prompt turn options/outcome/context, runtime snapshot boundary, real graph with stable node IDs, AgentEvent-to-product-event mapping, real PrepareInput/ResolveRuntime/LoadResources/BuildAgentRuntime/RecordUserInput/RunAgentTurn/FinalizeTurn/EmitCompletion nodes, pending agent-output event recording through TurnTransaction, `CodingAgentSession::prompt()` for runtime-backed options, completed user/assistant/tool-call replay hydration, Rust-native session open-or-create/list groundwork, explicit `New` print-session routing, and JSON protocol rendering through `CodingAgentEvent` are in place; adapter request resolution and CLI session-target print routing remain.
 - [ ] Implement Phase 3: converge CLI/RPC/interactive adapters.
 - [ ] Implement Phase 4: introduce `AgentTurnFlow` in `pi-agent-core`.
 - [ ] Implement Phase 5: plugin kernel on session/flow boundaries.
@@ -47,40 +47,40 @@ Do not let this file become historical fiction. If implementation changes the pl
 
 Guide: [Phase 1](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 
-- [ ] Add `crates/pi-coding-agent/src/coding_session/` module shell.
-- [ ] Export `CodingAgentSession` and `CodingAgentEvent` through `pi_coding_agent::api`.
-- [ ] Add `CodingSessionError` typed product error boundary.
-- [ ] Add base `CodingAgentEvent`.
-- [ ] Add `EventService`.
-- [ ] Add Rust-native session manifest model.
-- [ ] Add typed `SessionEventEnvelope` and `SessionEventData`.
-- [ ] Add deterministic ID and clock test boundaries.
-- [ ] Add `SessionLogStore`.
-- [ ] Add `TurnTransaction`.
-- [ ] Add replay/fold transcript view.
-- [ ] Add `CodingAgentSession` owner skeleton.
-- [ ] Add Phase 1 tests.
-- [ ] Run Phase 1 focused checks.
+- [x] Add `crates/pi-coding-agent/src/coding_session/` module shell.
+- [x] Export `CodingAgentSession` and `CodingAgentEvent` through `pi_coding_agent::api`.
+- [x] Add `CodingSessionError` typed product error boundary.
+- [x] Add base `CodingAgentEvent`.
+- [x] Add `EventService`.
+- [x] Add Rust-native session manifest model.
+- [x] Add typed `SessionEventEnvelope` and `SessionEventData`.
+- [x] Add deterministic ID and clock test boundaries.
+- [x] Add `SessionLogStore`.
+- [x] Add `TurnTransaction`.
+- [x] Add replay/fold transcript view.
+- [x] Add `CodingAgentSession` owner skeleton.
+- [x] Add Phase 1 tests. Public API, coding session shell/error, owner create/open persistence, manifest round-trip, event JSON shape, stable event kind names, deterministic ID, fixed clock, tempdir-backed store, canonical event-log replay, and transaction commit/abort/fail/finalization coverage added.
+- [x] Run Phase 1 focused checks. `cargo fmt --check`, `cargo test -p pi-coding-agent coding_session`, `cargo test -p pi-coding-agent public_api`, `cargo check --workspace`, and `cargo test --workspace` pass for the completed Phase 1 slice.
 
 ## Phase 2: PromptTurnFlow on Headless/JSON
 
 Guide: [Phase 2](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
 
-- [ ] Add `PromptTurnOptions`.
-- [ ] Add `PromptTurnOutcome`.
-- [ ] Add `PromptTurnContext`.
-- [ ] Add `RuntimeSnapshot`.
-- [ ] Add `PromptTurnFlow` graph.
-- [ ] Add prompt flow nodes.
-- [ ] Map `AgentEvent` to `CodingAgentEvent`.
-- [ ] Add `RunAgentTurn` node using existing `Agent::run()`.
-- [ ] Record agent output into session events through `TurnTransaction`.
-- [ ] Add `CodingAgentSession::prompt()`.
-- [ ] Route print mode through `CodingAgentSession`.
-- [ ] Route JSON mode through `CodingAgentEvent`.
-- [ ] Keep old `session_runner` as transitional wrapper.
-- [ ] Add Phase 2 tests.
-- [ ] Run Phase 2 focused checks.
+- [x] Add `PromptTurnOptions`.
+- [x] Add `PromptTurnOutcome`.
+- [x] Add `PromptTurnContext`.
+- [x] Add `RuntimeSnapshot`.
+- [x] Add `PromptTurnFlow` graph.
+- [~] Add prompt flow nodes. Stable skeleton nodes exist for the Phase 2 graph boundaries; PrepareInput now normalizes/validates prompt invocation into prepared persisted input, ResolveRuntime owns runtime snapshot attachment from PromptTurnOptions into PromptTurnContext, LoadResources attaches the runtime resource snapshot into turn state before agent construction, BuildAgentRuntime builds the Agent from RuntimeSnapshot and hydrated replay only after resources are loaded, RecordUserInput records prepared prompt input, RunAgentTurn drives an existing Agent stream, FinalizeTurn commits successful transactions, and EmitCompletion appends the success completion product event from the graph. Request/session nodes still need full behavior.
+- [x] Map `AgentEvent` to `CodingAgentEvent`.
+- [x] Add `RunAgentTurn` node using existing `Agent::run()`.
+- [x] Record agent output into session events through `TurnTransaction`.
+- [x] Add `CodingAgentSession::prompt()`.
+- [~] Route print mode through `CodingAgentSession`. Explicit enabled `New` session targets now use `CodingAgentSession` and Rust-native session logs; Rust-native open-or-create/list APIs are in place for target conversion; no-session/default/continue/fork/open/open-or-create print paths stay on the old runner until adapter routing is changed.
+- [x] Route JSON mode through `CodingAgentEvent`.
+- [~] Keep old `session_runner` as transitional wrapper. It remains the execution source for unmigrated adapters and legacy print/session-target paths while explicit `New` print sessions and JSON rendering move onto `CodingAgentSession`/`CodingAgentEvent`.
+- [~] Add Phase 2 tests. Prompt turn option/outcome/context, runtime snapshot, graph path/node ID, misconfigured flow, FlowService, RuntimeService agent building and replay hydration, real PrepareInput normalization/error coverage, real ResolveRuntime attachment/error coverage, real LoadResources attachment/error coverage, real BuildAgentRuntime resource-precondition and replay hydration coverage, real EmitCompletion completion/idempotency/error coverage, AgentEvent mapping, RecordUserInput prepared-event recording, RunAgentTurn/faux-provider flow execution, pending assistant/tool session-event recording with tool arguments, `CodingAgentSession::prompt()` success/config-error/failure-event-deduplication with user+assistant replay and reopened-session provider-context hydration for prior user/assistant/tool result history, Rust-native session open-or-create/list coverage, public API smoke coverage, explicit print-mode Rust-native session-log coverage, direct `CodingAgentEvent` protocol adapter coverage, and JSON mode success/tool/failure coverage added.
+- [~] Run Phase 2 focused checks. `cargo fmt --check`, `cargo test -p pi-coding-agent coding_session`, `cargo test -p pi-coding-agent prompt_turn_flow`, `cargo test -p pi-coding-agent flow_service`, `cargo test -p pi-coding-agent run_agent_turn`, `cargo test -p pi-coding-agent runtime_service`, `cargo test -p pi-coding-agent public_api`, `cargo test -p pi-coding-agent --test print_mode`, `cargo test -p pi-coding-agent --test session_print_mode`, `cargo test -p pi-coding-agent --test session_cli`, `cargo test -p pi-coding-agent --test json_mode`, `cargo test -p pi-coding-agent --test protocol_events`, `cargo check --workspace`, and `cargo test --workspace` pass for the current Phase 2 type/context/graph/real-PrepareInput/real-ResolveRuntime/real-LoadResources/real-BuildAgentRuntime/event-mapping/RecordUserInput/RunAgentTurn/real-EmitCompletion/replay-hydration/tool-call-hydration/session-recording/session-prompt/session-open-or-create-list/explicit-print-session/json-event-adapter slice.
 
 ## Phase 3: Adapter Convergence
 
@@ -161,3 +161,26 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-29: Flow-centered runtime architecture design committed.
 - 2026-06-29: Flow-centered implementation plan committed.
 - 2026-06-29: Six phase implementation guides and interface review committed.
+- 2026-06-29: Phase 1 `CodingAgentSession` shell, product event/error boundary, EventService, API exports, and focused smoke tests added.
+- 2026-06-29: Phase 1 Rust-native session manifest, typed session event envelope/data, and deterministic ID/clock test boundaries added.
+- 2026-06-29: Phase 1 `SessionLogStore` added for Rust-native session directories, manifest I/O, JSONL event append/read, and manifest updates.
+- 2026-06-29: Phase 1 `TurnTransaction` added for typed operation event buffering, commit/abort/fail finalization, lifecycle cancellation, and post-commit active leaf updates.
+- 2026-06-29: Phase 1 replay and owner persistence boundary completed: `CodingAgentSession` create/open now use Rust-native session directories, create appends `session.created`, and `SessionLogStore` can replay canonical `events.jsonl` into a transcript.
+- 2026-06-29: Phase 1 focused checks passed: `cargo fmt --check`, `cargo test -p pi-coding-agent coding_session`, `cargo test -p pi-coding-agent public_api`, `cargo check --workspace`, and `cargo test --workspace`.
+- 2026-06-29: Phase 2 started with `PromptTurnOptions`, `PromptTurnOutcome`, `PromptTurnContext`, `RuntimeSnapshot`, coding-session unit tests, public API smoke coverage, and passing fmt/check/workspace tests for the slice.
+- 2026-06-29: Phase 2 `PromptTurnFlow` graph skeleton added with stable node IDs, no-op boundary nodes, FlowService construction/run entrypoints, graph-focused coding-session tests, and passing fmt/check/workspace tests for the slice.
+- 2026-06-29: Phase 2 AgentEvent-to-CodingAgentEvent mapping added for turn/provider/assistant/tool/error/compaction events, with EventService emission coverage and focused coding-session checks passing for the slice.
+- 2026-06-29: Phase 2 RunAgentTurn node now drives a staged Agent runtime with the existing Agent stream APIs, records final assistant messages and mapped product events in PromptTurnContext, and has faux-provider graph coverage.
+- 2026-06-29: Phase 2 RunAgentTurn now records assistant deltas/completion and tool lifecycle observations into pending Rust-native session events through TurnTransaction without flushing before FinalizeTurn.
+- 2026-06-29: Phase 2 `CodingAgentSession::prompt()` added for runtime-backed prompt options: RuntimeService builds Agent from RuntimeSnapshot, PromptTurnFlow runs through RunAgentTurn and FinalizeTurn, product events are emitted, and committed Rust-native session events replay successfully in focused tests.
+- 2026-06-29: Phase 2 print mode now routes explicit enabled `New` session targets through `CodingAgentSession`, writes Rust-native `session.json`/`events.jsonl`, and keeps legacy CLI session paths on `session_runner` until replay/target migration is ready.
+- 2026-06-29: Phase 2 JSON mode now renders protocol output from `CodingAgentEvent` via `CodingProtocolEventAdapter`, while the old runner remains the transitional execution source until full session ownership moves over.
+- 2026-06-29: Phase 2 RecordUserInput node now persists prompt input through TurnTransaction before RunAgentTurn; `CodingAgentSession::prompt()` replay now includes both user input and assistant output.
+- 2026-06-29: Phase 2 replay hydration now feeds completed Rust-native user/assistant transcript items into the Agent runtime before the next prompt; reopened-session tests verify prior context reaches the provider.
+- 2026-06-29: Phase 2 tool-call replay hydration now persists tool arguments in Rust-native `tool.call.started` events, folds them into transcript tool-call items, and restores completed/failed assistant tool-call plus tool-result groups before reopened-session prompts.
+- 2026-06-29: Phase 2 BuildAgentRuntime is now a real PromptTurnFlow node: `CodingAgentSession::prompt()` passes replay into context, the graph builds/hydrates the Agent from RuntimeSnapshot, and graph/service tests exercise the node-owned runtime boundary.
+- 2026-06-29: Phase 2 Rust-native session target groundwork added: `SessionLogStore` can try-open by explicit id and list native session manifests, `SessionService`/`CodingAgentSession` expose open-or-create plus list summaries, and public API smoke coverage verifies the new owner-level entrypoints.
+- 2026-06-29: Phase 2 ResolveRuntime is now a real PromptTurnFlow node: `PromptTurnContext` no longer eagerly carries runtime from options, the node attaches RuntimeSnapshot at the graph boundary, and focused tests cover successful attachment plus missing-runtime errors.
+- 2026-06-29: Phase 2 PrepareInput is now a real PromptTurnFlow node: prompt invocations are normalized into prepared persisted input before recording, RecordUserInput requires that prepared input, and focused tests cover normal text input, empty-input rejection, and misordered record-node execution.
+- 2026-06-29: Phase 2 LoadResources is now a real PromptTurnFlow node: the graph attaches the runtime `AgentResources` snapshot into turn state, BuildAgentRuntime now requires the resources stage, and focused tests cover successful resource loading, missing-runtime errors, and skipped-resource build failures.
+- 2026-06-29: Phase 2 EmitCompletion is now a real PromptTurnFlow node: successful graph runs append `PromptCompleted` through `PromptTurnContext`, owner-level outcome emission is a missing-event fallback, and focused tests cover completion emission, idempotency, and missing-final-message errors.

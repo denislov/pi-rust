@@ -1,6 +1,7 @@
 use pi_agent_core::{AgentToolOutput, AgentToolResult, session::StoredAgentMessage};
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
-use pi_coding_agent::protocol::events::ProtocolEventAdapter;
+use pi_coding_agent::api::CodingAgentEvent;
+use pi_coding_agent::protocol::events::{CodingProtocolEventAdapter, ProtocolEventAdapter};
 use pi_coding_agent::protocol::types::ProtocolEvent;
 
 fn assistant(text: &str) -> AssistantMessage {
@@ -200,4 +201,62 @@ fn adapter_maps_agent_error_to_error_assistant_with_provider() {
             ..
         } if provider == "faux-provider"
     )));
+}
+
+#[test]
+fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let mut events = Vec::new();
+    for event in [
+        CodingAgentEvent::AgentTurnStarted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            agent_turn: 1,
+        },
+        CodingAgentEvent::AssistantMessageStarted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            message_id: Some("msg_1".into()),
+        },
+        CodingAgentEvent::AssistantMessageDelta {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            message_id: Some("msg_1".into()),
+            text: "hello".into(),
+        },
+        CodingAgentEvent::AssistantMessageCompleted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            message_id: Some("msg_1".into()),
+            final_text: "hello".into(),
+        },
+        CodingAgentEvent::PromptCompleted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+        },
+    ] {
+        events.extend(adapter.push(&event));
+    }
+
+    assert!(matches!(events[0], ProtocolEvent::TurnStart));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ProtocolEvent::MessageUpdate { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ProtocolEvent::TurnEnd { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ProtocolEvent::AgentEnd { .. }))
+    );
 }
