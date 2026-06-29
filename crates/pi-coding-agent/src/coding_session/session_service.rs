@@ -11,7 +11,7 @@ use super::session_log::store::{
 };
 use super::session_log::transaction::TurnTransaction;
 use super::{
-    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
+    CodingAgentEvent, CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
     CodingSessionError,
 };
 
@@ -20,6 +20,13 @@ pub(crate) struct SessionService {
     #[allow(dead_code)]
     store: SessionLogStore,
     handle: SessionHandle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FinalizedSessionWrite {
+    pub(crate) events: Vec<CodingAgentEvent>,
+    pub(crate) session_id: Option<String>,
+    pub(crate) leaf_id: Option<String>,
 }
 
 impl SessionService {
@@ -96,6 +103,108 @@ impl SessionService {
         )
     }
 
+    pub(crate) fn commit_prompt_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        new_leaf_id: Option<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let fallback_operation_id = operation_id.into();
+        let Some(mut transaction) = transaction else {
+            return Ok(Self::skipped_write(
+                fallback_operation_id,
+                "no active prompt transaction",
+            ));
+        };
+
+        let operation_id = transaction.operation_id().to_owned();
+        let session_id = self.session_id().to_owned();
+        let mut events = vec![CodingAgentEvent::SessionWritePending {
+            operation_id: operation_id.clone(),
+        }];
+        transaction.commit(new_leaf_id.clone())?;
+        events.push(CodingAgentEvent::SessionWriteCommitted {
+            operation_id,
+            session_id: session_id.clone(),
+        });
+        Ok(FinalizedSessionWrite {
+            events,
+            session_id: Some(session_id),
+            leaf_id: new_leaf_id,
+        })
+    }
+
+    pub(crate) fn fail_prompt_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        error_code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let fallback_operation_id = operation_id.into();
+        let Some(mut transaction) = transaction else {
+            return Ok(Self::skipped_write(
+                fallback_operation_id,
+                "no active prompt transaction",
+            ));
+        };
+
+        let operation_id = transaction.operation_id().to_owned();
+        let session_id = self.session_id().to_owned();
+        let mut events = vec![CodingAgentEvent::SessionWritePending {
+            operation_id: operation_id.clone(),
+        }];
+        transaction.fail(error_code, message)?;
+        events.push(CodingAgentEvent::SessionWriteCommitted {
+            operation_id,
+            session_id: session_id.clone(),
+        });
+        Ok(FinalizedSessionWrite {
+            events,
+            session_id: Some(session_id),
+            leaf_id: None,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn abort_prompt_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let fallback_operation_id = operation_id.into();
+        let Some(mut transaction) = transaction else {
+            return Ok(Self::skipped_write(
+                fallback_operation_id,
+                "no active prompt transaction",
+            ));
+        };
+
+        let operation_id = transaction.operation_id().to_owned();
+        let session_id = self.session_id().to_owned();
+        let mut events = vec![CodingAgentEvent::SessionWritePending {
+            operation_id: operation_id.clone(),
+        }];
+        transaction.abort(reason)?;
+        events.push(CodingAgentEvent::SessionWriteCommitted {
+            operation_id,
+            session_id: session_id.clone(),
+        });
+        Ok(FinalizedSessionWrite {
+            events,
+            session_id: Some(session_id),
+            leaf_id: None,
+        })
+    }
+
+    pub(crate) fn skip_prompt_transaction(
+        operation_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> FinalizedSessionWrite {
+        Self::skipped_write(operation_id, reason)
+    }
+
     #[cfg(test)]
     pub(crate) fn session_dir(&self) -> &Path {
         self.handle.session_dir()
@@ -132,6 +241,20 @@ impl SessionService {
         store.append_events(&handle, &[created])?;
 
         Ok(Self { store, handle })
+    }
+
+    fn skipped_write(
+        operation_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> FinalizedSessionWrite {
+        FinalizedSessionWrite {
+            events: vec![CodingAgentEvent::SessionWriteSkipped {
+                operation_id: operation_id.into(),
+                reason: reason.into(),
+            }],
+            session_id: None,
+            leaf_id: None,
+        }
     }
 }
 
@@ -339,5 +462,100 @@ mod tests {
             error.to_string(),
             "invalid input: opening a coding session requires a session id or session path"
         );
+    }
+
+    #[test]
+    fn commit_prompt_transaction_emits_pending_and_committed_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_commit_prompt")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let mut transaction = service.begin_prompt_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+        transaction
+            .record_user_input(vec![
+                crate::coding_session::session_log::event::PersistedContentBlock::Text {
+                    text: "hello".into(),
+                },
+            ])
+            .unwrap();
+
+        let finalized = service
+            .commit_prompt_transaction(Some(transaction), operation_id.clone(), None)
+            .unwrap();
+
+        assert_eq!(
+            finalized.events,
+            vec![
+                CodingAgentEvent::SessionWritePending {
+                    operation_id: operation_id.clone(),
+                },
+                CodingAgentEvent::SessionWriteCommitted {
+                    operation_id: operation_id.clone(),
+                    session_id: "sess_commit_prompt".into(),
+                },
+            ]
+        );
+        assert_eq!(finalized.session_id.as_deref(), Some("sess_commit_prompt"));
+        assert!(finalized.leaf_id.is_none());
+        let replay = service.replay().unwrap();
+        assert_eq!(replay.transcript.len(), 1);
+    }
+
+    #[test]
+    fn fail_prompt_transaction_emits_pending_and_committed_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fail_prompt")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let transaction = service.begin_prompt_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+
+        let finalized = service
+            .fail_prompt_transaction(
+                Some(transaction),
+                operation_id.clone(),
+                "provider",
+                "stream failed",
+            )
+            .unwrap();
+
+        assert_eq!(
+            finalized.events,
+            vec![
+                CodingAgentEvent::SessionWritePending {
+                    operation_id: operation_id.clone(),
+                },
+                CodingAgentEvent::SessionWriteCommitted {
+                    operation_id: operation_id.clone(),
+                    session_id: "sess_fail_prompt".into(),
+                },
+            ]
+        );
+        let replay = service.replay().unwrap();
+        assert!(
+            replay
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("stream failed"))
+        );
+    }
+
+    #[test]
+    fn skip_prompt_transaction_emits_skipped_event() {
+        let finalized =
+            SessionService::skip_prompt_transaction("op_skip", "no active prompt transaction");
+
+        assert_eq!(
+            finalized.events,
+            vec![CodingAgentEvent::SessionWriteSkipped {
+                operation_id: "op_skip".into(),
+                reason: "no active prompt transaction".into(),
+            }]
+        );
+        assert!(finalized.session_id.is_none());
+        assert!(finalized.leaf_id.is_none());
     }
 }

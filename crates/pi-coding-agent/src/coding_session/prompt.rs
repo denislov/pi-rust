@@ -583,25 +583,8 @@ impl PromptTurnContext {
         self.transaction.is_some()
     }
 
-    pub(crate) fn commit_transaction(
-        &mut self,
-        new_leaf_id: Option<String>,
-    ) -> Result<(), CodingSessionError> {
-        if let Some(transaction) = self.transaction.as_mut() {
-            transaction.commit(new_leaf_id)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn fail_transaction(
-        &mut self,
-        error_code: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Result<(), CodingSessionError> {
-        if let Some(transaction) = self.transaction.as_mut() {
-            transaction.fail(error_code, message)?;
-        }
-        Ok(())
+    pub(crate) fn take_transaction(&mut self) -> Option<PromptTurnTransaction> {
+        self.transaction.take()
     }
 
     pub(crate) fn pending_session_events(&self) -> &[SessionEventEnvelope] {

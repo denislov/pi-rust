@@ -34,10 +34,7 @@ impl FlowService {
                 let session_id = ctx.session_id().map(str::to_owned);
                 ctx.finish_success(session_id, None)
             }
-            Err(error) => {
-                ctx.fail_transaction(error.code(), error.to_string())?;
-                Ok(ctx.finish_failure(error))
-            }
+            Err(error) => Ok(ctx.finish_failure(error)),
         }
     }
 }

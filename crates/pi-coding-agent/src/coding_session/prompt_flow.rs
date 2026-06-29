@@ -302,8 +302,24 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
         }
         .to_string());
     }
-    ctx.commit_transaction(None)
-        .map_err(|error| error.to_string())?;
+    if ctx.session_id().is_none() {
+        return Err(CodingSessionError::Session {
+            message: "prompt turn cannot finalize before a session is opened".into(),
+        }
+        .to_string());
+    }
+    if ctx.replay().is_none() {
+        return Err(CodingSessionError::Session {
+            message: "prompt turn cannot finalize before session replay is loaded".into(),
+        }
+        .to_string());
+    }
+    if !ctx.has_active_transaction() {
+        return Err(CodingSessionError::Session {
+            message: "prompt turn cannot finalize before a turn transaction is active".into(),
+        }
+        .to_string());
+    }
     default_action()
 }
 
@@ -613,6 +629,16 @@ mod tests {
         flow
     }
 
+    fn finalize_turn_only_flow() -> Flow<PromptTurnContext> {
+        let mut flow = Flow::new("finalize_turn").unwrap();
+        flow.add_node(
+            "finalize_turn",
+            PromptTurnNode::new("FinalizeTurn", PromptTurnNodeKind::FinalizeTurn),
+        )
+        .unwrap();
+        flow
+    }
+
     #[tokio::test]
     async fn prompt_turn_flow_runs_skeleton_in_expected_order() {
         let api = "prompt-flow-skeleton";
@@ -888,6 +914,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn finalize_turn_node_validates_readiness_without_flushing_session_events() {
+        let flow = finalize_turn_only_flow();
+        let mut context = context();
+        let (_temp, store, handle) = attach_session_boundary(&mut context);
+        let mut message = AssistantMessage::empty("test", "test-model");
+        message.content.push(ContentBlock::Text {
+            text: "done".into(),
+            text_signature: None,
+        });
+        context.record_final_message(message);
+
+        flow.run(&mut context).await.unwrap();
+
+        assert_eq!(
+            session_event_kinds(&context),
+            vec!["operation.started", "turn.started"]
+        );
+        assert!(store.read_events(&handle).unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn run_agent_turn_records_final_message_and_coding_events() {
         let api = "prompt-flow-run-agent-turn";
         let flow = PromptTurnFlow::new().unwrap();
@@ -967,10 +1014,8 @@ mod tests {
 
         flow.run(&mut context).await.unwrap();
 
-        assert!(context.pending_session_events().is_empty());
-        let persisted = store.read_events(&handle).unwrap();
         assert_eq!(
-            event_kinds(&persisted),
+            session_event_kinds(&context),
             vec![
                 "operation.started",
                 "turn.started",
@@ -978,14 +1023,19 @@ mod tests {
                 "message.started",
                 "message.delta",
                 "message.completed",
-                "operation.committed",
             ]
         );
-        assert!(persisted.iter().any(|event| matches!(
-            &event.data,
-            SessionEventData::TurnInputRecorded { content }
-                if serde_json::to_value(content).unwrap()[0]["data"]["text"] == "hello"
-        )));
+        assert!(
+            context
+                .pending_session_events()
+                .iter()
+                .any(|event| matches!(
+                    &event.data,
+                    SessionEventData::TurnInputRecorded { content }
+                        if serde_json::to_value(content).unwrap()[0]["data"]["text"] == "hello"
+                ))
+        );
+        assert!(store.read_events(&handle).unwrap().is_empty());
         registry::unregister(api);
     }
 

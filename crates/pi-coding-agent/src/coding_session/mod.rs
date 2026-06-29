@@ -30,7 +30,7 @@ use flow_service::FlowService;
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
-use session_service::SessionService;
+use session_service::{FinalizedSessionWrite, SessionService};
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -142,23 +142,66 @@ impl CodingAgentSession {
             operation_id,
             turn_id,
         });
-        let outcome = self.flow_service.run_prompt_turn(&mut context).await?;
-        for event in context.coding_events() {
-            self.event_service.emit(event.clone());
-        }
-        self.emit_prompt_outcome_event_if_missing(&outcome, context.coding_events());
+        let mut outcome = match self.flow_service.run_prompt_turn(&mut context).await {
+            Ok(outcome) => outcome,
+            Err(error) => context.finish_failure(error),
+        };
+        let finalized = match self.finalize_prompt_transaction(&mut context, &outcome) {
+            Ok(finalized) => finalized,
+            Err(error) => {
+                outcome = context.finish_failure(error.clone());
+                SessionService::skip_prompt_transaction(
+                    context.operation_id().to_owned(),
+                    format!("session write finalization failed: {error}"),
+                )
+            }
+        };
+
+        self.emit_coding_events_before_prompt_outcome(context.coding_events());
+        self.emit_session_write_events(&finalized);
+        self.emit_prompt_outcome_event(&outcome);
         Ok(outcome)
     }
 
-    fn emit_prompt_outcome_event_if_missing(
-        &self,
+    fn finalize_prompt_transaction(
+        &mut self,
+        context: &mut PromptTurnContext,
         outcome: &PromptTurnOutcome,
-        emitted_events: &[CodingAgentEvent],
-    ) {
-        if prompt_outcome_event_was_emitted(outcome, emitted_events) {
-            return;
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let operation_id = context.operation_id().to_owned();
+        let transaction = context.take_transaction();
+        match outcome {
+            PromptTurnOutcome::Success { .. } => {
+                self.session_service
+                    .commit_prompt_transaction(transaction, operation_id, None)
+            }
+            PromptTurnOutcome::Aborted { reason, .. } => self
+                .session_service
+                .abort_prompt_transaction(transaction, operation_id, reason.clone()),
+            PromptTurnOutcome::Failed { error, .. } => {
+                self.session_service.fail_prompt_transaction(
+                    transaction,
+                    operation_id,
+                    error.code(),
+                    error.to_string(),
+                )
+            }
         }
-        self.emit_prompt_outcome_event(outcome);
+    }
+
+    fn emit_coding_events_before_prompt_outcome(&self, events: &[CodingAgentEvent]) {
+        for event in events {
+            if is_prompt_outcome_event(event) {
+                continue;
+            }
+            self.event_service.emit(event.clone());
+        }
+    }
+
+    fn emit_session_write_events(&self, finalized: &FinalizedSessionWrite) {
+        for event in &finalized.events {
+            self.event_service.emit(event.clone());
+        }
     }
 
     fn emit_prompt_outcome_event(&self, outcome: &PromptTurnOutcome) {
@@ -191,42 +234,13 @@ impl CodingAgentSession {
     }
 }
 
-fn prompt_outcome_event_was_emitted(
-    outcome: &PromptTurnOutcome,
-    emitted_events: &[CodingAgentEvent],
-) -> bool {
-    emitted_events.iter().any(|event| match (outcome, event) {
-        (
-            PromptTurnOutcome::Success {
-                operation_id,
-                turn_id,
-                ..
-            },
-            CodingAgentEvent::PromptCompleted {
-                operation_id: event_operation_id,
-                turn_id: event_turn_id,
-            },
-        ) => operation_id == event_operation_id && turn_id == event_turn_id,
-        (
-            PromptTurnOutcome::Aborted {
-                operation_id,
-                reason,
-                ..
-            },
-            CodingAgentEvent::PromptAborted {
-                operation_id: event_operation_id,
-                reason: event_reason,
-            },
-        ) => operation_id == event_operation_id && reason == event_reason,
-        (
-            PromptTurnOutcome::Failed { operation_id, .. },
-            CodingAgentEvent::PromptFailed {
-                operation_id: event_operation_id,
-                error: _,
-            },
-        ) => operation_id == event_operation_id,
-        _ => false,
-    })
+fn is_prompt_outcome_event(event: &CodingAgentEvent) -> bool {
+    matches!(
+        event,
+        CodingAgentEvent::PromptCompleted { .. }
+            | CodingAgentEvent::PromptFailed { .. }
+            | CodingAgentEvent::PromptAborted { .. }
+    )
 }
 
 #[cfg(test)]
@@ -385,6 +399,14 @@ mod tests {
         ));
         let remaining_events =
             std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert_event_order(
+            &remaining_events,
+            &[
+                "session_write_pending",
+                "session_write_committed",
+                "prompt_completed",
+            ],
+        );
         assert_eq!(
             remaining_events
                 .iter()
@@ -467,12 +489,30 @@ mod tests {
 
         assert!(matches!(outcome, PromptTurnOutcome::Failed { .. }));
         let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert_event_order(
+            &emitted_events,
+            &[
+                "session_write_pending",
+                "session_write_committed",
+                "prompt_failed",
+            ],
+        );
         assert_eq!(
             emitted_events
                 .iter()
                 .filter(|event| matches!(event, CodingAgentEvent::PromptFailed { .. }))
                 .count(),
             1
+        );
+        assert!(
+            session
+                .session_service
+                .replay()
+                .unwrap()
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("operation")
+                    && diagnostic.message.contains("failed"))
         );
         registry::unregister(api);
     }
@@ -658,6 +698,46 @@ mod tests {
         match outcome {
             PromptTurnOutcome::Success { turn_id, .. } => turn_id,
             _ => panic!("expected success outcome"),
+        }
+    }
+
+    fn assert_event_order(events: &[CodingAgentEvent], expected: &[&str]) {
+        let observed = events.iter().map(event_kind).collect::<Vec<_>>();
+        let mut next_index = 0;
+        for kind in observed {
+            if next_index < expected.len() && kind == expected[next_index] {
+                next_index += 1;
+            }
+        }
+        assert_eq!(
+            next_index,
+            expected.len(),
+            "did not observe event order {expected:?}"
+        );
+    }
+
+    fn event_kind(event: &CodingAgentEvent) -> &'static str {
+        match event {
+            CodingAgentEvent::SessionOpened { .. } => "session_opened",
+            CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
+            CodingAgentEvent::SessionWriteCommitted { .. } => "session_write_committed",
+            CodingAgentEvent::SessionWriteSkipped { .. } => "session_write_skipped",
+            CodingAgentEvent::PromptStarted { .. } => "prompt_started",
+            CodingAgentEvent::AgentTurnStarted { .. } => "agent_turn_started",
+            CodingAgentEvent::ProviderRequestStarted { .. } => "provider_request_started",
+            CodingAgentEvent::AssistantMessageStarted { .. } => "assistant_message_started",
+            CodingAgentEvent::AssistantMessageDelta { .. } => "assistant_message_delta",
+            CodingAgentEvent::AssistantMessageCompleted { .. } => "assistant_message_completed",
+            CodingAgentEvent::ToolCallStarted { .. } => "tool_call_started",
+            CodingAgentEvent::ToolCallUpdated { .. } => "tool_call_updated",
+            CodingAgentEvent::ToolCallCompleted { .. } => "tool_call_completed",
+            CodingAgentEvent::ToolCallFailed { .. } => "tool_call_failed",
+            CodingAgentEvent::RuntimeCompactionCompleted { .. } => "runtime_compaction_completed",
+            CodingAgentEvent::PromptCompleted { .. } => "prompt_completed",
+            CodingAgentEvent::PromptFailed { .. } => "prompt_failed",
+            CodingAgentEvent::PromptAborted { .. } => "prompt_aborted",
+            CodingAgentEvent::Diagnostic { .. } => "diagnostic",
+            CodingAgentEvent::CapabilityChanged => "capability_changed",
         }
     }
 }
