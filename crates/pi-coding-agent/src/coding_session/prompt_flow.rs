@@ -37,7 +37,7 @@ const PROMPT_TURN_NODE_SPECS: &[PromptTurnNodeSpec] = &[
     PromptTurnNodeSpec {
         id: "resolve_request",
         name: "ResolveRequest",
-        kind: PromptTurnNodeKind::Default,
+        kind: PromptTurnNodeKind::ResolveRequest,
     },
     PromptTurnNodeSpec {
         id: "prepare_input",
@@ -96,6 +96,7 @@ struct PromptTurnNodeSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PromptTurnNodeKind {
     Default,
+    ResolveRequest,
     PrepareInput,
     ResolveRuntime,
     LoadResources,
@@ -171,6 +172,7 @@ impl FlowNode<PromptTurnContext> for PromptTurnNode {
         Box::pin(async move {
             match self.kind {
                 PromptTurnNodeKind::Default => default_action(),
+                PromptTurnNodeKind::ResolveRequest => resolve_request(ctx),
                 PromptTurnNodeKind::PrepareInput => prepare_input(ctx),
                 PromptTurnNodeKind::ResolveRuntime => resolve_runtime(ctx),
                 PromptTurnNodeKind::LoadResources => load_resources(ctx),
@@ -183,6 +185,11 @@ impl FlowNode<PromptTurnContext> for PromptTurnNode {
             }
         })
     }
+}
+
+fn resolve_request(ctx: &mut PromptTurnContext) -> Result<Action, String> {
+    ctx.resolve_request().map_err(|error| error.to_string())?;
+    default_action()
 }
 
 fn prepare_input(ctx: &mut PromptTurnContext) -> Result<Action, String> {
@@ -419,6 +426,14 @@ mod tests {
     }
 
     fn context_with_runtime(api: &str, response: &str) -> PromptTurnContext {
+        context_with_runtime_invocation(api, response, PromptInvocation::Text("hello".into()))
+    }
+
+    fn context_with_runtime_invocation(
+        api: &str,
+        response: &str,
+        invocation: PromptInvocation,
+    ) -> PromptTurnContext {
         registry::register(api, Arc::new(FauxProvider::simple_text(response)));
         let options = PromptTurnOptions::from_session_prompt_options(SessionPromptOptions {
             prompt: "hello".into(),
@@ -435,7 +450,7 @@ mod tests {
             tool_execution: None,
             resources: AgentResources::default(),
             settings: None,
-            invocation: PromptInvocation::Text("hello".into()),
+            invocation,
         });
         PromptTurnContext::new(PromptTurnIds::new("op_1", "turn_1"), options)
     }
@@ -516,6 +531,16 @@ mod tests {
         flow.add_node(
             "prepare_input",
             PromptTurnNode::new("PrepareInput", PromptTurnNodeKind::PrepareInput),
+        )
+        .unwrap();
+        flow
+    }
+
+    fn resolve_request_only_flow() -> Flow<PromptTurnContext> {
+        let mut flow = Flow::new("resolve_request").unwrap();
+        flow.add_node(
+            "resolve_request",
+            PromptTurnNode::new("ResolveRequest", PromptTurnNodeKind::ResolveRequest),
         )
         .unwrap();
         flow
@@ -644,8 +669,10 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_input_node_records_normalized_text_input() {
+        let api = "prompt-flow-prepare-input";
         let flow = prepare_input_only_flow();
-        let mut context = context();
+        let mut context = context_with_runtime(api, "unused");
+        context.resolve_request().unwrap();
 
         assert!(context.prepared_input().is_none());
 
@@ -657,20 +684,95 @@ mod tests {
             serde_json::to_value(prepared).unwrap()[0]["data"]["text"],
             "hello"
         );
+        registry::unregister(api);
     }
 
     #[tokio::test]
-    async fn prepare_input_node_rejects_empty_text_input() {
-        let flow = prepare_input_only_flow();
-        let mut context = PromptTurnContext::new(
-            PromptTurnIds::new("op_1", "turn_1"),
-            PromptTurnOptions::new(PromptInvocation::Text(String::new())),
-        );
+    async fn resolve_request_node_marks_runtime_backed_prompt_resolved() {
+        let api = "prompt-flow-resolve-request";
+        let flow = resolve_request_only_flow();
+        let mut context = context_with_runtime(api, "unused");
+
+        assert!(!context.request_is_resolved());
+
+        flow.run(&mut context).await.unwrap();
+        flow.run(&mut context).await.unwrap();
+
+        assert!(context.request_is_resolved());
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn resolve_request_node_requires_runtime_snapshot() {
+        let flow = resolve_request_only_flow();
+        let mut context = context();
+
+        let error = flow.run(&mut context).await.unwrap_err();
+
+        assert!(matches!(error, FlowError::NodeFailed { .. }));
+        assert!(error.to_string().contains("runtime snapshot"));
+        assert!(!context.request_is_resolved());
+    }
+
+    #[tokio::test]
+    async fn resolve_request_node_rejects_empty_text_input() {
+        let api = "prompt-flow-resolve-empty-text";
+        let flow = resolve_request_only_flow();
+        let mut context =
+            context_with_runtime_invocation(api, "unused", PromptInvocation::Text(String::new()));
 
         let error = flow.run(&mut context).await.unwrap_err();
 
         assert!(matches!(error, FlowError::NodeFailed { .. }));
         assert!(error.to_string().contains("non-empty text input"));
+        assert!(!context.request_is_resolved());
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn resolve_request_node_rejects_empty_content_input() {
+        let api = "prompt-flow-resolve-empty-content";
+        let flow = resolve_request_only_flow();
+        let mut context =
+            context_with_runtime_invocation(api, "unused", PromptInvocation::Content(Vec::new()));
+
+        let error = flow.run(&mut context).await.unwrap_err();
+
+        assert!(matches!(error, FlowError::NodeFailed { .. }));
+        assert!(error.to_string().contains("non-empty content input"));
+        assert!(!context.request_is_resolved());
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn resolve_request_node_rejects_manual_compaction() {
+        let api = "prompt-flow-resolve-compact";
+        let flow = resolve_request_only_flow();
+        let mut context = context_with_runtime_invocation(
+            api,
+            "unused",
+            PromptInvocation::Compact {
+                custom_instructions: None,
+            },
+        );
+
+        let error = flow.run(&mut context).await.unwrap_err();
+
+        assert!(matches!(error, FlowError::NodeFailed { .. }));
+        assert!(error.to_string().contains("manual compaction"));
+        assert!(!context.request_is_resolved());
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn prepare_input_node_requires_resolved_request() {
+        let flow = prepare_input_only_flow();
+        let mut context = context();
+
+        let error = flow.run(&mut context).await.unwrap_err();
+
+        assert!(matches!(error, FlowError::NodeFailed { .. }));
+        assert!(error.to_string().contains("before request is resolved"));
         assert!(context.prepared_input().is_none());
     }
 
@@ -679,6 +781,7 @@ mod tests {
         let api = "prompt-flow-resolve-runtime";
         let flow = resolve_runtime_only_flow();
         let mut context = context_with_runtime(api, "unused");
+        context.resolve_request().unwrap();
 
         assert!(context.runtime().is_none());
 
@@ -690,14 +793,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_runtime_node_requires_runtime_snapshot() {
+    async fn resolve_runtime_node_requires_resolved_request() {
         let flow = resolve_runtime_only_flow();
         let mut context = context();
 
         let error = flow.run(&mut context).await.unwrap_err();
 
         assert!(matches!(error, FlowError::NodeFailed { .. }));
-        assert!(error.to_string().contains("runtime snapshot"));
+        assert!(error.to_string().contains("before request is resolved"));
         assert!(context.runtime().is_none());
     }
 
@@ -706,6 +809,7 @@ mod tests {
         let api = "prompt-flow-load-resources";
         let flow = resolve_and_load_resources_flow();
         let mut context = context_with_runtime(api, "unused");
+        context.resolve_request().unwrap();
 
         assert!(context.loaded_resources().is_none());
 
@@ -927,6 +1031,7 @@ mod tests {
         .edge("load_resources", "build_agent_runtime")
         .unwrap();
         let mut context = context_with_runtime(api, "unused");
+        context.resolve_request().unwrap();
         context.set_replay(SessionReplay {
             session_id: "sess_replay".into(),
             active_leaf_id: None,
@@ -980,6 +1085,7 @@ mod tests {
         .edge("resolve_runtime", "build_agent_runtime")
         .unwrap();
         let mut context = context_with_runtime(api, "unused");
+        context.resolve_request().unwrap();
 
         let error = flow.run(&mut context).await.unwrap_err();
 

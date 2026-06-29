@@ -369,6 +369,7 @@ impl PromptTurnIds {
 pub(crate) struct PromptTurnContext {
     ids: PromptTurnIds,
     options: PromptTurnOptions,
+    request_resolved: bool,
     runtime: Option<RuntimeSnapshot>,
     prepared_input: Option<Vec<PersistedContentBlock>>,
     loaded_resources: Option<AgentResources>,
@@ -390,6 +391,7 @@ impl PromptTurnContext {
         Self {
             ids,
             options,
+            request_resolved: false,
             runtime: None,
             prepared_input: None,
             loaded_resources: None,
@@ -431,10 +433,49 @@ impl PromptTurnContext {
         self.runtime = Some(runtime);
     }
 
+    pub(crate) fn resolve_request(&mut self) -> Result<(), CodingSessionError> {
+        if self.request_resolved {
+            return Ok(());
+        }
+        match self.options.invocation() {
+            PromptInvocation::Text(text) if text.is_empty() => {
+                return Err(CodingSessionError::Input {
+                    message: "prompt turn requires non-empty text input".into(),
+                });
+            }
+            PromptInvocation::Content(content) if content.is_empty() => {
+                return Err(CodingSessionError::Input {
+                    message: "prompt turn requires non-empty content input".into(),
+                });
+            }
+            PromptInvocation::Compact { .. } => {
+                return Err(CodingSessionError::UnsupportedCapability {
+                    capability: "manual compaction in PromptTurnFlow".into(),
+                });
+            }
+            PromptInvocation::Text(_)
+            | PromptInvocation::Content(_)
+            | PromptInvocation::Skill { .. }
+            | PromptInvocation::PromptTemplate { .. } => {}
+        }
+        if self.options.runtime().is_none() {
+            return Err(CodingSessionError::Config {
+                message: "prompt turn options do not include a runtime snapshot".into(),
+            });
+        }
+        self.request_resolved = true;
+        Ok(())
+    }
+
+    pub(crate) fn request_is_resolved(&self) -> bool {
+        self.request_resolved
+    }
+
     pub(crate) fn resolve_runtime_from_options(&mut self) -> Result<(), CodingSessionError> {
         if self.runtime.is_some() {
             return Ok(());
         }
+        self.require_resolved_request("resolve runtime")?;
         let runtime =
             self.options
                 .runtime()
@@ -454,6 +495,7 @@ impl PromptTurnContext {
         if self.prepared_input.is_some() {
             return Ok(());
         }
+        self.require_resolved_request("prepare input")?;
         self.prepared_input = Some(persisted_content_blocks_from_invocation(
             self.options.invocation(),
         )?);
@@ -797,6 +839,15 @@ impl PromptTurnContext {
             .ok_or_else(|| CodingSessionError::Session {
                 message: "prompt turn has no active transaction".into(),
             })
+    }
+
+    fn require_resolved_request(&self, action: &str) -> Result<(), CodingSessionError> {
+        if self.request_resolved {
+            return Ok(());
+        }
+        Err(CodingSessionError::Session {
+            message: format!("prompt turn cannot {action} before request is resolved"),
+        })
     }
 
     pub(crate) fn finish_success(
