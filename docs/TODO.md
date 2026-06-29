@@ -22,6 +22,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 
 - [Flow-centered architecture design](superpowers/specs/2026-06-29-flow-centered-runtime-architecture-design.md)
 - [Phase 2 print session target convergence design](superpowers/specs/2026-06-29-phase-2-print-session-target-convergence-design.md)
+- [Phase 2 ResolveRequest node design](superpowers/specs/2026-06-30-phase-2-resolve-request-node-design.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
@@ -188,3 +189,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-29: Phase 2 EmitCompletion is now a real PromptTurnFlow node: successful graph runs append `PromptCompleted` through `PromptTurnContext`, owner-level outcome emission is a missing-event fallback, and focused tests cover completion emission, idempotency, and missing-final-message errors.
 - 2026-06-29: Phase 2 print session target convergence design added. The design prioritizes Rust-native `CodingAgentSession` ownership for migrated print session targets and treats old runner use as a temporary unmigrated-path gap, not a compatibility requirement.
 - 2026-06-29: Phase 2 print session target convergence implemented: enabled default/New/OpenTarget id/path/OpenOrCreateId/ContinueMostRecent print session targets route through `CodingAgentSession`, ForkTarget now fails explicitly until Rust-native fork semantics exist, OpenSession validates owner-prepared session state, and focused print/session/coding-session checks pass.
+- 2026-06-30: Phase 2 ResolveRequest node design added. The design keeps adapter parsing outside the graph while making the flow validate runtime-backed `PromptTurnOptions` before input preparation and runtime attachment.
