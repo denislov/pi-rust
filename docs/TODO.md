@@ -21,6 +21,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 ## Source Documents
 
 - [Flow-centered architecture design](superpowers/specs/2026-06-29-flow-centered-runtime-architecture-design.md)
+- [Phase 2 print session target convergence design](superpowers/specs/2026-06-29-phase-2-print-session-target-convergence-design.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
@@ -149,6 +150,7 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 
 - [ ] Update `docs/roadmap/cross-cutting.md` to remove TS session compatibility as a current invariant.
 - [ ] Add a dedicated Rust-native session format doc once Phase 1 schema stabilizes.
+- [~] Prefer retiring migrated legacy paths over preserving compatibility. Workspace `AGENTS.md` now states that old TypeScript and old Rust runner paths are behavioral references, not compatibility targets; implementation/docs should remove migrated old paths or document explicit temporary stop conditions.
 - [ ] Keep `pi-agent-core` free of coding-agent product ownership.
 - [ ] Keep `CodingAgentSession` as owner/coordinator, not a monolithic implementation class.
 - [ ] Keep plugin/Lua APIs from depending on internal operation contexts.
@@ -184,3 +186,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-29: Phase 2 PrepareInput is now a real PromptTurnFlow node: prompt invocations are normalized into prepared persisted input before recording, RecordUserInput requires that prepared input, and focused tests cover normal text input, empty-input rejection, and misordered record-node execution.
 - 2026-06-29: Phase 2 LoadResources is now a real PromptTurnFlow node: the graph attaches the runtime `AgentResources` snapshot into turn state, BuildAgentRuntime now requires the resources stage, and focused tests cover successful resource loading, missing-runtime errors, and skipped-resource build failures.
 - 2026-06-29: Phase 2 EmitCompletion is now a real PromptTurnFlow node: successful graph runs append `PromptCompleted` through `PromptTurnContext`, owner-level outcome emission is a missing-event fallback, and focused tests cover completion emission, idempotency, and missing-final-message errors.
+- 2026-06-29: Phase 2 print session target convergence design added. The design prioritizes Rust-native `CodingAgentSession` ownership for migrated print session targets and treats old runner use as a temporary unmigrated-path gap, not a compatibility requirement.
