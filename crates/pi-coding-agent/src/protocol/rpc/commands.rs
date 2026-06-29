@@ -1,5 +1,6 @@
 use crate::CliError;
 use crate::protocol::rpc::state::RpcState;
+use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::rpc::wire::write_rpc_response;
 use crate::protocol::types::{RpcCommand, RpcResponse};
 use tokio::io::AsyncWrite;
@@ -66,7 +67,8 @@ impl RpcState {
                 self.emit_queue_update(writer).await
             }
             RpcCommand::Abort { id } => {
-                let cancelled = if let Some(running) = self.running.as_mut() {
+                let cancelled = if let Some(RunningPrompt::Legacy(running)) = self.running.as_mut()
+                {
                     if !running.abort_requested {
                         running.control.abort();
                         running.abort_requested = true;
@@ -104,6 +106,7 @@ impl RpcState {
                 self.session_name = None;
                 self.active_session_path = None;
                 self.active_leaf_id = None;
+                self.coding_session = None;
                 write_rpc_response(
                     writer,
                     RpcResponse::success(

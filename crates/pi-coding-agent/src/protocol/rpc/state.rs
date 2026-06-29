@@ -1,6 +1,10 @@
 use crate::protocol::events::ProtocolEventAdapter;
+use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::session_runner::{SessionPromptAbortHandle, SessionPromptResult};
-use crate::{CliArgs, CliError, CliRunOptions, config, select_model};
+use crate::{
+    CliArgs, CliError, CliRunOptions, coding_session::CodingAgentEvent,
+    coding_session::CodingAgentSession, coding_session::PromptTurnOutcome, config, select_model,
+};
 use pi_agent_core::session::StoredAgentMessage;
 use pi_agent_core::{AgentEvent, QueueMode, ThinkingLevel};
 use pi_ai::types::Model;
@@ -20,19 +24,38 @@ pub(super) struct RpcState {
     pub(super) active_session_path: Option<PathBuf>,
     pub(super) active_leaf_id: Option<String>,
     pub(super) messages: Vec<StoredAgentMessage>,
+    pub(super) coding_session: Option<CodingAgentSession>,
     pub(super) running: Option<RunningPrompt>,
     pub(super) is_compacting: bool,
     pub(super) steering: Vec<String>,
     pub(super) follow_up: Vec<String>,
 }
 
-pub(super) struct RunningPrompt {
+pub(super) enum RunningPrompt {
+    Legacy(LegacyRunningPrompt),
+    Coding(CodingRunningPrompt),
+}
+
+pub(super) struct LegacyRunningPrompt {
     pub(super) control: SessionPromptAbortHandle,
     pub(super) events: mpsc::UnboundedReceiver<AgentEvent>,
     pub(super) done: oneshot::Receiver<Result<SessionPromptResult, CliError>>,
     pub(super) adapter: ProtocolEventAdapter,
     pub(super) abort_requested: bool,
     pub(super) events_closed: bool,
+}
+
+pub(super) struct CodingRunningPrompt {
+    pub(super) events: mpsc::UnboundedReceiver<CodingAgentEvent>,
+    pub(super) done: oneshot::Receiver<CodingPromptTaskResult>,
+    pub(super) adapter: RpcCodingEventAdapter,
+    pub(super) events_closed: bool,
+}
+
+pub(super) struct CodingPromptTaskResult {
+    pub(super) session: CodingAgentSession,
+    pub(super) session_root: PathBuf,
+    pub(super) outcome: Result<PromptTurnOutcome, CliError>,
 }
 
 impl RpcState {
@@ -85,6 +108,7 @@ impl RpcState {
             active_session_path: None,
             active_leaf_id: None,
             messages: Vec::new(),
+            coding_session: None,
             running: None,
             is_compacting: false,
             steering: Vec::new(),

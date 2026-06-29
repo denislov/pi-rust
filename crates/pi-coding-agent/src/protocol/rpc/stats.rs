@@ -1,4 +1,6 @@
+use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
 use crate::protocol::rpc::state::RpcState;
+use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::types::RpcSessionState;
 use pi_agent_core::session::StoredAgentMessage;
 use serde_json::Value;
@@ -31,7 +33,47 @@ impl RpcState {
             auto_compaction_enabled: self.auto_compaction_enabled,
             message_count: self.messages.len(),
             pending_message_count: self.steering.len() + self.follow_up.len(),
+            capabilities: self.capabilities().into(),
         }
+    }
+
+    pub(super) fn capabilities(&self) -> CodingAgentCapabilities {
+        let mut capabilities =
+            CodingAgentCapabilities::phase_3(self.is_streaming().then_some("prompt"));
+        let legacy_running = matches!(self.running, Some(RunningPrompt::Legacy(_)));
+        let coding_running = matches!(self.running, Some(RunningPrompt::Coding(_)));
+
+        capabilities.abort = if legacy_running {
+            CapabilityStatus::Available
+        } else if coding_running {
+            CapabilityStatus::Disabled {
+                reason: "operation abort awaits CodingAgentSession operation handles".into(),
+            }
+        } else {
+            CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            }
+        };
+        capabilities.steer = if legacy_running {
+            CapabilityStatus::Available
+        } else if coding_running {
+            CapabilityStatus::Disabled {
+                reason: "agent turn steering awaits AgentTurnFlow".into(),
+            }
+        } else {
+            CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            }
+        };
+        capabilities.follow_up = if coding_running {
+            CapabilityStatus::Disabled {
+                reason: "follow-up controls await AgentTurnFlow".into(),
+            }
+        } else {
+            CapabilityStatus::Available
+        };
+
+        capabilities
     }
 
     pub(super) fn session_stats(&self) -> Value {

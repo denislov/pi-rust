@@ -1,11 +1,12 @@
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
-    CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput, CliRunOptions,
-    CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver, CodingAgentSession,
-    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
-    CodingDiagnosticSeverity, CodingSessionError, PrintModeOptions, PromptInvocation,
-    PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, SessionMode, SessionPromptOptions,
-    ToolFilter, builtin_tools, filter_tools, help_text, parse_args, render_diagnostics,
+    CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
+    CliRunOptions, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
+    CodingAgentSession, CodingAgentSessionOptions, CodingAgentSessionSummary,
+    CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
+    PrintModeOptions, PromptInvocation, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
+    SessionMode, SessionPromptOptions, ToolFilter, builtin_tools, filter_tools, help_text,
+    parse_args, render_diagnostics,
 };
 
 fn model(api: &str) -> Model {
@@ -113,9 +114,36 @@ async fn coding_session_public_api_symbols_are_importable() {
     assert_eq!(
         capabilities,
         CodingAgentCapabilities {
-            prompt: false,
-            session_log: false,
-            plugins: false,
+            prompt: CapabilityStatus::Available,
+            abort: CapabilityStatus::Unsupported {
+                reason: "operation abort is not exposed on CodingAgentSession yet".into(),
+            },
+            steer: CapabilityStatus::Unsupported {
+                reason: "agent turn steering awaits AgentTurnFlow".into(),
+            },
+            follow_up: CapabilityStatus::Unsupported {
+                reason: "follow-up controls await AgentTurnFlow".into(),
+            },
+            compact: CapabilityStatus::Unsupported {
+                reason: "manual compaction is not implemented in PromptTurnFlow yet".into(),
+            },
+            fork: CapabilityStatus::Unsupported {
+                reason: "Rust-native fork semantics are not implemented yet".into(),
+            },
+            clone_session: CapabilityStatus::Unsupported {
+                reason: "Rust-native session clone is not implemented yet".into(),
+            },
+            switch_session: CapabilityStatus::Unsupported {
+                reason: "session switching is not exposed on CodingAgentSession yet".into(),
+            },
+            export: CapabilityStatus::Unsupported {
+                reason: "Rust-native session export is not implemented yet".into(),
+            },
+            tools: CapabilityStatus::Available,
+            shell: CapabilityStatus::Available,
+            plugins: CapabilityStatus::Unsupported {
+                reason: "plugin kernel is not implemented yet".into(),
+            },
         }
     );
 

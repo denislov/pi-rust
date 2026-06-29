@@ -1,3 +1,4 @@
+use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
 use pi_agent_core::session::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model};
@@ -204,6 +205,65 @@ pub struct RpcSessionState {
     pub message_count: usize,
     #[serde(rename = "pendingMessageCount")]
     pub pending_message_count: usize,
+    pub capabilities: RpcCapabilities,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcCapabilities {
+    pub prompt: RpcCapabilityStatus,
+    pub abort: RpcCapabilityStatus,
+    pub steer: RpcCapabilityStatus,
+    #[serde(rename = "followUp")]
+    pub follow_up: RpcCapabilityStatus,
+    pub compact: RpcCapabilityStatus,
+    pub fork: RpcCapabilityStatus,
+    #[serde(rename = "cloneSession")]
+    pub clone_session: RpcCapabilityStatus,
+    #[serde(rename = "switchSession")]
+    pub switch_session: RpcCapabilityStatus,
+    pub export: RpcCapabilityStatus,
+    pub tools: RpcCapabilityStatus,
+    pub shell: RpcCapabilityStatus,
+    pub plugins: RpcCapabilityStatus,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RpcCapabilityStatus {
+    Available,
+    Disabled { reason: String },
+    Unsupported { reason: String },
+    Busy { operation: String },
+}
+
+impl From<CodingAgentCapabilities> for RpcCapabilities {
+    fn from(capabilities: CodingAgentCapabilities) -> Self {
+        Self {
+            prompt: capabilities.prompt.into(),
+            abort: capabilities.abort.into(),
+            steer: capabilities.steer.into(),
+            follow_up: capabilities.follow_up.into(),
+            compact: capabilities.compact.into(),
+            fork: capabilities.fork.into(),
+            clone_session: capabilities.clone_session.into(),
+            switch_session: capabilities.switch_session.into(),
+            export: capabilities.export.into(),
+            tools: capabilities.tools.into(),
+            shell: capabilities.shell.into(),
+            plugins: capabilities.plugins.into(),
+        }
+    }
+}
+
+impl From<CapabilityStatus> for RpcCapabilityStatus {
+    fn from(status: CapabilityStatus) -> Self {
+        match status {
+            CapabilityStatus::Available => Self::Available,
+            CapabilityStatus::Disabled { reason } => Self::Disabled { reason },
+            CapabilityStatus::Unsupported { reason } => Self::Unsupported { reason },
+            CapabilityStatus::Busy { operation } => Self::Busy { operation },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

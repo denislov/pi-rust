@@ -12,8 +12,8 @@ mod session_log;
 mod session_service;
 
 pub use context::{
-    CodingAgentCapabilities, CodingAgentSessionOptions, CodingAgentSessionSummary,
-    CodingAgentSessionView,
+    CapabilityStatus, CodingAgentCapabilities, CodingAgentSessionOptions,
+    CodingAgentSessionSummary, CodingAgentSessionView,
 };
 pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
@@ -40,7 +40,7 @@ pub struct CodingAgentSession {
     event_service: EventService,
     capability_service: CapabilityService,
     plugin_service: PluginService,
-    active_operation: bool,
+    active_operation: Option<String>,
 }
 
 impl CodingAgentSession {
@@ -72,7 +72,8 @@ impl CodingAgentSession {
     }
 
     pub fn capabilities(&self) -> CodingAgentCapabilities {
-        self.capability_service.capabilities()
+        self.capability_service
+            .capabilities(self.active_operation.as_deref())
     }
 
     pub fn view(&self) -> CodingAgentSessionView {
@@ -88,14 +89,14 @@ impl CodingAgentSession {
         &mut self,
         options: PromptTurnOptions,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        if self.active_operation {
+        if self.active_operation.is_some() {
             return Err(CodingSessionError::Busy {
                 operation: "prompt".into(),
             });
         }
-        self.active_operation = true;
+        self.active_operation = Some("prompt".into());
         let result = self.prompt_inner(options).await;
-        self.active_operation = false;
+        self.active_operation = None;
         result
     }
 
@@ -112,7 +113,7 @@ impl CodingAgentSession {
             event_service,
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
-            active_operation: false,
+            active_operation: None,
         })
     }
 

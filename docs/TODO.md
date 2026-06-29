@@ -23,6 +23,8 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [Flow-centered architecture design](superpowers/specs/2026-06-29-flow-centered-runtime-architecture-design.md)
 - [Phase 2 print session target convergence design](superpowers/specs/2026-06-29-phase-2-print-session-target-convergence-design.md)
 - [Phase 2 ResolveRequest node design](superpowers/specs/2026-06-30-phase-2-resolve-request-node-design.md)
+- [Session finalization convergence design](superpowers/specs/2026-06-30-session-finalization-convergence-design.md)
+- [Non-persistent product runtime design](superpowers/specs/2026-06-30-non-persistent-product-runtime-design.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
@@ -40,7 +42,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [x] Write detailed phase implementation guides.
 - [x] Implement Phase 1: `CodingAgentSession` skeleton and Rust-native session log. Product runtime shell/API boundary, typed session log schema, filesystem store, turn transactions, owner create/open persistence, and replay/fold transcript support are in place.
 - [~] Implement Phase 2: `PromptTurnFlow` on headless/json path. Prompt turn options/outcome/context, runtime snapshot boundary, real graph with stable node IDs, AgentEvent-to-product-event mapping, real ResolveRequest/PrepareInput/ResolveRuntime/LoadResources/OpenSession/BuildAgentRuntime/RecordUserInput/RunAgentTurn/FinalizeTurn/EmitCompletion nodes, pending agent-output event recording through TurnTransaction, `CodingAgentSession::prompt()` for runtime-backed options, completed user/assistant/tool-call replay hydration, Rust-native session open-or-create/list groundwork, enabled print-session target routing, and JSON protocol rendering through `CodingAgentEvent` are in place; non-persistent/no-session product runtime and Rust-native fork/branch semantics remain.
-- [ ] Implement Phase 3: converge CLI/RPC/interactive adapters.
+- [~] Implement Phase 3: converge CLI/RPC/interactive adapters. Concrete `CodingAgentCapabilities`/`CapabilityStatus` model, RPC `get_state` capability reporting, RPC `CodingAgentEvent` adapter, and enabled-session RPC prompt routing through `CodingAgentSession` are in place; disabled/no-session RPC prompt still uses the old runner until non-persistent product runtime exists, and interactive convergence remains.
 - [ ] Implement Phase 4: introduce `AgentTurnFlow` in `pi-agent-core`.
 - [ ] Implement Phase 5: plugin kernel on session/flow boundaries.
 - [ ] Implement Phase 6: advanced Flow workflows.
@@ -77,10 +79,12 @@ Guide: [Phase 2](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md
 - [x] Map `AgentEvent` to `CodingAgentEvent`.
 - [x] Add `RunAgentTurn` node using existing `Agent::run()`.
 - [x] Record agent output into session events through `TurnTransaction`.
+- [~] Converge prompt transaction finalization under `SessionService` and emit `SessionWrite*` product events. Design is approved and documented; implementation remains.
 - [x] Add `CodingAgentSession::prompt()`.
+- [~] Design non-persistent product runtime for no-session/disabled prompt convergence. Design is approved and documented; implementation remains.
 - [~] Route print mode through `CodingAgentSession`. Enabled default/New/OpenTarget/OpenOrCreateId/ContinueMostRecent print session targets now use `CodingAgentSession` and Rust-native session logs; ForkTarget fails explicitly until Rust-native fork/branch semantics exist; no-session/disabled print execution stays on the old runner until a non-persistent product runtime exists.
 - [x] Route JSON mode through `CodingAgentEvent`.
-- [~] Keep old `session_runner` as transitional wrapper. It remains the execution source for unmigrated adapters and no-session/disabled print execution while migrated enabled print session targets and JSON rendering move onto `CodingAgentSession`/`CodingAgentEvent`.
+- [~] Keep old `session_runner` as transitional wrapper. It remains the execution source for unmigrated adapters and no-session/disabled print/RPC execution while migrated enabled print/RPC session targets and JSON rendering move onto `CodingAgentSession`/`CodingAgentEvent`.
 - [~] Add Phase 2 tests. Prompt turn option/outcome/context, runtime snapshot, graph path/node ID, misconfigured flow, FlowService, RuntimeService agent building and replay hydration, real ResolveRequest validation/idempotency/order coverage, real PrepareInput normalization/error coverage, real ResolveRuntime attachment/error coverage, real LoadResources attachment/error coverage, real OpenSession boundary validation coverage, real BuildAgentRuntime resource-precondition and replay hydration coverage, real EmitCompletion completion/idempotency/error coverage, AgentEvent mapping, RecordUserInput prepared-event recording, RunAgentTurn/faux-provider flow execution, pending assistant/tool session-event recording with tool arguments, `CodingAgentSession::prompt()` success/config-error/failure-event-deduplication with user+assistant replay and reopened-session provider-context hydration for prior user/assistant/tool result history, Rust-native session open-or-create/list coverage, public API smoke coverage, default/New/OpenTarget id/path/OpenOrCreateId/ContinueMostRecent print-mode Rust-native session-log coverage, explicit unsupported ForkTarget coverage, direct `CodingAgentEvent` protocol adapter coverage, and JSON mode success/tool/failure coverage added.
 - [~] Run Phase 2 focused checks. `cargo fmt --check`, `cargo test -p pi-coding-agent coding_session`, `cargo test -p pi-coding-agent --test print_mode`, `cargo test -p pi-coding-agent --test session_print_mode`, `cargo test -p pi-coding-agent --test session_cli`, `cargo check --workspace`, and `cargo test --workspace` pass for the current Phase 2 type/context/graph/real-ResolveRequest/real-PrepareInput/real-ResolveRuntime/real-LoadResources/real-OpenSession/real-BuildAgentRuntime/event-mapping/RecordUserInput/RunAgentTurn/real-EmitCompletion/replay-hydration/tool-call-hydration/session-recording/session-prompt/session-open-or-create-list/print-session-target-convergence/json-event-adapter slice.
 
@@ -88,16 +92,16 @@ Guide: [Phase 2](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md
 
 Guide: [Phase 3](superpowers/guides/2026-06-29-phase-3-adapter-convergence-guide.md)
 
-- [ ] Add concrete `CodingAgentCapabilities`.
-- [ ] Route RPC prompt command through `CodingAgentSession`.
-- [ ] Add RPC adapter from `CodingAgentEvent` to protocol events.
-- [ ] Add RPC capability reporting.
+- [x] Add concrete `CodingAgentCapabilities`. `CapabilityStatus` now reports available/unsupported/busy/disabled states across prompt, abort, steer, follow-up, compact, fork, clone/switch/export session, tools, shell, and plugins.
+- [~] Route RPC prompt command through `CodingAgentSession`. Enabled-session RPC prompts now run through `CodingAgentSession`, stream `CodingAgentEvent` through `RpcCodingEventAdapter`, and persist Rust-native session logs; disabled/no-session RPC prompts stay on the old runner until non-persistent product runtime support lands.
+- [x] Add RPC adapter from `CodingAgentEvent` to protocol events. `RpcCodingEventAdapter` wraps the product-event protocol adapter at the RPC boundary and has prompt stream/failure mapping coverage; it is ready to wire into RPC prompt migration.
+- [x] Add RPC capability reporting. RPC `get_state` now includes protocol-stable capability status objects derived from the concrete capability model, including idle prompt availability and running prompt busy state.
 - [ ] Route interactive prompt tasks through `CodingAgentSession`.
 - [ ] Add interactive bridge from `CodingAgentEvent` to `UiEvent`.
 - [ ] Move migrated session actions to `SessionService`.
 - [ ] Stop creating old session JSONL from migrated product prompt paths.
-- [ ] Add Phase 3 tests.
-- [ ] Run Phase 3 focused checks.
+- [~] Add Phase 3 tests. CapabilityService idle/busy coverage, public API smoke coverage, RPC `get_state` idle/running capability reporting coverage, RPC product-event adapter prompt stream/failure coverage, and enabled RPC Rust-native session persistence/state coverage added.
+- [~] Run Phase 3 focused checks. `cargo fmt --check`, `cargo test -p pi-coding-agent capabilities`, `cargo test -p pi-coding-agent public_api`, `cargo test -p pi-coding-agent coding_session`, `cargo test -p pi-coding-agent --test rpc_mode`, `cargo test -p pi-coding-agent --test protocol_sessions`, `cargo test -p pi-coding-agent rpc_adapter`, `cargo check --workspace`, and `cargo test --workspace` pass for completed Phase 3 slices.
 
 ## Phase 4: AgentTurnFlow
 
@@ -191,3 +195,9 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-29: Phase 2 print session target convergence implemented: enabled default/New/OpenTarget id/path/OpenOrCreateId/ContinueMostRecent print session targets route through `CodingAgentSession`, ForkTarget now fails explicitly until Rust-native fork semantics exist, OpenSession validates owner-prepared session state, and focused print/session/coding-session checks pass.
 - 2026-06-30: Phase 2 ResolveRequest node design added. The design keeps adapter parsing outside the graph while making the flow validate runtime-backed `PromptTurnOptions` before input preparation and runtime attachment.
 - 2026-06-30: Phase 2 ResolveRequest is now a real PromptTurnFlow node: it validates runtime-backed prompt options, rejects empty text/content and manual compaction, marks request resolution idempotently, and makes PrepareInput/ResolveRuntime fail clearly if run before request resolution.
+- 2026-06-30: Phase 3 started with a concrete `CodingAgentCapabilities`/`CapabilityStatus` model. `CodingAgentSession::capabilities()` now reports prompt availability/busy state and explicit unsupported reasons for unmigrated adapter/session/plugin capabilities.
+- 2026-06-30: Phase 3 RPC capability reporting added: `get_state` includes protocol-stable capability status objects so clients can distinguish available, disabled, unsupported, and busy operations before RPC prompt execution migrates to `CodingAgentSession`.
+- 2026-06-30: Phase 3 RPC product-event adapter added. `RpcCodingEventAdapter` provides the RPC boundary for converting `CodingAgentEvent` into existing protocol events.
+- 2026-06-30: Phase 3 enabled-session RPC prompt migration started: RPC prompts with `SessionMode::Enabled` now run through `CodingAgentSession`, stream product events through `RpcCodingEventAdapter`, and persist Rust-native `session.json`/`events.jsonl`; disabled/no-session RPC prompts remain on the old runner until non-persistent product runtime support exists.
+- 2026-06-30: Session finalization convergence design added. The design moves prompt transaction commit/fail/abort ownership back under `SessionService` and makes `SessionWrite*` product events part of the persistent prompt event stream before final prompt outcome events.
+- 2026-06-30: Non-persistent product runtime design added. The design keeps `CodingAgentSession` as product owner when durable persistence is disabled, uses the same `PromptTurnFlow`, emits `SessionWriteSkipped`, and gives no-session print/RPC plus later JSON execution convergence a path off the old runner.

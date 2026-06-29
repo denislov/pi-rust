@@ -52,14 +52,13 @@ async fn rpc_prompt_persists_session_messages() {
     .await
     .unwrap();
 
-    let mut session_files = Vec::new();
-    collect_jsonl_files(&sessions, &mut session_files);
-    assert_eq!(session_files.len(), 1);
-    let contents = std::fs::read_to_string(&session_files[0]).unwrap();
-    assert!(contents.contains("\"type\":\"session\""));
-    assert!(contents.contains("\"type\":\"session_info\""));
-    assert!(contents.contains("\"role\":\"user\""));
-    assert!(contents.contains("\"role\":\"assistant\""));
+    let session_dirs = collect_native_session_dirs(&sessions);
+    assert_eq!(session_dirs.len(), 1);
+    assert!(session_dirs[0].join("session.json").exists());
+    let contents = std::fs::read_to_string(session_dirs[0].join("events.jsonl")).unwrap();
+    assert!(contents.contains("\"kind\":\"session.created\""));
+    assert!(contents.contains("\"kind\":\"turn.input.recorded\""));
+    assert!(contents.contains("\"kind\":\"message.completed\""));
     registry::unregister(api);
 }
 
@@ -136,23 +135,29 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
 
     assert_eq!(state["data"]["isStreaming"], false);
     assert_ne!(state["data"]["sessionId"], "in-memory");
-    assert!(
-        state["data"]["sessionFile"]
-            .as_str()
-            .unwrap()
-            .ends_with(".jsonl")
-    );
+    let session_dir = std::path::PathBuf::from(state["data"]["sessionFile"].as_str().unwrap());
+    assert!(session_dir.join("session.json").exists());
+    assert!(session_dir.join("events.jsonl").exists());
     registry::unregister(api);
 }
 
-fn collect_jsonl_files(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                collect_jsonl_files(&path, out);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+fn collect_native_session_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    collect_native_session_dirs_inner(root, &mut dirs);
+    dirs
+}
+
+fn collect_native_session_dirs_inner(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.join("session.json").exists() && path.join("events.jsonl").exists() {
                 out.push(path);
+            } else {
+                collect_native_session_dirs_inner(&path, out);
             }
         }
     }

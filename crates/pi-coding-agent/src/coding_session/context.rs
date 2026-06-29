@@ -56,17 +56,68 @@ pub struct CodingAgentSessionSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingAgentCapabilities {
-    pub prompt: bool,
-    pub session_log: bool,
-    pub plugins: bool,
+    pub prompt: CapabilityStatus,
+    pub abort: CapabilityStatus,
+    pub steer: CapabilityStatus,
+    pub follow_up: CapabilityStatus,
+    pub compact: CapabilityStatus,
+    pub fork: CapabilityStatus,
+    pub clone_session: CapabilityStatus,
+    pub switch_session: CapabilityStatus,
+    pub export: CapabilityStatus,
+    pub tools: CapabilityStatus,
+    pub shell: CapabilityStatus,
+    pub plugins: CapabilityStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilityStatus {
+    Available,
+    Disabled { reason: String },
+    Unsupported { reason: String },
+    Busy { operation: String },
 }
 
 impl CodingAgentCapabilities {
-    pub(crate) fn phase_1() -> Self {
+    pub(crate) fn phase_3(active_operation: Option<&str>) -> Self {
+        let prompt = match active_operation {
+            Some(operation) => CapabilityStatus::Busy {
+                operation: operation.into(),
+            },
+            None => CapabilityStatus::Available,
+        };
+
         Self {
-            prompt: false,
-            session_log: false,
-            plugins: false,
+            prompt,
+            abort: CapabilityStatus::Unsupported {
+                reason: "operation abort is not exposed on CodingAgentSession yet".into(),
+            },
+            steer: CapabilityStatus::Unsupported {
+                reason: "agent turn steering awaits AgentTurnFlow".into(),
+            },
+            follow_up: CapabilityStatus::Unsupported {
+                reason: "follow-up controls await AgentTurnFlow".into(),
+            },
+            compact: CapabilityStatus::Unsupported {
+                reason: "manual compaction is not implemented in PromptTurnFlow yet".into(),
+            },
+            fork: CapabilityStatus::Unsupported {
+                reason: "Rust-native fork semantics are not implemented yet".into(),
+            },
+            clone_session: CapabilityStatus::Unsupported {
+                reason: "Rust-native session clone is not implemented yet".into(),
+            },
+            switch_session: CapabilityStatus::Unsupported {
+                reason: "session switching is not exposed on CodingAgentSession yet".into(),
+            },
+            export: CapabilityStatus::Unsupported {
+                reason: "Rust-native session export is not implemented yet".into(),
+            },
+            tools: CapabilityStatus::Available,
+            shell: CapabilityStatus::Available,
+            plugins: CapabilityStatus::Unsupported {
+                reason: "plugin kernel is not implemented yet".into(),
+            },
         }
     }
 }

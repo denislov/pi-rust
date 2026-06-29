@@ -131,7 +131,7 @@ async fn rpc_processes_command_before_stdin_eof() {
     registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
 
     let (mut input_writer, input_reader) = tokio::io::duplex(128);
-    let (output_writer, mut output_reader) = tokio::io::duplex(1024);
+    let (output_writer, mut output_reader) = tokio::io::duplex(4096);
     let task = tokio::spawn(async move {
         let mut output_writer = output_writer;
         run_rpc_mode_for_io(
@@ -153,7 +153,7 @@ async fn rpc_processes_command_before_stdin_eof() {
         .await
         .unwrap();
 
-    let mut buf = vec![0; 1024];
+    let mut buf = vec![0; 4096];
     let bytes_read = tokio::time::timeout(Duration::from_millis(250), output_reader.read(&mut buf))
         .await
         .expect("rpc response before stdin EOF")
@@ -166,6 +166,112 @@ async fn rpc_processes_command_before_stdin_eof() {
 
     drop(input_writer);
     task.await.unwrap();
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_state_reports_capabilities_when_idle() {
+    let api = "pi-coding-rpc-capabilities-idle";
+    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+
+    let input = b"{\"id\":\"s1\",\"type\":\"get_state\"}\n";
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    let capabilities = &lines[0]["data"]["capabilities"];
+    assert_eq!(capabilities["prompt"]["status"], "available");
+    assert_eq!(capabilities["abort"]["status"], "disabled");
+    assert_eq!(capabilities["followUp"]["status"], "available");
+    assert_eq!(capabilities["compact"]["status"], "unsupported");
+    assert_eq!(capabilities["tools"]["status"], "available");
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_state_reports_prompt_busy_while_running() {
+    let api = "pi-coding-rpc-capabilities-busy";
+    let release = Arc::new(Notify::new());
+    registry::register(
+        api,
+        Arc::new(PausingProvider {
+            release: Arc::clone(&release),
+            opened: Arc::new(AtomicBool::new(false)),
+        }),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(512);
+    let (output_writer, output_reader) = tokio::io::duplex(4096);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    input_writer
+        .write_all(b"{\"id\":\"p1\",\"type\":\"prompt\",\"message\":\"hello\"}\n")
+        .await
+        .unwrap();
+
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+    let prompt_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
+        .await
+        .expect("prompt response before provider completes")
+        .unwrap()
+        .unwrap();
+    let prompt_response: serde_json::Value = serde_json::from_str(&prompt_response).unwrap();
+    assert_eq!(prompt_response["success"], true);
+
+    input_writer
+        .write_all(b"{\"id\":\"s1\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+
+    let state = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before get_state response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "get_state" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("state response while prompt is running");
+
+    release.notify_one();
+    drop(input_writer);
+    task.await.unwrap();
+
+    assert_eq!(state["data"]["isStreaming"], true);
+    let capabilities = &state["data"]["capabilities"];
+    assert_eq!(capabilities["prompt"]["status"], "busy");
+    assert_eq!(capabilities["prompt"]["operation"], "prompt");
+    assert_eq!(capabilities["abort"]["status"], "available");
+    assert_eq!(capabilities["steer"]["status"], "available");
     registry::unregister(api);
 }
 
