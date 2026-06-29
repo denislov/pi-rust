@@ -53,6 +53,8 @@ mod tests {
 
     use super::*;
     use crate::coding_session::prompt::{PromptTurnIds, PromptTurnOptions};
+    use crate::coding_session::session_log::replay::SessionReplay;
+    use crate::coding_session::session_log::store::{CreateSessionOptions, SessionLogStore};
     use crate::protocol::session_runner::SessionPromptOptions;
     use crate::runtime::PromptInvocation;
 
@@ -99,6 +101,21 @@ mod tests {
                 invocation: PromptInvocation::Text("hello".into()),
             }),
         );
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(CreateSessionOptions::new(
+                "sess_flow_service",
+                "2026-06-29T00:00:00Z",
+            ))
+            .unwrap();
+        context.set_replay(SessionReplay {
+            session_id: "sess_flow_service".into(),
+            active_leaf_id: None,
+            transcript: Vec::new(),
+            diagnostics: Vec::new(),
+        });
+        context.begin_transaction(&store, handle).unwrap();
 
         let outcome = service.run_prompt_turn_graph(&mut context).await.unwrap();
 

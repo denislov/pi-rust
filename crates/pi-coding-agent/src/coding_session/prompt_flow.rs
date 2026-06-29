@@ -57,7 +57,7 @@ const PROMPT_TURN_NODE_SPECS: &[PromptTurnNodeSpec] = &[
     PromptTurnNodeSpec {
         id: "open_session",
         name: "OpenSession",
-        kind: PromptTurnNodeKind::Default,
+        kind: PromptTurnNodeKind::OpenSession,
     },
     PromptTurnNodeSpec {
         id: "build_agent_runtime",
@@ -99,6 +99,7 @@ enum PromptTurnNodeKind {
     PrepareInput,
     ResolveRuntime,
     LoadResources,
+    OpenSession,
     BuildAgentRuntime,
     RecordUserInput,
     RunAgentTurn,
@@ -173,6 +174,7 @@ impl FlowNode<PromptTurnContext> for PromptTurnNode {
                 PromptTurnNodeKind::PrepareInput => prepare_input(ctx),
                 PromptTurnNodeKind::ResolveRuntime => resolve_runtime(ctx),
                 PromptTurnNodeKind::LoadResources => load_resources(ctx),
+                PromptTurnNodeKind::OpenSession => open_session(ctx),
                 PromptTurnNodeKind::BuildAgentRuntime => build_agent_runtime(ctx),
                 PromptTurnNodeKind::RecordUserInput => record_user_input(ctx),
                 PromptTurnNodeKind::RunAgentTurn => run_agent_turn(ctx).await,
@@ -197,6 +199,28 @@ fn resolve_runtime(ctx: &mut PromptTurnContext) -> Result<Action, String> {
 fn load_resources(ctx: &mut PromptTurnContext) -> Result<Action, String> {
     ctx.load_resources_from_runtime()
         .map_err(|error| error.to_string())?;
+    default_action()
+}
+
+fn open_session(ctx: &mut PromptTurnContext) -> Result<Action, String> {
+    if ctx.session_id().is_none() {
+        return Err(CodingSessionError::Session {
+            message: "prompt turn cannot continue before a session is opened".into(),
+        }
+        .to_string());
+    }
+    if ctx.replay().is_none() {
+        return Err(CodingSessionError::Session {
+            message: "prompt turn cannot continue before session replay is loaded".into(),
+        }
+        .to_string());
+    }
+    if !ctx.has_active_transaction() {
+        return Err(CodingSessionError::Session {
+            message: "prompt turn cannot continue before a turn transaction is active".into(),
+        }
+        .to_string());
+    }
     default_action()
 }
 
@@ -432,6 +456,20 @@ mod tests {
         (temp, store, handle)
     }
 
+    fn attach_session_boundary(
+        context: &mut PromptTurnContext,
+    ) -> (tempfile::TempDir, SessionLogStore, SessionHandle) {
+        let (temp, store, handle) = setup_session_log();
+        context.set_replay(SessionReplay {
+            session_id: handle.manifest().session_id.clone(),
+            active_leaf_id: None,
+            transcript: Vec::new(),
+            diagnostics: Vec::new(),
+        });
+        context.begin_transaction(&store, handle.clone()).unwrap();
+        (temp, store, handle)
+    }
+
     fn session_event_kinds(context: &PromptTurnContext) -> Vec<&'static str> {
         event_kinds(context.pending_session_events())
     }
@@ -530,6 +568,16 @@ mod tests {
         flow
     }
 
+    fn open_session_only_flow() -> Flow<PromptTurnContext> {
+        let mut flow = Flow::new("open_session").unwrap();
+        flow.add_node(
+            "open_session",
+            PromptTurnNode::new("OpenSession", PromptTurnNodeKind::OpenSession),
+        )
+        .unwrap();
+        flow
+    }
+
     fn emit_completion_only_flow() -> Flow<PromptTurnContext> {
         let mut flow = Flow::new("emit_completion").unwrap();
         flow.add_node(
@@ -545,6 +593,7 @@ mod tests {
         let api = "prompt-flow-skeleton";
         let flow = PromptTurnFlow::new().unwrap();
         let mut context = context_with_runtime(api, "done");
+        let _session = attach_session_boundary(&mut context);
 
         let outcome = flow.run(&mut context).await.unwrap();
 
@@ -580,6 +629,7 @@ mod tests {
             ..FlowRunOptions::default()
         };
         let mut context = context_with_runtime(api, "done");
+        let _session = attach_session_boundary(&mut context);
 
         flow.run_with_options(&mut context, options).await.unwrap();
 
@@ -682,6 +732,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn open_session_node_requires_owner_prepared_session_boundary() {
+        let flow = open_session_only_flow();
+        let mut context = context();
+
+        let error = flow.run(&mut context).await.unwrap_err();
+
+        assert!(matches!(error, FlowError::NodeFailed { .. }));
+        assert!(error.to_string().contains("session is opened"));
+    }
+
+    #[tokio::test]
     async fn emit_completion_node_records_prompt_completed_event_once() {
         let flow = emit_completion_only_flow();
         let mut context = context();
@@ -727,6 +788,7 @@ mod tests {
         let api = "prompt-flow-run-agent-turn";
         let flow = PromptTurnFlow::new().unwrap();
         let mut context = context_with_runtime(api, "flow answer");
+        let _session = attach_session_boundary(&mut context);
 
         flow.run(&mut context).await.unwrap();
 
@@ -797,8 +859,7 @@ mod tests {
         let api = "prompt-flow-user-input";
         let flow = PromptTurnFlow::new().unwrap();
         let mut context = context_with_runtime(api, "flow answer");
-        let (_temp, store, handle) = setup_session_log();
-        context.begin_transaction(&store, handle.clone()).unwrap();
+        let (_temp, store, handle) = attach_session_boundary(&mut context);
 
         flow.run(&mut context).await.unwrap();
 

@@ -537,6 +537,10 @@ impl PromptTurnContext {
         self.transaction.as_mut()
     }
 
+    pub(crate) fn has_active_transaction(&self) -> bool {
+        self.transaction.is_some()
+    }
+
     pub(crate) fn commit_transaction(
         &mut self,
         new_leaf_id: Option<String>,

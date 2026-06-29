@@ -1,12 +1,17 @@
 use pi_agent_core::{AgentTool, AgentToolOutput};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::registry;
-use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
+use pi_ai::registry::ApiProvider;
+use pi_ai::stream::EventStream;
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
+    ModelInput, StopReason, StreamOptions,
+};
 use pi_coding_agent::{
     CliError, PrintModeOptions, PromptInvocation, ResolvedSessionTarget, SessionMode,
     SessionRunOptions, run_print_mode,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -56,6 +61,40 @@ fn echo_tool() -> AgentTool {
             }];
             Box::pin(async move { Ok(AgentToolOutput::new(result)) })
         }),
+    }
+}
+
+struct RecordingProvider {
+    contexts: Arc<Mutex<Vec<Context>>>,
+    response: String,
+}
+
+impl RecordingProvider {
+    fn new(contexts: Arc<Mutex<Vec<Context>>>, response: impl Into<String>) -> Self {
+        Self {
+            contexts,
+            response: response.into(),
+        }
+    }
+}
+
+impl ApiProvider for RecordingProvider {
+    fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        self.contexts.lock().unwrap().push(ctx);
+        let model_id = model.id.clone();
+        let response = self.response.clone();
+        Box::pin(async_stream::stream! {
+            let mut message = AssistantMessage::empty("recording", &model_id);
+            message.provider = Some("recording".into());
+            message.content.push(ContentBlock::Text {
+                text: response,
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
     }
 }
 
@@ -262,5 +301,326 @@ async fn explicit_new_session_writes_rust_native_session_events() {
     assert!(events.contains(r#""kind":"operation.committed""#));
     assert!(events.contains(r#""kind":"message.completed""#));
     assert!(!events.contains(r#""type":"session""#));
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn open_or_create_session_target_reopens_rust_native_session() {
+    let first_api = "pi-coding-print-open-or-create-first";
+    registry::register(first_api, Arc::new(FauxProvider::simple_text("first")));
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let first = run_print_mode(PrintModeOptions {
+        prompt: "first question".into(),
+        model: faux_model(first_api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir.clone(),
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: Some(ResolvedSessionTarget::OpenOrCreateId("shared".into())),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("first question".into()),
+    })
+    .await
+    .unwrap();
+    assert_eq!(first, "first");
+    registry::unregister(first_api);
+
+    let second_api = "pi-coding-print-open-or-create-second";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    registry::register(
+        second_api,
+        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "second")),
+    );
+
+    let second = run_print_mode(PrintModeOptions {
+        prompt: "second question".into(),
+        model: faux_model(second_api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: Some(ResolvedSessionTarget::OpenOrCreateId("shared".into())),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("second question".into()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(second, "second");
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0].messages.len(), 3);
+    assert!(matches!(
+        &contexts[0].messages[0],
+        Message::User { content }
+            if content == &vec![ContentBlock::Text {
+                text: "first question".into(),
+                text_signature: None,
+            }]
+    ));
+    assert!(matches!(
+        &contexts[0].messages[1],
+        Message::Assistant { content }
+            if content == &vec![ContentBlock::Text {
+                text: "first".into(),
+                text_signature: None,
+            }]
+    ));
+    assert!(matches!(
+        &contexts[0].messages[2],
+        Message::User { content }
+            if content == &vec![ContentBlock::Text {
+                text: "second question".into(),
+                text_signature: None,
+            }]
+    ));
+    assert!(sessions_dir.join("shared").join("session.json").is_file());
+    registry::unregister(second_api);
+}
+
+#[tokio::test]
+async fn open_target_reuses_existing_rust_native_session() {
+    let first_api = "pi-coding-print-open-target-first";
+    registry::register(first_api, Arc::new(FauxProvider::simple_text("stored")));
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    run_print_mode(PrintModeOptions {
+        prompt: "remember".into(),
+        model: faux_model(first_api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir.clone(),
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: Some(ResolvedSessionTarget::OpenOrCreateId("existing".into())),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("remember".into()),
+    })
+    .await
+    .unwrap();
+    registry::unregister(first_api);
+
+    let second_api = "pi-coding-print-open-target-second";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    registry::register(
+        second_api,
+        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "opened")),
+    );
+
+    let output = run_print_mode(PrintModeOptions {
+        prompt: "continue".into(),
+        model: faux_model(second_api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir),
+        }),
+        session_target: Some(ResolvedSessionTarget::OpenTarget("existing".into())),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("continue".into()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(output, "opened");
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts[0].messages.len(), 3);
+    registry::unregister(second_api);
+}
+
+#[tokio::test]
+async fn continue_most_recent_uses_rust_native_session() {
+    let first_api = "pi-coding-print-continue-first";
+    registry::register(first_api, Arc::new(FauxProvider::simple_text("prior")));
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    run_print_mode(PrintModeOptions {
+        prompt: "prior question".into(),
+        model: faux_model(first_api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir.clone(),
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: Some(ResolvedSessionTarget::OpenOrCreateId("recent".into())),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("prior question".into()),
+    })
+    .await
+    .unwrap();
+    registry::unregister(first_api);
+
+    let second_api = "pi-coding-print-continue-second";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    registry::register(
+        second_api,
+        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "continued")),
+    );
+
+    let output = run_print_mode(PrintModeOptions {
+        prompt: "next".into(),
+        model: faux_model(second_api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir),
+        }),
+        session_target: Some(ResolvedSessionTarget::ContinueMostRecent),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("next".into()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(output, "continued");
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts[0].messages.len(), 3);
+    registry::unregister(second_api);
+}
+
+#[tokio::test]
+async fn continue_most_recent_reports_missing_rust_native_session() {
+    let api = "pi-coding-print-continue-missing";
+    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let error = run_print_mode(PrintModeOptions {
+        prompt: "next".into(),
+        model: faux_model(api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir),
+        }),
+        session_target: Some(ResolvedSessionTarget::ContinueMostRecent),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("next".into()),
+    })
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CliError::SessionFailure("no previous session to continue".into())
+    );
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn fork_target_is_not_silently_routed_to_old_jsonl_sessions() {
+    let api = "pi-coding-print-fork-unsupported";
+    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let error = run_print_mode(PrintModeOptions {
+        prompt: "fork".into(),
+        model: faux_model(api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir,
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: Some(ResolvedSessionTarget::ForkTarget("source".into())),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("fork".into()),
+    })
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CliError::UnsupportedMode("Rust-native session fork".into())
+    );
+    assert!(!sessions_dir.exists());
     registry::unregister(api);
 }

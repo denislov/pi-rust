@@ -1,6 +1,7 @@
 use crate::CliError;
 use crate::coding_session::{
-    CodingAgentSession, CodingAgentSessionOptions, PromptTurnOptions, PromptTurnOutcome,
+    CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PromptTurnOptions,
+    PromptTurnOutcome,
 };
 use crate::protocol::session_runner::{SessionPromptOptions, assistant_text, run_session_prompt};
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
@@ -112,21 +113,46 @@ async fn run_print_mode_with_coding_session(
         return Ok(PrintModeRoute::Legacy(options));
     }
 
-    match options.session_target.as_ref() {
-        Some(ResolvedSessionTarget::New) => {}
-        _ => return Ok(PrintModeRoute::Legacy(options)),
-    }
-
     let session_root = print_coding_session_root(session_options)?;
     let session_options = CodingAgentSessionOptions::new().with_session_log_root(session_root);
 
+    let mut session =
+        open_print_coding_session(session_options, options.session_target.as_ref()).await?;
     let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
-    let mut session = CodingAgentSession::create(session_options).await?;
 
     let outcome = session.prompt(prompt_options).await?;
     Ok(PrintModeRoute::Handled(print_text_from_prompt_outcome(
         outcome,
     )?))
+}
+
+async fn open_print_coding_session(
+    options: CodingAgentSessionOptions,
+    target: Option<&ResolvedSessionTarget>,
+) -> Result<CodingAgentSession, CliError> {
+    match target.unwrap_or(&ResolvedSessionTarget::New) {
+        ResolvedSessionTarget::New => Ok(CodingAgentSession::create(options).await?),
+        ResolvedSessionTarget::OpenTarget(session_id) => {
+            Ok(CodingAgentSession::open(options.with_session_id(session_id.clone())).await?)
+        }
+        ResolvedSessionTarget::OpenOrCreateId(session_id) => Ok(
+            CodingAgentSession::open_or_create(options.with_session_id(session_id.clone())).await?,
+        ),
+        ResolvedSessionTarget::ContinueMostRecent => {
+            let session_id = CodingAgentSession::list(options.clone())?
+                .into_iter()
+                .next()
+                .map(|summary| summary.session_id)
+                .ok_or_else(|| CodingSessionError::Session {
+                    message: "no previous session to continue".into(),
+                })?;
+            Ok(CodingAgentSession::open(options.with_session_id(session_id)).await?)
+        }
+        ResolvedSessionTarget::ForkTarget(_) => Err(CodingSessionError::UnsupportedCapability {
+            capability: "Rust-native session fork".into(),
+        }
+        .into()),
+    }
 }
 
 fn print_coding_session_root(options: &SessionRunOptions) -> Result<PathBuf, CliError> {

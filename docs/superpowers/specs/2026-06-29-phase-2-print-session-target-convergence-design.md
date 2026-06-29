@@ -35,7 +35,7 @@ The adapter should avoid duplicating runtime construction. `PromptTurnOptions::f
 `print_mode` should add a small private resolver for Rust-native targets:
 
 - `New`: call `CodingAgentSession::create` with the resolved session log root.
-- `OpenTarget(value)`: call `CodingAgentSession::open` with `session_id = value` first. If later user-facing syntax needs path targets, add explicit path handling instead of guessing.
+- `OpenTarget(value)`: call `CodingAgentSession::open` for an explicit Rust-native session id or Rust-native session directory path. This must not open old JSONL session files.
 - `OpenOrCreateId(id)`: call `CodingAgentSession::open_or_create` with `session_id = id`.
 - `ContinueMostRecent`: call `CodingAgentSession::list`, select the newest summary by `updated_at`, and call `CodingAgentSession::open` with that session id.
 - `ForkTarget(_)`: return `CodingSessionError::UnsupportedCapability`.
@@ -61,7 +61,8 @@ Unsupported migrated-session actions should fail explicitly. Do not silently rou
 Expected errors:
 
 - missing most-recent Rust-native session for `ContinueMostRecent`;
-- missing or invalid id for `OpenTarget`/`OpenOrCreateId`;
+- missing or invalid id/path for `OpenTarget`;
+- missing or invalid id for `OpenOrCreateId`;
 - unsupported Rust-native fork target;
 - normal `CodingSessionError` propagation from open/create/prompt.
 
@@ -74,6 +75,7 @@ Add or extend deterministic offline tests with faux providers:
 - explicit `New` still writes Rust-native `session.json` and `events.jsonl`;
 - `OpenOrCreateId` creates a Rust-native session, then reopens it on a second prompt;
 - `OpenTarget` reuses an existing Rust-native session and hydrates prior transcript into the provider context;
+- `OpenTarget` can open an explicit Rust-native session directory path without writing old JSONL;
 - `ContinueMostRecent` selects the newest Rust-native session;
 - `ContinueMostRecent` fails clearly when no Rust-native session exists;
 - `ForkTarget` in enabled Rust-native print mode fails as unsupported instead of writing old JSONL;

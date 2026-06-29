@@ -119,7 +119,7 @@ async fn no_session_does_not_write_files() {
 }
 
 #[tokio::test]
-async fn session_path_appends_to_specific_file() {
+async fn session_path_target_opens_rust_native_session_directory() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
@@ -142,14 +142,12 @@ async fn session_path_appends_to_specific_file() {
     assert_eq!(result.exit_code, 0);
     registry::unregister(api1);
 
-    let mut files = Vec::new();
-    collect_jsonl_files(dir.path(), &mut files);
-    let session_file = files.first().unwrap().clone();
+    assert!(sessions.join("path-test-id").join("session.json").is_file());
 
     let api2 = "session-cli-path-append";
     registry::register(api2, Arc::new(FauxProvider::simple_text("second")));
     let options2 = test_options(api2, &cwd, &sessions);
-    let session_path = session_file.display().to_string();
+    let session_path = sessions.join("path-test-id").display().to_string();
 
     let result = run_cli_with_options(
         vec![
@@ -164,13 +162,10 @@ async fn session_path_appends_to_specific_file() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout, "second\n");
 
-    let text = std::fs::read_to_string(&session_file).unwrap();
-    let lines = text.lines().count();
-    assert!(
-        lines >= 2,
-        "expected at least 2 lines, session header + entries"
-    );
-    assert!(text.contains("second prompt"));
+    let text = std::fs::read_to_string(sessions.join("path-test-id").join("events.jsonl")).unwrap();
+    assert_eq!(text.matches(r#""kind":"turn.input.recorded""#).count(), 2);
+    assert_eq!(text.matches(r#""kind":"message.completed""#).count(), 2);
+    assert!(!text.contains(r#""type":"message""#));
     registry::unregister(api2);
 }
 
@@ -218,7 +213,7 @@ async fn session_id_creates_and_reopens() {
 }
 
 #[tokio::test]
-async fn fork_creates_parent_session_header() {
+async fn fork_target_is_explicitly_unsupported_for_rust_native_print_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
@@ -255,28 +250,15 @@ async fn fork_creates_parent_session_header() {
         options2,
     )
     .await;
-    assert_eq!(result.exit_code, 0);
-
-    let mut files = Vec::new();
-    collect_jsonl_files(dir.path(), &mut files);
-    assert!(files.len() >= 2);
-
-    let mut found_parent = false;
-    for file in &files {
-        let text = std::fs::read_to_string(file).unwrap();
-        if text.contains("source") {
-            if text.contains("parentSession") {
-                found_parent = true;
-            }
-        }
-    }
-    assert!(found_parent, "fork should contain parentSession reference");
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stderr.contains("Rust-native session fork"));
+    assert_eq!(session_dirs(&sessions).len(), 1);
 
     registry::unregister(api2);
 }
 
 #[tokio::test]
-async fn name_appends_session_info() {
+async fn name_does_not_write_legacy_session_info_entry() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
@@ -299,12 +281,12 @@ async fn name_appends_session_info() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout, "answer\n");
 
-    let mut files = Vec::new();
-    collect_jsonl_files(dir.path(), &mut files);
-    assert_eq!(files.len(), 1);
-    let text = std::fs::read_to_string(&files[0]).unwrap();
-    assert!(text.contains("session_info"));
-    assert!(text.contains("named-run"));
+    let session_dirs = session_dirs(&sessions);
+    assert_eq!(session_dirs.len(), 1);
+    let text = std::fs::read_to_string(session_dirs[0].join("events.jsonl")).unwrap();
+    assert!(text.contains(r#""kind":"session.created""#));
+    assert!(!text.contains("session_info"));
+    assert!(!text.contains("named-run"));
     registry::unregister(api);
 }
 
@@ -362,63 +344,10 @@ async fn continue_maintains_parent_chain() {
     assert_eq!(result.exit_code, 0);
     registry::unregister(api2);
 
-    let mut files = Vec::new();
-    collect_jsonl_files(dir.path(), &mut files);
-    assert_eq!(files.len(), 1);
-    let text = std::fs::read_to_string(&files[0]).unwrap();
-    let entries: Vec<serde_json::Value> = text
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
-
-    let mut user_ids: Vec<String> = Vec::new();
-    let mut assistant_ids: Vec<String> = Vec::new();
-    for entry in &entries {
-        let entry_type = entry["type"].as_str().unwrap_or("");
-        if entry_type == "message" {
-            let role = entry["message"]["role"].as_str().unwrap_or("");
-            let id = entry["id"].as_str().unwrap().to_string();
-            if role == "user" {
-                user_ids.push(id);
-            } else if role == "assistant" {
-                assistant_ids.push(id);
-            }
-        }
-    }
-
-    assert!(
-        user_ids.len() >= 2,
-        "expected at least 2 user messages, got {}",
-        user_ids.len()
-    );
-    assert!(
-        assistant_ids.len() >= 2,
-        "expected at least 2 assistant messages, got {}",
-        assistant_ids.len()
-    );
-
-    let second_user_parent = entries
-        .iter()
-        .find(|e| e["id"].as_str() == Some(&user_ids[1]))
-        .and_then(|e| e["parentId"].as_str())
-        .map(|s| s.to_string());
-    assert_eq!(
-        second_user_parent.as_deref(),
-        Some(assistant_ids[0].as_str()),
-        "second user message should chain from first assistant"
-    );
-
-    let second_assistant_parent = entries
-        .iter()
-        .find(|e| e["id"].as_str() == Some(&assistant_ids[1]))
-        .and_then(|e| e["parentId"].as_str())
-        .map(|s| s.to_string());
-    assert_eq!(
-        second_assistant_parent.as_deref(),
-        Some(user_ids[1].as_str()),
-        "second assistant message should chain from second user"
-    );
+    let text = std::fs::read_to_string(sessions.join("test123").join("events.jsonl")).unwrap();
+    assert_eq!(text.matches(r#""kind":"turn.input.recorded""#).count(), 2);
+    assert_eq!(text.matches(r#""kind":"message.completed""#).count(), 2);
+    assert!(!text.contains(r#""type":"message""#));
 }
 
 #[tokio::test]
@@ -463,4 +392,18 @@ async fn session_dir_flag_writes_to_custom_path() {
         "expected jsonl files under custom session path {:?}",
         custom_sessions
     );
+    assert_eq!(session_dirs(&custom_sessions).len(), 1);
+    assert!(
+        session_dirs(&custom_sessions)[0]
+            .join("session.json")
+            .is_file()
+    );
+}
+
+fn session_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .collect()
 }
