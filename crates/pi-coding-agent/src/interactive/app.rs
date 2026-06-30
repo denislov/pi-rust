@@ -3095,7 +3095,7 @@ mod tests {
     }
 
     #[test]
-    fn clone_command_reports_unsupported_for_active_rust_native_session() {
+    fn clone_command_reports_failure_for_missing_rust_native_session() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("/tmp/project"),
             "faux-model".to_string(),
@@ -3120,14 +3120,12 @@ mod tests {
 
         assert!(root.take_selected_session().is_none());
         let text = last_system_text(&root);
-        assert!(
-            text.contains("Rust-native session clone is not implemented yet"),
-            "{text}"
-        );
+        assert!(text.contains("Failed to clone session:"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
     }
 
     #[test]
-    fn fork_command_reports_unsupported_for_active_rust_native_session() {
+    fn fork_command_reports_failure_for_missing_rust_native_session() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("/tmp/project"),
             "faux-model".to_string(),
@@ -3152,10 +3150,8 @@ mod tests {
 
         assert!(root.take_selected_session().is_none());
         let text = last_system_text(&root);
-        assert!(
-            text.contains("Rust-native session fork is not implemented yet"),
-            "{text}"
-        );
+        assert!(text.contains("Failed to fork session:"), "{text}");
+        assert!(!text.contains("not implemented"), "{text}");
     }
 
     #[test]

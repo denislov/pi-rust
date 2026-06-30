@@ -110,6 +110,23 @@ impl CodingAgentSession {
         SessionService::hydrate(&options)
     }
 
+    pub(crate) fn clone_session(
+        options: CodingAgentSessionOptions,
+    ) -> Result<CodingAgentSessionHydration, CodingSessionError> {
+        SessionService::open(&options)?
+            .clone_current()?
+            .hydrated_view()
+    }
+
+    pub(crate) fn fork_session(
+        options: CodingAgentSessionOptions,
+        target_leaf_id: Option<&str>,
+    ) -> Result<CodingAgentSessionHydration, CodingSessionError> {
+        SessionService::open(&options)?
+            .fork_current(target_leaf_id)?
+            .hydrated_view()
+    }
+
     pub(crate) fn hydrate_current(
         &self,
     ) -> Result<Option<CodingAgentSessionHydration>, CodingSessionError> {

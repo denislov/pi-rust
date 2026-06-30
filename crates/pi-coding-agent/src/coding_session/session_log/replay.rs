@@ -148,6 +148,8 @@ impl ReplayBuilder {
                 self.cwd = cwd.clone();
             }
             SessionEventData::OperationStarted { .. }
+            | SessionEventData::SessionCloned { .. }
+            | SessionEventData::SessionForked { .. }
             | SessionEventData::TurnStarted {}
             | SessionEventData::MetadataUpdated { .. } => {}
             SessionEventData::OperationCommitted { new_leaf_id } => {

@@ -77,6 +77,16 @@ impl SessionEventEnvelope {
 pub(crate) enum SessionEventData {
     #[serde(rename = "session.created")]
     SessionCreated { cwd: Option<String> },
+    #[serde(rename = "session.cloned")]
+    SessionCloned {
+        source_session_id: String,
+        source_leaf_id: String,
+    },
+    #[serde(rename = "session.forked")]
+    SessionForked {
+        source_session_id: String,
+        source_leaf_id: String,
+    },
     #[serde(rename = "operation.started")]
     OperationStarted { operation: OperationKind },
     #[serde(rename = "operation.committed")]
@@ -227,6 +237,20 @@ mod tests {
             (
                 SessionEventData::SessionCreated { cwd: None },
                 "session.created",
+            ),
+            (
+                SessionEventData::SessionCloned {
+                    source_session_id: "sess_source".into(),
+                    source_leaf_id: "leaf_source".into(),
+                },
+                "session.cloned",
+            ),
+            (
+                SessionEventData::SessionForked {
+                    source_session_id: "sess_source".into(),
+                    source_leaf_id: "leaf_source".into(),
+                },
+                "session.forked",
             ),
             (
                 SessionEventData::OperationStarted {

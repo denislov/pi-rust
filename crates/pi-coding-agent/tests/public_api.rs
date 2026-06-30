@@ -129,12 +129,8 @@ async fn coding_session_public_api_symbols_are_importable() {
             compact: CapabilityStatus::Unsupported {
                 reason: "manual compaction is not implemented in PromptTurnFlow yet".into(),
             },
-            fork: CapabilityStatus::Unsupported {
-                reason: "Rust-native fork semantics are not implemented yet".into(),
-            },
-            clone_session: CapabilityStatus::Unsupported {
-                reason: "Rust-native session clone is not implemented yet".into(),
-            },
+            fork: CapabilityStatus::Available,
+            clone_session: CapabilityStatus::Available,
             switch_session: CapabilityStatus::Unsupported {
                 reason: "session switching is not exposed on CodingAgentSession yet".into(),
             },

@@ -5,7 +5,7 @@ use super::session_log::event::{OperationKind, SessionEventData, SessionEventEnv
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 use super::session_log::store::{
-    CreateSessionOptions, SessionHandle, SessionLogStore, SessionSummary,
+    CreateSessionOptions, ManifestPatch, SessionHandle, SessionLogStore, SessionSummary,
 };
 use super::session_log::transaction::TurnTransaction;
 use super::{
@@ -26,6 +26,12 @@ pub(crate) struct FinalizedSessionWrite {
     pub(crate) events: Vec<CodingAgentEvent>,
     pub(crate) session_id: Option<String>,
     pub(crate) leaf_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionCopyKind {
+    Clone,
+    Fork,
 }
 
 impl SessionService {
@@ -112,6 +118,17 @@ impl SessionService {
         options: &CodingAgentSessionOptions,
     ) -> Result<CodingAgentSessionHydration, CodingSessionError> {
         Self::open(options)?.hydrated_view()
+    }
+
+    pub(crate) fn clone_current(&self) -> Result<Self, CodingSessionError> {
+        self.copy_to_new_session(None, SessionCopyKind::Clone)
+    }
+
+    pub(crate) fn fork_current(
+        &self,
+        target_leaf_id: Option<&str>,
+    ) -> Result<Self, CodingSessionError> {
+        self.copy_to_new_session(target_leaf_id, SessionCopyKind::Fork)
     }
 
     pub(crate) fn session_id(&self) -> &str {
@@ -273,6 +290,57 @@ impl SessionService {
         })
     }
 
+    fn copy_to_new_session(
+        &self,
+        target_leaf_id: Option<&str>,
+        kind: SessionCopyKind,
+    ) -> Result<Self, CodingSessionError> {
+        let target_leaf_id = resolve_copy_target_leaf(self.handle.manifest(), target_leaf_id)?;
+        let source_events = self.store.read_events(&self.handle)?;
+        let cutoff = committed_leaf_cutoff(&source_events, &target_leaf_id).ok_or_else(|| {
+            CodingSessionError::Session {
+                message: format!("leaf id not found in source session: {target_leaf_id}"),
+            }
+        })?;
+
+        let mut ids = SystemIdGenerator;
+        let clock = SystemClock;
+        let replay = self.replay()?;
+        let target_session_id = ids.next_session_id();
+        let mut target = Self::create_with_id(
+            self.store.clone(),
+            target_session_id,
+            &mut ids,
+            &clock,
+            replay.cwd,
+        )?;
+
+        let provenance = SessionEventEnvelope::new(
+            target.session_id().to_owned(),
+            ids.next_event_id(),
+            clock.now_rfc3339(),
+            kind.provenance_event(self.session_id().to_owned(), target_leaf_id.clone()),
+        );
+        target.store.append_events(&target.handle, &[provenance])?;
+
+        let copied_events = source_events[..=cutoff]
+            .iter()
+            .filter(|event| should_copy_source_event(event))
+            .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
+            .collect::<Vec<_>>();
+        target.store.append_events(&target.handle, &copied_events)?;
+        target.store.update_manifest(
+            &target.handle,
+            ManifestPatch::new()
+                .updated_at(clock.now_rfc3339())
+                .active_leaf_id(Some(target_leaf_id)),
+        )?;
+        let session_id = target.session_id().to_owned();
+        target.handle = target.store.open_session_id(&session_id)?;
+
+        Ok(target)
+    }
+
     fn create_with_id(
         store: SessionLogStore,
         session_id: String,
@@ -312,6 +380,79 @@ impl SessionService {
         let mut ids = SystemIdGenerator;
         ids.next_leaf_id()
     }
+}
+
+impl SessionCopyKind {
+    fn provenance_event(
+        self,
+        source_session_id: String,
+        source_leaf_id: String,
+    ) -> SessionEventData {
+        match self {
+            Self::Clone => SessionEventData::SessionCloned {
+                source_session_id,
+                source_leaf_id,
+            },
+            Self::Fork => SessionEventData::SessionForked {
+                source_session_id,
+                source_leaf_id,
+            },
+        }
+    }
+}
+
+fn resolve_copy_target_leaf(
+    manifest: &super::session_log::manifest::SessionManifest,
+    target_leaf_id: Option<&str>,
+) -> Result<String, CodingSessionError> {
+    if let Some(target_leaf_id) = target_leaf_id {
+        let target_leaf_id = target_leaf_id.trim();
+        if target_leaf_id.is_empty() {
+            return Err(CodingSessionError::Input {
+                message: "target leaf id must not be empty".into(),
+            });
+        }
+        return Ok(target_leaf_id.to_owned());
+    }
+
+    manifest
+        .active_leaf_id
+        .clone()
+        .ok_or_else(|| CodingSessionError::Session {
+            message: "session has no committed active leaf".into(),
+        })
+}
+
+fn committed_leaf_cutoff(events: &[SessionEventEnvelope], target_leaf_id: &str) -> Option<usize> {
+    events.iter().position(|event| {
+        matches!(
+            &event.data,
+            SessionEventData::OperationCommitted {
+                new_leaf_id: Some(new_leaf_id),
+            } if new_leaf_id == target_leaf_id
+        )
+    })
+}
+
+fn should_copy_source_event(event: &&SessionEventEnvelope) -> bool {
+    !matches!(
+        event.data,
+        SessionEventData::SessionCreated { .. }
+            | SessionEventData::SessionCloned { .. }
+            | SessionEventData::SessionForked { .. }
+    )
+}
+
+fn rewrite_event_for_session(
+    event: &SessionEventEnvelope,
+    target_session_id: &str,
+    ids: &mut impl IdGenerator,
+) -> SessionEventEnvelope {
+    let mut copied = event.clone();
+    copied.session_id = target_session_id.to_owned();
+    copied.event_id = ids.next_event_id();
+    copied.parent_event_id = None;
+    copied
 }
 
 fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessionTranscriptItem {
@@ -411,6 +552,7 @@ fn normalized_path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding_session::session_log::event::PersistedContentBlock;
 
     #[test]
     fn create_uses_explicit_session_id() {
@@ -661,6 +803,132 @@ mod tests {
     }
 
     #[test]
+    fn clone_current_copies_committed_history_to_new_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("project");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_clone_source")
+            .with_cwd(&cwd)
+            .with_session_log_root(temp.path().join("sessions"));
+        let mut service = SessionService::create(&options).unwrap();
+        let source_session_id = service.session_id().to_owned();
+        record_prompt(&mut service, "first prompt");
+        let target_leaf = record_prompt(&mut service, "second prompt");
+
+        let cloned = service.clone_current().unwrap();
+
+        assert_ne!(cloned.session_id(), source_session_id);
+        assert!(cloned.session_dir().join("session.json").is_file());
+        assert!(cloned.session_dir().join("events.jsonl").is_file());
+        let hydrated = cloned.hydrated_view().unwrap();
+        assert_eq!(hydrated.cwd.as_deref(), Some(cwd.to_str().unwrap()));
+        assert_eq!(
+            hydrated.summary.active_leaf_id.as_deref(),
+            Some(target_leaf.as_str())
+        );
+        assert_eq!(
+            hydrated.transcript,
+            vec![
+                CodingAgentSessionTranscriptItem::User {
+                    text: "first prompt".into()
+                },
+                CodingAgentSessionTranscriptItem::User {
+                    text: "second prompt".into()
+                },
+            ]
+        );
+
+        let cloned_session_id = cloned.session_id().to_owned();
+        let events = cloned.store.read_events(&cloned.handle).unwrap();
+        assert!(
+            matches!(
+                &events[1].data,
+                SessionEventData::SessionCloned {
+                    source_session_id: actual_source_session_id,
+                    source_leaf_id,
+                } if actual_source_session_id == &source_session_id
+                    && source_leaf_id == &target_leaf
+            ),
+            "{events:#?}"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.data, SessionEventData::SessionCreated { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.session_id == cloned_session_id
+                    && event.parent_event_id.is_none())
+        );
+    }
+
+    #[test]
+    fn fork_current_uses_requested_committed_leaf() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_source")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let source_session_id = service.session_id().to_owned();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        record_prompt(&mut service, "drop prompt");
+
+        let forked = service.fork_current(Some(&target_leaf)).unwrap();
+
+        assert_ne!(forked.session_id(), source_session_id);
+        let hydrated = forked.hydrated_view().unwrap();
+        assert_eq!(
+            hydrated.summary.active_leaf_id.as_deref(),
+            Some(target_leaf.as_str())
+        );
+        assert_eq!(
+            hydrated.transcript,
+            vec![CodingAgentSessionTranscriptItem::User {
+                text: "keep prompt".into()
+            }]
+        );
+        let events = forked.store.read_events(&forked.handle).unwrap();
+        assert!(
+            events.iter().any(|event| matches!(
+                &event.data,
+                SessionEventData::SessionForked {
+                    source_session_id: actual_source_session_id,
+                    source_leaf_id,
+                } if actual_source_session_id == &source_session_id
+                    && source_leaf_id == &target_leaf
+            )),
+            "{events:#?}"
+        );
+        let event_log_text =
+            std::fs::read_to_string(forked.handle.event_log_path().unwrap()).unwrap();
+        assert!(event_log_text.contains("keep prompt"), "{event_log_text}");
+        assert!(!event_log_text.contains("drop prompt"), "{event_log_text}");
+    }
+
+    #[test]
+    fn fork_current_rejects_unknown_leaf() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_unknown")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        record_prompt(&mut service, "known prompt");
+
+        let error = service.fork_current(Some("leaf_missing")).unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert_eq!(
+            error.to_string(),
+            "session error: leaf id not found in source session: leaf_missing"
+        );
+    }
+
+    #[test]
     fn fail_prompt_transaction_emits_pending_and_committed_events() {
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
@@ -714,5 +982,20 @@ mod tests {
         );
         assert!(finalized.session_id.is_none());
         assert!(finalized.leaf_id.is_none());
+    }
+
+    fn record_prompt(service: &mut SessionService, text: &str) -> String {
+        let mut transaction = service.begin_prompt_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+        transaction
+            .record_user_input(vec![PersistedContentBlock::Text {
+                text: text.to_owned(),
+            }])
+            .unwrap();
+        service
+            .commit_prompt_transaction(Some(transaction), operation_id)
+            .unwrap()
+            .leaf_id
+            .unwrap()
     }
 }

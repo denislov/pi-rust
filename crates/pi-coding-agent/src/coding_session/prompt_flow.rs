@@ -557,6 +557,8 @@ mod tests {
                 SessionEventData::MetadataUpdated { .. } => "metadata.updated",
                 SessionEventData::ActiveLeafChanged { .. } => "active_leaf.changed",
                 SessionEventData::SessionCreated { .. } => "session.created",
+                SessionEventData::SessionCloned { .. } => "session.cloned",
+                SessionEventData::SessionForked { .. } => "session.forked",
             })
             .collect()
     }

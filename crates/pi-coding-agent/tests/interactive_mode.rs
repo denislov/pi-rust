@@ -60,7 +60,7 @@ async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
 }
 
 #[tokio::test]
-async fn scripted_interactive_clone_after_rust_native_prompt_reports_unsupported() {
+async fn scripted_interactive_clone_after_rust_native_prompt_creates_session() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response("assistant reply")]);
 
@@ -69,7 +69,7 @@ async fn scripted_interactive_clone_after_rust_native_prompt_reports_unsupported
         dir.path(),
         vec![
             ("hello\r", "assistant reply"),
-            ("/clone\r", "assistant reply"),
+            ("/clone\r", "session.cloned"),
         ],
         80,
         24,
@@ -78,16 +78,24 @@ async fn scripted_interactive_clone_after_rust_native_prompt_reports_unsupported
     .unwrap();
 
     let files = collect_jsonl_files(dir.path());
-    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(files.len(), 2, "{files:?}");
+    assert_eq!(rust_session_dirs(dir.path()).len(), 2);
     assert!(
-        output.contains("Rust-native session clone is not implemented yet"),
+        output.contains("Cloned to new session"),
         "{}",
         output.rendered
+    );
+    assert!(!output.contains("not implemented"), "{}", output.rendered);
+    assert!(
+        files.iter().any(|path| std::fs::read_to_string(path)
+            .unwrap()
+            .contains("session.cloned")),
+        "{files:?}"
     );
 }
 
 #[tokio::test]
-async fn scripted_interactive_fork_after_rust_native_prompt_reports_unsupported() {
+async fn scripted_interactive_fork_after_rust_native_prompt_creates_session() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response("assistant reply")]);
 
@@ -96,7 +104,7 @@ async fn scripted_interactive_fork_after_rust_native_prompt_reports_unsupported(
         dir.path(),
         vec![
             ("hello\r", "assistant reply"),
-            ("/fork\r", "assistant reply"),
+            ("/fork\r", "session.forked"),
         ],
         80,
         24,
@@ -105,11 +113,19 @@ async fn scripted_interactive_fork_after_rust_native_prompt_reports_unsupported(
     .unwrap();
 
     let files = collect_jsonl_files(dir.path());
-    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(files.len(), 2, "{files:?}");
+    assert_eq!(rust_session_dirs(dir.path()).len(), 2);
     assert!(
-        output.contains("Rust-native session fork is not implemented yet"),
+        output.contains("Forked to new session"),
         "{}",
         output.rendered
+    );
+    assert!(!output.contains("not implemented"), "{}", output.rendered);
+    assert!(
+        files.iter().any(|path| std::fs::read_to_string(path)
+            .unwrap()
+            .contains("session.forked")),
+        "{files:?}"
     );
 }
 
@@ -294,6 +310,29 @@ fn collect_jsonl_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     collect_jsonl_files_recursive(root, &mut files);
     files.sort();
     files
+}
+
+fn rust_session_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    collect_rust_session_dirs(root, &mut dirs);
+    dirs.sort();
+    dirs
+}
+
+fn collect_rust_session_dirs(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.join("session.json").is_file() && path.join("events.jsonl").is_file() {
+                out.push(path);
+            } else {
+                collect_rust_session_dirs(&path, out);
+            }
+        }
+    }
 }
 
 fn collect_jsonl_files_recursive(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

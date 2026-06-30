@@ -11,9 +11,10 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
-    SessionChoiceKind, clone_session_to_sibling, export_path_arg,
-    export_transcript as export_session_transcript, hydrate_rust_native_choice,
-    resolve_command_path, rust_native_tree_from_hydrated_session, session_choice_from_metadata,
+    SessionChoiceKind, clone_rust_native_choice, clone_session_to_sibling, export_path_arg,
+    export_transcript as export_session_transcript, fork_rust_native_choice,
+    hydrate_rust_native_choice, resolve_command_path, rust_native_tree_from_hydrated_session,
+    session_choice_from_metadata,
 };
 use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selector_arg};
 use crate::interactive::{Transcript, TranscriptItem};
@@ -242,13 +243,19 @@ fn handle_new_command(root: &mut InteractiveRoot) {
 }
 
 fn handle_clone_command(root: &mut InteractiveRoot) {
-    if matches!(
-        root.active_session.as_ref().map(|choice| choice.kind),
-        Some(SessionChoiceKind::RustNative)
-    ) {
-        root.transcript.push(TranscriptItem::system(
-            "Rust-native session clone is not implemented yet.",
-        ));
+    if let Some(choice) = root
+        .active_session
+        .as_ref()
+        .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
+    {
+        match clone_rust_native_choice(choice) {
+            Ok(hydrated) => {
+                root.apply_hydrated_session(hydrated, Some("Cloned to new session".into()));
+            }
+            Err(error) => root.transcript.push(TranscriptItem::system(format!(
+                "Failed to clone session: {error}"
+            ))),
+        }
         return;
     }
 
@@ -283,13 +290,31 @@ fn handle_clone_command(root: &mut InteractiveRoot) {
 }
 
 fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
-    if matches!(
-        root.active_session.as_ref().map(|choice| choice.kind),
-        Some(SessionChoiceKind::RustNative)
-    ) {
-        root.transcript.push(TranscriptItem::system(
-            "Rust-native session fork is not implemented yet.",
-        ));
+    if let Some(choice) = root
+        .active_session
+        .as_ref()
+        .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
+    {
+        let target_leaf_id = if args.is_empty() {
+            None
+        } else {
+            let mut parts = args.split_whitespace();
+            let leaf_id = parts.next().unwrap_or_default();
+            if parts.next().is_some() {
+                root.transcript
+                    .push(TranscriptItem::system("Usage: /fork [leaf-id]"));
+                return;
+            }
+            Some(leaf_id)
+        };
+        match fork_rust_native_choice(choice, target_leaf_id) {
+            Ok(hydrated) => {
+                root.apply_hydrated_session(hydrated, Some("Forked to new session".into()));
+            }
+            Err(error) => root.transcript.push(TranscriptItem::system(format!(
+                "Failed to fork session: {error}"
+            ))),
+        }
         return;
     }
 
