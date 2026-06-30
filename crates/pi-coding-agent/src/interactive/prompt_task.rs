@@ -140,12 +140,14 @@ async fn run_coding_prompt_task(
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> Result<CodingPromptTaskResult, CliError> {
-    let session_root = interactive_coding_session_root(options.session.as_ref())?;
     let mut session = match existing_session {
         Some(session) => session,
         None => {
-            open_interactive_coding_session(session_root.as_ref(), options.session_target.as_ref())
-                .await?
+            open_interactive_coding_session(
+                options.session.as_ref(),
+                options.session_target.as_ref(),
+            )
+            .await?
         }
     };
     let mut receiver = session.subscribe();
@@ -215,14 +217,29 @@ fn interactive_coding_session_root(
 }
 
 async fn open_interactive_coding_session(
-    session_root: Option<&PathBuf>,
+    session_options: Option<&crate::runtime::SessionRunOptions>,
     target: Option<&ResolvedSessionTarget>,
 ) -> Result<CodingAgentSession, CliError> {
-    let Some(session_root) = session_root else {
+    let Some(session_options) = session_options else {
         return Ok(CodingAgentSession::non_persistent(CodingAgentSessionOptions::new()).await?);
     };
+    if !matches!(session_options.mode, SessionMode::Enabled) {
+        return Ok(CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_cwd(session_options.cwd.clone()),
+        )
+        .await?);
+    }
 
-    let options = CodingAgentSessionOptions::new().with_session_log_root(session_root.clone());
+    let session_root =
+        interactive_coding_session_root(Some(session_options))?.ok_or_else(|| {
+            CodingSessionError::Session {
+                message: "enabled interactive session is missing a session root".into(),
+            }
+        })?;
+
+    let options = CodingAgentSessionOptions::new()
+        .with_cwd(session_options.cwd.clone())
+        .with_session_log_root(session_root);
     match target.unwrap_or(&ResolvedSessionTarget::New) {
         ResolvedSessionTarget::New => Ok(CodingAgentSession::create(options).await?),
         ResolvedSessionTarget::OpenOrCreateId(session_id) => Ok(

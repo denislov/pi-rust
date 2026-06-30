@@ -93,12 +93,16 @@ impl RpcState {
                 Some(session_root) => {
                     CodingAgentSession::create(
                         CodingAgentSessionOptions::new()
+                            .with_cwd(self.options.session.cwd.clone())
                             .with_session_log_root(session_root.clone()),
                     )
                     .await?
                 }
                 None => {
-                    CodingAgentSession::non_persistent(CodingAgentSessionOptions::new()).await?
+                    CodingAgentSession::non_persistent(
+                        CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
+                    )
+                    .await?
                 }
             },
         };

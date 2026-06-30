@@ -92,9 +92,11 @@ async fn coding_session_public_api_symbols_are_importable() {
     let temp = tempfile::tempdir().unwrap();
     let options = CodingAgentSessionOptions::new()
         .with_session_id("sess_public_api")
+        .with_cwd(temp.path())
         .with_session_log_root(temp.path())
         .with_session_path("sess_public_api");
     assert_eq!(options.session_id(), Some("sess_public_api"));
+    assert_eq!(options.cwd(), Some(temp.path()));
     assert_eq!(options.session_log_root(), Some(temp.path()));
     assert_eq!(
         options.session_path(),

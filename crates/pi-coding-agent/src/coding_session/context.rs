@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodingAgentSessionOptions {
+    cwd: Option<PathBuf>,
     session_id: Option<String>,
     session_log_root: Option<PathBuf>,
     session_path: Option<PathBuf>,
@@ -17,6 +18,11 @@ impl CodingAgentSessionOptions {
         self
     }
 
+    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
     pub fn with_session_log_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.session_log_root = Some(root.into());
         self
@@ -29,6 +35,10 @@ impl CodingAgentSessionOptions {
 
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
+    }
+
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
     }
 
     pub fn session_log_root(&self) -> Option<&Path> {

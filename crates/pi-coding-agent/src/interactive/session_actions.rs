@@ -99,7 +99,8 @@ pub(super) fn hydrate_existing_session_target(
     let root = interactive_session_root(session_options)?;
     let cwd = session_options.cwd.display().to_string();
 
-    if let Some(hydrated) = hydrate_rust_native_session_target(&root, &cwd, target)? {
+    if let Some(hydrated) = hydrate_rust_native_session_target(&root, &session_options.cwd, target)?
+    {
         return Ok(Some(hydrated));
     }
 
@@ -121,10 +122,12 @@ pub(super) fn hydrate_existing_session_target(
 
 fn hydrate_rust_native_session_target(
     root: &Path,
-    cwd: &str,
+    cwd: &Path,
     target: &ResolvedSessionTarget,
 ) -> Result<Option<HydratedSession>, CliError> {
-    let base_options = CodingAgentSessionOptions::new().with_session_log_root(root);
+    let base_options = CodingAgentSessionOptions::new()
+        .with_cwd(cwd)
+        .with_session_log_root(root);
     let hydration = match target {
         ResolvedSessionTarget::New | ResolvedSessionTarget::ForkTarget(_) => return Ok(None),
         ResolvedSessionTarget::ContinueMostRecent => rust_native_choices(root, cwd)?
@@ -707,7 +710,7 @@ pub(super) fn collect_session_choices(session: &Option<SessionRunOptions>) -> Ve
         Err(_) => return Vec::new(),
     };
     let cwd = session.cwd.display().to_string();
-    let mut choices = rust_native_choices(&root, &cwd).unwrap_or_default();
+    let mut choices = rust_native_choices(&root, &session.cwd).unwrap_or_default();
     let repo = JsonlSessionRepo::new(root);
     choices.extend(
         repo.list(Some(&cwd))
@@ -739,8 +742,10 @@ fn interactive_session_root(session: &SessionRunOptions) -> Result<PathBuf, CliE
     }
 }
 
-fn rust_native_choices(root: &Path, cwd: &str) -> Result<Vec<SessionChoice>, CliError> {
-    let options = CodingAgentSessionOptions::new().with_session_log_root(root);
+fn rust_native_choices(root: &Path, cwd: &Path) -> Result<Vec<SessionChoice>, CliError> {
+    let options = CodingAgentSessionOptions::new()
+        .with_cwd(cwd)
+        .with_session_log_root(root);
     Ok(CodingAgentSession::list(options.clone())?
         .into_iter()
         .filter_map(|summary| {
@@ -752,11 +757,16 @@ fn rust_native_choices(root: &Path, cwd: &str) -> Result<Vec<SessionChoice>, Cli
         .collect())
 }
 
-fn hydration_matches_cwd(_hydration: &CodingAgentSessionHydration, _cwd: &str) -> bool {
-    // Rust-native `session.created.cwd` is still populated by SessionService
-    // from the process cwd. Until session creation receives SessionRunOptions
-    // cwd explicitly, the session log root is the reliable adapter boundary.
-    true
+fn hydration_matches_cwd(hydration: &CodingAgentSessionHydration, cwd: &Path) -> bool {
+    let expected = normalized_path_string(cwd);
+    hydration.cwd.as_deref() == Some(expected.as_str())
+}
+
+fn normalized_path_string(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn session_choice_from_rust_native(hydration: &CodingAgentSessionHydration) -> SessionChoice {

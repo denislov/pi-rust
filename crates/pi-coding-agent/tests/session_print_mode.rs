@@ -51,7 +51,7 @@ async fn persists_new_print_mode_session() {
         register_builtins: false,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
-            cwd: project_dir,
+            cwd: project_dir.clone(),
             session_dir: Some(sessions_dir.clone()),
         }),
         session_target: None,
@@ -72,6 +72,7 @@ async fn persists_new_print_mode_session() {
     assert!(session_dirs[0].join("session.json").is_file());
     let text = std::fs::read_to_string(session_dirs[0].join("events.jsonl")).unwrap();
     assert!(text.contains(r#""kind":"session.created""#));
+    assert!(text.contains(&format!(r#""cwd":"{}""#, project_dir.display())));
     assert!(text.contains(r#""kind":"turn.input.recorded""#));
     assert!(text.contains(r#""kind":"message.completed""#));
     assert!(!text.contains(r#""type":"session""#));

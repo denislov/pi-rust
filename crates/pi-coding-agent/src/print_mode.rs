@@ -109,7 +109,9 @@ async fn run_print_mode_with_coding_session(
     }
 
     let session_root = print_coding_session_root(session_options)?;
-    let session_options = CodingAgentSessionOptions::new().with_session_log_root(session_root);
+    let session_options = CodingAgentSessionOptions::new()
+        .with_cwd(session_options.cwd.clone())
+        .with_session_log_root(session_root);
 
     let mut session =
         open_print_coding_session(session_options, options.session_target.as_ref()).await?;
@@ -123,7 +125,12 @@ async fn run_non_persistent_print_mode(
     options: SessionPromptOptions,
 ) -> Result<PromptTurnOutcome, CliError> {
     ensure_non_persistent_print_target(options.session_target.as_ref())?;
-    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new()).await?;
+    let coding_options = options
+        .session
+        .as_ref()
+        .map(|session| CodingAgentSessionOptions::new().with_cwd(session.cwd.clone()))
+        .unwrap_or_else(CodingAgentSessionOptions::new);
+    let mut session = CodingAgentSession::non_persistent(coding_options).await?;
     let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
     Ok(session.prompt(prompt_options).await?)
 }

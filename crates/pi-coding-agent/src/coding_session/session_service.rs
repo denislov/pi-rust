@@ -1,6 +1,4 @@
-#[cfg(test)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::prompt::PromptTurnTransaction;
 use super::session_log::event::{OperationKind, SessionEventData, SessionEventEnvelope};
@@ -40,7 +38,13 @@ impl SessionService {
             Some(session_id) => normalize_session_id(session_id, "session id")?,
             None => ids.next_session_id(),
         };
-        Self::create_with_id(store, session_id, &mut ids, &clock)
+        Self::create_with_id(
+            store,
+            session_id,
+            &mut ids,
+            &clock,
+            option_cwd_string(options),
+        )
     }
 
     pub(crate) fn open(options: &CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
@@ -75,7 +79,13 @@ impl SessionService {
 
         let mut ids = SystemIdGenerator;
         let clock = SystemClock;
-        Self::create_with_id(store, session_id, &mut ids, &clock)
+        Self::create_with_id(
+            store,
+            session_id,
+            &mut ids,
+            &clock,
+            option_cwd_string(options),
+        )
     }
 
     pub(crate) fn list(
@@ -83,11 +93,19 @@ impl SessionService {
     ) -> Result<Vec<CodingAgentSessionSummary>, CodingSessionError> {
         let root = resolve_session_log_root(options)?;
         let store = SessionLogStore::new(root);
-        Ok(store
-            .list_sessions()?
-            .into_iter()
-            .map(CodingAgentSessionSummary::from)
-            .collect())
+        let cwd = option_cwd_string(options);
+        let mut summaries = Vec::new();
+        for summary in store.list_sessions()? {
+            if let Some(cwd) = cwd.as_deref() {
+                let handle = store.open_session(&summary.session_dir)?;
+                let replay = store.replay_session(&handle)?;
+                if replay.cwd.as_deref() != Some(cwd) {
+                    continue;
+                }
+            }
+            summaries.push(CodingAgentSessionSummary::from(summary));
+        }
+        Ok(summaries)
     }
 
     pub(crate) fn hydrate(
@@ -259,6 +277,7 @@ impl SessionService {
         session_id: String,
         ids: &mut impl IdGenerator,
         clock: &impl Clock,
+        cwd: Option<String>,
     ) -> Result<Self, CodingSessionError> {
         let created_at = clock.now_rfc3339();
         let handle =
@@ -267,9 +286,7 @@ impl SessionService {
             handle.manifest().session_id.clone(),
             ids.next_event_id(),
             created_at,
-            SessionEventData::SessionCreated {
-                cwd: current_dir_string(),
-            },
+            SessionEventData::SessionCreated { cwd },
         );
         store.append_events(&handle, &[created])?;
 
@@ -374,10 +391,15 @@ fn normalize_session_id(value: &str, label: &str) -> Result<String, CodingSessio
     Ok(trimmed.to_owned())
 }
 
-fn current_dir_string() -> Option<String> {
-    std::env::current_dir()
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
+fn option_cwd_string(options: &CodingAgentSessionOptions) -> Option<String> {
+    options.cwd().map(normalized_path_string)
+}
+
+fn normalized_path_string(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -399,6 +421,22 @@ mod tests {
         let replay = service.replay().unwrap();
         assert_eq!(replay.session_id, "sess_test");
         assert!(replay.transcript.is_empty());
+    }
+
+    #[test]
+    fn create_records_adapter_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("project");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_cwd")
+            .with_cwd(&cwd)
+            .with_session_log_root(temp.path().join("sessions"));
+
+        let service = SessionService::create(&options).unwrap();
+
+        let replay = service.replay().unwrap();
+        assert_eq!(replay.cwd.as_deref(), Some(cwd.to_str().unwrap()));
     }
 
     #[test]
@@ -519,6 +557,36 @@ mod tests {
         );
         assert_eq!(summaries[1].session_id, "sess_list_new");
         assert_eq!(summaries[1].session_dir, new.session_dir());
+    }
+
+    #[test]
+    fn list_filters_session_summaries_by_adapter_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let other = temp.path().join("other");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let root = temp.path().join("sessions");
+        let project_options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_project")
+            .with_cwd(&project)
+            .with_session_log_root(&root);
+        let other_options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_other")
+            .with_cwd(&other)
+            .with_session_log_root(&root);
+        SessionService::create(&project_options).unwrap();
+        SessionService::create(&other_options).unwrap();
+
+        let summaries = SessionService::list(
+            &CodingAgentSessionOptions::new()
+                .with_cwd(&project)
+                .with_session_log_root(&root),
+        )
+        .unwrap();
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].session_id, "sess_project");
     }
 
     #[test]
