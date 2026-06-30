@@ -1,3 +1,4 @@
+use crate::coding_session::CodingAgentEvent;
 use pi_agent_core::AgentEvent;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Usage};
 
@@ -163,6 +164,96 @@ impl InteractiveEventBridge {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct CodingEventBridge {
+    total_input: u32,
+    total_output: u32,
+    total_cache_read: u32,
+    total_cache_write: u32,
+    total_cost: f64,
+}
+
+impl CodingEventBridge {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn handle(&mut self, event: &CodingAgentEvent) -> Vec<UiEvent> {
+        match event {
+            CodingAgentEvent::AgentTurnStarted { .. } => vec![UiEvent::TurnStarted],
+            CodingAgentEvent::AssistantMessageDelta { text, .. } => {
+                vec![UiEvent::AssistantDelta { text: text.clone() }]
+            }
+            CodingAgentEvent::AssistantMessageCompleted { .. } => vec![UiEvent::AssistantDone],
+            CodingAgentEvent::ToolCallStarted {
+                tool_call_id,
+                name,
+                arguments_json,
+                ..
+            } => vec![UiEvent::ToolStarted {
+                call_id: tool_call_id.clone(),
+                name: name.clone(),
+                args: parse_tool_arguments(arguments_json),
+            }],
+            CodingAgentEvent::ToolCallUpdated {
+                tool_call_id,
+                message,
+                ..
+            } => vec![UiEvent::ToolUpdated {
+                call_id: tool_call_id.clone(),
+                result: message.clone(),
+            }],
+            CodingAgentEvent::ToolCallCompleted {
+                tool_call_id,
+                summary,
+                ..
+            } => vec![UiEvent::ToolFinished {
+                call_id: tool_call_id.clone(),
+                result: summary.clone(),
+                is_error: false,
+            }],
+            CodingAgentEvent::ToolCallFailed {
+                tool_call_id,
+                message,
+                ..
+            } => vec![UiEvent::ToolFinished {
+                call_id: tool_call_id.clone(),
+                result: message.clone(),
+                is_error: true,
+            }],
+            CodingAgentEvent::RuntimeCompactionCompleted { summary, .. } => vec![
+                UiEvent::CompactionNotice {
+                    summary: summary.clone(),
+                },
+                UiEvent::UsageUpdate {
+                    input: self.total_input,
+                    output: self.total_output,
+                    cache_read: self.total_cache_read,
+                    cache_write: self.total_cache_write,
+                    cost: self.total_cost,
+                    context_tokens: None,
+                },
+            ],
+            CodingAgentEvent::PromptFailed { error, .. } => vec![UiEvent::AgentError {
+                error: error.to_string(),
+            }],
+            CodingAgentEvent::PromptAborted { reason, .. } => vec![UiEvent::AgentError {
+                error: format!("prompt aborted: {reason}"),
+            }],
+            CodingAgentEvent::SessionOpened { .. }
+            | CodingAgentEvent::SessionWritePending { .. }
+            | CodingAgentEvent::SessionWriteCommitted { .. }
+            | CodingAgentEvent::SessionWriteSkipped { .. }
+            | CodingAgentEvent::PromptStarted { .. }
+            | CodingAgentEvent::ProviderRequestStarted { .. }
+            | CodingAgentEvent::AssistantMessageStarted { .. }
+            | CodingAgentEvent::PromptCompleted { .. }
+            | CodingAgentEvent::Diagnostic { .. }
+            | CodingAgentEvent::CapabilityChanged => Vec::new(),
+        }
+    }
+}
+
 /// Extract text-only content from tool-result blocks. Tool results never
 /// contain `thinking` blocks (those belong to the assistant message), so
 /// this is a plain text concatenation.
@@ -192,4 +283,9 @@ fn calculate_context_tokens(usage: &Usage) -> u32 {
             .saturating_add(usage.cache_read)
             .saturating_add(usage.cache_write)
     }
+}
+
+fn parse_tool_arguments(arguments_json: &str) -> serde_json::Value {
+    serde_json::from_str(arguments_json)
+        .unwrap_or_else(|_| serde_json::Value::String(arguments_json.to_string()))
 }
