@@ -28,6 +28,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [Interactive CodingEventBridge design](superpowers/specs/2026-06-30-interactive-coding-event-bridge-design.md)
 - [Rust-native active leaf commit design](superpowers/specs/2026-06-30-rust-native-active-leaf-commit-design.md)
 - [Rust-native session fork and clone design](superpowers/specs/2026-06-30-rust-native-session-fork-clone-design.md)
+- [Rust-native manual compaction design](superpowers/specs/2026-06-30-rust-native-manual-compaction-design.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
@@ -218,3 +219,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-30: Rust-native active leaf commits implemented. Successful persistent `CodingAgentSession::prompt()` calls now allocate a `leaf_id` in `SessionService`, commit it through `TurnTransaction`, refresh session hydration/list summaries, return it in `PromptTurnOutcome`, and propagate it to RPC/interactive active-session state.
 - 2026-06-30: Rust-native session fork/clone design added. The design adds `SessionService`-owned clone/fork APIs that create independent Rust-native sessions from committed leaves by rewriting durable source events and recording typed provenance events.
 - 2026-06-30: Rust-native session fork/clone implemented for interactive active sessions. `SessionService` now creates independent cloned/forked Rust-native sessions from committed leaves, records `session.cloned`/`session.forked` provenance, rewrites copied event history to the new session id, updates active leaf manifests, and interactive `/clone` and `/fork` select the new session instead of reporting unsupported.
+- 2026-06-30: Rust-native manual compaction design added. The design keeps manual compaction separate from `PromptTurnFlow`, persists typed Rust-native compaction events through `SessionService`, folds compaction during replay, and wires interactive `/compact` for active Rust-native sessions while leaving legacy JSONL compaction on the old runner.
