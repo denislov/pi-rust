@@ -27,6 +27,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [Non-persistent product runtime design](superpowers/specs/2026-06-30-non-persistent-product-runtime-design.md)
 - [Interactive CodingEventBridge design](superpowers/specs/2026-06-30-interactive-coding-event-bridge-design.md)
 - [Rust-native active leaf commit design](superpowers/specs/2026-06-30-rust-native-active-leaf-commit-design.md)
+- [Rust-native session fork and clone design](superpowers/specs/2026-06-30-rust-native-session-fork-clone-design.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
@@ -215,3 +216,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-30: Interactive Rust-native session actions advanced: newly created and resumed Rust-native sessions are tracked as active `SessionChoice`s, `/session` reports Rust-native session details, `/tree` opens a read-only tree projection from `SessionService` hydration, and Rust-native fork/clone/compact/tree navigation now fail with explicit unsupported boundaries instead of falling through to legacy JSONL assumptions.
 - 2026-06-30: Rust-native active leaf commit design added. The design makes successful persistent prompt commits allocate and persist a real `leaf_id` through `SessionService`/`TurnTransaction` before implementing fork, clone, compact, or tree navigation actions.
 - 2026-06-30: Rust-native active leaf commits implemented. Successful persistent `CodingAgentSession::prompt()` calls now allocate a `leaf_id` in `SessionService`, commit it through `TurnTransaction`, refresh session hydration/list summaries, return it in `PromptTurnOutcome`, and propagate it to RPC/interactive active-session state.
+- 2026-06-30: Rust-native session fork/clone design added. The design adds `SessionService`-owned clone/fork APIs that create independent Rust-native sessions from committed leaves by rewriting durable source events and recording typed provenance events.
