@@ -284,6 +284,9 @@ impl CodingProtocolEventAdapter {
                 Vec::new()
             }
             CodingAgentEvent::AssistantMessageStarted { .. } => {
+                if self.assistant_open {
+                    return Vec::new();
+                }
                 let message = self.ensure_assistant();
                 self.assistant_open = true;
                 vec![ProtocolEvent::MessageStart {

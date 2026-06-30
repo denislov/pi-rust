@@ -21,7 +21,6 @@ pub(crate) use context::{
 pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
 pub use event_service::CodingAgentEventReceiver;
-pub(crate) use event_service::{AgentEventMappingContext, map_agent_event};
 pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
