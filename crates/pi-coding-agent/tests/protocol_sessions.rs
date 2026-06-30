@@ -71,7 +71,7 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
     let api = "pi-coding-rpc-session-state";
     registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
     let mut session_options = SessionRunOptions::enabled(cwd);
-    session_options.session_dir = Some(sessions);
+    session_options.session_dir = Some(sessions.clone());
 
     let (mut input_writer, input_reader) = tokio::io::duplex(512);
     let (output_writer, output_reader) = tokio::io::duplex(4096);
@@ -138,6 +138,14 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
     let session_dir = std::path::PathBuf::from(state["data"]["sessionFile"].as_str().unwrap());
     assert!(session_dir.join("session.json").exists());
     assert!(session_dir.join("events.jsonl").exists());
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(session_dir.join("session.json")).unwrap())
+            .unwrap();
+    let active_leaf_id = manifest["active_leaf_id"]
+        .as_str()
+        .expect("active leaf should be present after RPC prompt");
+    assert_eq!(state["data"]["sessionId"], active_leaf_id);
+    assert_ne!(active_leaf_id, manifest["session_id"].as_str().unwrap());
     registry::unregister(api);
 }
 

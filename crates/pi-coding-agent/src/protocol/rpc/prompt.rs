@@ -233,7 +233,7 @@ impl RpcState {
                     result.session_root.as_ref(),
                     prompt_outcome_session_id(outcome),
                 ) {
-                    self.active_leaf_id = Some(session_id.to_string());
+                    self.active_leaf_id = prompt_outcome_leaf_id(outcome).map(ToString::to_string);
                     self.active_session_path = Some(session_root.join(session_id));
                 } else {
                     self.active_leaf_id = None;
@@ -280,5 +280,13 @@ fn prompt_outcome_session_id(outcome: &crate::coding_session::PromptTurnOutcome)
             session_id.as_deref()
         }
         crate::coding_session::PromptTurnOutcome::Failed { .. } => None,
+    }
+}
+
+fn prompt_outcome_leaf_id(outcome: &crate::coding_session::PromptTurnOutcome) -> Option<&str> {
+    match outcome {
+        crate::coding_session::PromptTurnOutcome::Success { leaf_id, .. } => leaf_id.as_deref(),
+        crate::coding_session::PromptTurnOutcome::Aborted { .. }
+        | crate::coding_session::PromptTurnOutcome::Failed { .. } => None,
     }
 }

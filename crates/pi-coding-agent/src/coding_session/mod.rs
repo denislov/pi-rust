@@ -219,6 +219,7 @@ impl CodingAgentSession {
                 )
             }
         };
+        apply_finalized_session_write(&mut outcome, &finalized);
 
         self.emit_coding_events_before_prompt_outcome(context.coding_events());
         self.emit_session_write_events(&finalized);
@@ -266,7 +267,7 @@ impl CodingAgentSession {
         match &mut self.persistence {
             SessionPersistence::Persistent(session_service) => match outcome {
                 PromptTurnOutcome::Success { .. } => {
-                    session_service.commit_prompt_transaction(transaction, operation_id, None)
+                    session_service.commit_prompt_transaction(transaction, operation_id)
                 }
                 PromptTurnOutcome::Aborted { reason, .. } => session_service
                     .abort_prompt_transaction(transaction, operation_id, reason.clone()),
@@ -355,6 +356,23 @@ fn is_prompt_outcome_event(event: &CodingAgentEvent) -> bool {
     )
 }
 
+fn apply_finalized_session_write(
+    outcome: &mut PromptTurnOutcome,
+    finalized: &FinalizedSessionWrite,
+) {
+    if let PromptTurnOutcome::Success {
+        session_id,
+        leaf_id,
+        ..
+    } = outcome
+    {
+        if let Some(finalized_session_id) = &finalized.session_id {
+            *session_id = Some(finalized_session_id.clone());
+        }
+        *leaf_id = finalized.leaf_id.clone();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -371,6 +389,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::coding_session::session_log::event::{SessionEventData, SessionEventEnvelope};
     use crate::coding_session::session_log::replay::{MessageStatus, TranscriptItem};
     use crate::protocol::session_runner::SessionPromptOptions;
     use crate::runtime::{PromptInvocation, SessionRunOptions};
@@ -482,25 +501,24 @@ mod tests {
         let api = "coding-session-prompt";
         registry::register(api, Arc::new(FauxProvider::simple_text("session answer")));
         let temp = tempfile::tempdir().unwrap();
-        let mut session = CodingAgentSession::create(
-            CodingAgentSessionOptions::new()
-                .with_session_id("sess_prompt")
-                .with_session_log_root(temp.path()),
-        )
-        .await
-        .unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_prompt")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
         let mut events = session.subscribe();
 
         let outcome = session.prompt(prompt_options(api, "hello")).await.unwrap();
 
-        assert!(matches!(
-            &outcome,
+        let leaf_id = match &outcome {
             PromptTurnOutcome::Success {
                 final_text,
                 session_id: Some(session_id),
+                leaf_id: Some(leaf_id),
                 ..
-            } if final_text == "session answer" && session_id == "sess_prompt"
-        ));
+            } if final_text == "session answer" && session_id == "sess_prompt" => leaf_id.clone(),
+            other => panic!("expected successful prompt with committed leaf, got {other:?}"),
+        };
+        assert!(leaf_id.starts_with("leaf_"));
         assert!(matches!(
             events.try_recv().unwrap(),
             Some(CodingAgentEvent::PromptStarted { .. })
@@ -528,6 +546,7 @@ mod tests {
         );
 
         let replay = session.persistent_session_service().replay().unwrap();
+        assert_eq!(replay.active_leaf_id.as_deref(), Some(leaf_id.as_str()));
         assert!(matches!(
             replay.transcript.as_slice(),
             [
@@ -544,6 +563,28 @@ mod tests {
                 && text == "hello"
                 && assistant_text == "session answer"
         ));
+        let committed_leaf = std::fs::read_to_string(temp.path().join("sess_prompt/events.jsonl"))
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<SessionEventEnvelope>(line).ok())
+            .find_map(|event| match event.data {
+                SessionEventData::OperationCommitted {
+                    new_leaf_id: Some(leaf_id),
+                } => Some(leaf_id),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(committed_leaf, leaf_id);
+        let hydrated = session.hydrate_current().unwrap().unwrap();
+        assert_eq!(
+            hydrated.summary.active_leaf_id.as_deref(),
+            Some(leaf_id.as_str())
+        );
+        let summaries = CodingAgentSession::list(options).unwrap();
+        assert_eq!(
+            summaries[0].active_leaf_id.as_deref(),
+            Some(leaf_id.as_str())
+        );
         assert_eq!(session.view().session_id, "sess_prompt");
         registry::unregister(api);
     }
@@ -575,6 +616,15 @@ mod tests {
                 .unwrap()
                 .transcript
                 .is_empty()
+        );
+        assert!(
+            session
+                .hydrate_current()
+                .unwrap()
+                .unwrap()
+                .summary
+                .active_leaf_id
+                .is_none()
         );
     }
 

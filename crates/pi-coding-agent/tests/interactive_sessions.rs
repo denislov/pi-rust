@@ -73,6 +73,17 @@ async fn interactive_session_command_reports_created_rust_native_session() {
     assert!(frame.contains("Session Info"), "{frame}");
     assert!(frame.contains("Storage: rust-native"), "{frame}");
     assert!(frame.contains("Entries:"), "{frame}");
+    let sessions = rust_session_dirs(temp.path());
+    assert_eq!(sessions.len(), 1);
+    let manifest = read_session_manifest(&sessions[0]);
+    let leaf_id = manifest["active_leaf_id"]
+        .as_str()
+        .expect("active leaf should be present after prompt");
+    assert!(leaf_id.starts_with("leaf_"));
+    assert!(
+        frame.contains(&format!("Active leaf: {leaf_id}")),
+        "{frame}"
+    );
 }
 
 #[tokio::test]

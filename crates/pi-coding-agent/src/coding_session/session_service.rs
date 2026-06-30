@@ -132,7 +132,6 @@ impl SessionService {
         &mut self,
         transaction: Option<PromptTurnTransaction>,
         operation_id: impl Into<String>,
-        new_leaf_id: Option<String>,
     ) -> Result<FinalizedSessionWrite, CodingSessionError> {
         let fallback_operation_id = operation_id.into();
         let Some(mut transaction) = transaction else {
@@ -144,10 +143,12 @@ impl SessionService {
 
         let operation_id = transaction.operation_id().to_owned();
         let session_id = self.session_id().to_owned();
+        let new_leaf_id = Some(Self::next_leaf_id());
         let mut events = vec![CodingAgentEvent::SessionWritePending {
             operation_id: operation_id.clone(),
         }];
         transaction.commit(new_leaf_id.clone())?;
+        self.handle = self.store.open_session_id(&session_id)?;
         events.push(CodingAgentEvent::SessionWriteCommitted {
             operation_id,
             session_id: session_id.clone(),
@@ -305,6 +306,11 @@ impl SessionService {
             session_id: None,
             leaf_id: None,
         }
+    }
+
+    fn next_leaf_id() -> String {
+        let mut ids = SystemIdGenerator;
+        ids.next_leaf_id()
     }
 }
 
@@ -618,7 +624,7 @@ mod tests {
             .unwrap();
 
         let finalized = service
-            .commit_prompt_transaction(Some(transaction), operation_id.clone(), None)
+            .commit_prompt_transaction(Some(transaction), operation_id.clone())
             .unwrap();
 
         assert_eq!(
@@ -634,9 +640,24 @@ mod tests {
             ]
         );
         assert_eq!(finalized.session_id.as_deref(), Some("sess_commit_prompt"));
-        assert!(finalized.leaf_id.is_none());
+        assert!(
+            finalized
+                .leaf_id
+                .as_deref()
+                .is_some_and(|leaf_id| leaf_id.starts_with("leaf_"))
+        );
         let replay = service.replay().unwrap();
         assert_eq!(replay.transcript.len(), 1);
+        assert_eq!(replay.active_leaf_id, finalized.leaf_id);
+        assert_eq!(
+            service
+                .hydrated_view()
+                .unwrap()
+                .summary
+                .active_leaf_id
+                .as_deref(),
+            replay.active_leaf_id.as_deref()
+        );
     }
 
     #[test]
