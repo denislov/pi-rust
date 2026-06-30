@@ -9,6 +9,10 @@ use pi_agent_core::{AgentMessage, session};
 use pi_ai::types::{ContentBlock, StopReason};
 
 use crate::CliError;
+use crate::coding_session::{
+    CodingAgentSession, CodingAgentSessionHydration, CodingAgentSessionOptions,
+    CodingAgentSessionTranscriptItem,
+};
 use crate::interactive::transcript::TranscriptItem;
 use crate::runtime::{SessionMode, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
@@ -21,6 +25,14 @@ pub(super) struct SessionChoice {
     pub(super) created_at: String,
     pub(super) name: Option<String>,
     pub(super) entry_count: usize,
+    pub(super) active_leaf_id: Option<String>,
+    pub(super) kind: SessionChoiceKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionChoiceKind {
+    RustNative,
+    LegacyJsonl,
 }
 
 /// Cumulative usage statistics computed from all assistant messages in a
@@ -84,12 +96,14 @@ pub(super) fn hydrate_existing_session_target(
         return Ok(None);
     };
 
-    let root = match &session_options.session_dir {
-        Some(dir) => dir.clone(),
-        None => crate::session::resolve_session_dir(&session_options.cwd, None, None)?,
-    };
-    let repo = JsonlSessionRepo::new(root);
+    let root = interactive_session_root(session_options)?;
     let cwd = session_options.cwd.display().to_string();
+
+    if let Some(hydrated) = hydrate_rust_native_session_target(&root, &cwd, target)? {
+        return Ok(Some(hydrated));
+    }
+
+    let repo = JsonlSessionRepo::new(root);
     let storage = match target {
         ResolvedSessionTarget::ContinueMostRecent => repo
             .most_recent(&cwd)
@@ -103,6 +117,85 @@ pub(super) fn hydrate_existing_session_target(
     };
 
     storage.map(hydrate_session_storage).transpose()
+}
+
+fn hydrate_rust_native_session_target(
+    root: &Path,
+    cwd: &str,
+    target: &ResolvedSessionTarget,
+) -> Result<Option<HydratedSession>, CliError> {
+    let base_options = CodingAgentSessionOptions::new().with_session_log_root(root);
+    let hydration = match target {
+        ResolvedSessionTarget::New | ResolvedSessionTarget::ForkTarget(_) => return Ok(None),
+        ResolvedSessionTarget::ContinueMostRecent => rust_native_choices(root, cwd)?
+            .into_iter()
+            .next()
+            .map(|choice| {
+                CodingAgentSession::hydrate(base_options.clone().with_session_id(choice.id.clone()))
+            })
+            .transpose()?,
+        ResolvedSessionTarget::OpenOrCreateId(session_id) => {
+            match CodingAgentSession::hydrate(base_options.with_session_id(session_id.clone())) {
+                Ok(hydration) => Some(hydration),
+                Err(_) => return Ok(None),
+            }
+        }
+        ResolvedSessionTarget::OpenTarget(target) => {
+            let options = if target_looks_like_rust_native_session_dir(target) {
+                base_options.with_session_path(target)
+            } else {
+                base_options.with_session_id(target.clone())
+            };
+            match CodingAgentSession::hydrate(options) {
+                Ok(hydration) => Some(hydration),
+                Err(error) if target_looks_like_rust_native_session_dir(target) => {
+                    return Err(CliError::SessionFailure(error.to_string()));
+                }
+                Err(_) => return Ok(None),
+            }
+        }
+    };
+
+    Ok(hydration
+        .filter(|hydration| hydration_matches_cwd(hydration, cwd))
+        .map(hydrated_session_from_rust_native))
+}
+
+fn hydrated_session_from_rust_native(hydration: CodingAgentSessionHydration) -> HydratedSession {
+    let choice = session_choice_from_rust_native(&hydration);
+    HydratedSession {
+        choice,
+        transcript_items: hydration
+            .transcript
+            .into_iter()
+            .map(transcript_item_from_rust_native)
+            .collect(),
+        leaf_id: hydration.summary.active_leaf_id,
+        cumulative_usage: CumulativeUsage::default(),
+    }
+}
+
+fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> TranscriptItem {
+    match item {
+        CodingAgentSessionTranscriptItem::User { text } => TranscriptItem::user(text),
+        CodingAgentSessionTranscriptItem::Assistant { id, text, done } => {
+            TranscriptItem::assistant(id, text, done)
+        }
+        CodingAgentSessionTranscriptItem::Tool {
+            call_id,
+            name,
+            args,
+            result,
+            is_error,
+        } => TranscriptItem::Tool {
+            call_id,
+            name,
+            args,
+            result,
+            is_error,
+        },
+        CodingAgentSessionTranscriptItem::Diagnostic { message } => TranscriptItem::system(message),
+    }
 }
 
 pub(super) fn hydrate_session_storage(
@@ -609,25 +702,85 @@ pub(super) fn collect_session_choices(session: &Option<SessionRunOptions>) -> Ve
         return Vec::new();
     }
 
-    let root = match &session.session_dir {
-        Some(dir) => dir.clone(),
-        None => match crate::session::resolve_session_dir(&session.cwd, None, None) {
-            Ok(dir) => dir,
-            Err(_) => return Vec::new(),
-        },
+    let root = match interactive_session_root(session) {
+        Ok(root) => root,
+        Err(_) => return Vec::new(),
     };
-    let repo = JsonlSessionRepo::new(root);
     let cwd = session.cwd.display().to_string();
-    repo.list(Some(&cwd))
-        .unwrap_or_default()
+    let mut choices = rust_native_choices(&root, &cwd).unwrap_or_default();
+    let repo = JsonlSessionRepo::new(root);
+    choices.extend(
+        repo.list(Some(&cwd))
+            .unwrap_or_default()
+            .into_iter()
+            .map(session_choice_from_metadata),
+    );
+    choices.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| match (left.kind, right.kind) {
+                (SessionChoiceKind::RustNative, SessionChoiceKind::LegacyJsonl) => {
+                    std::cmp::Ordering::Less
+                }
+                (SessionChoiceKind::LegacyJsonl, SessionChoiceKind::RustNative) => {
+                    std::cmp::Ordering::Greater
+                }
+                _ => left.id.cmp(&right.id),
+            })
+    });
+    choices
+}
+
+fn interactive_session_root(session: &SessionRunOptions) -> Result<PathBuf, CliError> {
+    match &session.session_dir {
+        Some(dir) => Ok(dir.clone()),
+        None => crate::session::resolve_session_dir(&session.cwd, None, None),
+    }
+}
+
+fn rust_native_choices(root: &Path, cwd: &str) -> Result<Vec<SessionChoice>, CliError> {
+    let options = CodingAgentSessionOptions::new().with_session_log_root(root);
+    Ok(CodingAgentSession::list(options.clone())?
         .into_iter()
-        .map(session_choice_from_metadata)
-        .collect()
+        .filter_map(|summary| {
+            CodingAgentSession::hydrate(options.clone().with_session_id(summary.session_id.clone()))
+                .ok()
+        })
+        .filter(|hydration| hydration_matches_cwd(hydration, cwd))
+        .map(|hydration| session_choice_from_rust_native(&hydration))
+        .collect())
+}
+
+fn hydration_matches_cwd(_hydration: &CodingAgentSessionHydration, _cwd: &str) -> bool {
+    // Rust-native `session.created.cwd` is still populated by SessionService
+    // from the process cwd. Until session creation receives SessionRunOptions
+    // cwd explicitly, the session log root is the reliable adapter boundary.
+    true
+}
+
+fn session_choice_from_rust_native(hydration: &CodingAgentSessionHydration) -> SessionChoice {
+    SessionChoice {
+        id: hydration.summary.session_id.clone(),
+        cwd: hydration.cwd.clone().unwrap_or_default(),
+        path: hydration.summary.session_dir.clone(),
+        created_at: hydration.summary.created_at.clone(),
+        name: None,
+        entry_count: hydration.transcript.len(),
+        active_leaf_id: hydration.summary.active_leaf_id.clone(),
+        kind: SessionChoiceKind::RustNative,
+    }
+}
+
+fn target_looks_like_rust_native_session_dir(target: &str) -> bool {
+    let path = Path::new(target);
+    path.is_dir() && path.join("session.json").is_file() && path.join("events.jsonl").is_file()
 }
 
 pub(super) fn session_choice_from_metadata(metadata: JsonlSessionMetadata) -> SessionChoice {
-    let (name, entry_count) = JsonlSessionStorage::open(&metadata.path)
+    let (name, entry_count, active_leaf_id) = JsonlSessionStorage::open(&metadata.path)
         .map(|storage| {
+            let leaf_id = storage.get_leaf_id().ok().flatten();
             let entries = storage.get_entries();
             let name = entries
                 .iter()
@@ -636,9 +789,9 @@ pub(super) fn session_choice_from_metadata(metadata: JsonlSessionMetadata) -> Se
                 .and_then(|entry| entry.field("name"))
                 .and_then(|value| value.as_str())
                 .map(str::to_string);
-            (name, entries.len())
+            (name, entries.len(), leaf_id)
         })
-        .unwrap_or((None, 0));
+        .unwrap_or((None, 0, None));
 
     SessionChoice {
         id: metadata.id,
@@ -647,6 +800,8 @@ pub(super) fn session_choice_from_metadata(metadata: JsonlSessionMetadata) -> Se
         created_at: metadata.created_at,
         name,
         entry_count,
+        active_leaf_id,
+        kind: SessionChoiceKind::LegacyJsonl,
     }
 }
 

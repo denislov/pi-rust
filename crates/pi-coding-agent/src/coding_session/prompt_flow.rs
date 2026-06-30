@@ -521,6 +521,7 @@ mod tests {
         let (temp, store, handle) = setup_session_log();
         context.set_replay(SessionReplay {
             session_id: handle.manifest().session_id.clone(),
+            cwd: None,
             active_leaf_id: None,
             transcript: Vec::new(),
             diagnostics: Vec::new(),
@@ -1112,6 +1113,7 @@ mod tests {
         context.resolve_request().unwrap();
         context.set_replay(SessionReplay {
             session_id: "sess_replay".into(),
+            cwd: None,
             active_leaf_id: None,
             transcript: vec![
                 TranscriptItem::UserInput {

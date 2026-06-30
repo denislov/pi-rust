@@ -15,6 +15,9 @@ pub use context::{
     CapabilityStatus, CodingAgentCapabilities, CodingAgentSessionOptions,
     CodingAgentSessionSummary, CodingAgentSessionView,
 };
+pub(crate) use context::{
+    CodingAgentSessionDiagnostic, CodingAgentSessionHydration, CodingAgentSessionTranscriptItem,
+};
 pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
 pub use event_service::CodingAgentEventReceiver;
@@ -100,6 +103,12 @@ impl CodingAgentSession {
         options: CodingAgentSessionOptions,
     ) -> Result<Vec<CodingAgentSessionSummary>, CodingSessionError> {
         SessionService::list(&options)
+    }
+
+    pub(crate) fn hydrate(
+        options: CodingAgentSessionOptions,
+    ) -> Result<CodingAgentSessionHydration, CodingSessionError> {
+        SessionService::hydrate(&options)
     }
 
     pub fn subscribe(&self) -> CodingAgentEventReceiver {

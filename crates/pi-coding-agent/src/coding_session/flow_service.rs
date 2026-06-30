@@ -108,6 +108,7 @@ mod tests {
             .unwrap();
         context.set_replay(SessionReplay {
             session_id: "sess_flow_service".into(),
+            cwd: None,
             active_leaf_id: None,
             transcript: Vec::new(),
             diagnostics: Vec::new(),

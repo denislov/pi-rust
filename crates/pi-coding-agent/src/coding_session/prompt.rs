@@ -547,6 +547,7 @@ impl PromptTurnContext {
         self.transaction = None;
         self.replay = Some(SessionReplay {
             session_id: runtime_id,
+            cwd: None,
             active_leaf_id: None,
             transcript,
             diagnostics: Vec::new(),

@@ -2,24 +2,24 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use pi_agent_core::session::{JsonlSessionStorage, create_session_id};
+use pi_ai::types::Usage;
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };
 
+use crate::coding_session::{CodingAgentSession, PromptTurnOutcome};
 use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
     PromptContext, build_prompt_context, resolve_prompt_api_key, session_label,
 };
 use crate::interactive::input::InputPump;
-use crate::interactive::prompt_task::PromptTask;
+use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
     hydrate_existing_session_target, session_choice_from_metadata,
 };
-use crate::interactive::{InteractiveEventBridge, TranscriptItem, UiEvent};
-use crate::protocol::session_runner::{
-    SessionPromptOptions, SessionPromptResult, spawn_session_prompt,
-};
+use crate::interactive::{CodingEventBridge, InteractiveEventBridge, TranscriptItem, UiEvent};
+use crate::protocol::session_runner::{SessionPromptOptions, SessionPromptResult};
 use crate::runtime::PromptInvocation;
 use crate::session::ResolvedSessionTarget;
 use crate::{CliArgs, CliError, CliRunOptions};
@@ -261,7 +261,9 @@ async fn run_started_interactive_loop<T: Terminal>(
 ) -> Result<i32, CliError> {
     let mut stdin_buffer = StdinBuffer::new();
     let mut running: Option<PromptTask> = None;
-    let mut bridge = InteractiveEventBridge::new();
+    let mut coding_session: Option<CodingAgentSession> = None;
+    let mut agent_bridge = InteractiveEventBridge::new();
+    let mut coding_bridge = CodingEventBridge::new();
     let mut input_open = true;
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
     render_scheduler.request(true);
@@ -297,6 +299,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                             events,
                             &mut prompt_context,
                             &mut running,
+                            &mut coding_session,
                             &mut render_scheduler,
                             parsed,
                             options,
@@ -316,6 +319,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                                 stdin_buffer.process(&chunk),
                                 &mut prompt_context,
                                 &mut running,
+                                &mut coding_session,
                                 &mut render_scheduler,
                                 parsed,
                                 options,
@@ -335,7 +339,13 @@ async fn run_started_interactive_loop<T: Terminal>(
                         Some(event) => {
                             schedule_render(
                                 &mut render_scheduler,
-                                apply_agent_event(tui, root_id, &mut bridge, event)?,
+                                apply_prompt_task_event(
+                                    tui,
+                                    root_id,
+                                    &mut agent_bridge,
+                                    &mut coding_bridge,
+                                    event,
+                                )?,
                             );
                         }
                         None => {
@@ -360,10 +370,16 @@ async fn run_started_interactive_loop<T: Terminal>(
                     while let Ok(event) = task.events.try_recv() {
                         schedule_render(
                             &mut render_scheduler,
-                            apply_agent_event(tui, root_id, &mut bridge, event)?,
+                            apply_prompt_task_event(
+                                tui,
+                                root_id,
+                                &mut agent_bridge,
+                                &mut coding_bridge,
+                                event,
+                            )?,
                         );
                     }
-                    finish_prompt(tui, root_id, result)?;
+                    finish_prompt(tui, root_id, result, &mut coding_session)?;
                     schedule_render(&mut render_scheduler, RenderRequest::FORCE);
                     flush_render_if_ready(tui, &mut render_scheduler)?;
                     running = None;
@@ -395,6 +411,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                             events,
                             &mut prompt_context,
                             &mut running,
+                            &mut coding_session,
                             &mut render_scheduler,
                             parsed,
                             options,
@@ -413,6 +430,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                             stdin_buffer.flush(),
                             &mut prompt_context,
                             &mut running,
+                            &mut coding_session,
                             &mut render_scheduler,
                             parsed,
                             options,
@@ -434,6 +452,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                         stdin_buffer.process(&chunk),
                         &mut prompt_context,
                         &mut running,
+                        &mut coding_session,
                         &mut render_scheduler,
                         parsed,
                         options,
@@ -460,6 +479,7 @@ fn process_input_events<T: Terminal>(
     events: Vec<InputEvent>,
     prompt_context: &mut PromptContext,
     running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
     render_scheduler: &mut RenderScheduler,
     parsed: &CliArgs,
     options: &CliRunOptions,
@@ -471,6 +491,7 @@ fn process_input_events<T: Terminal>(
             event,
             prompt_context,
             running,
+            coding_session,
             parsed,
             options,
         )? {
@@ -545,6 +566,7 @@ fn handle_input_event<T: Terminal>(
     event: InputEvent,
     prompt_context: &mut PromptContext,
     running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
     parsed: &CliArgs,
     options: &CliRunOptions,
 ) -> Result<LoopControl, CliError> {
@@ -616,6 +638,7 @@ fn handle_input_event<T: Terminal>(
         prompt_context.thinking_level = Some(thinking_level);
     }
     if let Some(session) = selected_session {
+        *coding_session = None;
         prompt_context.session_target = Some(ResolvedSessionTarget::OpenTarget(
             session.path.display().to_string(),
         ));
@@ -803,6 +826,7 @@ fn handle_input_event<T: Terminal>(
                 .as_ref()
                 .is_some_and(|session| matches!(session.mode, crate::runtime::SessionMode::Enabled))
             {
+                *coding_session = None;
                 prompt_context.session_target =
                     Some(ResolvedSessionTarget::OpenOrCreateId(create_session_id()));
                 prompt_context.session_name = None;
@@ -836,7 +860,13 @@ fn handle_input_event<T: Terminal>(
             if prompt.trim().is_empty() {
                 return Ok(LoopControl::Continue(render_request));
             }
-            *running = Some(start_prompt_task(tui, root_id, prompt, prompt_context)?);
+            *running = Some(start_prompt_task(
+                tui,
+                root_id,
+                prompt,
+                prompt_context,
+                coding_session,
+            )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
         InteractiveAction::CompactSession => {
@@ -859,6 +889,7 @@ fn start_prompt_task<T: Terminal>(
     root_id: usize,
     prompt: String,
     prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
 ) -> Result<PromptTask, CliError> {
     let processed_prompt = input::process_at_file_references_with_processing_options(
         &prompt,
@@ -896,7 +927,8 @@ fn start_prompt_task<T: Terminal>(
         prompt: task_prompt,
     };
 
-    let task = spawn_session_prompt(options).map(PromptTask::new)?;
+    let existing_session = coding_session.take();
+    let task = PromptTask::spawn_prompt(options, existing_session)?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
@@ -952,20 +984,24 @@ fn start_compact_task<T: Terminal>(
         },
     };
 
-    let task = spawn_session_prompt(options).map(PromptTask::new)?;
+    let task = PromptTask::spawn_legacy(options)?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
     Ok(task)
 }
 
-fn apply_agent_event<T: Terminal>(
+fn apply_prompt_task_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
-    bridge: &mut InteractiveEventBridge,
-    event: pi_agent_core::AgentEvent,
+    agent_bridge: &mut InteractiveEventBridge,
+    coding_bridge: &mut CodingEventBridge,
+    event: PromptTaskEvent,
 ) -> Result<RenderRequest, CliError> {
-    let ui_events = bridge.handle(&event);
+    let ui_events = match event {
+        PromptTaskEvent::Agent(event) => agent_bridge.handle(&event),
+        PromptTaskEvent::Coding(event) => coding_bridge.handle(&event),
+    };
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
     root.apply_events(ui_events);
@@ -976,22 +1012,18 @@ fn apply_agent_event<T: Terminal>(
 fn finish_prompt<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
-    result: Result<SessionPromptResult, CliError>,
+    result: Result<PromptTaskResult, CliError>,
+    coding_session: &mut Option<CodingAgentSession>,
 ) -> Result<(), CliError> {
     if root_settings_show_progress(tui, root_id)? {
         set_terminal_progress(tui, false)?;
     }
     let root = root_mut(tui, root_id)?;
     match result {
-        Ok(result) => {
-            root.active_session_path = result.session_path;
-            root.active_leaf_id = result.leaf_id;
-            if let Some(path) = root.active_session_path.as_ref()
-                && let Ok(storage) = pi_agent_core::session::JsonlSessionStorage::open(path)
-            {
-                let choice = session_choice_from_metadata(storage.metadata());
-                root.session_label = choice.display_name().to_string();
-            }
+        Ok(PromptTaskResult::Legacy(result)) => finish_legacy_prompt(root, result),
+        Ok(PromptTaskResult::Coding(result)) => {
+            finish_coding_prompt(root, result.outcome);
+            *coding_session = Some(result.session);
         }
         Err(error) => {
             root.apply_events(vec![UiEvent::AgentError {
@@ -1001,6 +1033,64 @@ fn finish_prompt<T: Terminal>(
     }
     root.set_status(InteractiveStatus::Idle);
     Ok(())
+}
+
+fn finish_legacy_prompt(root: &mut InteractiveRoot, result: SessionPromptResult) {
+    root.active_session_path = result.session_path;
+    root.active_leaf_id = result.leaf_id;
+    if let Some(path) = root.active_session_path.as_ref()
+        && let Ok(storage) = pi_agent_core::session::JsonlSessionStorage::open(path)
+    {
+        let choice = session_choice_from_metadata(storage.metadata());
+        root.session_label = choice.display_name().to_string();
+    }
+}
+
+fn finish_coding_prompt(root: &mut InteractiveRoot, outcome: PromptTurnOutcome) {
+    root.active_session_path = None;
+    root.active_leaf_id = None;
+    match outcome {
+        PromptTurnOutcome::Success {
+            session_id,
+            leaf_id,
+            final_message,
+            ..
+        } => {
+            apply_success_usage(root, &final_message.usage);
+            if let Some(session_id) = session_id {
+                root.session_label = session_id;
+                root.active_leaf_id = leaf_id;
+            }
+        }
+        PromptTurnOutcome::Aborted { session_id, .. } => {
+            if let Some(session_id) = session_id {
+                root.session_label = session_id;
+            }
+        }
+        PromptTurnOutcome::Failed { .. } => {}
+    }
+}
+
+fn apply_success_usage(root: &mut InteractiveRoot, usage: &Usage) {
+    root.stats.input = root.stats.input.saturating_add(usage.input);
+    root.stats.output = root.stats.output.saturating_add(usage.output);
+    root.stats.cache_read = root.stats.cache_read.saturating_add(usage.cache_read);
+    root.stats.cache_write = root.stats.cache_write.saturating_add(usage.cache_write);
+    root.stats.cost +=
+        usage.cost.input + usage.cost.output + usage.cost.cache_read + usage.cost.cache_write;
+    root.stats.context_tokens = Some(calculate_context_tokens(usage));
+}
+
+fn calculate_context_tokens(usage: &Usage) -> u32 {
+    if usage.total_tokens > 0 {
+        usage.total_tokens
+    } else {
+        usage
+            .input
+            .saturating_add(usage.output)
+            .saturating_add(usage.cache_read)
+            .saturating_add(usage.cache_write)
+    }
 }
 
 fn set_terminal_progress<T: Terminal>(tui: &mut Tui<T>, active: bool) -> Result<(), CliError> {

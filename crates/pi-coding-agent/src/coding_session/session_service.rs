@@ -5,14 +5,15 @@ use std::path::PathBuf;
 use super::prompt::PromptTurnTransaction;
 use super::session_log::event::{OperationKind, SessionEventData, SessionEventEnvelope};
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
-use super::session_log::replay::SessionReplay;
+use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 use super::session_log::store::{
     CreateSessionOptions, SessionHandle, SessionLogStore, SessionSummary,
 };
 use super::session_log::transaction::TurnTransaction;
 use super::{
-    CodingAgentEvent, CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
-    CodingSessionError,
+    CodingAgentEvent, CodingAgentSessionDiagnostic, CodingAgentSessionHydration,
+    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionTranscriptItem,
+    CodingAgentSessionView, CodingSessionError,
 };
 
 #[derive(Debug)]
@@ -87,6 +88,12 @@ impl SessionService {
             .into_iter()
             .map(CodingAgentSessionSummary::from)
             .collect())
+    }
+
+    pub(crate) fn hydrate(
+        options: &CodingAgentSessionOptions,
+    ) -> Result<CodingAgentSessionHydration, CodingSessionError> {
+        Self::open(options)?.hydrated_view()
     }
 
     pub(crate) fn session_id(&self) -> &str {
@@ -221,6 +228,32 @@ impl SessionService {
         }
     }
 
+    fn hydrated_view(&self) -> Result<CodingAgentSessionHydration, CodingSessionError> {
+        let replay = self.replay()?;
+        Ok(CodingAgentSessionHydration {
+            summary: CodingAgentSessionSummary {
+                session_id: self.handle.manifest().session_id.clone(),
+                session_dir: self.handle.session_dir().to_path_buf(),
+                created_at: self.handle.manifest().created_at.clone(),
+                updated_at: self.handle.manifest().updated_at.clone(),
+                active_leaf_id: self.handle.manifest().active_leaf_id.clone(),
+            },
+            cwd: replay.cwd.clone(),
+            transcript: replay
+                .transcript
+                .into_iter()
+                .map(coding_transcript_item_from_replay)
+                .collect(),
+            diagnostics: replay
+                .diagnostics
+                .into_iter()
+                .map(|diagnostic| CodingAgentSessionDiagnostic {
+                    message: diagnostic.message,
+                })
+                .collect(),
+        })
+    }
+
     fn create_with_id(
         store: SessionLogStore,
         session_id: String,
@@ -254,6 +287,41 @@ impl SessionService {
             }],
             session_id: None,
             leaf_id: None,
+        }
+    }
+}
+
+fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessionTranscriptItem {
+    match item {
+        TranscriptItem::UserInput { text, .. } => CodingAgentSessionTranscriptItem::User { text },
+        TranscriptItem::AssistantMessage {
+            message_id,
+            text,
+            status,
+        } => CodingAgentSessionTranscriptItem::Assistant {
+            id: message_id,
+            text,
+            done: !matches!(status, MessageStatus::Started),
+        },
+        TranscriptItem::ToolCall {
+            tool_call_id,
+            name,
+            arguments,
+            status,
+            summary,
+        } => CodingAgentSessionTranscriptItem::Tool {
+            call_id: tool_call_id,
+            name,
+            args: arguments,
+            result: if summary.is_empty() {
+                None
+            } else {
+                Some(summary)
+            },
+            is_error: matches!(status, ToolCallStatus::Failed),
+        },
+        TranscriptItem::Diagnostic { message, .. } => {
+            CodingAgentSessionTranscriptItem::Diagnostic { message }
         }
     }
 }

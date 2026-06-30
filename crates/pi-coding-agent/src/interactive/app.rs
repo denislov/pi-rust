@@ -35,6 +35,8 @@ use crate::interactive::render::{
 use crate::interactive::root::{
     FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus,
 };
+#[cfg(test)]
+use crate::interactive::session_actions::SessionChoiceKind;
 use crate::interactive::session_actions::{SessionChoice, collect_session_choices};
 #[cfg(test)]
 use crate::interactive::slash::{
@@ -2041,6 +2043,8 @@ mod tests {
             created_at: "2026-06-20T00:00:00Z".to_string(),
             name: Some("Project Alpha".to_string()),
             entry_count: 3,
+            active_leaf_id: Some("leaf-alpha".to_string()),
+            kind: SessionChoiceKind::LegacyJsonl,
         }];
 
         root.handle_slash_command(ParsedSlashCommand {
@@ -2083,6 +2087,8 @@ mod tests {
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 name: Some("Project Alpha".to_string()),
                 entry_count: 3,
+                active_leaf_id: Some("leaf-alpha".to_string()),
+                kind: SessionChoiceKind::LegacyJsonl,
             },
             SessionChoice {
                 id: "session-beta".to_string(),
@@ -2091,6 +2097,8 @@ mod tests {
                 created_at: "2026-06-21T00:00:00Z".to_string(),
                 name: Some("Beta Tools".to_string()),
                 entry_count: 8,
+                active_leaf_id: Some("leaf-beta".to_string()),
+                kind: SessionChoiceKind::LegacyJsonl,
             },
         ];
         root.handle_slash_command(ParsedSlashCommand {

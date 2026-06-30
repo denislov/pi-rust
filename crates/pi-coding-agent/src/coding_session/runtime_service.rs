@@ -245,6 +245,7 @@ mod tests {
         let agent = service.build_agent_runtime(&runtime).unwrap();
         let replay = SessionReplay {
             session_id: "sess_replay".into(),
+            cwd: None,
             active_leaf_id: None,
             transcript: vec![
                 TranscriptItem::UserInput {

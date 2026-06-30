@@ -8,6 +8,7 @@ use super::event::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionReplay {
     pub(crate) session_id: String,
+    pub(crate) cwd: Option<String>,
     pub(crate) active_leaf_id: Option<String>,
     pub(crate) transcript: Vec<TranscriptItem>,
     pub(crate) diagnostics: Vec<ReplayDiagnostic>,
@@ -61,6 +62,7 @@ pub(crate) struct ReplayDiagnostic {
 #[derive(Debug, Default)]
 struct ReplayBuilder {
     session_id: Option<String>,
+    cwd: Option<String>,
     active_leaf_id: Option<String>,
     transcript: Vec<TranscriptItem>,
     diagnostics: Vec<ReplayDiagnostic>,
@@ -91,6 +93,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
 
     SessionReplay {
         session_id: builder.session_id.unwrap_or_default(),
+        cwd: builder.cwd,
         active_leaf_id: builder.active_leaf_id,
         transcript: builder.transcript,
         diagnostics: builder.diagnostics,
@@ -141,8 +144,10 @@ impl ReplayBuilder {
 
     fn apply_event(&mut self, event: &SessionEventEnvelope) {
         match &event.data {
-            SessionEventData::SessionCreated { .. }
-            | SessionEventData::OperationStarted { .. }
+            SessionEventData::SessionCreated { cwd } => {
+                self.cwd = cwd.clone();
+            }
+            SessionEventData::OperationStarted { .. }
             | SessionEventData::TurnStarted {}
             | SessionEventData::MetadataUpdated { .. } => {}
             SessionEventData::OperationCommitted { new_leaf_id } => {
@@ -506,6 +511,22 @@ mod tests {
                 message: "note".into(),
             }]
         );
+    }
+
+    #[test]
+    fn session_created_records_cwd() {
+        let events = vec![event(
+            "evt_1",
+            None,
+            None,
+            SessionEventData::SessionCreated {
+                cwd: Some("/work".into()),
+            },
+        )];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(replay.cwd.as_deref(), Some("/work"));
     }
 
     #[test]

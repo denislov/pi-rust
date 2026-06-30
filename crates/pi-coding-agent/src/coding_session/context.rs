@@ -55,6 +55,41 @@ pub struct CodingAgentSessionSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodingAgentSessionHydration {
+    pub(crate) summary: CodingAgentSessionSummary,
+    pub(crate) cwd: Option<String>,
+    pub(crate) transcript: Vec<CodingAgentSessionTranscriptItem>,
+    pub(crate) diagnostics: Vec<CodingAgentSessionDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CodingAgentSessionTranscriptItem {
+    User {
+        text: String,
+    },
+    Assistant {
+        id: String,
+        text: String,
+        done: bool,
+    },
+    Tool {
+        call_id: String,
+        name: String,
+        args: serde_json::Value,
+        result: Option<String>,
+        is_error: bool,
+    },
+    Diagnostic {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodingAgentSessionDiagnostic {
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingAgentCapabilities {
     pub prompt: CapabilityStatus,
     pub abort: CapabilityStatus,

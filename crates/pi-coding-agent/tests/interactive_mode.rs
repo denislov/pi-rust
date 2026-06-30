@@ -60,7 +60,7 @@ async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
 }
 
 #[tokio::test]
-async fn scripted_interactive_clone_after_prompt_forks_current_session() {
+async fn scripted_interactive_clone_after_rust_native_prompt_is_not_legacy_available() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response("assistant reply")]);
 
@@ -69,7 +69,7 @@ async fn scripted_interactive_clone_after_prompt_forks_current_session() {
         dir.path(),
         vec![
             ("hello\r", "assistant reply"),
-            ("/clone\r", "parentSession"),
+            ("/clone\r", "assistant reply"),
         ],
         80,
         24,
@@ -78,29 +78,26 @@ async fn scripted_interactive_clone_after_prompt_forks_current_session() {
     .unwrap();
 
     let files = collect_jsonl_files(dir.path());
-    assert_eq!(files.len(), 2, "{files:?}");
+    assert_eq!(files.len(), 1, "{files:?}");
     assert!(
-        output.contains("Cloned to new session"),
+        output.contains("Nothing to clone yet"),
         "{}",
         output.rendered
-    );
-    assert!(
-        files.iter().any(|path| std::fs::read_to_string(path)
-            .map(|text| text.contains("parentSession"))
-            .unwrap_or(false)),
-        "{files:?}"
     );
 }
 
 #[tokio::test]
-async fn scripted_interactive_fork_after_prompt_creates_parent_session() {
+async fn scripted_interactive_fork_after_rust_native_prompt_is_not_legacy_available() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response("assistant reply")]);
 
     let output = run_scripted_interactive_with_session_dir_size_and_waits(
         provider,
         dir.path(),
-        vec![("hello\r", "assistant reply"), ("/fork\r", "parentSession")],
+        vec![
+            ("hello\r", "assistant reply"),
+            ("/fork\r", "assistant reply"),
+        ],
         80,
         24,
     )
@@ -108,22 +105,16 @@ async fn scripted_interactive_fork_after_prompt_creates_parent_session() {
     .unwrap();
 
     let files = collect_jsonl_files(dir.path());
-    assert_eq!(files.len(), 2, "{files:?}");
+    assert_eq!(files.len(), 1, "{files:?}");
     assert!(
-        output.contains("Forked to new session"),
+        output.contains("Nothing to fork yet"),
         "{}",
         output.rendered
-    );
-    assert!(
-        files.iter().any(|path| std::fs::read_to_string(path)
-            .map(|text| text.contains("parentSession"))
-            .unwrap_or(false)),
-        "{files:?}"
     );
 }
 
 #[tokio::test]
-async fn scripted_interactive_compact_after_prompt_appends_compaction_entry() {
+async fn scripted_interactive_compact_after_rust_native_prompt_is_not_legacy_available() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![
         FauxProvider::text_call("assistant reply", StopReason::Stop),
@@ -135,7 +126,7 @@ async fn scripted_interactive_compact_after_prompt_appends_compaction_entry() {
         dir.path(),
         vec![
             ("hello\r", "assistant reply"),
-            ("/compact keep decisions\r", "summary from compact"),
+            ("/compact keep decisions\r", "assistant reply"),
         ],
         80,
         24,
@@ -147,19 +138,11 @@ async fn scripted_interactive_compact_after_prompt_appends_compaction_entry() {
     assert_eq!(files.len(), 1, "{files:?}");
     let session_text = std::fs::read_to_string(&files[0]).unwrap();
     assert!(
-        session_text.contains("\"type\":\"compaction\""),
+        !session_text.contains("\"type\":\"compaction\""),
         "{session_text}"
     );
     assert!(
-        session_text.contains("summary from compact"),
-        "{session_text}"
-    );
-    assert!(
-        session_text.contains("\"firstKeptEntryId\""),
-        "{session_text}"
-    );
-    assert!(
-        output.contains("summary from compact"),
+        output.contains("Nothing to compact (no messages yet)"),
         "{}",
         output.rendered
     );

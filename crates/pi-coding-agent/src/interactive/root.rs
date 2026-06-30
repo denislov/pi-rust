@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use pi_agent_core::session::JsonlSessionStorage;
 use pi_ai::types::Model;
 use pi_tui::{
     Component, ERROR, Editor, InputEvent, KeybindingsManager, MarkdownTheme, STATUS_IDLE,
@@ -22,7 +21,7 @@ use crate::interactive::render::{
     TranscriptRenderCache, TranscriptRenderOptions, TranscriptRowSnapshot, TranscriptStyles,
     WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens, running_status_text,
 };
-use crate::interactive::session_actions::{HydratedSession, SessionChoice};
+use crate::interactive::session_actions::{HydratedSession, SessionChoice, SessionChoiceKind};
 use crate::interactive::session_selector;
 use crate::interactive::slash::{self, ParsedSlashCommand};
 use crate::interactive::transcript::TranscriptMutation;
@@ -552,11 +551,11 @@ impl InteractiveRoot {
         self.session_label = choice.display_name().to_string();
         self.selected_session = Some(choice.clone());
         self.selected_session_hydrate = true;
-        self.active_session_path = Some(choice.path.clone());
-        self.active_leaf_id = JsonlSessionStorage::open(&choice.path)
-            .ok()
-            .and_then(|storage| storage.get_leaf_id().ok())
-            .flatten();
+        self.active_session_path = match choice.kind {
+            SessionChoiceKind::LegacyJsonl => Some(choice.path.clone()),
+            SessionChoiceKind::RustNative => None,
+        };
+        self.active_leaf_id = choice.active_leaf_id.clone();
         self.selecting_session = false;
         self.session_selection_selected = 0;
         self.editor.set_text("");
@@ -572,7 +571,10 @@ impl InteractiveRoot {
         notice: Option<String>,
     ) {
         self.session_label = hydrated.choice.display_name().to_string();
-        self.active_session_path = Some(hydrated.choice.path.clone());
+        self.active_session_path = match hydrated.choice.kind {
+            SessionChoiceKind::LegacyJsonl => Some(hydrated.choice.path.clone()),
+            SessionChoiceKind::RustNative => None,
+        };
         self.active_leaf_id = hydrated.leaf_id;
         // Restore cumulative token/cost stats so the footer reflects the
         // entire session immediately after resume, without waiting for the
