@@ -3064,6 +3064,101 @@ mod tests {
     }
 
     #[test]
+    fn session_command_reports_active_rust_native_session_details() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/tmp/project"),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.set_active_session_choice(SessionChoice {
+            id: "sess_rust_native".to_string(),
+            cwd: "/tmp/project".to_string(),
+            path: PathBuf::from("/tmp/project/sessions/sess_rust_native"),
+            created_at: "2026-06-30T00:00:00Z".to_string(),
+            name: None,
+            entry_count: 2,
+            active_leaf_id: Some("leaf_1".to_string()),
+            kind: SessionChoiceKind::RustNative,
+        });
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "session".to_string(),
+            args: String::new(),
+            original: "/session".to_string(),
+        });
+
+        let text = last_system_text(&root);
+        assert!(text.contains("Storage: rust-native"), "{text}");
+        assert!(text.contains("Session ID: sess_rust_native"), "{text}");
+        assert!(text.contains("Entries: 2"), "{text}");
+        assert!(text.contains("Active leaf: leaf_1"), "{text}");
+    }
+
+    #[test]
+    fn clone_command_reports_unsupported_for_active_rust_native_session() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/tmp/project"),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.set_active_session_choice(SessionChoice {
+            id: "sess_rust_native".to_string(),
+            cwd: "/tmp/project".to_string(),
+            path: PathBuf::from("/tmp/project/sessions/sess_rust_native"),
+            created_at: "2026-06-30T00:00:00Z".to_string(),
+            name: None,
+            entry_count: 2,
+            active_leaf_id: Some("leaf_1".to_string()),
+            kind: SessionChoiceKind::RustNative,
+        });
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "clone".to_string(),
+            args: String::new(),
+            original: "/clone".to_string(),
+        });
+
+        assert!(root.take_selected_session().is_none());
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Rust-native session clone is not implemented yet"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn fork_command_reports_unsupported_for_active_rust_native_session() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/tmp/project"),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.set_active_session_choice(SessionChoice {
+            id: "sess_rust_native".to_string(),
+            cwd: "/tmp/project".to_string(),
+            path: PathBuf::from("/tmp/project/sessions/sess_rust_native"),
+            created_at: "2026-06-30T00:00:00Z".to_string(),
+            name: None,
+            entry_count: 2,
+            active_leaf_id: Some("leaf_1".to_string()),
+            kind: SessionChoiceKind::RustNative,
+        });
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "fork".to_string(),
+            args: String::new(),
+            original: "/fork".to_string(),
+        });
+
+        assert!(root.take_selected_session().is_none());
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Rust-native session fork is not implemented yet"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn session_command_reports_current_footer_state() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("/tmp/project"),

@@ -11,8 +11,9 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
-    clone_session_to_sibling, export_path_arg, export_transcript as export_session_transcript,
-    resolve_command_path, session_choice_from_metadata,
+    SessionChoiceKind, clone_session_to_sibling, export_path_arg,
+    export_transcript as export_session_transcript, hydrate_rust_native_choice,
+    resolve_command_path, rust_native_tree_from_hydrated_session, session_choice_from_metadata,
 };
 use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selector_arg};
 use crate::interactive::{Transcript, TranscriptItem};
@@ -136,6 +137,15 @@ fn handle_compact_command(root: &mut InteractiveRoot, args: &str) {
         ));
         return;
     }
+    if matches!(
+        root.active_session.as_ref().map(|choice| choice.kind),
+        Some(SessionChoiceKind::RustNative)
+    ) {
+        root.transcript.push(TranscriptItem::system(
+            "Rust-native session compaction is not implemented yet.",
+        ));
+        return;
+    }
     if root.active_session_path.is_none() || root.active_leaf_id.is_none() {
         root.transcript.push(TranscriptItem::system(
             "Nothing to compact (no messages yet)",
@@ -177,9 +187,10 @@ fn handle_import_command(root: &mut InteractiveRoot, args: &str) {
             let leaf_id = storage.get_leaf_id().unwrap_or(None);
             let choice = session_choice_from_metadata(storage.metadata());
             root.session_label = choice.display_name().to_string();
+            let mut choice = choice;
+            choice.active_leaf_id = leaf_id;
+            root.set_active_session_choice(choice.clone());
             root.selected_session = Some(choice);
-            root.active_session_path = Some(path.clone());
-            root.active_leaf_id = leaf_id;
             root.selecting_session = false;
             root.session_selection_selected = 0;
             root.editor.set_text("");
@@ -226,12 +237,21 @@ fn handle_new_command(root: &mut InteractiveRoot) {
     root.session_selection_selected = 0;
     root.stats = Default::default();
     root.session_label = "session".to_string();
-    root.active_session_path = None;
-    root.active_leaf_id = None;
+    root.clear_active_session();
     root.action = InteractiveAction::NewSession;
 }
 
 fn handle_clone_command(root: &mut InteractiveRoot) {
+    if matches!(
+        root.active_session.as_ref().map(|choice| choice.kind),
+        Some(SessionChoiceKind::RustNative)
+    ) {
+        root.transcript.push(TranscriptItem::system(
+            "Rust-native session clone is not implemented yet.",
+        ));
+        return;
+    }
+
     let Some(source_path) = root.active_session_path.clone() else {
         root.transcript
             .push(TranscriptItem::system("Nothing to clone yet"));
@@ -248,9 +268,10 @@ fn handle_clone_command(root: &mut InteractiveRoot) {
             let leaf_id = storage.get_leaf_id().unwrap_or(None);
             let choice = session_choice_from_metadata(storage.metadata());
             root.session_label = choice.display_name().to_string();
+            let mut choice = choice;
+            choice.active_leaf_id = leaf_id;
+            root.set_active_session_choice(choice.clone());
             root.selected_session = Some(choice.clone());
-            root.active_session_path = Some(choice.path);
-            root.active_leaf_id = leaf_id;
             root.editor.set_text("");
             root.transcript
                 .push(TranscriptItem::system("Cloned to new session"));
@@ -262,6 +283,16 @@ fn handle_clone_command(root: &mut InteractiveRoot) {
 }
 
 fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
+    if matches!(
+        root.active_session.as_ref().map(|choice| choice.kind),
+        Some(SessionChoiceKind::RustNative)
+    ) {
+        root.transcript.push(TranscriptItem::system(
+            "Rust-native session fork is not implemented yet.",
+        ));
+        return;
+    }
+
     let Some(source_path) = root.active_session_path.clone() else {
         root.transcript
             .push(TranscriptItem::system("Nothing to fork yet"));
@@ -290,9 +321,10 @@ fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
             let leaf_id = storage.get_leaf_id().unwrap_or(None);
             let choice = session_choice_from_metadata(storage.metadata());
             root.session_label = choice.display_name().to_string();
+            let mut choice = choice;
+            choice.active_leaf_id = leaf_id;
+            root.set_active_session_choice(choice.clone());
             root.selected_session = Some(choice.clone());
-            root.active_session_path = Some(choice.path);
-            root.active_leaf_id = leaf_id;
             root.editor.set_text("");
             root.transcript
                 .push(TranscriptItem::system("Forked to new session"));
@@ -331,6 +363,40 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
     }
 
     let Some(ref session_path) = root.active_session_path else {
+        if let Some(choice) = root
+            .active_session
+            .as_ref()
+            .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
+        {
+            match hydrate_rust_native_choice(choice) {
+                Ok(hydrated) => {
+                    let (tree, leaf_id) = rust_native_tree_from_hydrated_session(&hydrated);
+                    if tree.is_empty() {
+                        root.transcript
+                            .push(TranscriptItem::system("No entries in session"));
+                        return;
+                    }
+                    let filter_mode = pi_agent_core::session::TreeFilterMode::from_str(
+                        &root.settings.tree_filter_mode,
+                    );
+                    let selector = crate::interactive::tree_selector::TreeSelectorState::new(
+                        tree,
+                        leaf_id,
+                        filter_mode,
+                        root.viewport_width,
+                    );
+                    root.selecting_tree = true;
+                    root.tree_selector = Some(selector);
+                    root.selected_tree_entry_id = None;
+                    root.editor.set_text("");
+                }
+                Err(error) => root.transcript.push(TranscriptItem::system(format!(
+                    "Failed to open session: {error}"
+                ))),
+            }
+            return;
+        }
+
         root.transcript
             .push(TranscriptItem::system("No entries in session"));
         return;
@@ -454,14 +520,31 @@ fn handle_name_command(root: &mut InteractiveRoot, args: &str) {
 
 fn handle_session_command(root: &mut InteractiveRoot) {
     let cwd = abbreviate_cwd(&root.cwd);
-    root.transcript.push(TranscriptItem::system(format!(
+    let mut details = format!(
         "Session Info\n\nName: {}\nModel: {}\nCwd: {}\nTokens\nInput: {}\nOutput: {}",
         root.session_label,
         root.model_id,
         cwd,
         format_tokens(root.stats.input),
         format_tokens(root.stats.output)
-    )));
+    );
+    if let Some(choice) = &root.active_session {
+        let storage = match choice.kind {
+            SessionChoiceKind::RustNative => "rust-native",
+            SessionChoiceKind::LegacyJsonl => "legacy-jsonl",
+        };
+        details.push_str(&format!(
+            "\nStorage: {}\nSession ID: {}\nEntries: {}\nPath: {}",
+            storage,
+            choice.id,
+            choice.entry_count,
+            choice.path.display()
+        ));
+        if let Some(leaf_id) = root.active_leaf_id.as_deref() {
+            details.push_str(&format!("\nActive leaf: {leaf_id}"));
+        }
+    }
+    root.transcript.push(TranscriptItem::system(details));
 }
 
 fn handle_hotkeys_command(root: &mut InteractiveRoot) {

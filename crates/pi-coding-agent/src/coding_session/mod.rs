@@ -110,6 +110,17 @@ impl CodingAgentSession {
         SessionService::hydrate(&options)
     }
 
+    pub(crate) fn hydrate_current(
+        &self,
+    ) -> Result<Option<CodingAgentSessionHydration>, CodingSessionError> {
+        match &self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                Ok(Some(session_service.hydrated_view()?))
+            }
+            SessionPersistence::NonPersistent(_) => Ok(None),
+        }
+    }
+
     pub fn subscribe(&self) -> CodingAgentEventReceiver {
         self.event_service.subscribe()
     }

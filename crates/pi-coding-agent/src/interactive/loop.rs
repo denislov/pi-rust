@@ -16,7 +16,8 @@ use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
-    hydrate_existing_session_target, session_choice_from_metadata,
+    SessionChoiceKind, hydrate_existing_session_target, hydrated_session_from_rust_native,
+    session_choice_from_metadata,
 };
 use crate::interactive::{CodingEventBridge, InteractiveEventBridge, TranscriptItem, UiEvent};
 use crate::protocol::session_runner::{SessionPromptOptions, SessionPromptResult};
@@ -711,7 +712,16 @@ fn handle_input_event<T: Terminal>(
     {
         let root = root_mut(tui, root_id)?;
         if let Some(target_id) = root.take_selected_tree_entry_id() {
-            if let Some(ref session_path) = root.active_session_path.clone() {
+            if root.active_session_path.is_none()
+                && matches!(
+                    root.active_session.as_ref().map(|choice| choice.kind),
+                    Some(SessionChoiceKind::RustNative)
+                )
+            {
+                root.transcript.push(TranscriptItem::system(
+                    "Rust-native tree navigation is not implemented yet.".to_string(),
+                ));
+            } else if let Some(ref session_path) = root.active_session_path.clone() {
                 match JsonlSessionStorage::open(session_path) {
                     Ok(mut storage) => {
                         // Check if already at this point.
@@ -1022,7 +1032,7 @@ fn finish_prompt<T: Terminal>(
     match result {
         Ok(PromptTaskResult::Legacy(result)) => finish_legacy_prompt(root, result),
         Ok(PromptTaskResult::Coding(result)) => {
-            finish_coding_prompt(root, result.outcome);
+            finish_coding_prompt(root, &result.session, result.outcome);
             *coding_session = Some(result.session);
         }
         Err(error) => {
@@ -1036,19 +1046,25 @@ fn finish_prompt<T: Terminal>(
 }
 
 fn finish_legacy_prompt(root: &mut InteractiveRoot, result: SessionPromptResult) {
+    root.clear_active_session();
     root.active_session_path = result.session_path;
     root.active_leaf_id = result.leaf_id;
     if let Some(path) = root.active_session_path.as_ref()
         && let Ok(storage) = pi_agent_core::session::JsonlSessionStorage::open(path)
     {
-        let choice = session_choice_from_metadata(storage.metadata());
+        let mut choice = session_choice_from_metadata(storage.metadata());
+        choice.active_leaf_id = root.active_leaf_id.clone();
+        root.set_active_session_choice(choice.clone());
         root.session_label = choice.display_name().to_string();
     }
 }
 
-fn finish_coding_prompt(root: &mut InteractiveRoot, outcome: PromptTurnOutcome) {
-    root.active_session_path = None;
-    root.active_leaf_id = None;
+fn finish_coding_prompt(
+    root: &mut InteractiveRoot,
+    session: &CodingAgentSession,
+    outcome: PromptTurnOutcome,
+) {
+    root.clear_active_session();
     match outcome {
         PromptTurnOutcome::Success {
             session_id,
@@ -1068,6 +1084,14 @@ fn finish_coding_prompt(root: &mut InteractiveRoot, outcome: PromptTurnOutcome) 
             }
         }
         PromptTurnOutcome::Failed { .. } => {}
+    }
+    if let Ok(Some(hydration)) = session.hydrate_current() {
+        let hydrated = hydrated_session_from_rust_native(hydration);
+        let mut choice = hydrated.choice;
+        if choice.active_leaf_id.is_none() {
+            choice.active_leaf_id = root.active_leaf_id.clone();
+        }
+        root.set_active_session_choice(choice);
     }
 }
 

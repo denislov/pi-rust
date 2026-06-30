@@ -57,6 +57,44 @@ async fn interactive_footer_updates_to_created_session_id_after_prompt() {
 }
 
 #[tokio::test]
+async fn interactive_session_command_reports_created_rust_native_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("saved")]);
+
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![("persist me\r", "saved"), ("/session\r", "saved")],
+    )
+    .await
+    .unwrap();
+
+    let frame = result.rendered_lines.join("\n");
+    assert!(frame.contains("Session Info"), "{frame}");
+    assert!(frame.contains("Storage: rust-native"), "{frame}");
+    assert!(frame.contains("Entries:"), "{frame}");
+}
+
+#[tokio::test]
+async fn interactive_tree_command_opens_created_rust_native_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("tree answer")]);
+
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![("tree prompt\r", "tree answer"), ("/tree\r", "tree answer")],
+    )
+    .await
+    .unwrap();
+
+    let frame = result.rendered_lines.join("\n");
+    assert!(frame.contains("Session Tree"), "{frame}");
+    assert!(frame.contains("tree prompt"), "{frame}");
+    assert!(frame.contains("assistant: tree answer"), "{frame}");
+}
+
+#[tokio::test]
 async fn interactive_mode_continues_same_session_across_prompts() {
     let temp = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![

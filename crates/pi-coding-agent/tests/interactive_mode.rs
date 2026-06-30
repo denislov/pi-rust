@@ -60,7 +60,7 @@ async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
 }
 
 #[tokio::test]
-async fn scripted_interactive_clone_after_rust_native_prompt_is_not_legacy_available() {
+async fn scripted_interactive_clone_after_rust_native_prompt_reports_unsupported() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response("assistant reply")]);
 
@@ -80,14 +80,14 @@ async fn scripted_interactive_clone_after_rust_native_prompt_is_not_legacy_avail
     let files = collect_jsonl_files(dir.path());
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(
-        output.contains("Nothing to clone yet"),
+        output.contains("Rust-native session clone is not implemented yet"),
         "{}",
         output.rendered
     );
 }
 
 #[tokio::test]
-async fn scripted_interactive_fork_after_rust_native_prompt_is_not_legacy_available() {
+async fn scripted_interactive_fork_after_rust_native_prompt_reports_unsupported() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::new(vec![text_response("assistant reply")]);
 
@@ -107,14 +107,14 @@ async fn scripted_interactive_fork_after_rust_native_prompt_is_not_legacy_availa
     let files = collect_jsonl_files(dir.path());
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(
-        output.contains("Nothing to fork yet"),
+        output.contains("Rust-native session fork is not implemented yet"),
         "{}",
         output.rendered
     );
 }
 
 #[tokio::test]
-async fn scripted_interactive_compact_after_rust_native_prompt_is_not_legacy_available() {
+async fn scripted_interactive_compact_after_rust_native_prompt_reports_unsupported() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![
         FauxProvider::text_call("assistant reply", StopReason::Stop),
@@ -142,7 +142,7 @@ async fn scripted_interactive_compact_after_rust_native_prompt_is_not_legacy_ava
         "{session_text}"
     );
     assert!(
-        output.contains("Nothing to compact (no messages yet)"),
+        output.contains("Rust-native session compaction is not implemented yet"),
         "{}",
         output.rendered
     );

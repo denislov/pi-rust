@@ -113,6 +113,7 @@ pub(super) struct InteractiveRoot {
     pub(super) session_choices: Vec<SessionChoice>,
     pub(super) selected_session: Option<SessionChoice>,
     pub(super) selected_session_hydrate: bool,
+    pub(super) active_session: Option<SessionChoice>,
     pub(super) active_session_path: Option<PathBuf>,
     pub(super) active_leaf_id: Option<String>,
     pub(super) selecting_session: bool,
@@ -261,6 +262,7 @@ impl InteractiveRoot {
             session_choices: Vec::new(),
             selected_session: None,
             selected_session_hydrate: false,
+            active_session: None,
             active_session_path: None,
             active_leaf_id: None,
             selecting_session: false,
@@ -551,11 +553,7 @@ impl InteractiveRoot {
         self.session_label = choice.display_name().to_string();
         self.selected_session = Some(choice.clone());
         self.selected_session_hydrate = true;
-        self.active_session_path = match choice.kind {
-            SessionChoiceKind::LegacyJsonl => Some(choice.path.clone()),
-            SessionChoiceKind::RustNative => None,
-        };
-        self.active_leaf_id = choice.active_leaf_id.clone();
+        self.set_active_session_choice(choice.clone());
         self.selecting_session = false;
         self.session_selection_selected = 0;
         self.editor.set_text("");
@@ -571,11 +569,9 @@ impl InteractiveRoot {
         notice: Option<String>,
     ) {
         self.session_label = hydrated.choice.display_name().to_string();
-        self.active_session_path = match hydrated.choice.kind {
-            SessionChoiceKind::LegacyJsonl => Some(hydrated.choice.path.clone()),
-            SessionChoiceKind::RustNative => None,
-        };
-        self.active_leaf_id = hydrated.leaf_id;
+        let mut choice = hydrated.choice.clone();
+        choice.active_leaf_id = hydrated.leaf_id.clone();
+        self.set_active_session_choice(choice);
         // Restore cumulative token/cost stats so the footer reflects the
         // entire session immediately after resume, without waiting for the
         // next turn to emit a UsageUpdate event.
@@ -600,6 +596,21 @@ impl InteractiveRoot {
         }
         self.transcript = transcript;
         self.render_cache.clear();
+    }
+
+    pub(super) fn set_active_session_choice(&mut self, choice: SessionChoice) {
+        self.active_session_path = match choice.kind {
+            SessionChoiceKind::LegacyJsonl => Some(choice.path.clone()),
+            SessionChoiceKind::RustNative => None,
+        };
+        self.active_leaf_id = choice.active_leaf_id.clone();
+        self.active_session = Some(choice);
+    }
+
+    pub(super) fn clear_active_session(&mut self) {
+        self.active_session = None;
+        self.active_session_path = None;
+        self.active_leaf_id = None;
     }
 
     pub(super) fn footer(&self, width: usize) -> Vec<String> {

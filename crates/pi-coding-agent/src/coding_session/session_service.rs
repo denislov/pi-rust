@@ -246,7 +246,7 @@ impl SessionService {
         }
     }
 
-    fn hydrated_view(&self) -> Result<CodingAgentSessionHydration, CodingSessionError> {
+    pub(crate) fn hydrated_view(&self) -> Result<CodingAgentSessionHydration, CodingSessionError> {
         let replay = self.replay()?;
         Ok(CodingAgentSessionHydration {
             summary: CodingAgentSessionSummary {

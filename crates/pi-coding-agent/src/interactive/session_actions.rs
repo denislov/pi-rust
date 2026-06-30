@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use pi_agent_core::session::{
     JsonlSessionMetadata, JsonlSessionRepo, JsonlSessionStorage, SessionEntry, SessionHeader,
-    StoredAgentMessage, StoredUsage, create_session_id, create_timestamp, generate_entry_id,
+    SessionTreeNode, StoredAgentMessage, StoredUsage, create_session_id, create_timestamp,
+    generate_entry_id,
 };
 use pi_agent_core::{AgentMessage, session};
 use pi_ai::types::{ContentBlock, StopReason};
@@ -164,7 +165,9 @@ fn hydrate_rust_native_session_target(
         .map(hydrated_session_from_rust_native))
 }
 
-fn hydrated_session_from_rust_native(hydration: CodingAgentSessionHydration) -> HydratedSession {
+pub(super) fn hydrated_session_from_rust_native(
+    hydration: CodingAgentSessionHydration,
+) -> HydratedSession {
     let choice = session_choice_from_rust_native(&hydration);
     HydratedSession {
         choice,
@@ -176,6 +179,123 @@ fn hydrated_session_from_rust_native(hydration: CodingAgentSessionHydration) -> 
         leaf_id: hydration.summary.active_leaf_id,
         cumulative_usage: CumulativeUsage::default(),
     }
+}
+
+pub(super) fn hydrate_rust_native_choice(
+    choice: &SessionChoice,
+) -> Result<HydratedSession, CliError> {
+    if choice.kind != SessionChoiceKind::RustNative {
+        return Err(CliError::SessionFailure(
+            "session choice is not Rust-native".into(),
+        ));
+    }
+    let mut options = CodingAgentSessionOptions::new().with_session_path(&choice.path);
+    if let Some(root) = choice.path.parent() {
+        options = options.with_session_log_root(root);
+    }
+    if !choice.cwd.is_empty() {
+        options = options.with_cwd(PathBuf::from(&choice.cwd));
+    }
+    CodingAgentSession::hydrate(options)
+        .map(hydrated_session_from_rust_native)
+        .map_err(CliError::from)
+}
+
+pub(super) fn rust_native_tree_from_hydrated_session(
+    hydrated: &HydratedSession,
+) -> (Vec<SessionTreeNode>, Option<String>) {
+    let timestamp = hydrated.choice.created_at.clone();
+    let mut entries = Vec::new();
+    let mut parent_id: Option<String> = None;
+
+    for (index, item) in hydrated.transcript_items.iter().enumerate() {
+        let entry_id = format!("rust_native_entry_{index}");
+        let message = match item {
+            TranscriptItem::User { text } => StoredAgentMessage::User {
+                content: vec![ContentBlock::Text {
+                    text: text.clone(),
+                    text_signature: None,
+                }],
+                timestamp: 0,
+            },
+            TranscriptItem::Assistant { markdown, .. } => StoredAgentMessage::Assistant {
+                content: vec![ContentBlock::Text {
+                    text: markdown.clone(),
+                    text_signature: None,
+                }],
+                api: "coding-session".to_string(),
+                provider: "coding-session".to_string(),
+                model: "coding-session".to_string(),
+                response_model: None,
+                response_id: None,
+                usage: StoredUsage::default(),
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                timestamp: 0,
+            },
+            TranscriptItem::Tool {
+                call_id,
+                name,
+                result,
+                is_error,
+                ..
+            } => StoredAgentMessage::ToolResult {
+                tool_call_id: call_id.clone(),
+                tool_name: name.clone(),
+                content: vec![ContentBlock::Text {
+                    text: result.clone().unwrap_or_default(),
+                    text_signature: None,
+                }],
+                is_error: *is_error,
+                timestamp: 0,
+            },
+            TranscriptItem::Error { text } => StoredAgentMessage::Custom {
+                custom_type: "error".to_string(),
+                content: vec![ContentBlock::Text {
+                    text: text.clone(),
+                    text_signature: None,
+                }],
+                display: true,
+                details: None,
+                timestamp: 0,
+            },
+            TranscriptItem::System { text } => StoredAgentMessage::Custom {
+                custom_type: "system".to_string(),
+                content: vec![ContentBlock::Text {
+                    text: text.clone(),
+                    text_signature: None,
+                }],
+                display: true,
+                details: None,
+                timestamp: 0,
+            },
+        };
+
+        entries.push(SessionEntry::message(
+            entry_id.clone(),
+            parent_id.clone(),
+            timestamp.clone(),
+            message,
+        ));
+        parent_id = Some(entry_id);
+    }
+
+    let current_leaf_id = entries.last().map(|entry| entry.id.clone());
+    let mut child: Option<SessionTreeNode> = None;
+    for entry in entries.into_iter().rev() {
+        let mut node = SessionTreeNode {
+            entry,
+            children: Vec::new(),
+            label: None,
+            label_timestamp: None,
+        };
+        if let Some(child) = child {
+            node.children.push(child);
+        }
+        child = Some(node);
+    }
+
+    (child.into_iter().collect(), current_leaf_id)
 }
 
 fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> TranscriptItem {
@@ -903,6 +1023,46 @@ mod tests {
         let usage = compute_cumulative_usage(&messages);
         assert_eq!(usage.input, 100);
         assert_eq!(usage.output, 50);
+    }
+
+    #[test]
+    fn rust_native_tree_projection_builds_linear_readonly_tree() {
+        let hydrated = HydratedSession {
+            choice: SessionChoice {
+                id: "sess_rust".to_string(),
+                cwd: "/work".to_string(),
+                path: PathBuf::from("/sessions/sess_rust"),
+                created_at: "2026-06-30T00:00:00Z".to_string(),
+                name: None,
+                entry_count: 3,
+                active_leaf_id: None,
+                kind: SessionChoiceKind::RustNative,
+            },
+            transcript_items: vec![
+                TranscriptItem::user("hello".to_string()),
+                TranscriptItem::assistant("assistant_1".to_string(), "world".to_string(), true),
+                TranscriptItem::Tool {
+                    call_id: "tool_1".to_string(),
+                    name: "read".to_string(),
+                    args: serde_json::json!({"path": "README.md"}),
+                    result: Some("contents".to_string()),
+                    is_error: false,
+                },
+            ],
+            leaf_id: None,
+            cumulative_usage: CumulativeUsage::default(),
+        };
+
+        let (tree, leaf_id) = rust_native_tree_from_hydrated_session(&hydrated);
+
+        assert_eq!(leaf_id.as_deref(), Some("rust_native_entry_2"));
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].entry.id, "rust_native_entry_0");
+        assert_eq!(tree[0].children[0].entry.id, "rust_native_entry_1");
+        assert_eq!(
+            tree[0].children[0].children[0].entry.id,
+            "rust_native_entry_2"
+        );
     }
 
     #[test]
