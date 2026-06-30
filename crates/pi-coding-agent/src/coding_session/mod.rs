@@ -29,11 +29,14 @@ pub use prompt::{
 use capability_service::CapabilityService;
 use event_service::EventService;
 use flow_service::FlowService;
+use pi_agent_core::compaction::estimate::estimate_tokens;
+use pi_agent_core::compaction::summarize::summarize;
+use pi_ai::types::{AssistantMessage, ContentBlock};
 use plugin_service::PluginService;
-use prompt::{PromptTurnContext, PromptTurnIds};
+use prompt::{PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
 use session_log::id::{IdGenerator, SystemIdGenerator};
-use session_log::replay::TranscriptItem;
+use session_log::replay::{TranscriptItem, transcript_item_id};
 use session_service::{FinalizedSessionWrite, SessionService};
 
 #[derive(Debug)]
@@ -176,6 +179,21 @@ impl CodingAgentSession {
         result
     }
 
+    pub async fn compact(
+        &mut self,
+        options: PromptTurnOptions,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        if self.active_operation.is_some() {
+            return Err(CodingSessionError::Busy {
+                operation: "compact".into(),
+            });
+        }
+        self.active_operation = Some("compact".into());
+        let result = self.compact_inner(options).await;
+        self.active_operation = None;
+        result
+    }
+
     fn from_services(session_service: SessionService) -> Result<Self, CodingSessionError> {
         let event_service = EventService::new();
         event_service.emit(CodingAgentEvent::SessionOpened {
@@ -240,6 +258,131 @@ impl CodingAgentSession {
 
         self.emit_coding_events_before_prompt_outcome(context.coding_events());
         self.emit_session_write_events(&finalized);
+        self.emit_prompt_outcome_event(&outcome);
+        Ok(outcome)
+    }
+
+    async fn compact_inner(
+        &mut self,
+        options: PromptTurnOptions,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        let custom_instructions = match options.invocation() {
+            crate::runtime::PromptInvocation::Compact {
+                custom_instructions,
+            } => custom_instructions.clone(),
+            _ => {
+                return Err(CodingSessionError::Input {
+                    message: "compact operation requires a compaction invocation".into(),
+                });
+            }
+        };
+        let runtime = options
+            .runtime()
+            .cloned()
+            .ok_or_else(|| CodingSessionError::Config {
+                message: "compact operation options do not include a runtime snapshot".into(),
+            })?;
+
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "manual compaction without persistent session".into(),
+            });
+        };
+
+        let replay = session_service.replay()?;
+        let first_kept_message_id = replay
+            .transcript
+            .iter()
+            .rev()
+            .find_map(transcript_item_id)
+            .ok_or_else(|| CodingSessionError::Session {
+                message: "Nothing to compact (no messages yet)".into(),
+            })?;
+
+        let agent = self.runtime_service.build_agent_runtime(&runtime)?;
+        self.runtime_service
+            .hydrate_agent_runtime(&agent, &runtime, &replay);
+        let messages = agent.messages();
+        if messages.len() < 2 {
+            return Err(CodingSessionError::Session {
+                message: "Nothing to compact (no messages yet)".into(),
+            });
+        }
+        let first_kept_index = messages.len() - 1;
+        let to_summarize = &messages[..first_kept_index];
+        if to_summarize.is_empty() {
+            return Err(CodingSessionError::Session {
+                message: "Nothing to compact (no compactable history)".into(),
+            });
+        }
+        let tokens_before = estimate_tokens(&messages);
+
+        let mut transaction = session_service.begin_manual_compaction_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+        let turn_id = transaction.turn_id().to_owned();
+        transaction.record_session_compaction_started(&first_kept_message_id, tokens_before)?;
+
+        let stream_options = agent.provider_request_snapshot().1;
+        let summary = match summarize(
+            runtime.model(),
+            to_summarize,
+            custom_instructions.as_deref(),
+            stream_options,
+            None,
+        )
+        .await
+        {
+            Ok(summary) => summary,
+            Err(error) => {
+                let mut outcome = PromptTurnOutcome::Failed {
+                    operation_id: operation_id.clone(),
+                    turn_id: Some(turn_id.clone()),
+                    error: CodingSessionError::Provider {
+                        message: error.to_string(),
+                    },
+                    diagnostics: Vec::new(),
+                };
+                let finalized = session_service.fail_prompt_transaction(
+                    Some(transaction),
+                    operation_id.clone(),
+                    "provider",
+                    error.to_string(),
+                )?;
+                apply_finalized_session_write(&mut outcome, &finalized);
+                self.emit_session_write_events(&finalized);
+                self.emit_prompt_outcome_event(&outcome);
+                return Ok(outcome);
+            }
+        };
+
+        transaction.record_session_compaction_completed(
+            summary.clone(),
+            first_kept_message_id.clone(),
+            tokens_before,
+        )?;
+        let mut outcome = PromptTurnOutcome::Success {
+            operation_id: operation_id.clone(),
+            turn_id: turn_id.clone(),
+            session_id: Some(session_service.session_id().to_owned()),
+            leaf_id: session_service.active_leaf_id().map(str::to_owned),
+            final_text: summary.clone(),
+            final_message: compaction_final_message(&runtime, &summary),
+            diagnostics: Vec::new(),
+        };
+        let finalized = session_service
+            .commit_manual_compaction_transaction(Some(transaction), operation_id.clone())?;
+        apply_finalized_session_write(&mut outcome, &finalized);
+
+        emit_session_write_pending(&self.event_service, &finalized);
+        self.event_service
+            .emit(CodingAgentEvent::RuntimeCompactionCompleted {
+                operation_id,
+                turn_id,
+                summary,
+                first_kept_message_id,
+                tokens_before,
+            });
+        emit_session_write_committed(&self.event_service, &finalized);
         self.emit_prompt_outcome_event(&outcome);
         Ok(outcome)
     }
@@ -390,6 +533,36 @@ fn apply_finalized_session_write(
     }
 }
 
+fn compaction_final_message(runtime: &RuntimeSnapshot, summary: &str) -> AssistantMessage {
+    let mut message = AssistantMessage::empty(&runtime.model().api, &runtime.model().id);
+    message.provider = Some(runtime.model().provider.clone());
+    message.content.push(ContentBlock::Text {
+        text: summary.to_owned(),
+        text_signature: None,
+    });
+    message
+}
+
+fn emit_session_write_pending(event_service: &EventService, finalized: &FinalizedSessionWrite) {
+    for event in &finalized.events {
+        if matches!(event, CodingAgentEvent::SessionWritePending { .. }) {
+            event_service.emit(event.clone());
+        }
+    }
+}
+
+fn emit_session_write_committed(event_service: &EventService, finalized: &FinalizedSessionWrite) {
+    for event in &finalized.events {
+        if matches!(
+            event,
+            CodingAgentEvent::SessionWriteCommitted { .. }
+                | CodingAgentEvent::SessionWriteSkipped { .. }
+        ) {
+            event_service.emit(event.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -454,6 +627,28 @@ mod tests {
             resources: AgentResources::default(),
             settings: None,
             invocation: PromptInvocation::Text(prompt.into()),
+        })
+    }
+
+    fn compact_options(api: &str, custom_instructions: Option<&str>) -> PromptTurnOptions {
+        PromptTurnOptions::from_session_prompt_options(SessionPromptOptions {
+            prompt: String::new(),
+            model: model(api),
+            api_key: None,
+            system_prompt: Some("system".into()),
+            max_turns: Some(2),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: Some(SessionRunOptions::disabled(".".into())),
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Compact {
+                custom_instructions: custom_instructions.map(str::to_owned),
+            },
         })
     }
 
@@ -801,6 +996,89 @@ mod tests {
                 .any(|diagnostic| diagnostic.message.contains("operation")
                     && diagnostic.message.contains("failed"))
         );
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn compact_persistent_session_records_events_and_replays_summary() {
+        let api = "coding-session-compact";
+        registry::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("first answer", StopReason::Stop),
+                FauxProvider::text_call("summary from compact", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_compact")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        session
+            .prompt(prompt_options(api, "first question"))
+            .await
+            .unwrap();
+        let mut events = session.subscribe();
+
+        let outcome = session
+            .compact(compact_options(api, Some("keep decisions")))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &outcome,
+            PromptTurnOutcome::Success {
+                final_text,
+                session_id: Some(session_id),
+                leaf_id: Some(_),
+                ..
+            } if final_text == "summary from compact" && session_id == "sess_compact"
+        ));
+        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert_event_order(
+            &emitted_events,
+            &[
+                "session_write_pending",
+                "runtime_compaction_completed",
+                "session_write_committed",
+                "prompt_completed",
+            ],
+        );
+        assert!(emitted_events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::RuntimeCompactionCompleted {
+                summary,
+                tokens_before,
+                ..
+            } if summary == "summary from compact" && *tokens_before > 0
+        )));
+
+        let replay = session.persistent_session_service().replay().unwrap();
+        assert!(matches!(
+            replay.transcript.as_slice(),
+            [
+                TranscriptItem::CompactionSummary {
+                    summary,
+                    first_kept_message_id,
+                    tokens_before,
+                },
+                TranscriptItem::AssistantMessage {
+                    text,
+                    status: MessageStatus::Completed,
+                    ..
+                },
+            ] if summary == "summary from compact"
+                && first_kept_message_id.starts_with("msg_")
+                && *tokens_before > 0
+                && text == "first answer"
+        ));
+        let event_log =
+            std::fs::read_to_string(temp.path().join("sess_compact/events.jsonl")).unwrap();
+        assert!(event_log.contains("session.compaction.started"));
+        assert!(event_log.contains("session.compaction.completed"));
         registry::unregister(api);
     }
 

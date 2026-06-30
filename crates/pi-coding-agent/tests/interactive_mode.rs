@@ -130,7 +130,7 @@ async fn scripted_interactive_fork_after_rust_native_prompt_creates_session() {
 }
 
 #[tokio::test]
-async fn scripted_interactive_compact_after_rust_native_prompt_reports_unsupported() {
+async fn scripted_interactive_compact_after_rust_native_prompt_records_compaction() {
     let dir = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![
         FauxProvider::text_call("assistant reply", StopReason::Stop),
@@ -142,7 +142,7 @@ async fn scripted_interactive_compact_after_rust_native_prompt_reports_unsupport
         dir.path(),
         vec![
             ("hello\r", "assistant reply"),
-            ("/compact keep decisions\r", "assistant reply"),
+            ("/compact keep decisions\r", "session.compaction.completed"),
         ],
         80,
         24,
@@ -158,10 +158,15 @@ async fn scripted_interactive_compact_after_rust_native_prompt_reports_unsupport
         "{session_text}"
     );
     assert!(
-        output.contains("Rust-native session compaction is not implemented yet"),
+        session_text.contains("session.compaction.completed"),
+        "{session_text}"
+    );
+    assert!(
+        output.contains("summary from compact"),
         "{}",
         output.rendered
     );
+    assert!(!output.contains("not implemented"), "{}", output.rendered);
 }
 
 #[tokio::test]

@@ -888,6 +888,7 @@ fn handle_input_event<T: Terminal>(
                 root_id,
                 compact_instructions,
                 prompt_context,
+                coding_session,
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
@@ -966,7 +967,16 @@ fn start_compact_task<T: Terminal>(
     root_id: usize,
     custom_instructions: Option<String>,
     prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
 ) -> Result<PromptTask, CliError> {
+    let use_rust_native = {
+        let root = root_mut(tui, root_id)?;
+        matches!(
+            root.active_session.as_ref().map(|choice| choice.kind),
+            Some(SessionChoiceKind::RustNative)
+        )
+    };
+
     {
         let root = root_mut(tui, root_id)?;
         root.transcript
@@ -994,7 +1004,11 @@ fn start_compact_task<T: Terminal>(
         },
     };
 
-    let task = PromptTask::spawn_legacy(options)?;
+    let task = if use_rust_native {
+        PromptTask::spawn_compact(options, coding_session.take())?
+    } else {
+        PromptTask::spawn_legacy(options)?
+    };
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
@@ -1032,7 +1046,7 @@ fn finish_prompt<T: Terminal>(
     match result {
         Ok(PromptTaskResult::Legacy(result)) => finish_legacy_prompt(root, result),
         Ok(PromptTaskResult::Coding(result)) => {
-            finish_coding_prompt(root, &result.session, result.outcome);
+            finish_coding_prompt(root, &result.session, result.outcome, result.update_usage);
             *coding_session = Some(result.session);
         }
         Err(error) => {
@@ -1063,6 +1077,7 @@ fn finish_coding_prompt(
     root: &mut InteractiveRoot,
     session: &CodingAgentSession,
     outcome: PromptTurnOutcome,
+    update_usage: bool,
 ) {
     root.clear_active_session();
     match outcome {
@@ -1072,7 +1087,9 @@ fn finish_coding_prompt(
             final_message,
             ..
         } => {
-            apply_success_usage(root, &final_message.usage);
+            if update_usage {
+                apply_success_usage(root, &final_message.usage);
+            }
             if let Some(session_id) = session_id {
                 root.session_label = session_id;
                 root.active_leaf_id = leaf_id;

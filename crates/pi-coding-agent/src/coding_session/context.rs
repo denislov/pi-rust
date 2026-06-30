@@ -89,6 +89,9 @@ pub(crate) enum CodingAgentSessionTranscriptItem {
         result: Option<String>,
         is_error: bool,
     },
+    CompactionSummary {
+        summary: String,
+    },
     Diagnostic {
         message: String,
     },
@@ -143,9 +146,7 @@ impl CodingAgentCapabilities {
             follow_up: CapabilityStatus::Unsupported {
                 reason: "follow-up controls await AgentTurnFlow".into(),
             },
-            compact: CapabilityStatus::Unsupported {
-                reason: "manual compaction is not implemented in PromptTurnFlow yet".into(),
-            },
+            compact: CapabilityStatus::Available,
             fork: CapabilityStatus::Available,
             clone_session: CapabilityStatus::Available,
             switch_session: CapabilityStatus::Unsupported {

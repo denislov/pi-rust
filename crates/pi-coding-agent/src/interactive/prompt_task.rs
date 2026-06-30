@@ -27,6 +27,7 @@ pub(super) enum PromptTaskResult {
 pub(super) struct CodingPromptTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: PromptTurnOutcome,
+    pub(super) update_usage: bool,
 }
 
 enum PromptTaskAbortHandle {
@@ -56,6 +57,13 @@ impl PromptTask {
 
     pub(super) fn spawn_legacy(options: SessionPromptOptions) -> Result<Self, CliError> {
         Self::from_legacy_spawned(spawn_session_prompt(options)?)
+    }
+
+    pub(super) fn spawn_compact(
+        options: SessionPromptOptions,
+        existing_session: Option<CodingAgentSession>,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_compact(options, existing_session))
     }
 
     pub(super) fn abort_once(&mut self) {
@@ -132,6 +140,29 @@ impl PromptTask {
             events_closed: false,
         }
     }
+
+    fn spawn_coding_compact(
+        options: SessionPromptOptions,
+        existing_session: Option<CodingAgentSession>,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result =
+                run_coding_compact_task(options, existing_session, event_tx, abort_rx).await;
+            let _ = done_tx.send(result.map(PromptTaskResult::Coding));
+        });
+
+        Self {
+            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
 }
 
 async fn run_coding_prompt_task(
@@ -178,7 +209,62 @@ async fn run_coding_prompt_task(
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
     }
 
-    Ok(CodingPromptTaskResult { session, outcome })
+    Ok(CodingPromptTaskResult {
+        session,
+        outcome,
+        update_usage: true,
+    })
+}
+
+async fn run_coding_compact_task(
+    options: SessionPromptOptions,
+    existing_session: Option<CodingAgentSession>,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<CodingPromptTaskResult, CliError> {
+    let mut session = match existing_session {
+        Some(session) => session,
+        None => {
+            open_interactive_coding_session(
+                options.session.as_ref(),
+                options.session_target.as_ref(),
+            )
+            .await?
+        }
+    };
+    let mut receiver = session.subscribe();
+    let compact_options = PromptTurnOptions::from_session_prompt_options(options);
+
+    let outcome = {
+        let mut compact = Box::pin(session.compact(compact_options));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive manual compaction abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut compact => {
+                    break outcome.map_err(CliError::from);
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(CodingPromptTaskResult {
+        session,
+        outcome,
+        update_usage: false,
+    })
 }
 
 fn should_use_legacy_prompt_task(options: &SessionPromptOptions) -> bool {

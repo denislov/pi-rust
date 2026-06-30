@@ -138,16 +138,12 @@ fn handle_compact_command(root: &mut InteractiveRoot, args: &str) {
         ));
         return;
     }
-    if matches!(
+    let active_rust_native = matches!(
         root.active_session.as_ref().map(|choice| choice.kind),
         Some(SessionChoiceKind::RustNative)
-    ) {
-        root.transcript.push(TranscriptItem::system(
-            "Rust-native session compaction is not implemented yet.",
-        ));
-        return;
-    }
-    if root.active_session_path.is_none() || root.active_leaf_id.is_none() {
+    );
+    if !active_rust_native && (root.active_session_path.is_none() || root.active_leaf_id.is_none())
+    {
         root.transcript.push(TranscriptItem::system(
             "Nothing to compact (no messages yet)",
         ));

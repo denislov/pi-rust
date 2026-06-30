@@ -559,6 +559,10 @@ mod tests {
                 SessionEventData::SessionCreated { .. } => "session.created",
                 SessionEventData::SessionCloned { .. } => "session.cloned",
                 SessionEventData::SessionForked { .. } => "session.forked",
+                SessionEventData::SessionCompactionStarted { .. } => "session.compaction.started",
+                SessionEventData::SessionCompactionCompleted { .. } => {
+                    "session.compaction.completed"
+                }
             })
             .collect()
     }

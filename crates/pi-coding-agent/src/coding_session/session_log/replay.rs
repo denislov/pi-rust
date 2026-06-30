@@ -32,6 +32,11 @@ pub(crate) enum TranscriptItem {
         status: ToolCallStatus,
         summary: String,
     },
+    CompactionSummary {
+        summary: String,
+        first_kept_message_id: String,
+        tokens_before: u32,
+    },
     Diagnostic {
         level: DiagnosticLevel,
         message: String,
@@ -150,8 +155,16 @@ impl ReplayBuilder {
             SessionEventData::OperationStarted { .. }
             | SessionEventData::SessionCloned { .. }
             | SessionEventData::SessionForked { .. }
+            | SessionEventData::SessionCompactionStarted { .. }
             | SessionEventData::TurnStarted {}
             | SessionEventData::MetadataUpdated { .. } => {}
+            SessionEventData::SessionCompactionCompleted {
+                summary,
+                first_kept_message_id,
+                tokens_before,
+            } => {
+                self.apply_compaction_completed(summary, first_kept_message_id, *tokens_before);
+            }
             SessionEventData::OperationCommitted { new_leaf_id } => {
                 if let Some(new_leaf_id) = new_leaf_id {
                     self.active_leaf_id = Some(new_leaf_id.clone());
@@ -360,6 +373,61 @@ impl ReplayBuilder {
             level: DiagnosticLevel::Warn,
             message: message.into(),
         });
+    }
+
+    fn apply_compaction_completed(
+        &mut self,
+        summary: &str,
+        first_kept_message_id: &str,
+        tokens_before: u32,
+    ) {
+        let Some(first_kept_index) = self
+            .transcript
+            .iter()
+            .position(|item| transcript_item_id(item).as_deref() == Some(first_kept_message_id))
+        else {
+            self.warn(format!(
+                "session compaction references unknown first kept message: {first_kept_message_id}"
+            ));
+            return;
+        };
+
+        let kept = self.transcript.split_off(first_kept_index);
+        self.transcript.clear();
+        self.transcript.push(TranscriptItem::CompactionSummary {
+            summary: summary.to_owned(),
+            first_kept_message_id: first_kept_message_id.to_owned(),
+            tokens_before,
+        });
+        self.transcript.extend(kept);
+        self.rebuild_indices();
+    }
+
+    fn rebuild_indices(&mut self) {
+        self.message_indices.clear();
+        self.tool_indices.clear();
+        for (index, item) in self.transcript.iter().enumerate() {
+            match item {
+                TranscriptItem::AssistantMessage { message_id, .. } => {
+                    self.message_indices.insert(message_id.clone(), index);
+                }
+                TranscriptItem::ToolCall { tool_call_id, .. } => {
+                    self.tool_indices.insert(tool_call_id.clone(), index);
+                }
+                TranscriptItem::UserInput { .. }
+                | TranscriptItem::CompactionSummary { .. }
+                | TranscriptItem::Diagnostic { .. } => {}
+            }
+        }
+    }
+}
+
+pub(crate) fn transcript_item_id(item: &TranscriptItem) -> Option<String> {
+    match item {
+        TranscriptItem::UserInput { turn_id, .. } => Some(turn_id.clone()),
+        TranscriptItem::AssistantMessage { message_id, .. } => Some(message_id.clone()),
+        TranscriptItem::ToolCall { tool_call_id, .. } => Some(tool_call_id.clone()),
+        TranscriptItem::CompactionSummary { .. } | TranscriptItem::Diagnostic { .. } => None,
     }
 }
 
@@ -705,5 +773,124 @@ mod tests {
         let replay = fold_events(&events);
 
         assert_eq!(replay.active_leaf_id.as_deref(), Some("leaf_global"));
+    }
+
+    #[test]
+    fn session_compaction_completed_folds_transcript_to_summary_and_kept_tail() {
+        let events = vec![
+            op_event(
+                "evt_1",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            op_event(
+                "evt_2",
+                SessionEventData::TurnInputRecorded {
+                    content: vec![PersistedContentBlock::Text {
+                        text: "old prompt".into(),
+                    }],
+                },
+            ),
+            op_event(
+                "evt_3",
+                SessionEventData::MessageStarted {
+                    message_id: "msg_old".into(),
+                    role: PersistedRole::Assistant,
+                },
+            ),
+            op_event(
+                "evt_4",
+                SessionEventData::MessageDelta {
+                    message_id: "msg_old".into(),
+                    text: "old answer".into(),
+                },
+            ),
+            op_event(
+                "evt_5",
+                SessionEventData::MessageCompleted {
+                    message_id: "msg_old".into(),
+                    finish_reason: Some("stop".into()),
+                },
+            ),
+            op_event(
+                "evt_6",
+                SessionEventData::MessageStarted {
+                    message_id: "msg_kept".into(),
+                    role: PersistedRole::Assistant,
+                },
+            ),
+            op_event(
+                "evt_7",
+                SessionEventData::MessageDelta {
+                    message_id: "msg_kept".into(),
+                    text: "kept answer".into(),
+                },
+            ),
+            op_event(
+                "evt_8",
+                SessionEventData::MessageCompleted {
+                    message_id: "msg_kept".into(),
+                    finish_reason: Some("stop".into()),
+                },
+            ),
+            op_event(
+                "evt_9",
+                SessionEventData::SessionCompactionCompleted {
+                    summary: "summary of old context".into(),
+                    first_kept_message_id: "msg_kept".into(),
+                    tokens_before: 1200,
+                },
+            ),
+            op_event(
+                "evt_10",
+                SessionEventData::OperationCommitted {
+                    new_leaf_id: Some("leaf_1".into()),
+                },
+            ),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(
+            replay.transcript,
+            vec![
+                TranscriptItem::CompactionSummary {
+                    summary: "summary of old context".into(),
+                    first_kept_message_id: "msg_kept".into(),
+                    tokens_before: 1200,
+                },
+                TranscriptItem::AssistantMessage {
+                    message_id: "msg_kept".into(),
+                    text: "kept answer".into(),
+                    status: MessageStatus::Completed,
+                },
+            ]
+        );
+        assert!(replay.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn session_compaction_completed_warns_when_kept_id_is_unknown() {
+        let events = vec![event(
+            "evt_1",
+            None,
+            None,
+            SessionEventData::SessionCompactionCompleted {
+                summary: "summary".into(),
+                first_kept_message_id: "missing".into(),
+                tokens_before: 1200,
+            },
+        )];
+
+        let replay = fold_events(&events);
+
+        assert!(replay.transcript.is_empty());
+        assert_eq!(replay.diagnostics.len(), 1);
+        assert!(
+            replay.diagnostics[0]
+                .message
+                .contains("unknown first kept message")
+        );
     }
 }

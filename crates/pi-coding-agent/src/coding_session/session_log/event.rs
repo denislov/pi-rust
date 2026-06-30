@@ -87,6 +87,17 @@ pub(crate) enum SessionEventData {
         source_session_id: String,
         source_leaf_id: String,
     },
+    #[serde(rename = "session.compaction.started")]
+    SessionCompactionStarted {
+        first_kept_message_id: String,
+        tokens_before: u32,
+    },
+    #[serde(rename = "session.compaction.completed")]
+    SessionCompactionCompleted {
+        summary: String,
+        first_kept_message_id: String,
+        tokens_before: u32,
+    },
     #[serde(rename = "operation.started")]
     OperationStarted { operation: OperationKind },
     #[serde(rename = "operation.committed")]
@@ -251,6 +262,21 @@ mod tests {
                     source_leaf_id: "leaf_source".into(),
                 },
                 "session.forked",
+            ),
+            (
+                SessionEventData::SessionCompactionStarted {
+                    first_kept_message_id: "msg_1".into(),
+                    tokens_before: 1200,
+                },
+                "session.compaction.started",
+            ),
+            (
+                SessionEventData::SessionCompactionCompleted {
+                    summary: "summary".into(),
+                    first_kept_message_id: "msg_1".into(),
+                    tokens_before: 1200,
+                },
+                "session.compaction.completed",
             ),
             (
                 SessionEventData::OperationStarted {

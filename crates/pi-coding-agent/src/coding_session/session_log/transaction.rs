@@ -249,6 +249,34 @@ where
         Ok(())
     }
 
+    pub(crate) fn record_session_compaction_started(
+        &mut self,
+        first_kept_message_id: impl Into<String>,
+        tokens_before: u32,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::SessionCompactionStarted {
+            first_kept_message_id: first_kept_message_id.into(),
+            tokens_before,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn record_session_compaction_completed(
+        &mut self,
+        summary: impl Into<String>,
+        first_kept_message_id: impl Into<String>,
+        tokens_before: u32,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::SessionCompactionCompleted {
+            summary: summary.into(),
+            first_kept_message_id: first_kept_message_id.into(),
+            tokens_before,
+        });
+        Ok(())
+    }
+
     pub(crate) fn commit(&mut self, new_leaf_id: Option<String>) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
         self.push_event(SessionEventData::OperationCommitted {
@@ -423,6 +451,10 @@ mod tests {
                 SessionEventData::SessionCreated { .. } => "session.created",
                 SessionEventData::SessionCloned { .. } => "session.cloned",
                 SessionEventData::SessionForked { .. } => "session.forked",
+                SessionEventData::SessionCompactionStarted { .. } => "session.compaction.started",
+                SessionEventData::SessionCompactionCompleted { .. } => {
+                    "session.compaction.completed"
+                }
             })
             .collect()
     }

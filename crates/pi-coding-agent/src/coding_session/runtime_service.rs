@@ -119,6 +119,22 @@ impl RuntimeService {
                     });
                 }
                 TranscriptItem::ToolCall { .. } => {}
+                TranscriptItem::CompactionSummary {
+                    summary,
+                    tokens_before,
+                    ..
+                } => {
+                    flush_replay_hydration_group(
+                        agent,
+                        &mut pending_assistant,
+                        &mut pending_tool_results,
+                    );
+                    agent.add_message(AgentMessage::CompactionSummary {
+                        message_id: format!("replay_compaction_{index}"),
+                        summary: summary.clone(),
+                        tokens_before: *tokens_before,
+                    });
+                }
                 TranscriptItem::Diagnostic { .. } => {
                     flush_replay_hydration_group(
                         agent,
@@ -248,6 +264,11 @@ mod tests {
             cwd: None,
             active_leaf_id: None,
             transcript: vec![
+                TranscriptItem::CompactionSummary {
+                    summary: "summary of earlier work".into(),
+                    first_kept_message_id: "turn_1".into(),
+                    tokens_before: 1200,
+                },
                 TranscriptItem::UserInput {
                     turn_id: "turn_1".into(),
                     text: "previous question".into(),
@@ -283,13 +304,21 @@ mod tests {
         service.hydrate_agent_runtime(&agent, &runtime, &replay);
 
         let messages = agent.messages();
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 4);
         assert!(matches!(
             &messages[0],
-            AgentMessage::UserText { text, .. } if text == "previous question"
+            AgentMessage::CompactionSummary {
+                summary,
+                tokens_before,
+                ..
+            } if summary == "summary of earlier work" && *tokens_before == 1200
         ));
         assert!(matches!(
             &messages[1],
+            AgentMessage::UserText { text, .. } if text == "previous question"
+        ));
+        assert!(matches!(
+            &messages[2],
             AgentMessage::Assistant { message_id, message }
                 if message_id == "msg_1"
                     && message.content == vec![ContentBlock::Text {
@@ -300,17 +329,17 @@ mod tests {
                         name: "read".into(),
                         arguments: serde_json::json!({"path": "src/lib.rs"}),
                         thought_signature: None,
-                    }]
+                }]
         ));
         assert!(matches!(
-            &messages[2],
+            &messages[3],
             AgentMessage::ToolResult {
                 message_id,
                 tool_call_id,
                 tool_name,
                 is_error,
                 content,
-            } if message_id == "replay_tool_result_2"
+            } if message_id == "replay_tool_result_3"
                 && tool_call_id == "tool_1"
                 && tool_name == "read"
                 && !is_error

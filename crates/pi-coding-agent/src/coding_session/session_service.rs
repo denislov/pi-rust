@@ -135,6 +135,10 @@ impl SessionService {
         &self.handle.manifest().session_id
     }
 
+    pub(crate) fn active_leaf_id(&self) -> Option<&str> {
+        self.handle.manifest().active_leaf_id.as_deref()
+    }
+
     pub(crate) fn begin_prompt_transaction(&self) -> PromptTurnTransaction {
         TurnTransaction::begin(
             &self.store,
@@ -142,6 +146,16 @@ impl SessionService {
             SystemIdGenerator,
             SystemClock,
             OperationKind::Prompt,
+        )
+    }
+
+    pub(crate) fn begin_manual_compaction_transaction(&self) -> PromptTurnTransaction {
+        TurnTransaction::begin(
+            &self.store,
+            self.handle.clone(),
+            SystemIdGenerator,
+            SystemClock,
+            OperationKind::ManualCompaction,
         )
     }
 
@@ -206,6 +220,41 @@ impl SessionService {
             events,
             session_id: Some(session_id),
             leaf_id: None,
+        })
+    }
+
+    pub(crate) fn commit_manual_compaction_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let fallback_operation_id = operation_id.into();
+        let Some(mut transaction) = transaction else {
+            return Ok(Self::skipped_write(
+                fallback_operation_id,
+                "no active manual compaction transaction",
+            ));
+        };
+
+        let operation_id = transaction.operation_id().to_owned();
+        let session_id = self.session_id().to_owned();
+        let mut events = vec![CodingAgentEvent::SessionWritePending {
+            operation_id: operation_id.clone(),
+        }];
+        transaction.commit(None)?;
+        self.store.update_manifest(
+            &self.handle,
+            ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
+        )?;
+        self.handle = self.store.open_session_id(&session_id)?;
+        events.push(CodingAgentEvent::SessionWriteCommitted {
+            operation_id,
+            session_id: session_id.clone(),
+        });
+        Ok(FinalizedSessionWrite {
+            events,
+            session_id: Some(session_id),
+            leaf_id: self.handle.manifest().active_leaf_id.clone(),
         })
     }
 
@@ -484,6 +533,9 @@ fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessio
             },
             is_error: matches!(status, ToolCallStatus::Failed),
         },
+        TranscriptItem::CompactionSummary { summary, .. } => {
+            CodingAgentSessionTranscriptItem::CompactionSummary { summary }
+        }
         TranscriptItem::Diagnostic { message, .. } => {
             CodingAgentSessionTranscriptItem::Diagnostic { message }
         }

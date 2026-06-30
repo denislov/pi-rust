@@ -349,6 +349,9 @@ fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> T
             result,
             is_error,
         },
+        CodingAgentSessionTranscriptItem::CompactionSummary { summary } => {
+            TranscriptItem::assistant("compaction", summary, true)
+        }
         CodingAgentSessionTranscriptItem::Diagnostic { message } => TranscriptItem::system(message),
     }
 }

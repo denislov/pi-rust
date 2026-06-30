@@ -194,7 +194,7 @@ async fn rpc_state_reports_capabilities_when_idle() {
     assert_eq!(capabilities["prompt"]["status"], "available");
     assert_eq!(capabilities["abort"]["status"], "disabled");
     assert_eq!(capabilities["followUp"]["status"], "available");
-    assert_eq!(capabilities["compact"]["status"], "unsupported");
+    assert_eq!(capabilities["compact"]["status"], "available");
     assert_eq!(capabilities["tools"]["status"], "available");
     registry::unregister(api);
 }
