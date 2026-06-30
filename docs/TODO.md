@@ -25,6 +25,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [Phase 2 ResolveRequest node design](superpowers/specs/2026-06-30-phase-2-resolve-request-node-design.md)
 - [Session finalization convergence design](superpowers/specs/2026-06-30-session-finalization-convergence-design.md)
 - [Non-persistent product runtime design](superpowers/specs/2026-06-30-non-persistent-product-runtime-design.md)
+- [Interactive CodingEventBridge design](superpowers/specs/2026-06-30-interactive-coding-event-bridge-design.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
@@ -97,7 +98,7 @@ Guide: [Phase 3](superpowers/guides/2026-06-29-phase-3-adapter-convergence-guide
 - [x] Add RPC adapter from `CodingAgentEvent` to protocol events. `RpcCodingEventAdapter` wraps the product-event protocol adapter at the RPC boundary and has prompt stream/failure mapping coverage; it is ready to wire into RPC prompt migration.
 - [x] Add RPC capability reporting. RPC `get_state` now includes protocol-stable capability status objects derived from the concrete capability model, including idle prompt availability and running prompt busy state.
 - [ ] Route interactive prompt tasks through `CodingAgentSession`.
-- [ ] Add interactive bridge from `CodingAgentEvent` to `UiEvent`.
+- [~] Add interactive bridge from `CodingAgentEvent` to `UiEvent`. Design is approved and documented; implementation remains.
 - [ ] Move migrated session actions to `SessionService`.
 - [ ] Stop creating old session JSONL from migrated product prompt paths.
 - [~] Add Phase 3 tests. CapabilityService idle/busy coverage, public API smoke coverage, RPC `get_state` idle/running capability reporting coverage, RPC product-event adapter prompt stream/failure coverage, enabled RPC Rust-native session persistence/state coverage, disabled RPC non-persistent no-file coverage, and coding-running abort/steer/follow-up disabled behavior coverage added.
@@ -203,3 +204,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-30: Non-persistent product runtime design added. The design keeps `CodingAgentSession` as product owner when durable persistence is disabled, uses the same `PromptTurnFlow`, emits `SessionWriteSkipped`, and gives no-session print/RPC plus later JSON execution convergence a path off the old runner.
 - 2026-06-30: Session finalization convergence implemented. `SessionService` now owns prompt transaction commit/fail/abort/skip finalization, `FinalizeTurn` only validates readiness, owner-level prompt events emit `SessionWritePending`/`SessionWriteCommitted` before `PromptCompleted` or `PromptFailed`, and focused coding-session/print/RPC/protocol checks pass.
 - 2026-06-30: Non-persistent product runtime implemented for core owner, print, and RPC prompt paths. `CodingAgentSession::non_persistent()` runs `PromptTurnFlow` without durable session storage, emits `SessionWriteSkipped`, supports owner-lifetime transcript hydration, routes no-session/disabled print off the old runner, and routes disabled-session RPC through `RpcCodingEventAdapter` with no session file.
+- 2026-06-30: Interactive CodingEventBridge design added. The bridge is scoped to translating `CodingAgentEvent` into existing `UiEvent` values while leaving interactive prompt task ownership on the old runner until the later prompt migration slice.
