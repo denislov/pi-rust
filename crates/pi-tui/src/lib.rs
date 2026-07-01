@@ -70,3 +70,32 @@ pub use utils::{
     truncate_to_width, truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
 };
 pub use virtual_terminal::{TerminalOp, VirtualTerminal};
+
+/// Stable generic terminal UI facade.
+///
+/// Product-specific coding-agent actions, sessions, model state, tree state,
+/// tools, and plugin dispatch belong in `pi-coding-agent` adapters.
+pub mod api {
+    pub use crate::autocomplete::{
+        AutocompleteItem, AutocompleteOptions, AutocompleteProvider, AutocompleteSuggestions,
+        CombinedAutocompleteProvider, CompletionEdit, SlashCommand,
+    };
+    pub use crate::component::{Component, ComponentId, Container};
+    pub use crate::components::{
+        Box, CancellableLoader, Editor, Image, Input, Loader, Markdown, SelectItem, SelectList,
+        SelectorDialog, SelectorDialogOptions, SettingItem, SettingsList, SettingsListOptions,
+        Spacer, Text, TruncatedText,
+    };
+    pub use crate::input::{
+        InputEvent, Key, KeyEvent, KeyEventKind, KeyModifiers, KeybindingConflict,
+        KeybindingDefinition, KeybindingsConfig, KeybindingsManager, StdinBuffer,
+    };
+    pub use crate::overlay::{OverlayAnchor, OverlayHandle, OverlayOptions};
+    pub use crate::runtime::RenderScheduler;
+    pub use crate::terminal::{ProcessTerminal, Terminal, TerminalSize};
+    pub use crate::theme::{ThemeMode, ThemePalette, TuiTheme, dark_theme, light_theme};
+    pub use crate::tui::{
+        InputListenerResult, RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError,
+    };
+    pub use crate::virtual_terminal::{TerminalOp, VirtualTerminal};
+}

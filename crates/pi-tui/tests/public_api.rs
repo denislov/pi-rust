@@ -1,15 +1,54 @@
+use pi_tui::api::{
+    AutocompleteItem as ApiAutocompleteItem, Box as ApiBox, Component as ApiComponent,
+    Editor as ApiEditor, InputEvent as ApiInputEvent, Key as ApiKey,
+    KeybindingsManager as ApiKeybindingsManager, Markdown as ApiMarkdown,
+    OverlayOptions as ApiOverlayOptions, ProcessTerminal as ApiProcessTerminal,
+    RenderScheduler as ApiRenderScheduler, RenderStrategy as ApiRenderStrategy,
+    Terminal as ApiTerminal, Text as ApiText, Tui as ApiTui, TuiTheme as ApiTuiTheme,
+    VirtualTerminal as ApiVirtualTerminal,
+};
 use pi_tui::{
     AutocompleteItem, AutocompleteOptions, Box as TuiBox, CancellableLoader, CellDimensions,
-    Component, Container, Image, ImageDimensions, ImageProtocol, ImageRenderOptions,
-    KeybindingsManager, Loader, Markdown, ProcessTerminal, SelectItem, SelectorDialog,
-    SelectorDialogOptions, SettingItem, SettingsList, SettingsListOptions, SlashCommand, Spacer,
-    TUI_KEYBINDINGS, Terminal, TerminalCapabilities, TerminalSize, Text, ThemeMode, TruncatedText,
-    Tui, TuiTheme, VirtualTerminal, calculate_image_cell_size, color_level,
-    delete_all_kitty_images, delete_kitty_image, detect_color_level_from_env,
-    detect_terminal_capabilities_from_env, encode_iterm2, encode_kitty,
-    image_dimensions_from_bytes, is_image_line, light_theme, paint_with_level,
-    truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
+    Container, Image, ImageDimensions, ImageProtocol, ImageRenderOptions, KeybindingsManager,
+    Loader, Markdown, ProcessTerminal, SelectItem, SelectorDialog, SelectorDialogOptions,
+    SettingItem, SettingsList, SettingsListOptions, SlashCommand, Spacer, TUI_KEYBINDINGS,
+    TerminalCapabilities, TerminalSize, Text, ThemeMode, TruncatedText, Tui, TuiTheme,
+    VirtualTerminal, calculate_image_cell_size, color_level, delete_all_kitty_images,
+    delete_kitty_image, detect_color_level_from_env, detect_terminal_capabilities_from_env,
+    encode_iterm2, encode_kitty, image_dimensions_from_bytes, is_image_line, light_theme,
+    paint_with_level, truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
 };
+
+#[test]
+fn generic_tui_symbols_are_importable_from_api_facade() {
+    fn accepts_types(
+        _autocomplete: Option<ApiAutocompleteItem>,
+        _box_component: Option<ApiBox>,
+        _editor: Option<ApiEditor>,
+        _input_event: Option<ApiInputEvent>,
+        _key: Option<ApiKey>,
+        _keybindings: Option<ApiKeybindingsManager>,
+        _markdown: Option<ApiMarkdown>,
+        _overlay: Option<ApiOverlayOptions>,
+        _process_terminal: Option<ApiProcessTerminal>,
+        _render_scheduler: Option<ApiRenderScheduler>,
+        _render_strategy: Option<ApiRenderStrategy>,
+        _text: Option<ApiText>,
+        _theme: Option<ApiTuiTheme>,
+        _virtual_terminal: Option<ApiVirtualTerminal>,
+    ) {
+    }
+
+    accepts_types(
+        None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+    );
+
+    fn accepts_component<T: ApiComponent>() {}
+    fn accepts_terminal<T: ApiTerminal>() {}
+    let _ = accepts_component::<ApiText>;
+    let _ = accepts_terminal::<ApiVirtualTerminal>;
+    let _ = std::any::type_name::<ApiTui<ApiVirtualTerminal>>();
+}
 
 #[test]
 fn public_api_symbols_are_importable() {

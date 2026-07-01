@@ -48,3 +48,29 @@ pub use types::{
     SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
     ToolUpdateCallback,
 };
+
+/// Stable low-level runtime facade for `pi-agent-core`.
+///
+/// Product session ownership, adapter wire events, and workflow ownership belong
+/// in `pi-coding-agent`. This module intentionally exposes low-level agent,
+/// tool, hook, resource, and environment contracts.
+pub mod api {
+    pub use crate::agent::Agent;
+    pub use crate::env::{
+        ExecOptions, ExecutionEnv, ExecutionOutput, FileInfo, FileKind, FileSystem,
+        InMemoryExecutionEnv, Shell,
+    };
+    pub use crate::errors::{ExecutionError, FileError};
+    pub use crate::hooks::{
+        AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
+        BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ConvertToLlmHook,
+        ShouldStopAfterTurnHook, TransformContextHook,
+    };
+    pub use crate::types::{
+        AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
+        AgentToolOutput, AgentToolResult, CompactionConfig, CompactionSettings, PromptTemplate,
+        ProviderRequestSnapshot, QueueMode, ResourceDiagnostic, Skill, SourceTag,
+        SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel,
+        ToolExecutionMode, ToolFn, ToolUpdateCallback,
+    };
+}
