@@ -11,6 +11,7 @@ use crate::types::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingToolCall {
+    pub index: usize,
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,

@@ -1,7 +1,8 @@
 mod common;
 
 use pi_agent_core::agent_turn_flow::{
-    AgentTurnContext, MaybeCompactRuntimeContextNode, PrepareContextNode, ProviderStreamNode,
+    AgentTurnContext, DecideStopOrToolsNode, MaybeCompactRuntimeContextNode, PrepareContextNode,
+    ProviderStreamNode,
 };
 use pi_agent_core::flow::Flow;
 use pi_agent_core::{
@@ -265,6 +266,116 @@ async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
     assert!(context.events.iter().any(|event| matches!(
         event,
         AgentEvent::AgentError { error } if error == "no more scripted turns"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn decide_node_finishes_text_response_and_appends_assistant_message() {
+    let api = "agent-turn-flow-decide-done";
+    let config = AgentConfig::new(common::faux_model(api));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
+
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("final answer", StopReason::Stop),
+        ])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "decide_stop_or_tools");
+    assert_eq!(outcome.last_action.as_str(), "done");
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentDone { message }
+            if message.content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Text { text, .. } if text == "final answer"
+            ))
+    )));
+    assert!(context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Assistant { message, .. }
+            if message.content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Text { text, .. } if text == "final answer"
+            ))
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
+    let api = "agent-turn-flow-decide-tools";
+    let config = AgentConfig::new(common::faux_model(api));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({"text": "hello"}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "decide_stop_or_tools");
+    assert_eq!(outcome.last_action.as_str(), "tools");
+    assert_eq!(context.pending_tool_calls.len(), 1);
+    assert_eq!(context.pending_tool_calls[0].index, 0);
+    assert_eq!(context.pending_tool_calls[0].id, "call_1");
+    assert_eq!(context.pending_tool_calls[0].name, "echo");
+    assert_eq!(
+        context.pending_tool_calls[0].arguments,
+        serde_json::json!({"text": "hello"})
+    );
+    assert!(
+        !context
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentDone { .. }))
+    );
+    assert!(context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Assistant { message, .. }
+            if message.content.iter().any(|block| matches!(
+                block,
+                ContentBlock::ToolCall { id, name, .. } if id == "call_1" && name == "echo"
+            ))
     )));
 
     registry::unregister(api);

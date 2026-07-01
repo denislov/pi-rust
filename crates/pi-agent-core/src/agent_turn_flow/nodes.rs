@@ -7,11 +7,12 @@ use crate::compaction::summarize::summarize;
 use crate::convert::convert_to_context;
 use crate::flow::{Action, FlowNode};
 use crate::loop_runtime::context::stream_options_for_turn;
+use crate::loop_runtime::tools::extract_tool_calls;
 use crate::types::{AgentEvent, AgentMessage, ProviderRequestSnapshot};
 use futures::StreamExt;
-use pi_ai::types::{AssistantMessageEvent, Usage};
+use pi_ai::types::{AssistantMessageEvent, StopReason, Usage};
 
-use super::context::{AgentTurnContext, RuntimeCompactionState};
+use super::context::{AgentTurnContext, PendingToolCall, RuntimeCompactionState};
 
 pub struct PrepareContextNode;
 
@@ -61,6 +62,21 @@ impl FlowNode<AgentTurnContext> for ProviderStreamNode {
         ctx: &'a mut AgentTurnContext,
     ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
         Box::pin(async move { stream_provider(ctx).await })
+    }
+}
+
+pub struct DecideStopOrToolsNode;
+
+impl FlowNode<AgentTurnContext> for DecideStopOrToolsNode {
+    fn name(&self) -> &str {
+        "decide_stop_or_tools"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { decide_stop_or_tools(ctx) })
     }
 }
 
@@ -192,6 +208,57 @@ pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<Action, Strin
     let error = stream_error.unwrap_or_else(|| "LLM stream ended without Done event".into());
     ctx.events.push(AgentEvent::AgentError { error });
     Action::new("error").map_err(|err| err.to_string())
+}
+
+pub fn decide_stop_or_tools(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    let assistant = ctx
+        .assistant_message
+        .clone()
+        .ok_or_else(|| "assistant message is not available".to_string())?;
+
+    ctx.messages.push(AgentMessage::Assistant {
+        message_id: assistant.response_id.clone().unwrap_or_default(),
+        message: assistant.clone(),
+    });
+
+    match assistant.stop_reason {
+        StopReason::Stop | StopReason::Length => {
+            ctx.events
+                .push(AgentEvent::AgentDone { message: assistant });
+            Action::new("done").map_err(|err| err.to_string())
+        }
+        StopReason::Error => {
+            let error = assistant
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "LLM error".into());
+            ctx.events.push(AgentEvent::AgentError { error });
+            Action::new("error").map_err(|err| err.to_string())
+        }
+        StopReason::Aborted => {
+            ctx.events.push(AgentEvent::AgentError {
+                error: "aborted".into(),
+            });
+            Action::new("aborted").map_err(|err| err.to_string())
+        }
+        StopReason::ToolUse => {
+            let tool_calls = extract_tool_calls(&assistant);
+            ctx.pending_tool_calls = tool_calls
+                .into_iter()
+                .map(|call| PendingToolCall {
+                    index: call.index,
+                    id: call.tool_call_id,
+                    name: call.tool_name,
+                    arguments: call.arguments,
+                })
+                .collect();
+            if ctx.pending_tool_calls.is_empty() {
+                Action::new("continue").map_err(|err| err.to_string())
+            } else {
+                Action::new("tools").map_err(|err| err.to_string())
+            }
+        }
+    }
 }
 
 fn default_action() -> Result<Action, String> {
