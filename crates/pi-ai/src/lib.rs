@@ -9,7 +9,10 @@ pub mod types;
 pub mod util;
 
 pub use models::{all_models, calculate_cost, get_model, get_models, get_providers, lookup_model};
-pub use registry::{register, stream_model};
+pub use registry::{
+    AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuthResolver, ProviderRegistry,
+    register, stream_model,
+};
 pub use stream::{EventStream, complete};
 pub use types::{
     AssistantMessage, AssistantMessageDiagnostic, AssistantMessageEvent, ContentBlock, Context,
@@ -28,7 +31,10 @@ pub mod api {
     pub use crate::models::{
         all_models, calculate_cost, get_model, get_models, get_providers, lookup_model,
     };
-    pub use crate::registry::{register, stream_model};
+    pub use crate::registry::{
+        AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuthResolver, ProviderRegistry,
+        register, stream_model,
+    };
     pub use crate::stream::{EventStream, complete};
     pub use crate::types::{
         AssistantMessage, AssistantMessageDiagnostic, AssistantMessageEvent, ContentBlock, Context,

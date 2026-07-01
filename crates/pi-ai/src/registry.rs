@@ -10,48 +10,165 @@ pub trait ApiProvider: Send + Sync {
     fn stream(&self, model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream;
 }
 
-static REGISTRY: LazyLock<RwLock<HashMap<String, Arc<dyn ApiProvider>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+pub trait ProviderAuthResolver: Send + Sync {
+    fn resolve_api_key(&self, provider: &str) -> Option<String>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EnvProviderAuthResolver;
+
+impl ProviderAuthResolver for EnvProviderAuthResolver {
+    fn resolve_api_key(&self, provider: &str) -> Option<String> {
+        crate::util::env_keys::env_api_key(provider)
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct ProviderRegistry {
+    providers: Arc<RwLock<HashMap<String, Arc<dyn ApiProvider>>>>,
+}
+
+impl ProviderRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&self, api: impl Into<String>, provider: Arc<dyn ApiProvider>) {
+        self.providers.write().unwrap().insert(api.into(), provider);
+    }
+
+    pub fn unregister(&self, api: &str) {
+        self.providers.write().unwrap().remove(api);
+    }
+
+    pub fn lookup(&self, api: &str) -> Option<Arc<dyn ApiProvider>> {
+        self.providers.read().unwrap().get(api).cloned()
+    }
+
+    pub fn stream_model(
+        &self,
+        model: &Model,
+        ctx: Context,
+        opts: Option<StreamOptions>,
+    ) -> EventStream {
+        self.stream_model_with_auth(model, ctx, opts, &EnvProviderAuthResolver)
+    }
+
+    pub fn stream_model_with_auth(
+        &self,
+        model: &Model,
+        ctx: Context,
+        mut opts: Option<StreamOptions>,
+        auth_resolver: &dyn ProviderAuthResolver,
+    ) -> EventStream {
+        let api = model.api.clone();
+        let provider = match self.lookup(&api) {
+            Some(p) => p,
+            None => return unknown_provider_stream(api),
+        };
+
+        if let Some(ref mut o) = opts {
+            if o.api_key.is_none() {
+                o.api_key = auth_resolver.resolve_api_key(&model.provider);
+            }
+        }
+
+        provider.stream(model, ctx, opts)
+    }
+}
+
+#[derive(Clone)]
+pub struct AiClient {
+    registry: ProviderRegistry,
+    auth_resolver: Arc<dyn ProviderAuthResolver>,
+}
+
+impl Default for AiClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AiClient {
+    pub fn new() -> Self {
+        Self::with_auth_resolver(Arc::new(EnvProviderAuthResolver))
+    }
+
+    pub fn with_auth_resolver(auth_resolver: Arc<dyn ProviderAuthResolver>) -> Self {
+        Self {
+            registry: ProviderRegistry::new(),
+            auth_resolver,
+        }
+    }
+
+    pub fn with_registry(
+        registry: ProviderRegistry,
+        auth_resolver: Arc<dyn ProviderAuthResolver>,
+    ) -> Self {
+        Self {
+            registry,
+            auth_resolver,
+        }
+    }
+
+    pub fn provider_registry(&self) -> ProviderRegistry {
+        self.registry.clone()
+    }
+
+    pub fn register_provider(&self, api: impl Into<String>, provider: Arc<dyn ApiProvider>) {
+        self.registry.register(api, provider);
+    }
+
+    pub fn unregister_provider(&self, api: &str) {
+        self.registry.unregister(api);
+    }
+
+    pub fn lookup_provider(&self, api: &str) -> Option<Arc<dyn ApiProvider>> {
+        self.registry.lookup(api)
+    }
+
+    pub fn stream_model(
+        &self,
+        model: &Model,
+        ctx: Context,
+        opts: Option<StreamOptions>,
+    ) -> EventStream {
+        self.registry
+            .stream_model_with_auth(model, ctx, opts, self.auth_resolver.as_ref())
+    }
+}
+
+static REGISTRY: LazyLock<ProviderRegistry> = LazyLock::new(ProviderRegistry::new);
 
 pub fn register(api: &str, provider: Arc<dyn ApiProvider>) {
-    REGISTRY.write().unwrap().insert(api.to_string(), provider);
+    REGISTRY.register(api, provider);
 }
 
 pub fn unregister(api: &str) {
-    REGISTRY.write().unwrap().remove(api);
+    REGISTRY.unregister(api);
 }
 
 pub fn lookup(api: &str) -> Option<Arc<dyn ApiProvider>> {
-    REGISTRY.read().unwrap().get(api).cloned()
+    REGISTRY.lookup(api)
 }
 
 /// Top-level entry point: resolves provider by model.api, injects env API key
 /// if not provided, delegates to provider.stream(). Returns a stream that
 /// immediately yields Error on unknown api.
-pub fn stream_model(model: &Model, ctx: Context, mut opts: Option<StreamOptions>) -> EventStream {
-    let api = model.api.clone();
-    let provider = match lookup(&api) {
-        Some(p) => p,
-        None => {
-            return Box::pin(stream! {
-                let mut msg = AssistantMessage::empty("registry", "");
-                msg.error_message = Some(format!("unknown provider api: {}", api));
-                msg.stop_reason = StopReason::Error;
-                yield AssistantMessageEvent::Error {
-                    reason: StopReason::Error,
-                    message: msg,
-                };
-            });
-        }
-    };
+pub fn stream_model(model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+    REGISTRY.stream_model(model, ctx, opts)
+}
 
-    if let Some(ref mut o) = opts {
-        if o.api_key.is_none() {
-            o.api_key = crate::util::env_keys::env_api_key(&model.provider);
-        }
-    }
-
-    provider.stream(model, ctx, opts)
+fn unknown_provider_stream(api: String) -> EventStream {
+    Box::pin(stream! {
+        let mut msg = AssistantMessage::empty("registry", "");
+        msg.error_message = Some(format!("unknown provider api: {}", api));
+        msg.stop_reason = StopReason::Error;
+        yield AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message: msg,
+        };
+    })
 }
 
 #[cfg(test)]
