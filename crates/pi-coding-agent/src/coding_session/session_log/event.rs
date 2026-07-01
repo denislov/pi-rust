@@ -98,6 +98,12 @@ pub(crate) enum SessionEventData {
         first_kept_message_id: String,
         tokens_before: u32,
     },
+    #[serde(rename = "branch.summary.created")]
+    BranchSummaryCreated {
+        summary: String,
+        source_leaf_id: String,
+        target_leaf_id: String,
+    },
     #[serde(rename = "operation.started")]
     OperationStarted { operation: OperationKind },
     #[serde(rename = "operation.committed")]
@@ -288,6 +294,14 @@ mod tests {
                     tokens_before: 1200,
                 },
                 "session.compaction.completed",
+            ),
+            (
+                SessionEventData::BranchSummaryCreated {
+                    summary: "summary".into(),
+                    source_leaf_id: "leaf_old".into(),
+                    target_leaf_id: "leaf_target".into(),
+                },
+                "branch.summary.created",
             ),
             (
                 SessionEventData::OperationStarted {

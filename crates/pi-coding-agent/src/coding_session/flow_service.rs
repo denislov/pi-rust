@@ -3,6 +3,7 @@
 use pi_agent_core::flow::FlowOutcome;
 
 use super::CodingSessionError;
+use super::branch_summary_flow::{BranchSummaryContext, BranchSummaryFlow, BranchSummaryOutcome};
 use super::manual_compaction_flow::{
     ManualCompactionContext, ManualCompactionFlow, ManualCompactionOutcome,
 };
@@ -25,6 +26,27 @@ impl FlowService {
         &self,
     ) -> Result<ManualCompactionFlow, CodingSessionError> {
         ManualCompactionFlow::new()
+    }
+
+    pub(crate) fn branch_summary_flow(&self) -> Result<BranchSummaryFlow, CodingSessionError> {
+        BranchSummaryFlow::new()
+    }
+
+    pub(crate) async fn run_branch_summary_graph(
+        &self,
+        ctx: &mut BranchSummaryContext,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        self.branch_summary_flow()?.run(ctx).await
+    }
+
+    pub(crate) async fn run_branch_summary(
+        &self,
+        ctx: &mut BranchSummaryContext,
+    ) -> Result<BranchSummaryOutcome, CodingSessionError> {
+        match self.run_branch_summary_graph(ctx).await {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
     }
 
     pub(crate) async fn run_manual_compaction_graph(
@@ -146,6 +168,26 @@ mod tests {
         assert_eq!(outcome.last_node.as_str(), "emit_completion");
         assert!(context.final_message().is_some());
         registry::unregister(api);
+    }
+
+    #[test]
+    fn branch_summary_flow_node_ids_are_stable() {
+        let service = FlowService::new();
+
+        service.branch_summary_flow().unwrap();
+
+        assert_eq!(
+            crate::coding_session::branch_summary_flow::BranchSummaryFlow::node_ids(),
+            &[
+                "start_branch_summary",
+                "load_branch_events",
+                "select_abandoned_range",
+                "prepare_summary_prompt",
+                "run_summary_model",
+                "record_branch_summary",
+                "finalize_branch_summary",
+            ]
+        );
     }
 
     #[test]

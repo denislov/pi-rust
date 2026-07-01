@@ -322,6 +322,9 @@ fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> T
         CodingAgentSessionTranscriptItem::CompactionSummary { summary } => {
             TranscriptItem::assistant("compaction", summary, true)
         }
+        CodingAgentSessionTranscriptItem::BranchSummary { summary } => {
+            TranscriptItem::assistant("branch_summary", summary, true)
+        }
         CodingAgentSessionTranscriptItem::Diagnostic { message } => TranscriptItem::system(message),
     }
 }

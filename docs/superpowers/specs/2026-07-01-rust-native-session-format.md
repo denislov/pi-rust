@@ -109,6 +109,7 @@ Current stable event kinds:
 | `session.forked` | Records forked-session provenance |
 | `session.compaction.started` | Starts manual/session compaction metadata |
 | `session.compaction.completed` | Persists compaction summary metadata |
+| `branch.summary.created` | Persists a summary of abandoned branch work for replay into later context |
 | `operation.started` | Starts a mutating operation such as prompt, manual compaction, branch summary, export, plugin load |
 | `operation.committed` | Commits an operation and may assign `new_leaf_id` |
 | `operation.aborted` | Records an aborted operation |

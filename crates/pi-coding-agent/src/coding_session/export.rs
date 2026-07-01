@@ -33,6 +33,9 @@ pub enum CodingAgentSessionExportItem {
     CompactionSummary {
         summary: String,
     },
+    BranchSummary {
+        summary: String,
+    },
     Diagnostic {
         message: String,
     },
@@ -112,6 +115,9 @@ fn export_item_from_replay(item: TranscriptItem) -> CodingAgentSessionExportItem
         TranscriptItem::CompactionSummary { summary, .. } => {
             CodingAgentSessionExportItem::CompactionSummary { summary }
         }
+        TranscriptItem::BranchSummary { summary, .. } => {
+            CodingAgentSessionExportItem::BranchSummary { summary }
+        }
         TranscriptItem::Diagnostic { message, .. } => {
             CodingAgentSessionExportItem::Diagnostic { message }
         }
@@ -159,6 +165,10 @@ fn render_export_html(export: &CodingAgentSessionExport) -> String {
                 "<section class=\"message compaction\"><h2>Compaction Summary</h2><pre>{}</pre></section>",
                 html_escape(summary)
             )),
+            CodingAgentSessionExportItem::BranchSummary { summary } => body.push_str(&format!(
+                "<section class=\"message branch-summary\"><h2>Branch Summary</h2><pre>{}</pre></section>",
+                html_escape(summary)
+            )),
             CodingAgentSessionExportItem::Diagnostic { message } => body.push_str(&format!(
                 "<section class=\"message diagnostic\"><h2>Diagnostic</h2><pre>{}</pre></section>",
                 html_escape(message)
@@ -175,7 +185,7 @@ fn render_export_html(export: &CodingAgentSessionExport) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>{}</style></head><body><main><h1>{}</h1>{}</main></body></html>",
         html_escape(&export.summary.session_id),
-        "body{font-family:system-ui,sans-serif;margin:2rem;background:#101010;color:#f4f4f4}main{max-width:900px;margin:auto}.meta,.message{border:1px solid #444;padding:1rem;margin:1rem 0;border-radius:6px}pre{white-space:pre-wrap;font-family:ui-monospace,monospace}.user{border-color:#3b82f6}.assistant{border-color:#10b981}.tool{border-color:#a78bfa}.error{border-color:#ef4444;color:#fecaca}.diagnostic{border-color:#f59e0b}.compaction{border-color:#14b8a6}.incomplete{opacity:.75}",
+        "body{font-family:system-ui,sans-serif;margin:2rem;background:#101010;color:#f4f4f4}main{max-width:900px;margin:auto}.meta,.message{border:1px solid #444;padding:1rem;margin:1rem 0;border-radius:6px}pre{white-space:pre-wrap;font-family:ui-monospace,monospace}.user{border-color:#3b82f6}.assistant{border-color:#10b981}.tool{border-color:#a78bfa}.error{border-color:#ef4444;color:#fecaca}.diagnostic{border-color:#f59e0b}.compaction{border-color:#14b8a6}.branch-summary{border-color:#f97316}.incomplete{opacity:.75}",
         html_escape(&export.summary.session_id),
         body
     )

@@ -143,6 +143,23 @@ impl RuntimeService {
                         tokens_before: *tokens_before,
                     });
                 }
+                TranscriptItem::BranchSummary {
+                    summary,
+                    source_leaf_id,
+                    ..
+                } => {
+                    flush_replay_hydration_group(
+                        agent,
+                        &mut pending_assistant,
+                        &mut pending_tool_results,
+                    );
+                    agent.add_message(AgentMessage::BranchSummary {
+                        message_id: format!("replay_branch_summary_{index}"),
+                        summary: summary.clone(),
+                        from_id: source_leaf_id.clone(),
+                        timestamp: 0,
+                    });
+                }
                 TranscriptItem::Diagnostic { .. } => {
                     flush_replay_hydration_group(
                         agent,

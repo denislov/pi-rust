@@ -180,6 +180,17 @@ impl SessionService {
         )
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn begin_branch_summary_transaction(&self) -> PromptTurnTransaction {
+        TurnTransaction::begin(
+            &self.store,
+            self.handle.clone(),
+            SystemIdGenerator,
+            SystemClock,
+            OperationKind::BranchSummary,
+        )
+    }
+
     pub(crate) fn commit_prompt_transaction(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -665,6 +676,9 @@ fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessio
         },
         TranscriptItem::CompactionSummary { summary, .. } => {
             CodingAgentSessionTranscriptItem::CompactionSummary { summary }
+        }
+        TranscriptItem::BranchSummary { summary, .. } => {
+            CodingAgentSessionTranscriptItem::BranchSummary { summary }
         }
         TranscriptItem::Diagnostic { message, .. } => {
             CodingAgentSessionTranscriptItem::Diagnostic { message }

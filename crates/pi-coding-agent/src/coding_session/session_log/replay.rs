@@ -37,6 +37,11 @@ pub(crate) enum TranscriptItem {
         first_kept_message_id: String,
         tokens_before: u32,
     },
+    BranchSummary {
+        summary: String,
+        source_leaf_id: String,
+        target_leaf_id: String,
+    },
     Diagnostic {
         level: DiagnosticLevel,
         message: String,
@@ -164,6 +169,17 @@ impl ReplayBuilder {
                 tokens_before,
             } => {
                 self.apply_compaction_completed(summary, first_kept_message_id, *tokens_before);
+            }
+            SessionEventData::BranchSummaryCreated {
+                summary,
+                source_leaf_id,
+                target_leaf_id,
+            } => {
+                self.transcript.push(TranscriptItem::BranchSummary {
+                    summary: summary.clone(),
+                    source_leaf_id: source_leaf_id.clone(),
+                    target_leaf_id: target_leaf_id.clone(),
+                });
             }
             SessionEventData::OperationCommitted { new_leaf_id } => {
                 if let Some(new_leaf_id) = new_leaf_id {
@@ -417,6 +433,7 @@ impl ReplayBuilder {
                 }
                 TranscriptItem::UserInput { .. }
                 | TranscriptItem::CompactionSummary { .. }
+                | TranscriptItem::BranchSummary { .. }
                 | TranscriptItem::Diagnostic { .. } => {}
             }
         }
@@ -428,7 +445,9 @@ pub(crate) fn transcript_item_id(item: &TranscriptItem) -> Option<String> {
         TranscriptItem::UserInput { turn_id, .. } => Some(turn_id.clone()),
         TranscriptItem::AssistantMessage { message_id, .. } => Some(message_id.clone()),
         TranscriptItem::ToolCall { tool_call_id, .. } => Some(tool_call_id.clone()),
-        TranscriptItem::CompactionSummary { .. } | TranscriptItem::Diagnostic { .. } => None,
+        TranscriptItem::CompactionSummary { .. }
+        | TranscriptItem::BranchSummary { .. }
+        | TranscriptItem::Diagnostic { .. } => None,
     }
 }
 
@@ -762,6 +781,43 @@ mod tests {
         let replay = fold_events(&events);
 
         assert_eq!(replay.active_leaf_id.as_deref(), Some("leaf_global"));
+    }
+
+    #[test]
+    fn branch_summary_created_replays_as_transcript_item() {
+        let events = vec![
+            op_event(
+                "evt_1",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::BranchSummary,
+                },
+            ),
+            op_event(
+                "evt_2",
+                SessionEventData::BranchSummaryCreated {
+                    summary: "summary of abandoned work".into(),
+                    source_leaf_id: "leaf_old".into(),
+                    target_leaf_id: "leaf_target".into(),
+                },
+            ),
+            op_event(
+                "evt_3",
+                SessionEventData::OperationCommitted { new_leaf_id: None },
+            ),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(
+            replay.transcript,
+            vec![TranscriptItem::BranchSummary {
+                summary: "summary of abandoned work".into(),
+                source_leaf_id: "leaf_old".into(),
+                target_leaf_id: "leaf_target".into(),
+            }]
+        );
+        assert_eq!(replay.active_leaf_id, None);
+        assert!(replay.diagnostics.is_empty());
     }
 
     #[test]

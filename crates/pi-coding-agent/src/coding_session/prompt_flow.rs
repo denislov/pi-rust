@@ -657,6 +657,7 @@ mod tests {
                 SessionEventData::SessionCompactionCompleted { .. } => {
                     "session.compaction.completed"
                 }
+                SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
             })
             .collect()
     }

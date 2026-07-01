@@ -102,6 +102,9 @@ pub(crate) enum CodingAgentSessionTranscriptItem {
     CompactionSummary {
         summary: String,
     },
+    BranchSummary {
+        summary: String,
+    },
     Diagnostic {
         message: String,
     },

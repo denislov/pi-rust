@@ -153,14 +153,14 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 
 - [x] Add `ManualCompactionFlow`. P5 introduces `ManualCompactionOptions`, `ManualCompactionContext`, `ManualCompactionOutcome`, and a stable-node `ManualCompactionFlow`; `CodingAgentSession::compact()` now delegates summary selection/model execution/session-event recording to the flow and still commits/fails through `SessionService`.
 - [~] Add explicit runtime vs session compaction boundaries. Manual session compaction is now a `pi-coding-agent` workflow separate from `pi-agent-core` runtime compaction; adapter-facing `RuntimeCompactionCompleted` naming and active-leaf/new-leaf semantics remain follow-up compatibility/boundary cleanup.
-- [ ] Add `BranchSummaryFlow`.
+- [~] Add `BranchSummaryFlow`. Initial P6 slice adds stable-node `BranchSummaryFlow`, `BranchSummaryOptions`/context/outcome types, no-op handling for the current linear Rust-native session view, `branch.summary.created` event/replay support, and `TurnTransaction::record_branch_summary_created`; real abandoned-branch selection/model summarization remains blocked on an explicit same-session branch view.
 - [~] Add Rust-native `ExportFlow`. P1 export boundary slice now has session-owned Rust-native HTML export through `CodingAgentSession`/`SessionService`, public export view types, export capability reporting, and interactive adapter reuse for active Rust-native sessions; an explicit Flow graph wrapper remains follow-up work if export needs multi-step orchestration.
 - [ ] Add `PluginLoadFlow`.
 - [ ] Design and prototype subagent/supervisor flows.
 - [ ] Design and prototype self-healing edit workflow.
 - [~] Add workflow capability integration. Persistent-session compact capability already gates `ManualCompactionFlow`; broader workflow capability names and busy-state policy remain for later Phase 6 workflows.
-- [~] Add workflow session event integration. `ManualCompactionFlow` records `session.compaction.started/completed` through `TurnTransaction` and failure records `operation.failed`; active leaf/new leaf event taxonomy remains follow-up.
-- [~] Add Phase 6 tests. `manual_compaction_flow` unit coverage and session-level compact success/failure regression coverage are in place; branch summary, plugin load, subagent, self-healing edit, and export-flow wrappers still need tests when implemented.
+- [~] Add workflow session event integration. `ManualCompactionFlow` records `session.compaction.started/completed` through `TurnTransaction` and failure records `operation.failed`; branch summary now has a durable `branch.summary.created` event, replay transcript item, runtime hydration, export rendering, and transaction recorder. Active leaf/new leaf event taxonomy remains follow-up.
+- [~] Add Phase 6 tests. `manual_compaction_flow` unit coverage and session-level compact success/failure regression coverage are in place; branch summary now has event serialization, replay, transaction recorder, stable-node FlowService, and no-op Flow coverage. Plugin load, subagent, self-healing edit, and export-flow wrappers still need tests when implemented.
 
 ## Cross-Cutting TODO
 

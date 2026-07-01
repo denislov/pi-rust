@@ -264,6 +264,21 @@ where
         Ok(())
     }
 
+    pub(crate) fn record_branch_summary_created(
+        &mut self,
+        summary: impl Into<String>,
+        source_leaf_id: impl Into<String>,
+        target_leaf_id: impl Into<String>,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::BranchSummaryCreated {
+            summary: summary.into(),
+            source_leaf_id: source_leaf_id.into(),
+            target_leaf_id: target_leaf_id.into(),
+        });
+        Ok(())
+    }
+
     pub(crate) fn commit(&mut self, new_leaf_id: Option<String>) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
         self.push_event(SessionEventData::OperationCommitted {
@@ -441,6 +456,7 @@ mod tests {
                 SessionEventData::SessionCompactionCompleted { .. } => {
                     "session.compaction.completed"
                 }
+                SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
             })
             .collect()
     }
@@ -502,6 +518,43 @@ mod tests {
         let opened = store.open_session(handle.session_dir()).unwrap();
         assert_eq!(opened.manifest().active_leaf_id.as_deref(), Some("leaf_1"));
         assert_eq!(opened.manifest().updated_at, "2026-06-29T00:00:01Z");
+    }
+
+    #[test]
+    fn branch_summary_created_is_recorded_before_commit() {
+        let (_temp, store, handle) = setup();
+        let mut tx = TurnTransaction::begin(
+            &store,
+            handle.clone(),
+            DeterministicIdGenerator::new(),
+            FixedClock::new("2026-06-29T00:00:01Z"),
+            OperationKind::BranchSummary,
+        );
+
+        tx.record_branch_summary_created("summary of abandoned work", "leaf_old", "leaf_target")
+            .unwrap();
+        tx.commit(None).unwrap();
+
+        let events = store.read_events(&handle).unwrap();
+        assert_eq!(
+            event_kinds(&events),
+            vec![
+                "operation.started",
+                "turn.started",
+                "branch.summary.created",
+                "operation.committed",
+            ]
+        );
+        assert!(matches!(
+            events.iter().rev().nth(1).map(|event| &event.data),
+            Some(SessionEventData::BranchSummaryCreated {
+                summary,
+                source_leaf_id,
+                target_leaf_id,
+            }) if summary == "summary of abandoned work"
+                && source_leaf_id == "leaf_old"
+                && target_leaf_id == "leaf_target"
+        ));
     }
 
     #[test]
