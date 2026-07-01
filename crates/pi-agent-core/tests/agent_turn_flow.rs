@@ -6,13 +6,16 @@ use pi_agent_core::agent_turn_flow::{
 };
 use pi_agent_core::flow::{Action, Flow};
 use pi_agent_core::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool, CompactionConfig,
-    CompactionSettings, PromptTemplate, Skill, ToolExecutionMode,
+    Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool, AgentToolOutput,
+    CompactionConfig, CompactionSettings, PromptTemplate, Skill, ToolExecutionMode,
 };
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason, StreamOptions};
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, StreamOptions,
+};
 use std::sync::Arc;
+use std::time::Duration;
 
 fn user_msg(id: &str, text: &str) -> AgentMessage {
     AgentMessage::UserText {
@@ -30,6 +33,62 @@ fn text_content(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn delayed_tool(name: &str, delay_ms: u64, output_text: &str) -> AgentTool {
+    let name = name.to_string();
+    let text = output_text.to_string();
+    AgentTool {
+        name,
+        description: format!("delayed {}ms", delay_ms),
+        parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
+        execute: Arc::new(move |_, _on_update| {
+            let text = text.clone();
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
+                    text,
+                    text_signature: None,
+                }]))
+            })
+        }),
+    }
+}
+
+fn two_tool_use_turn(
+    first_id: &str,
+    first_name: &str,
+    first_arguments: serde_json::Value,
+    second_id: &str,
+    second_name: &str,
+    second_arguments: serde_json::Value,
+) -> common::ScriptedTurn {
+    let mut message = AssistantMessage::empty("test", "test-model");
+    message.content = vec![
+        ContentBlock::ToolCall {
+            id: first_id.into(),
+            name: first_name.into(),
+            arguments: first_arguments,
+            thought_signature: None,
+        },
+        ContentBlock::ToolCall {
+            id: second_id.into(),
+            name: second_name.into(),
+            arguments: second_arguments,
+            thought_signature: None,
+        },
+    ];
+
+    common::ScriptedTurn {
+        events: vec![AssistantMessageEvent::Start {
+            content_index: None,
+            partial: message,
+        }],
+        stop_reason: StopReason::ToolUse,
+        response_id: "resp_two_tools".into(),
+        model_name: "test-model".into(),
+    }
 }
 
 #[test]
@@ -278,6 +337,83 @@ async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
         AgentMessage::ToolResult { tool_call_id, tool_name, is_error: false, content, .. }
             if tool_call_id == "call_1" && tool_name == "echo" && text_content(content) == "hello"
     )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant_order() {
+    let api = "agent-turn-flow-execute-parallel-tools";
+    let mut config = AgentConfig::new(common::faux_model(api));
+    config.tool_execution = ToolExecutionMode::Parallel;
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use both tools"));
+    agent.add_tool(delayed_tool("slow", 100, "slow_result"));
+    agent.add_tool(delayed_tool("fast", 10, "fast_result"));
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![two_tool_use_turn(
+            "call_slow",
+            "slow",
+            serde_json::json!({}),
+            "call_fast",
+            "fast",
+            serde_json::json!({}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap()
+        .edge_on(
+            "decide_stop_or_tools",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_action.as_str(), "continue");
+    let end_events: Vec<_> = context
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolCallEnd { tool_name, .. } => Some(tool_name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(end_events, vec!["fast", "slow"]);
+
+    let result_messages: Vec<_> = context
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::ToolResult {
+                tool_name, content, ..
+            } => Some((tool_name.as_str(), text_content(content))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        result_messages,
+        vec![
+            ("slow", "slow_result".to_string()),
+            ("fast", "fast_result".to_string())
+        ]
+    );
 
     registry::unregister(api);
 }

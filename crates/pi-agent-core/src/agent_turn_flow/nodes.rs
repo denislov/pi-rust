@@ -8,10 +8,12 @@ use crate::convert::convert_to_context;
 use crate::flow::{Action, FlowNode};
 use crate::loop_runtime::context::stream_options_for_turn;
 use crate::loop_runtime::tools::{
-    ToolCallExecution, append_tool_result_messages, extract_tool_calls,
+    ToolCallExecution, ToolCallRequest, append_tool_result_messages, extract_tool_calls,
+    should_use_sequential_tools,
 };
-use crate::types::{AgentEvent, AgentMessage, AgentToolResult, ProviderRequestSnapshot};
+use crate::types::{AgentEvent, AgentMessage, AgentTool, AgentToolResult, ProviderRequestSnapshot};
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use pi_ai::types::{AssistantMessageEvent, StopReason, Usage};
 
 use super::context::{AgentTurnContext, PendingToolCall, RuntimeCompactionState};
@@ -284,43 +286,104 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
         return Action::new("continue").map_err(|err| err.to_string());
     }
 
-    let mut executions = Vec::with_capacity(pending.len());
-    for call in pending {
-        ctx.events.push(AgentEvent::ToolCallStart {
+    let requests: Vec<_> = pending
+        .iter()
+        .map(|call| ToolCallRequest {
+            index: call.index,
             tool_call_id: call.id.clone(),
             tool_name: call.name.clone(),
             arguments: call.arguments.clone(),
-        });
+        })
+        .collect();
+    let use_sequential =
+        should_use_sequential_tools(ctx.config.tool_execution, &requests, &ctx.tools);
 
-        let tool = ctx
-            .tools
-            .iter()
-            .find(|tool| tool.name == call.name)
-            .cloned();
-        let result = match tool {
-            Some(tool) => match (tool.execute)(call.arguments.clone(), None).await {
-                Ok(output) => AgentToolResult::from_output(output),
-                Err(error) => AgentToolResult::error(error),
-            },
-            None => AgentToolResult::error(format!("unknown tool: {}", call.name)),
-        };
+    let executions = if use_sequential {
+        let mut executions = Vec::with_capacity(pending.len());
+        for call in pending {
+            ctx.events.push(AgentEvent::ToolCallStart {
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            });
 
-        ctx.events.push(AgentEvent::ToolCallEnd {
-            tool_call_id: call.id.clone(),
-            tool_name: call.name.clone(),
-            result: result.clone(),
-        });
-        ctx.tool_results.push(result.clone());
-        executions.push(ToolCallExecution {
-            index: call.index,
-            tool_call_id: call.id,
-            tool_name: call.name,
-            result,
-        });
-    }
+            let tool = find_tool(&ctx.tools, &call.name);
+            let result = execute_tool(tool, call.name.clone(), call.arguments.clone()).await;
 
+            ctx.events.push(AgentEvent::ToolCallEnd {
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                result: result.clone(),
+            });
+            executions.push(ToolCallExecution {
+                index: call.index,
+                tool_call_id: call.id,
+                tool_name: call.name,
+                result,
+            });
+        }
+        executions
+    } else {
+        for call in &pending {
+            ctx.events.push(AgentEvent::ToolCallStart {
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            });
+        }
+
+        let mut futures: FuturesUnordered<_> = pending
+            .into_iter()
+            .map(|call| {
+                let tool = find_tool(&ctx.tools, &call.name);
+                async move {
+                    let result =
+                        execute_tool(tool, call.name.clone(), call.arguments.clone()).await;
+                    ToolCallExecution {
+                        index: call.index,
+                        tool_call_id: call.id,
+                        tool_name: call.name,
+                        result,
+                    }
+                }
+            })
+            .collect();
+
+        let mut executions = Vec::new();
+        while let Some(execution) = futures.next().await {
+            ctx.events.push(AgentEvent::ToolCallEnd {
+                tool_call_id: execution.tool_call_id.clone(),
+                tool_name: execution.tool_name.clone(),
+                result: execution.result.clone(),
+            });
+            executions.push(execution);
+        }
+        executions.sort_by_key(|execution| execution.index);
+        executions
+    };
+
+    ctx.tool_results
+        .extend(executions.iter().map(|execution| execution.result.clone()));
     append_tool_result_messages(&mut ctx.messages, &executions);
     Action::new("continue").map_err(|err| err.to_string())
+}
+
+fn find_tool(tools: &[AgentTool], name: &str) -> Option<AgentTool> {
+    tools.iter().find(|tool| tool.name == name).cloned()
+}
+
+async fn execute_tool(
+    tool: Option<AgentTool>,
+    tool_name: String,
+    arguments: serde_json::Value,
+) -> AgentToolResult {
+    match tool {
+        Some(tool) => match (tool.execute)(arguments, None).await {
+            Ok(output) => AgentToolResult::from_output(output),
+            Err(error) => AgentToolResult::error(error),
+        },
+        None => AgentToolResult::error(format!("unknown tool: {}", tool_name)),
+    }
 }
 
 fn default_action() -> Result<Action, String> {
