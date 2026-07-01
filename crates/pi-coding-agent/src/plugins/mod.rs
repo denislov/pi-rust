@@ -1,6 +1,7 @@
 mod capability;
 mod command;
 mod error;
+mod flow_extension;
 mod hook;
 mod keybind;
 mod registry;
@@ -10,6 +11,7 @@ mod ui;
 pub(crate) use capability::PluginCapabilities;
 pub(crate) use command::{CommandDefinition, CommandProvider, CommandRegistrationHost};
 pub(crate) use error::PluginError;
+pub(crate) use flow_extension::{FlowExtension, FlowExtensionPoint};
 #[allow(unused_imports)]
 pub(crate) use hook::{
     HookDiagnostic, HookFailurePolicy, HookOutcome, HookProvider, HookRegistration,

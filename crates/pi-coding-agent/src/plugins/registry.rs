@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::command::CommandProvider;
+use super::flow_extension::FlowExtension;
 use super::hook::HookProvider;
 use super::keybind::KeybindProvider;
 use super::tool::ToolProvider;
@@ -62,6 +63,7 @@ pub(crate) struct PluginRegistry {
     hook_providers: Vec<Arc<dyn HookProvider>>,
     ui_providers: Vec<Arc<dyn UiProvider>>,
     keybind_providers: Vec<Arc<dyn KeybindProvider>>,
+    flow_extensions: Vec<Arc<dyn FlowExtension>>,
 }
 
 impl PluginRegistry {
@@ -94,6 +96,11 @@ impl PluginRegistry {
         self.keybind_providers.push(provider);
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn register_flow_extension(&mut self, extension: Arc<dyn FlowExtension>) {
+        self.flow_extensions.push(extension);
+    }
+
     pub(crate) fn tool_providers(&self) -> &[Arc<dyn ToolProvider>] {
         &self.tool_providers
     }
@@ -117,6 +124,11 @@ impl PluginRegistry {
     pub(crate) fn keybind_providers(&self) -> &[Arc<dyn KeybindProvider>] {
         &self.keybind_providers
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn flow_extensions(&self) -> &[Arc<dyn FlowExtension>] {
+        &self.flow_extensions
+    }
 }
 
 impl fmt::Debug for PluginRegistry {
@@ -127,6 +139,7 @@ impl fmt::Debug for PluginRegistry {
             .field("hook_providers_len", &self.hook_providers.len())
             .field("ui_providers_len", &self.ui_providers.len())
             .field("keybind_providers_len", &self.keybind_providers.len())
+            .field("flow_extensions_len", &self.flow_extensions.len())
             .finish()
     }
 }

@@ -418,7 +418,7 @@ git commit -m "feat(coding-agent): add plugin ui and keybind boundaries"
 - Modify: `crates/pi-coding-agent/src/coding_session/plugin_service.rs`
 - Test: `plugin_service.rs`
 
-- [ ] **Step 1: Write failing FlowExtension tests**
+- [x] **Step 1: Write failing FlowExtension tests**
 
 Add a test proving only named extension points can be registered:
 
@@ -435,7 +435,7 @@ fn collect_flow_extension_points_returns_named_points_without_graph_rewrites() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -443,9 +443,9 @@ Run:
 PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent collect_flow_extension_points
 ```
 
-Expected: compilation failure because FlowExtension types do not exist.
+Expected: compilation failure because FlowExtension types do not exist. Actual RED was verified with unresolved imports for `FlowExtension` and `FlowExtensionPoint` before the boundary module was added.
 
-- [ ] **Step 3: Implement reserved FlowExtension types**
+- [x] **Step 3: Implement reserved FlowExtension types**
 
 Create `plugins/flow_extension.rs` with a closed enum such as:
 
@@ -464,7 +464,7 @@ pub(crate) enum FlowExtensionPoint {
 
 The trait exposes only `extension_points() -> Result<Vec<FlowExtensionPoint>, PluginError>`. Do not expose node insertion, graph rewrites, or Lua registration.
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 Run:
 
@@ -472,9 +472,9 @@ Run:
 PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent collect_flow_extension_points
 ```
 
-Expected: reserved FlowExtension tests pass.
+Expected: reserved FlowExtension tests pass. Actual GREEN was verified with `cargo test -p pi-coding-agent collect_flow_extension_points`, plus `plugin`, `coding_session`, `cargo check --workspace`, and full `cargo test -p pi-coding-agent` checks.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/plugins/flow_extension.rs crates/pi-coding-agent/src/plugins/mod.rs crates/pi-coding-agent/src/plugins/registry.rs crates/pi-coding-agent/src/coding_session/plugin_service.rs docs/TODO.md docs/superpowers/plans/2026-07-01-phase-5-plugin-kernel-completion-plan.md

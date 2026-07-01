@@ -8,11 +8,11 @@ use pi_agent_core::AgentTool;
 use super::CodingSessionError;
 use super::prompt::CodingDiagnostic;
 use crate::plugins::{
-    CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy, HookOutcome,
-    HookProvider, HookRegistration, HookRegistrationHost, KeybindDefinition, KeybindProvider,
-    KeybindRegistrationHost, PluginCapabilities, PluginError, PluginRegistry, PromptHookContext,
-    PromptHookPoint, ToolProvider, ToolRegistrationHost, UiActionDefinition, UiProvider,
-    UiRegistrationHost,
+    CommandDefinition, CommandProvider, CommandRegistrationHost, FlowExtension, FlowExtensionPoint,
+    HookFailurePolicy, HookOutcome, HookProvider, HookRegistration, HookRegistrationHost,
+    KeybindDefinition, KeybindProvider, KeybindRegistrationHost, PluginCapabilities, PluginError,
+    PluginRegistry, PromptHookContext, PromptHookPoint, ToolProvider, ToolRegistrationHost,
+    UiActionDefinition, UiProvider, UiRegistrationHost,
 };
 
 #[derive(Clone)]
@@ -103,6 +103,18 @@ impl PluginService {
         keybindings
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn collect_flow_extension_points(&self) -> Vec<FlowExtensionPoint> {
+        let mut points = Vec::new();
+        for extension in self.registry.flow_extensions() {
+            match collect_provider_flow_extension_points(extension.as_ref()) {
+                Ok(mut provided) => points.append(&mut provided),
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+        points
+    }
+
     pub(crate) fn run_prompt_hook(
         &self,
         point: PromptHookPoint,
@@ -154,7 +166,7 @@ impl PluginService {
             hook_providers: self.registry.hook_providers().len(),
             ui_providers: self.registry.ui_providers().len(),
             keybind_providers: self.registry.keybind_providers().len(),
-            flow_extensions: 0,
+            flow_extensions: self.registry.flow_extensions().len(),
             diagnostics: self.diagnostics().len(),
         }
     }
@@ -267,6 +279,20 @@ fn collect_provider_keybindings(
     }
 }
 
+#[allow(dead_code)]
+fn collect_provider_flow_extension_points(
+    extension: &dyn FlowExtension,
+) -> Result<Vec<FlowExtensionPoint>, PluginError> {
+    let plugin_id = provider_plugin_id(|| extension.metadata().id.as_str().to_owned());
+    match catch_unwind(AssertUnwindSafe(|| extension.extension_points())) {
+        Ok(result) => result,
+        Err(panic) => Err(PluginError::Panic {
+            plugin_id,
+            message: panic_message(panic),
+        }),
+    }
+}
+
 fn run_provider_hook(
     provider: &dyn HookProvider,
     ctx: &PromptHookContext,
@@ -304,11 +330,11 @@ mod tests {
 
     use super::*;
     use crate::plugins::{
-        CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy,
-        HookProvider, HookRegistration, HookRegistrationHost, KeybindDefinition, KeybindProvider,
-        KeybindRegistrationHost, PluginError, PluginId, PluginMetadata, PluginRegistry,
-        PluginSource, PromptHookPoint, ToolProvider, ToolRegistrationHost, UiActionDefinition,
-        UiProvider, UiRegistrationHost,
+        CommandDefinition, CommandProvider, CommandRegistrationHost, FlowExtension,
+        FlowExtensionPoint, HookFailurePolicy, HookProvider, HookRegistration,
+        HookRegistrationHost, KeybindDefinition, KeybindProvider, KeybindRegistrationHost,
+        PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource, PromptHookPoint,
+        ToolProvider, ToolRegistrationHost, UiActionDefinition, UiProvider, UiRegistrationHost,
     };
 
     struct StaticToolProvider {
@@ -544,6 +570,43 @@ mod tests {
         }
     }
 
+    struct StaticFlowExtension;
+
+    impl FlowExtension for StaticFlowExtension {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("flow-extension-plugin"),
+                "flow-extension-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn extension_points(&self) -> Result<Vec<FlowExtensionPoint>, PluginError> {
+            Ok(vec![FlowExtensionPoint::PromptBeforeAgentTurn])
+        }
+    }
+
+    struct FailingFlowExtension;
+
+    impl FlowExtension for FailingFlowExtension {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("failing-flow-extension-plugin"),
+                "failing-flow-extension-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn extension_points(&self) -> Result<Vec<FlowExtensionPoint>, PluginError> {
+            Err(PluginError::Registration {
+                plugin_id: "failing-flow-extension-plugin".into(),
+                message: "flow extension registration failed".into(),
+            })
+        }
+    }
+
     struct PanickingToolProvider;
 
     impl ToolProvider for PanickingToolProvider {
@@ -643,6 +706,7 @@ mod tests {
         registry.register_hook_provider(Arc::new(StaticHookProvider));
         registry.register_ui_provider(Arc::new(StaticUiProvider));
         registry.register_keybind_provider(Arc::new(StaticKeybindProvider));
+        registry.register_flow_extension(Arc::new(StaticFlowExtension));
         let service = PluginService::with_registry(registry);
 
         let capabilities = service.capabilities();
@@ -652,6 +716,7 @@ mod tests {
         assert_eq!(capabilities.hook_providers, 1);
         assert_eq!(capabilities.ui_providers, 1);
         assert_eq!(capabilities.keybind_providers, 1);
+        assert_eq!(capabilities.flow_extensions, 1);
         assert!(service.diagnostics().is_empty());
     }
 
@@ -726,6 +791,41 @@ mod tests {
             diagnostics[0]
                 .message
                 .contains("keybind registration failed")
+        );
+    }
+
+    #[test]
+    fn collect_flow_extension_points_returns_named_points_without_graph_rewrites() {
+        let mut registry = PluginRegistry::new();
+        registry.register_flow_extension(Arc::new(StaticFlowExtension));
+        let service = PluginService::with_registry(registry);
+
+        let points = service.collect_flow_extension_points();
+
+        assert_eq!(points, vec![FlowExtensionPoint::PromptBeforeAgentTurn]);
+        assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn collect_flow_extension_points_isolates_provider_failures_as_diagnostics() {
+        let mut registry = PluginRegistry::new();
+        registry.register_flow_extension(Arc::new(FailingFlowExtension));
+        registry.register_flow_extension(Arc::new(StaticFlowExtension));
+        let service = PluginService::with_registry(registry);
+
+        let points = service.collect_flow_extension_points();
+
+        assert_eq!(points, vec![FlowExtensionPoint::PromptBeforeAgentTurn]);
+        let diagnostics = service.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].plugin_id.as_deref(),
+            Some("failing-flow-extension-plugin")
+        );
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("flow extension registration failed")
         );
     }
 
