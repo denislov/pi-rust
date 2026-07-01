@@ -373,7 +373,60 @@ pub struct AgentTool {
     pub execution_mode: Option<ToolExecutionMode>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentToolDefinitionError {
+    field: &'static str,
+    message: String,
+}
+
+impl AgentToolDefinitionError {
+    pub fn new(field: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            field,
+            message: message.into(),
+        }
+    }
+
+    pub fn field(&self) -> &'static str {
+        self.field
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for AgentToolDefinitionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid agent tool {}: {}", self.field, self.message)
+    }
+}
+
+impl std::error::Error for AgentToolDefinitionError {}
+
 impl AgentTool {
+    pub fn validate(&self) -> Result<(), AgentToolDefinitionError> {
+        if self.name.trim().is_empty() {
+            return Err(AgentToolDefinitionError::new(
+                "name",
+                "tool name must not be empty",
+            ));
+        }
+        if self.description.trim().is_empty() {
+            return Err(AgentToolDefinitionError::new(
+                "description",
+                "tool description must not be empty",
+            ));
+        }
+        if !self.parameters.is_object() {
+            return Err(AgentToolDefinitionError::new(
+                "parameters",
+                "tool parameters schema must be a JSON object",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn new_text<F, Fut>(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -632,6 +685,35 @@ mod tests {
             |_| async { Ok("ok".to_string()) },
         );
         assert_eq!(tool.execution_mode, None);
+    }
+
+    #[test]
+    fn agent_tool_validation_accepts_object_schema() {
+        let tool = make_text_tool();
+
+        assert!(tool.validate().is_ok());
+    }
+
+    #[test]
+    fn agent_tool_validation_rejects_empty_name() {
+        let mut tool = make_text_tool();
+        tool.name = "  ".into();
+
+        let error = tool.validate().unwrap_err();
+
+        assert_eq!(error.field(), "name");
+        assert!(error.to_string().contains("tool name"));
+    }
+
+    #[test]
+    fn agent_tool_validation_rejects_non_object_parameters() {
+        let mut tool = make_text_tool();
+        tool.parameters = serde_json::json!(["not", "a", "schema"]);
+
+        let error = tool.validate().unwrap_err();
+
+        assert_eq!(error.field(), "parameters");
+        assert!(error.to_string().contains("JSON object"));
     }
 
     #[test]

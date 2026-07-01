@@ -42,11 +42,11 @@ pub use hooks::{
 };
 pub use resources::{parse_command_args, substitute_args};
 pub use types::{
-    AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolOutput,
-    AgentToolResult, CompactionConfig, CompactionSettings, PromptTemplate, ProviderRequestSnapshot,
-    QueueMode, ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate,
-    SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
-    ToolUpdateCallback,
+    AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
+    AgentToolDefinitionError, AgentToolOutput, AgentToolResult, CompactionConfig,
+    CompactionSettings, PromptTemplate, ProviderRequestSnapshot, QueueMode, ResourceDiagnostic,
+    Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill,
+    ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
 };
 
 /// Stable low-level runtime facade for `pi-agent-core`.
@@ -68,9 +68,9 @@ pub mod api {
     };
     pub use crate::types::{
         AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
-        AgentToolOutput, AgentToolResult, CompactionConfig, CompactionSettings, PromptTemplate,
-        ProviderRequestSnapshot, QueueMode, ResourceDiagnostic, Skill, SourceTag,
-        SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel,
-        ToolExecutionMode, ToolFn, ToolUpdateCallback,
+        AgentToolDefinitionError, AgentToolOutput, AgentToolResult, CompactionConfig,
+        CompactionSettings, PromptTemplate, ProviderRequestSnapshot, QueueMode, ResourceDiagnostic,
+        Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill,
+        ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
     };
 }

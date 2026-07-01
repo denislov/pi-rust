@@ -2,7 +2,9 @@ use crate::agent_turn_flow::{AgentTurnContext, AgentTurnFlow};
 use crate::convert::convert_to_context;
 use crate::hooks::BeforeProviderRequestHook;
 use crate::resources::{format_prompt_template_invocation, format_skill_invocation};
-use crate::types::{AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool};
+use crate::types::{
+    AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolDefinitionError,
+};
 use pi_ai::types::{Context, StreamOptions};
 use std::collections::VecDeque;
 use std::sync::{
@@ -68,6 +70,12 @@ impl Agent {
 
     pub fn add_tool(&self, tool: AgentTool) {
         self.state.write().unwrap().tools.push(tool);
+    }
+
+    pub fn try_add_tool(&self, tool: AgentTool) -> Result<(), AgentToolDefinitionError> {
+        tool.validate()?;
+        self.add_tool(tool);
+        Ok(())
     }
 
     pub fn add_message(&self, msg: AgentMessage) {
