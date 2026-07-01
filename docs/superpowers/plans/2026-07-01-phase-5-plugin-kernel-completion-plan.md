@@ -156,7 +156,7 @@ git commit -m "feat(coding-agent): report plugin kernel capabilities"
 - Modify: `crates/pi-coding-agent/src/coding_session/plugin_service.rs`
 - Test: `plugin_service.rs`
 
-- [ ] **Step 1: Write failing hook collection tests**
+- [x] **Step 1: Write failing hook collection tests**
 
 Add tests to `plugin_service.rs` for returned hook registrations and returned-error isolation:
 
@@ -175,7 +175,7 @@ fn collect_prompt_hooks_returns_registered_hook_definitions() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -185,7 +185,7 @@ PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent collect_prompt_hooks
 
 Expected: compilation failure because hook types do not exist.
 
-- [ ] **Step 3: Implement hook types and registry storage**
+- [x] **Step 3: Implement hook types and registry storage**
 
 Create `plugins/hook.rs` with:
 
@@ -224,7 +224,7 @@ pub(crate) trait HookProvider: Send + Sync {
 
 Add `hook_providers` to `PluginRegistry`, plus `register_hook_provider()` and `hook_providers()`.
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 Run:
 
@@ -234,7 +234,7 @@ PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent collect_prompt_hooks
 
 Expected: hook collection tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/plugins/hook.rs crates/pi-coding-agent/src/plugins/mod.rs crates/pi-coding-agent/src/plugins/registry.rs crates/pi-coding-agent/src/coding_session/plugin_service.rs docs/TODO.md docs/superpowers/plans/2026-07-01-phase-5-plugin-kernel-completion-plan.md

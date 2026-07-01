@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::command::CommandProvider;
+use super::hook::HookProvider;
 use super::tool::ToolProvider;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -56,6 +57,7 @@ impl PluginMetadata {
 pub(crate) struct PluginRegistry {
     tool_providers: Vec<Arc<dyn ToolProvider>>,
     command_providers: Vec<Arc<dyn CommandProvider>>,
+    hook_providers: Vec<Arc<dyn HookProvider>>,
 }
 
 impl PluginRegistry {
@@ -73,6 +75,11 @@ impl PluginRegistry {
         self.command_providers.push(provider);
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn register_hook_provider(&mut self, provider: Arc<dyn HookProvider>) {
+        self.hook_providers.push(provider);
+    }
+
     pub(crate) fn tool_providers(&self) -> &[Arc<dyn ToolProvider>] {
         &self.tool_providers
     }
@@ -81,6 +88,11 @@ impl PluginRegistry {
     pub(crate) fn command_providers(&self) -> &[Arc<dyn CommandProvider>] {
         &self.command_providers
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn hook_providers(&self) -> &[Arc<dyn HookProvider>] {
+        &self.hook_providers
+    }
 }
 
 impl fmt::Debug for PluginRegistry {
@@ -88,6 +100,7 @@ impl fmt::Debug for PluginRegistry {
         f.debug_struct("PluginRegistry")
             .field("tool_providers_len", &self.tool_providers.len())
             .field("command_providers_len", &self.command_providers.len())
+            .field("hook_providers_len", &self.hook_providers.len())
             .finish()
     }
 }
