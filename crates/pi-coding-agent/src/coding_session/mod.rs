@@ -153,8 +153,9 @@ impl CodingAgentSession {
     }
 
     pub fn capabilities(&self) -> CodingAgentCapabilities {
+        let plugin_capabilities = self.plugin_service.capabilities();
         self.capability_service
-            .capabilities(self.active_operation.as_deref())
+            .capabilities(self.active_operation.as_deref(), &plugin_capabilities)
     }
 
     pub fn view(&self) -> CodingAgentSessionView {

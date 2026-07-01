@@ -1,4 +1,5 @@
 use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
+use crate::plugins::PluginCapabilities;
 use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::types::RpcSessionState;
@@ -38,8 +39,11 @@ impl RpcState {
     }
 
     pub(super) fn capabilities(&self) -> CodingAgentCapabilities {
-        let mut capabilities =
-            CodingAgentCapabilities::phase_3(self.is_streaming().then_some("prompt"));
+        let plugin_capabilities = PluginCapabilities::new();
+        let mut capabilities = CodingAgentCapabilities::phase_5(
+            self.is_streaming().then_some("prompt"),
+            &plugin_capabilities,
+        );
         let coding_running = matches!(self.running, Some(RunningPrompt::Coding(_)));
 
         capabilities.abort = if coding_running {

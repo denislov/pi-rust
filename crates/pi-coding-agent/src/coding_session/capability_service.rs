@@ -1,4 +1,5 @@
 use super::CodingAgentCapabilities;
+use crate::plugins::PluginCapabilities;
 
 #[derive(Debug)]
 pub(crate) struct CapabilityService;
@@ -8,8 +9,12 @@ impl CapabilityService {
         Self
     }
 
-    pub(crate) fn capabilities(&self, active_operation: Option<&str>) -> CodingAgentCapabilities {
-        CodingAgentCapabilities::phase_3(active_operation)
+    pub(crate) fn capabilities(
+        &self,
+        active_operation: Option<&str>,
+        plugin_capabilities: &PluginCapabilities,
+    ) -> CodingAgentCapabilities {
+        CodingAgentCapabilities::phase_5(active_operation, plugin_capabilities)
     }
 }
 
@@ -17,23 +22,24 @@ impl CapabilityService {
 mod tests {
     use super::*;
     use crate::coding_session::CapabilityStatus;
+    use crate::plugins::PluginCapabilities;
 
     #[test]
     fn capabilities_report_prompt_available_when_idle() {
-        let capabilities = CapabilityService::new().capabilities(None);
+        let plugin_capabilities = PluginCapabilities::new();
+        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities);
 
         assert_eq!(capabilities.prompt, CapabilityStatus::Available);
         assert_eq!(capabilities.tools, CapabilityStatus::Available);
         assert_eq!(capabilities.shell, CapabilityStatus::Available);
-        assert!(matches!(
-            capabilities.plugins,
-            CapabilityStatus::Unsupported { .. }
-        ));
+        assert_eq!(capabilities.plugins, CapabilityStatus::Available);
     }
 
     #[test]
     fn capabilities_report_prompt_busy_for_active_operation() {
-        let capabilities = CapabilityService::new().capabilities(Some("prompt"));
+        let plugin_capabilities = PluginCapabilities::new();
+        let capabilities =
+            CapabilityService::new().capabilities(Some("prompt"), &plugin_capabilities);
 
         assert_eq!(
             capabilities.prompt,
@@ -41,5 +47,13 @@ mod tests {
                 operation: "prompt".into(),
             }
         );
+    }
+
+    #[test]
+    fn capabilities_report_plugins_available_when_kernel_exists() {
+        let plugin_capabilities = PluginCapabilities::new();
+        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities);
+
+        assert_eq!(capabilities.plugins, CapabilityStatus::Available);
     }
 }

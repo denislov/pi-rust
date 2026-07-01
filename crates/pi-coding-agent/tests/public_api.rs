@@ -137,9 +137,7 @@ async fn coding_session_public_api_symbols_are_importable() {
             },
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
-            plugins: CapabilityStatus::Unsupported {
-                reason: "plugin kernel is not implemented yet".into(),
-            },
+            plugins: CapabilityStatus::Available,
         }
     );
 

@@ -1,8 +1,10 @@
+mod capability;
 mod command;
 mod error;
 mod registry;
 mod tool;
 
+pub(crate) use capability::PluginCapabilities;
 pub(crate) use command::{CommandDefinition, CommandProvider, CommandRegistrationHost};
 pub(crate) use error::PluginError;
 pub(crate) use registry::PluginRegistry;

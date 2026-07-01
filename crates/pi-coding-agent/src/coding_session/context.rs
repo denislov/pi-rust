@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use pi_agent_core::session::SessionTreeNode;
 
+use crate::plugins::PluginCapabilities;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodingAgentSessionOptions {
     cwd: Option<PathBuf>,
@@ -135,13 +137,18 @@ pub enum CapabilityStatus {
 }
 
 impl CodingAgentCapabilities {
-    pub(crate) fn phase_3(active_operation: Option<&str>) -> Self {
+    pub(crate) fn phase_5(
+        active_operation: Option<&str>,
+        plugin_capabilities: &PluginCapabilities,
+    ) -> Self {
         let prompt = match active_operation {
             Some(operation) => CapabilityStatus::Busy {
                 operation: operation.into(),
             },
             None => CapabilityStatus::Available,
         };
+
+        let _ = plugin_capabilities;
 
         Self {
             prompt,
@@ -165,9 +172,7 @@ impl CodingAgentCapabilities {
             },
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
-            plugins: CapabilityStatus::Unsupported {
-                reason: "plugin kernel is not implemented yet".into(),
-            },
+            plugins: CapabilityStatus::Available,
         }
     }
 }

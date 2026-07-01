@@ -57,7 +57,7 @@ Create or modify only these files for Phase 5 completion:
 - Test: existing unit tests in `capability_service.rs` and `plugin_service.rs`
 - Test: `crates/pi-coding-agent/tests/public_api.rs`
 
-- [ ] **Step 1: Write the failing capability tests**
+- [x] **Step 1: Write the failing capability tests**
 
 Add tests that expect plugin capability state to be available now that the internal kernel exists:
 
@@ -92,17 +92,17 @@ fn capabilities_report_registered_plugin_capabilities() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
 ```bash
-PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent capabilities_report_plugins_available_when_kernel_exists capabilities_report_registered_plugin_capabilities
+PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent capabilities_report
 ```
 
 Expected: compilation/test failure because `PluginCapabilities` and the new `CapabilityService::capabilities(_, _)` signature do not exist.
 
-- [ ] **Step 3: Implement minimal capability report**
+- [x] **Step 3: Implement minimal capability report**
 
 Create `plugins/capability.rs`:
 
@@ -127,7 +127,7 @@ impl PluginCapabilities {
 
 Update `PluginService::capabilities()` to fill the report from `PluginRegistry` and diagnostics. Update `CapabilityService::capabilities(active_operation, plugin_report)` so `CodingAgentCapabilities.plugins` is `CapabilityStatus::Available`.
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 Run:
 
@@ -137,7 +137,7 @@ PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent capabilities_report
 
 Expected: the new plugin capability tests pass, and existing capability tests are updated to expect `CapabilityStatus::Available` for plugins.
 
-- [ ] **Step 5: Update docs and commit**
+- [x] **Step 5: Update docs and commit**
 
 Update `docs/TODO.md` Phase 5 capability/failure-isolation notes, then commit:
 

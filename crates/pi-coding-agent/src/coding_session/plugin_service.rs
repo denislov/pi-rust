@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use pi_agent_core::AgentTool;
 
 use crate::plugins::{
-    CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginRegistry,
-    ToolProvider, ToolRegistrationHost,
+    CommandDefinition, CommandProvider, CommandRegistrationHost, PluginCapabilities, PluginError,
+    PluginRegistry, ToolProvider, ToolRegistrationHost,
 };
 
 #[derive(Clone)]
@@ -57,6 +57,18 @@ impl PluginService {
             }
         }
         commands
+    }
+
+    pub(crate) fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities {
+            tool_providers: self.registry.tool_providers().len(),
+            command_providers: self.registry.command_providers().len(),
+            hook_providers: 0,
+            ui_providers: 0,
+            keybind_providers: 0,
+            flow_extensions: 0,
+            diagnostics: self.diagnostics().len(),
+        }
     }
 
     pub(crate) fn diagnostics(&self) -> Vec<PluginDiagnostic> {
@@ -292,6 +304,23 @@ mod tests {
                 .message
                 .contains("command registration failed")
         );
+    }
+
+    #[test]
+    fn capabilities_report_registered_plugin_capabilities() {
+        let mut registry = PluginRegistry::new();
+        registry.register_tool_provider(Arc::new(StaticToolProvider {
+            plugin_id: "tools-plugin",
+            tool_name: "plugin_echo",
+        }));
+        registry.register_command_provider(Arc::new(StaticCommandProvider));
+        let service = PluginService::with_registry(registry);
+
+        let capabilities = service.capabilities();
+
+        assert_eq!(capabilities.tool_providers, 1);
+        assert_eq!(capabilities.command_providers, 1);
+        assert!(service.diagnostics().is_empty());
     }
 
     #[test]
