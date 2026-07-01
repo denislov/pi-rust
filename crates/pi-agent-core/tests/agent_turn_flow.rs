@@ -1,7 +1,7 @@
 mod common;
 
 use pi_agent_core::agent_turn_flow::{
-    AgentTurnContext, MaybeCompactRuntimeContextNode, PrepareContextNode,
+    AgentTurnContext, MaybeCompactRuntimeContextNode, PrepareContextNode, ProviderStreamNode,
 };
 use pi_agent_core::flow::Flow;
 use pi_agent_core::{
@@ -10,7 +10,7 @@ use pi_agent_core::{
 };
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
-use pi_ai::types::{StopReason, StreamOptions};
+use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason, StreamOptions};
 use std::sync::Arc;
 
 fn user_msg(id: &str, text: &str) -> AgentMessage {
@@ -189,6 +189,82 @@ async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
         event,
         AgentEvent::SessionCompacted { summary, first_kept_message_id, .. }
             if summary == "summary of old context" && first_kept_message_id == "old_2"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn provider_stream_node_records_llm_events_and_final_assistant_message() {
+    let api = "agent-turn-flow-provider-stream";
+    let config = AgentConfig::new(common::faux_model(api));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
+
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("final answer", StopReason::Stop),
+        ])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "provider_stream");
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::LlmEvent(AssistantMessageEvent::TextDelta { delta, .. }) if delta == "final answer"
+    )));
+    let assistant = context
+        .assistant_message
+        .as_ref()
+        .expect("provider stream should store final assistant message");
+    assert!(assistant.content.iter().any(|block| matches!(
+        block,
+        ContentBlock::Text { text, .. } if text == "final answer"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
+    let api = "agent-turn-flow-provider-error";
+    let config = AgentConfig::new(common::faux_model(api));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
+
+    registry::register(api, Arc::new(common::TestProvider::new(vec![])));
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "provider_stream");
+    assert!(context.assistant_message.is_none());
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::LlmEvent(AssistantMessageEvent::Error { .. })
+    )));
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentError { error } if error == "no more scripted turns"
     )));
 
     registry::unregister(api);

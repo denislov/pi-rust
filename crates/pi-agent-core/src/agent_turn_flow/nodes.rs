@@ -8,7 +8,8 @@ use crate::convert::convert_to_context;
 use crate::flow::{Action, FlowNode};
 use crate::loop_runtime::context::stream_options_for_turn;
 use crate::types::{AgentEvent, AgentMessage, ProviderRequestSnapshot};
-use pi_ai::types::Usage;
+use futures::StreamExt;
+use pi_ai::types::{AssistantMessageEvent, Usage};
 
 use super::context::{AgentTurnContext, RuntimeCompactionState};
 
@@ -25,7 +26,7 @@ impl FlowNode<AgentTurnContext> for PrepareContextNode {
     ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
         Box::pin(async move {
             prepare_context(ctx)?;
-            Action::new("default").map_err(|err| err.to_string())
+            default_action()
         })
     }
 }
@@ -43,8 +44,23 @@ impl FlowNode<AgentTurnContext> for MaybeCompactRuntimeContextNode {
     ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
         Box::pin(async move {
             maybe_compact_runtime_context(ctx).await?;
-            Action::new("default").map_err(|err| err.to_string())
+            default_action()
         })
+    }
+}
+
+pub struct ProviderStreamNode;
+
+impl FlowNode<AgentTurnContext> for ProviderStreamNode {
+    fn name(&self) -> &str {
+        "provider_stream"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { stream_provider(ctx).await })
     }
 }
 
@@ -131,6 +147,55 @@ pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result
     });
 
     Ok(())
+}
+
+pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    let request = ctx
+        .provider_request
+        .clone()
+        .ok_or_else(|| "provider request is not prepared".to_string())?;
+    let mut llm_stream = pi_ai::stream_model(
+        &request.model,
+        request.context,
+        Some(request.stream_options),
+    );
+    let mut assistant_message = None;
+    let mut stream_error = None;
+
+    while let Some(event) = llm_stream.next().await {
+        let is_terminal = matches!(
+            event,
+            AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
+        );
+        if let AssistantMessageEvent::Done { message, .. } = &event {
+            assistant_message = Some(message.clone());
+        }
+        if let AssistantMessageEvent::Error { message, .. } = &event {
+            stream_error = Some(
+                message
+                    .error_message
+                    .clone()
+                    .unwrap_or_else(|| "LLM error".into()),
+            );
+        }
+        ctx.events.push(AgentEvent::LlmEvent(event));
+        if is_terminal {
+            break;
+        }
+    }
+
+    if let Some(message) = assistant_message {
+        ctx.assistant_message = Some(message);
+        return default_action();
+    }
+
+    let error = stream_error.unwrap_or_else(|| "LLM stream ended without Done event".into());
+    ctx.events.push(AgentEvent::AgentError { error });
+    Action::new("error").map_err(|err| err.to_string())
+}
+
+fn default_action() -> Result<Action, String> {
+    Action::new("default").map_err(|err| err.to_string())
 }
 
 fn message_id(message: &AgentMessage) -> &str {
