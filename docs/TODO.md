@@ -32,6 +32,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [Rust-native tree navigation design](superpowers/specs/2026-06-30-rust-native-tree-navigation-design.md)
 - [Rust-native session format](superpowers/specs/2026-07-01-rust-native-session-format.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
+- [Phase 5 plugin kernel completion plan](superpowers/plans/2026-07-01-phase-5-plugin-kernel-completion-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
 - [Phase 3 guide](superpowers/guides/2026-06-29-phase-3-adapter-convergence-guide.md)
@@ -240,3 +241,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-07-01: Documentation cleanup aligned roadmap/cross-cutting/architecture docs with the Flow-centered runtime state, removed TS session JSONL compatibility as a current invariant, and added the Rust-native session format spec.
 - 2026-07-01: Phase 5 started with the internal Rust plugin kernel slice: `crate::plugins` now has plugin metadata/source types, `PluginRegistry`, `ToolProvider`, and `ToolRegistrationHost`; `PluginService` collects plugin tools with error/panic isolation; `PromptTurnContext` carries the session-owned plugin service into `RuntimeService`; focused plugin tests pass.
 - 2026-07-01: Phase 5 command boundary started. `CommandProvider`, `CommandDefinition`, `CommandRegistrationHost`, registry storage, and `PluginService::collect_commands()` now exist as internal staging APIs with diagnostics for provider failures; command execution/adapters remain follow-up work.
+- 2026-07-01: Phase 5 completion plan added. The remaining flow is capability reporting, prompt hook provider integration, UI/keybind boundaries, reserved FlowExtension points, and a guide-level completion audit.
