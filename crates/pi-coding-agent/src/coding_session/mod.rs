@@ -1180,7 +1180,7 @@ mod tests {
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::single_call(
                     vec![FauxResponse {
-                        text_deltas: Vec::new(),
+                        text_deltas: vec!["I will use echo.".into()],
                         thinking_deltas: Vec::new(),
                         tool_calls: vec![FauxToolCall {
                             id: "toolu_1".into(),
@@ -1227,7 +1227,7 @@ mod tests {
 
         let contexts = contexts.lock().unwrap();
         assert_eq!(contexts.len(), 1);
-        assert_eq!(contexts[0].messages.len(), 4);
+        assert_eq!(contexts[0].messages.len(), 5);
         assert!(matches!(
             &contexts[0].messages[0],
             Message::User { content }
@@ -1247,7 +1247,7 @@ mod tests {
                         ..
                     },
                 ] => {
-                    assert_eq!(text, "tool final");
+                    assert_eq!(text, "I will use echo.");
                     assert_eq!(name, "echo");
                     assert_eq!(arguments, &serde_json::json!({"text": "hi"}));
                     id.clone()
@@ -1272,6 +1272,14 @@ mod tests {
         ));
         assert!(matches!(
             &contexts[0].messages[3],
+            Message::Assistant { content }
+                if content == &vec![ContentBlock::Text {
+                    text: "tool final".into(),
+                    text_signature: None,
+                }]
+        ));
+        assert!(matches!(
+            &contexts[0].messages[4],
             Message::User { content }
                 if content == &vec![ContentBlock::Text {
                     text: "continue".into(),

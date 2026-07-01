@@ -113,6 +113,33 @@ fn turn_started_closes_current_assistant_without_creating_empty_message() {
 }
 
 #[test]
+fn agent_error_closes_current_assistant_before_error_item() {
+    let mut transcript = Transcript::new();
+
+    transcript.apply_event(UiEvent::AssistantDelta {
+        text: "partial answer".to_string(),
+    });
+    transcript.apply_event(UiEvent::AgentError {
+        error: "provider failed".to_string(),
+    });
+
+    assert_eq!(
+        transcript.items(),
+        &[
+            TranscriptItem::Assistant {
+                id: "assistant_0".to_string(),
+                markdown: "partial answer".to_string(),
+                thinking: String::new(),
+                done: true,
+            },
+            TranscriptItem::Error {
+                text: "provider failed".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
 fn system_item_is_pushed_and_rendered_as_a_line() {
     let mut transcript = Transcript::new();
     transcript.push(TranscriptItem::system("welcome to pi"));

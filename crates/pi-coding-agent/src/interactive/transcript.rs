@@ -302,9 +302,13 @@ impl Transcript {
                 is_error,
             } => self.finish_tool(&call_id, result, is_error),
             UiEvent::ToolUpdated { call_id, result } => self.update_tool(&call_id, result),
-            UiEvent::AgentError { error } => TranscriptMutation::single(
-                self.push_with_index(TranscriptItem::Error { text: error }),
-            ),
+            UiEvent::AgentError { error } => {
+                let mut mutation = self.close_open_assistant();
+                mutation.extend(TranscriptMutation::single(
+                    self.push_with_index(TranscriptItem::Error { text: error }),
+                ));
+                mutation
+            }
             UiEvent::CompactionNotice { summary } => {
                 TranscriptMutation::single(self.push_with_index(TranscriptItem::Assistant {
                     id: format!("compaction_{}", self.items.len()),

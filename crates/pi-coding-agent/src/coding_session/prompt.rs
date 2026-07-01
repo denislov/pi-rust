@@ -382,6 +382,7 @@ pub(crate) struct PromptTurnContext {
     agent_observations: Vec<AgentRunObservation>,
     coding_events: Vec<CodingAgentEvent>,
     assistant_session_message_id: Option<String>,
+    completed_assistant_session_message_id: Option<String>,
     live_event_service: Option<EventService>,
     tool_session_call_ids: HashMap<String, String>,
     diagnostics: Vec<CodingDiagnostic>,
@@ -405,6 +406,7 @@ impl PromptTurnContext {
             agent_observations: Vec::new(),
             coding_events: Vec::new(),
             assistant_session_message_id: None,
+            completed_assistant_session_message_id: None,
             live_event_service: None,
             tool_session_call_ids: HashMap::new(),
             diagnostics: Vec::new(),
@@ -695,7 +697,11 @@ impl PromptTurnContext {
             self.operation_id().to_owned(),
             self.turn_id().to_owned(),
         );
-        if let Some(message_id) = self.assistant_session_message_id.clone() {
+        if let Some(message_id) = self
+            .assistant_session_message_id
+            .clone()
+            .or_else(|| self.completed_assistant_session_message_id.clone())
+        {
             mapping_context = mapping_context.with_assistant_message_id(message_id);
         }
         let coding_events = map_agent_event(&mapping_context, &event);
@@ -784,15 +790,7 @@ impl PromptTurnContext {
                 tool_name,
                 result,
             } => self.record_tool_result_to_transaction(tool_call_id, tool_name, result),
-            AgentEvent::AgentDone { message } => {
-                let message_id = self.ensure_assistant_session_message_started()?;
-                let content = persisted_assistant_content_blocks(&message.content);
-                self.transaction_mut_required()?.complete_assistant_message(
-                    message_id,
-                    content,
-                    stop_reason_string(message),
-                )
-            }
+            AgentEvent::AgentDone { .. } => Ok(()),
             AgentEvent::AgentError { error } => self
                 .transaction_mut_required()?
                 .emit_diagnostic(DiagnosticLevel::Error, error.clone()),
@@ -811,9 +809,15 @@ impl PromptTurnContext {
             | AssistantMessageEvent::TextStart { .. }
             | AssistantMessageEvent::ThinkingStart { .. }
             | AssistantMessageEvent::TextDelta { .. }
-            | AssistantMessageEvent::ThinkingDelta { .. } => {
+            | AssistantMessageEvent::ThinkingDelta { .. }
+            | AssistantMessageEvent::ToolcallStart { .. }
+            | AssistantMessageEvent::ToolcallDelta { .. }
+            | AssistantMessageEvent::ToolcallEnd { .. } => {
                 self.ensure_assistant_session_message_started()?;
                 Ok(())
+            }
+            AssistantMessageEvent::Done { message, .. } => {
+                self.complete_current_assistant_message(message)
             }
             AssistantMessageEvent::Error { message, .. } => {
                 self.transaction_mut_required()?.emit_diagnostic(
@@ -824,12 +828,9 @@ impl PromptTurnContext {
                         .unwrap_or_else(|| "assistant stream failed".into()),
                 )
             }
-            AssistantMessageEvent::Done { .. }
-            | AssistantMessageEvent::TextEnd { .. }
-            | AssistantMessageEvent::ThinkingEnd { .. }
-            | AssistantMessageEvent::ToolcallStart { .. }
-            | AssistantMessageEvent::ToolcallDelta { .. }
-            | AssistantMessageEvent::ToolcallEnd { .. } => Ok(()),
+            AssistantMessageEvent::TextEnd { .. } | AssistantMessageEvent::ThinkingEnd { .. } => {
+                Ok(())
+            }
         }
     }
 
@@ -857,7 +858,21 @@ impl PromptTurnContext {
         }
         let message_id = self.transaction_mut_required()?.start_assistant_message()?;
         self.assistant_session_message_id = Some(message_id.clone());
+        self.completed_assistant_session_message_id = None;
         Ok(message_id)
+    }
+
+    fn complete_current_assistant_message(
+        &mut self,
+        message: &AssistantMessage,
+    ) -> Result<(), CodingSessionError> {
+        let message_id = self.ensure_assistant_session_message_started()?;
+        let content = persisted_assistant_content_blocks(&message.content);
+        self.transaction_mut_required()?
+            .complete_assistant_message(message_id.clone(), content, stop_reason_string(message))?;
+        self.assistant_session_message_id = None;
+        self.completed_assistant_session_message_id = Some(message_id);
+        Ok(())
     }
 
     fn ensure_tool_session_call_started(
