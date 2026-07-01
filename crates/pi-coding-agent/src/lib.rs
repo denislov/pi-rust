@@ -1,4 +1,5 @@
 mod coding_session;
+mod plugins;
 
 pub mod args;
 pub mod config;

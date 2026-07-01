@@ -7,6 +7,7 @@ use pi_ai::types::{AssistantMessage, ContentBlock, StopReason};
 use crate::runtime::{SessionMode, build_agent_config};
 
 use super::CodingSessionError;
+use super::plugin_service::PluginService;
 use super::prompt::RuntimeSnapshot;
 use super::session_log::event::PersistedContentBlock;
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
@@ -19,6 +20,14 @@ impl RuntimeService {
     pub(crate) fn build_agent_runtime(
         &self,
         runtime: &RuntimeSnapshot,
+    ) -> Result<Agent, CodingSessionError> {
+        self.build_agent_runtime_with_plugins(runtime, &PluginService::new())
+    }
+
+    pub(crate) fn build_agent_runtime_with_plugins(
+        &self,
+        runtime: &RuntimeSnapshot,
+        plugin_service: &PluginService,
     ) -> Result<Agent, CodingSessionError> {
         if runtime.register_builtins() {
             pi_ai::providers::register_builtins();
@@ -47,6 +56,9 @@ impl RuntimeService {
         let agent = Agent::new(config);
         for tool in runtime.tools() {
             agent.add_tool(tool.clone());
+        }
+        for tool in plugin_service.collect_tools() {
+            agent.add_tool(tool);
         }
         Ok(agent)
     }
@@ -210,7 +222,9 @@ fn flush_replay_hydration_group(
 
 #[cfg(test)]
 mod tests {
-    use pi_agent_core::{AgentResources, ToolExecutionMode};
+    use std::sync::Arc;
+
+    use pi_agent_core::{AgentResources, AgentTool, ToolExecutionMode};
     use pi_ai::types::{Model, ModelCost, ModelInput};
 
     use super::*;
@@ -273,6 +287,53 @@ mod tests {
             stream_options.and_then(|options| options.api_key),
             Some("key".into())
         );
+    }
+
+    struct RuntimeToolProvider;
+
+    impl crate::plugins::ToolProvider for RuntimeToolProvider {
+        fn metadata(&self) -> crate::plugins::PluginMetadata {
+            crate::plugins::PluginMetadata::new(
+                crate::plugins::PluginId::new("runtime-plugin"),
+                "runtime-plugin",
+                "0.1.0",
+                crate::plugins::PluginSource::FirstParty,
+            )
+        }
+
+        fn tools(
+            &self,
+            _host: &crate::plugins::ToolRegistrationHost,
+        ) -> Result<Vec<AgentTool>, crate::plugins::PluginError> {
+            Ok(vec![AgentTool::new_text(
+                "plugin_echo",
+                "plugin echo tool",
+                serde_json::json!({"type": "object"}),
+                |_| async { Ok("plugin output".to_string()) },
+            )])
+        }
+    }
+
+    #[test]
+    fn build_agent_runtime_with_plugins_merges_plugin_tools_into_provider_context() {
+        let service = RuntimeService::new();
+        let runtime = runtime_snapshot("runtime-plugin-tools");
+        let mut registry = crate::plugins::PluginRegistry::new();
+        registry.register_tool_provider(Arc::new(RuntimeToolProvider));
+        let plugin_service = super::super::plugin_service::PluginService::with_registry(registry);
+
+        let agent = service
+            .build_agent_runtime_with_plugins(&runtime, &plugin_service)
+            .unwrap();
+
+        let (context, _) = agent.provider_request_snapshot();
+        let tool_names: Vec<_> = context
+            .tools
+            .expect("plugin tools should be exposed to provider context")
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        assert_eq!(tool_names, vec!["plugin_echo"]);
     }
 
     #[test]

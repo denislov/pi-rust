@@ -266,7 +266,7 @@ fn build_agent_runtime(ctx: &mut PromptTurnContext) -> Result<Action, String> {
     })?;
     let service = RuntimeService::new();
     let agent = service
-        .build_agent_runtime(&runtime)
+        .build_agent_runtime_with_plugins(&runtime, ctx.plugin_service())
         .map_err(|error| error.to_string())?;
     if let Some(replay) = ctx.replay() {
         service.hydrate_agent_runtime(&agent, &runtime, replay);

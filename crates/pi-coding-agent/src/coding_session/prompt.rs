@@ -19,6 +19,7 @@ use crate::session::ResolvedSessionTarget;
 use super::CodingSessionError;
 use super::event::CodingAgentEvent;
 use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
+use super::plugin_service::PluginService;
 use super::session_log::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
     SessionEventEnvelope,
@@ -384,6 +385,7 @@ pub(crate) struct PromptTurnContext {
     assistant_session_message_id: Option<String>,
     completed_assistant_session_message_id: Option<String>,
     live_event_service: Option<EventService>,
+    plugin_service: PluginService,
     tool_session_call_ids: HashMap<String, String>,
     diagnostics: Vec<CodingDiagnostic>,
 }
@@ -408,6 +410,7 @@ impl PromptTurnContext {
             assistant_session_message_id: None,
             completed_assistant_session_message_id: None,
             live_event_service: None,
+            plugin_service: PluginService::new(),
             tool_session_call_ids: HashMap::new(),
             diagnostics: Vec::new(),
         }
@@ -431,6 +434,14 @@ impl PromptTurnContext {
 
     pub(crate) fn options(&self) -> &PromptTurnOptions {
         &self.options
+    }
+
+    pub(crate) fn set_plugin_service(&mut self, plugin_service: PluginService) {
+        self.plugin_service = plugin_service;
+    }
+
+    pub(crate) fn plugin_service(&self) -> &PluginService {
+        &self.plugin_service
     }
 
     pub(crate) fn set_runtime(&mut self, runtime: RuntimeSnapshot) {

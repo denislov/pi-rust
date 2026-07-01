@@ -409,6 +409,7 @@ impl CodingAgentSession {
                 let turn_id = transaction.turn_id().to_owned();
                 let mut context =
                     PromptTurnContext::new(PromptTurnIds::new(operation_id, turn_id), options);
+                context.set_plugin_service(self.plugin_service.clone());
                 context.set_session_id(session_service.session_id().to_owned());
                 context.set_replay(replay);
                 context.set_transaction(transaction);
@@ -421,6 +422,7 @@ impl CodingAgentSession {
                     PromptTurnIds::new(ids.next_operation_id(), ids.next_turn_id()),
                     options,
                 );
+                context.set_plugin_service(self.plugin_service.clone());
                 context
                     .set_non_persistent_session(state.runtime_id.clone(), state.transcript.clone());
                 context.enable_live_events(event_service);
