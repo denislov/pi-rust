@@ -9,10 +9,10 @@ use super::CodingSessionError;
 use super::prompt::CodingDiagnostic;
 use crate::plugins::{
     CommandDefinition, CommandProvider, CommandRegistrationHost, FlowExtension, FlowExtensionPoint,
-    HookFailurePolicy, HookOutcome, HookProvider, HookRegistration, HookRegistrationHost,
-    KeybindDefinition, KeybindProvider, KeybindRegistrationHost, PluginCapabilities, PluginError,
-    PluginRegistry, PromptHookContext, PromptHookPoint, ToolProvider, ToolRegistrationHost,
-    UiActionDefinition, UiProvider, UiRegistrationHost,
+    FlowExtensionRegistrationHost, HookFailurePolicy, HookOutcome, HookProvider, HookRegistration,
+    HookRegistrationHost, KeybindDefinition, KeybindProvider, KeybindRegistrationHost,
+    PluginCapabilities, PluginError, PluginRegistry, PromptHookContext, PromptHookPoint,
+    ToolProvider, ToolRegistrationHost, UiActionDefinition, UiProvider, UiRegistrationHost,
 };
 
 #[derive(Clone)]
@@ -105,9 +105,10 @@ impl PluginService {
 
     #[allow(dead_code)]
     pub(crate) fn collect_flow_extension_points(&self) -> Vec<FlowExtensionPoint> {
+        let host = FlowExtensionRegistrationHost;
         let mut points = Vec::new();
         for extension in self.registry.flow_extensions() {
-            match collect_provider_flow_extension_points(extension.as_ref()) {
+            match collect_provider_flow_extension_points(extension.as_ref(), &host) {
                 Ok(mut provided) => points.append(&mut provided),
                 Err(error) => self.record_plugin_error(error),
             }
@@ -282,9 +283,10 @@ fn collect_provider_keybindings(
 #[allow(dead_code)]
 fn collect_provider_flow_extension_points(
     extension: &dyn FlowExtension,
+    host: &FlowExtensionRegistrationHost,
 ) -> Result<Vec<FlowExtensionPoint>, PluginError> {
     let plugin_id = provider_plugin_id(|| extension.metadata().id.as_str().to_owned());
-    match catch_unwind(AssertUnwindSafe(|| extension.extension_points())) {
+    match catch_unwind(AssertUnwindSafe(|| extension.extension_points(host))) {
         Ok(result) => result,
         Err(panic) => Err(PluginError::Panic {
             plugin_id,
@@ -331,10 +333,11 @@ mod tests {
     use super::*;
     use crate::plugins::{
         CommandDefinition, CommandProvider, CommandRegistrationHost, FlowExtension,
-        FlowExtensionPoint, HookFailurePolicy, HookProvider, HookRegistration,
-        HookRegistrationHost, KeybindDefinition, KeybindProvider, KeybindRegistrationHost,
-        PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource, PromptHookPoint,
-        ToolProvider, ToolRegistrationHost, UiActionDefinition, UiProvider, UiRegistrationHost,
+        FlowExtensionPoint, FlowExtensionRegistrationHost, HookFailurePolicy, HookProvider,
+        HookRegistration, HookRegistrationHost, KeybindDefinition, KeybindProvider,
+        KeybindRegistrationHost, PluginError, PluginId, PluginMetadata, PluginRegistry,
+        PluginSource, PromptHookPoint, ToolProvider, ToolRegistrationHost, UiActionDefinition,
+        UiProvider, UiRegistrationHost,
     };
 
     struct StaticToolProvider {
@@ -582,7 +585,10 @@ mod tests {
             )
         }
 
-        fn extension_points(&self) -> Result<Vec<FlowExtensionPoint>, PluginError> {
+        fn extension_points(
+            &self,
+            _host: &FlowExtensionRegistrationHost,
+        ) -> Result<Vec<FlowExtensionPoint>, PluginError> {
             Ok(vec![FlowExtensionPoint::PromptBeforeAgentTurn])
         }
     }
@@ -599,7 +605,10 @@ mod tests {
             )
         }
 
-        fn extension_points(&self) -> Result<Vec<FlowExtensionPoint>, PluginError> {
+        fn extension_points(
+            &self,
+            _host: &FlowExtensionRegistrationHost,
+        ) -> Result<Vec<FlowExtensionPoint>, PluginError> {
             Err(PluginError::Registration {
                 plugin_id: "failing-flow-extension-plugin".into(),
                 message: "flow extension registration failed".into(),

@@ -462,7 +462,7 @@ pub(crate) enum FlowExtensionPoint {
 }
 ```
 
-The trait exposes only `extension_points() -> Result<Vec<FlowExtensionPoint>, PluginError>`. Do not expose node insertion, graph rewrites, or Lua registration.
+The trait exposes only `extension_points(host: &FlowExtensionRegistrationHost) -> Result<Vec<FlowExtensionPoint>, PluginError>`. Do not expose node insertion, graph rewrites, or Lua registration.
 
 - [x] **Step 4: Run tests to verify GREEN**
 
@@ -472,7 +472,7 @@ Run:
 PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent collect_flow_extension_points
 ```
 
-Expected: reserved FlowExtension tests pass. Actual GREEN was verified with `cargo test -p pi-coding-agent collect_flow_extension_points`, plus `plugin`, `coding_session`, `cargo check --workspace`, and full `cargo test -p pi-coding-agent` checks.
+Expected: reserved FlowExtension tests pass. Actual GREEN was verified first with `cargo test -p pi-coding-agent collect_flow_extension_points`, then the Task 6 audit added `FlowExtensionRegistrationHost` and reverified with `cargo test -p pi-coding-agent collect_flow_extension_points`, `plugin`, `coding_session`, and `cargo check --workspace`.
 
 - [x] **Step 5: Commit**
 

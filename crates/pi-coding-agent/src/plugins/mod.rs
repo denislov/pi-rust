@@ -11,7 +11,7 @@ mod ui;
 pub(crate) use capability::PluginCapabilities;
 pub(crate) use command::{CommandDefinition, CommandProvider, CommandRegistrationHost};
 pub(crate) use error::PluginError;
-pub(crate) use flow_extension::{FlowExtension, FlowExtensionPoint};
+pub(crate) use flow_extension::{FlowExtension, FlowExtensionPoint, FlowExtensionRegistrationHost};
 #[allow(unused_imports)]
 pub(crate) use hook::{
     HookDiagnostic, HookFailurePolicy, HookOutcome, HookProvider, HookRegistration,

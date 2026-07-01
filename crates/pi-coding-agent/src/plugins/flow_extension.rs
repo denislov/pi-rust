@@ -13,9 +13,16 @@ pub(crate) enum FlowExtensionPoint {
     AgentAfterToolResult,
 }
 
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub(crate) struct FlowExtensionRegistrationHost;
+
 #[allow(dead_code)]
 pub(crate) trait FlowExtension: Send + Sync {
     fn metadata(&self) -> PluginMetadata;
 
-    fn extension_points(&self) -> Result<Vec<FlowExtensionPoint>, PluginError>;
+    fn extension_points(
+        &self,
+        host: &FlowExtensionRegistrationHost,
+    ) -> Result<Vec<FlowExtensionPoint>, PluginError>;
 }
