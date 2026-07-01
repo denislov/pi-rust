@@ -623,17 +623,53 @@ async fn continue_most_recent_reports_missing_rust_native_session() {
 }
 
 #[tokio::test]
-async fn fork_target_is_not_silently_routed_to_old_jsonl_sessions() {
-    let api = "pi-coding-print-fork-unsupported";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+async fn fork_target_routes_through_rust_native_session() {
+    let first_api = "pi-coding-print-fork-source";
+    registry::register(
+        first_api,
+        Arc::new(FauxProvider::simple_text("source answer")),
+    );
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let error = run_print_mode(PrintModeOptions {
-        prompt: "fork".into(),
-        model: faux_model(api),
+    let first = run_print_mode(PrintModeOptions {
+        prompt: "source question".into(),
+        model: faux_model(first_api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(5),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(SessionRunOptions {
+            mode: SessionMode::Enabled,
+            cwd: project_dir.clone(),
+            session_dir: Some(sessions_dir.clone()),
+        }),
+        session_target: Some(ResolvedSessionTarget::OpenOrCreateId("source".into())),
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("source question".into()),
+    })
+    .await
+    .unwrap();
+    assert_eq!(first, "source answer");
+    registry::unregister(first_api);
+
+    let second_api = "pi-coding-print-fork-followup";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    registry::register(
+        second_api,
+        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "fork answer")),
+    );
+
+    let second = run_print_mode(PrintModeOptions {
+        prompt: "fork question".into(),
+        model: faux_model(second_api),
         api_key: None,
         system_prompt: None,
         max_turns: Some(5),
@@ -650,15 +686,53 @@ async fn fork_target_is_not_silently_routed_to_old_jsonl_sessions() {
         tool_execution: None,
         resources: pi_agent_core::AgentResources::default(),
         settings: None,
-        invocation: PromptInvocation::Text("fork".into()),
+        invocation: PromptInvocation::Text("fork question".into()),
     })
     .await
-    .unwrap_err();
+    .unwrap();
 
-    assert_eq!(
-        error,
-        CliError::UnsupportedMode("Rust-native session fork".into())
-    );
-    assert!(!sessions_dir.exists());
-    registry::unregister(api);
+    assert_eq!(second, "fork answer");
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0].messages.len(), 3);
+    assert!(matches!(
+        &contexts[0].messages[0],
+        Message::User { content }
+            if content == &vec![ContentBlock::Text {
+                text: "source question".into(),
+                text_signature: None,
+            }]
+    ));
+    assert!(matches!(
+        &contexts[0].messages[1],
+        Message::Assistant { content }
+            if content == &vec![ContentBlock::Text {
+                text: "source answer".into(),
+                text_signature: None,
+            }]
+    ));
+    assert!(matches!(
+        &contexts[0].messages[2],
+        Message::User { content }
+            if content == &vec![ContentBlock::Text {
+                text: "fork question".into(),
+                text_signature: None,
+            }]
+    ));
+
+    let fork_session_dirs = std::fs::read_dir(&sessions_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.is_dir() && path.file_name().and_then(|name| name.to_str()) != Some("source")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(fork_session_dirs.len(), 1);
+    let fork_events = std::fs::read_to_string(fork_session_dirs[0].join("events.jsonl")).unwrap();
+    assert!(fork_events.contains(r#""kind":"session.forked""#));
+    assert!(fork_events.contains("source question"));
+    assert!(fork_events.contains("fork question"));
+    let source_events = std::fs::read_to_string(sessions_dir.join("source/events.jsonl")).unwrap();
+    assert!(!source_events.contains("fork question"));
+    registry::unregister(second_api);
 }

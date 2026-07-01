@@ -140,7 +140,10 @@ Focused coverage should prove:
   source transcript.
 - Interactive `/clone` and `/fork` after a Rust-native prompt select the new
   Rust-native session instead of reporting unsupported.
-- Interactive `/compact` and tree navigation remain explicitly unsupported.
+- Print-mode `ForkTarget` can fork a source Rust-native session, run the prompt
+  in the new fork, and leave the source session unchanged.
+- Leaf-backed interactive tree navigation is handled by the dedicated tree
+  navigation slice; projection ids remain invalid fork targets.
 
 Suggested checks:
 
@@ -157,7 +160,8 @@ adapter behavior beyond the focused slice.
 
 ## Handoff
 
-After this slice, Phase 3 will still need Rust-native tree navigation and
-session compaction. The later navigation slice should replace temporary
-projection ids with leaf-aware tree nodes or another stable Rust-native branch
-view before accepting arbitrary UI tree selections as fork targets.
+After this slice, print-mode branch target convergence is covered by routing
+`ForkTarget` through `SessionService` fork support, manual compaction has moved
+to the dedicated Rust-native compaction slice, and leaf-backed tree navigation is
+covered by the dedicated tree navigation slice. A later full branch-DAG slice can
+add in-place branch switching beyond fork-on-select navigation.

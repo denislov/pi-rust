@@ -1,7 +1,13 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use pi_agent_core::session::{SessionEntry, SessionTreeNode, StoredAgentMessage};
+use pi_ai::types::ContentBlock;
+
 use super::prompt::PromptTurnTransaction;
-use super::session_log::event::{OperationKind, SessionEventData, SessionEventEnvelope};
+use super::session_log::event::{
+    OperationKind, PersistedContentBlock, SessionEventData, SessionEventEnvelope,
+};
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 use super::session_log::store::{
@@ -11,7 +17,7 @@ use super::session_log::transaction::TurnTransaction;
 use super::{
     CodingAgentEvent, CodingAgentSessionDiagnostic, CodingAgentSessionHydration,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionTranscriptItem,
-    CodingAgentSessionView, CodingSessionError,
+    CodingAgentSessionTree, CodingAgentSessionView, CodingSessionError,
 };
 
 #[derive(Debug)]
@@ -118,6 +124,20 @@ impl SessionService {
         options: &CodingAgentSessionOptions,
     ) -> Result<CodingAgentSessionHydration, CodingSessionError> {
         Self::open(options)?.hydrated_view()
+    }
+
+    pub(crate) fn tree_view(
+        options: &CodingAgentSessionOptions,
+    ) -> Result<CodingAgentSessionTree, CodingSessionError> {
+        Self::open(options)?.leaf_tree_view()
+    }
+
+    fn leaf_tree_view(&self) -> Result<CodingAgentSessionTree, CodingSessionError> {
+        let events = self.store.read_events(&self.handle)?;
+        Ok(build_leaf_tree(
+            &events,
+            self.handle.manifest().active_leaf_id.clone(),
+        ))
     }
 
     pub(crate) fn clone_current(&self) -> Result<Self, CodingSessionError> {
@@ -502,6 +522,101 @@ fn rewrite_event_for_session(
     copied.event_id = ids.next_event_id();
     copied.parent_event_id = None;
     copied
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LeafTreeEntry {
+    leaf_id: String,
+    parent_leaf_id: Option<String>,
+    timestamp: String,
+    text: String,
+}
+
+fn build_leaf_tree(
+    events: &[SessionEventEnvelope],
+    active_leaf_id: Option<String>,
+) -> CodingAgentSessionTree {
+    let mut operation_kinds = HashMap::new();
+    let mut operation_inputs = HashMap::new();
+    let mut leaves = Vec::new();
+    let mut previous_leaf_id: Option<String> = None;
+
+    for event in events {
+        let Some(operation_id) = event.operation_id.as_deref() else {
+            continue;
+        };
+        match &event.data {
+            SessionEventData::OperationStarted { operation } => {
+                operation_kinds.insert(operation_id.to_owned(), operation.clone());
+            }
+            SessionEventData::TurnInputRecorded { content } => {
+                operation_inputs
+                    .entry(operation_id.to_owned())
+                    .or_insert_with(|| text_from_persisted_content(content));
+            }
+            SessionEventData::OperationCommitted {
+                new_leaf_id: Some(leaf_id),
+            } if operation_kinds.get(operation_id) == Some(&OperationKind::Prompt) => {
+                leaves.push(LeafTreeEntry {
+                    leaf_id: leaf_id.clone(),
+                    parent_leaf_id: previous_leaf_id.clone(),
+                    timestamp: event.created_at.clone(),
+                    text: operation_inputs
+                        .get(operation_id)
+                        .filter(|text| !text.trim().is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| leaf_id.clone()),
+                });
+                previous_leaf_id = Some(leaf_id.clone());
+            }
+            _ => {}
+        }
+    }
+
+    CodingAgentSessionTree {
+        tree: linear_leaf_tree(leaves),
+        active_leaf_id,
+    }
+}
+
+fn text_from_persisted_content(content: &[PersistedContentBlock]) -> String {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            PersistedContentBlock::Text { text } => Some(text.trim()),
+            PersistedContentBlock::Image { .. } => None,
+        })
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn linear_leaf_tree(leaves: Vec<LeafTreeEntry>) -> Vec<SessionTreeNode> {
+    let mut child: Option<SessionTreeNode> = None;
+    for leaf in leaves.into_iter().rev() {
+        let mut node = SessionTreeNode {
+            entry: SessionEntry::message(
+                leaf.leaf_id,
+                leaf.parent_leaf_id,
+                leaf.timestamp,
+                StoredAgentMessage::User {
+                    content: vec![ContentBlock::Text {
+                        text: leaf.text,
+                        text_signature: None,
+                    }],
+                    timestamp: 0,
+                },
+            ),
+            children: Vec::new(),
+            label: None,
+            label_timestamp: None,
+        };
+        if let Some(child) = child {
+            node.children.push(child);
+        }
+        child = Some(node);
+    }
+    child.into_iter().collect()
 }
 
 fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessionTranscriptItem {
@@ -1034,6 +1149,36 @@ mod tests {
         );
         assert!(finalized.session_id.is_none());
         assert!(finalized.leaf_id.is_none());
+    }
+
+    #[test]
+    fn tree_view_uses_committed_leaf_ids() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_tree")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let first_leaf = record_prompt(&mut service, "first prompt");
+        let second_leaf = record_prompt(&mut service, "second prompt");
+
+        let tree = SessionService::tree_view(&options).unwrap();
+
+        assert_eq!(tree.active_leaf_id.as_deref(), Some(second_leaf.as_str()));
+        assert_eq!(tree.tree.len(), 1);
+        assert_eq!(tree.tree[0].entry.id, first_leaf);
+        assert_eq!(tree.tree[0].children.len(), 1);
+        assert_eq!(tree.tree[0].children[0].entry.id, second_leaf);
+        assert_eq!(
+            tree.tree[0]
+                .entry
+                .field("message")
+                .and_then(|message| message.get("content"))
+                .and_then(|content| content.as_array())
+                .and_then(|blocks| blocks.first())
+                .and_then(|block| block.get("text"))
+                .and_then(|text| text.as_str()),
+            Some("first prompt")
+        );
     }
 
     fn record_prompt(service: &mut SessionService, text: &str) -> String {

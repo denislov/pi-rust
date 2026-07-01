@@ -17,6 +17,7 @@ pub use context::{
 };
 pub(crate) use context::{
     CodingAgentSessionDiagnostic, CodingAgentSessionHydration, CodingAgentSessionTranscriptItem,
+    CodingAgentSessionTree,
 };
 pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
@@ -111,6 +112,12 @@ impl CodingAgentSession {
         options: CodingAgentSessionOptions,
     ) -> Result<CodingAgentSessionHydration, CodingSessionError> {
         SessionService::hydrate(&options)
+    }
+
+    pub(crate) fn tree_view(
+        options: CodingAgentSessionOptions,
+    ) -> Result<CodingAgentSessionTree, CodingSessionError> {
+        SessionService::tree_view(&options)
     }
 
     pub(crate) fn clone_session(

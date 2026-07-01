@@ -16,8 +16,8 @@ use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
-    SessionChoiceKind, hydrate_existing_session_target, hydrated_session_from_rust_native,
-    session_choice_from_metadata,
+    SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
+    hydrated_session_from_rust_native, session_choice_from_metadata,
 };
 use crate::interactive::{CodingEventBridge, InteractiveEventBridge, TranscriptItem, UiEvent};
 use crate::protocol::session_runner::{SessionPromptOptions, SessionPromptResult};
@@ -712,15 +712,34 @@ fn handle_input_event<T: Terminal>(
     {
         let root = root_mut(tui, root_id)?;
         if let Some(target_id) = root.take_selected_tree_entry_id() {
-            if root.active_session_path.is_none()
-                && matches!(
-                    root.active_session.as_ref().map(|choice| choice.kind),
-                    Some(SessionChoiceKind::RustNative)
-                )
+            if let Some(choice) = root
+                .active_session
+                .as_ref()
+                .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
+                .cloned()
             {
-                root.transcript.push(TranscriptItem::system(
-                    "Rust-native tree navigation is not implemented yet.".to_string(),
-                ));
+                if choice.active_leaf_id.as_deref() == Some(target_id.as_str())
+                    || root.active_leaf_id.as_deref() == Some(target_id.as_str())
+                {
+                    root.transcript
+                        .push(TranscriptItem::system("Already at this point".to_string()));
+                } else {
+                    match fork_rust_native_choice(&choice, Some(&target_id)) {
+                        Ok(hydrated) => {
+                            root.apply_hydrated_session(
+                                hydrated,
+                                Some("Navigated to selected point".to_string()),
+                            );
+                            if let Some(active) = root.active_session.as_ref() {
+                                prompt_context.session_target =
+                                    Some(ResolvedSessionTarget::OpenTarget(active.id.clone()));
+                            }
+                        }
+                        Err(error) => root.transcript.push(TranscriptItem::system(format!(
+                            "Failed to navigate tree: {error}"
+                        ))),
+                    }
+                }
             } else if let Some(ref session_path) = root.active_session_path.clone() {
                 match JsonlSessionStorage::open(session_path) {
                     Ok(mut storage) => {

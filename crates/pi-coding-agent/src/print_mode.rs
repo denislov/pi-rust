@@ -169,10 +169,16 @@ async fn open_print_coding_session(
                 })?;
             Ok(CodingAgentSession::open(options.with_session_id(session_id)).await?)
         }
-        ResolvedSessionTarget::ForkTarget(_) => Err(CodingSessionError::UnsupportedCapability {
-            capability: "Rust-native session fork".into(),
+        ResolvedSessionTarget::ForkTarget(source) => {
+            let forked = CodingAgentSession::fork_session(
+                options.clone().with_session_id(source.clone()),
+                None,
+            )?;
+            Ok(
+                CodingAgentSession::open(options.with_session_id(forked.summary.session_id))
+                    .await?,
+            )
         }
-        .into()),
     }
 }
 

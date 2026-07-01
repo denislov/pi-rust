@@ -181,20 +181,6 @@ pub(super) fn hydrated_session_from_rust_native(
     }
 }
 
-pub(super) fn hydrate_rust_native_choice(
-    choice: &SessionChoice,
-) -> Result<HydratedSession, CliError> {
-    if choice.kind != SessionChoiceKind::RustNative {
-        return Err(CliError::SessionFailure(
-            "session choice is not Rust-native".into(),
-        ));
-    }
-    let options = rust_native_choice_options(choice);
-    CodingAgentSession::hydrate(options)
-        .map(hydrated_session_from_rust_native)
-        .map_err(CliError::from)
-}
-
 pub(super) fn clone_rust_native_choice(
     choice: &SessionChoice,
 ) -> Result<HydratedSession, CliError> {
@@ -233,7 +219,15 @@ fn rust_native_choice_options(choice: &SessionChoice) -> CodingAgentSessionOptio
     options
 }
 
-pub(super) fn rust_native_tree_from_hydrated_session(
+pub(super) fn rust_native_tree_for_choice(
+    choice: &SessionChoice,
+) -> Result<(Vec<SessionTreeNode>, Option<String>), CliError> {
+    let tree = CodingAgentSession::tree_view(rust_native_choice_options(choice))?;
+    Ok((tree.tree, tree.active_leaf_id))
+}
+
+#[cfg(test)]
+fn rust_native_tree_from_hydrated_session(
     hydrated: &HydratedSession,
 ) -> (Vec<SessionTreeNode>, Option<String>) {
     let timestamp = hydrated.choice.created_at.clone();

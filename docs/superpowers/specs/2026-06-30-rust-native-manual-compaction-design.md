@@ -186,6 +186,8 @@ interactive hydration behavior.
 
 ## Handoff
 
-After this slice, Phase 3 still needs Rust-native tree navigation and any
-print-mode branch target convergence. Phase 6 can later extract this operation
-into a named `ManualCompactionFlow` once the Phase 3 adapter path is proven.
+After this slice, print-mode branch target convergence and leaf-backed
+Rust-native tree navigation are covered by their dedicated slices. Phase 6 can
+later extract this operation into a named `ManualCompactionFlow` once the Phase 3
+adapter path is proven, and a later branch-DAG slice can add in-place branch
+switching beyond fork-on-select navigation.

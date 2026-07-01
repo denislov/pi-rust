@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use pi_agent_core::session::SessionTreeNode;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodingAgentSessionOptions {
     cwd: Option<PathBuf>,
@@ -70,6 +72,12 @@ pub(crate) struct CodingAgentSessionHydration {
     pub(crate) cwd: Option<String>,
     pub(crate) transcript: Vec<CodingAgentSessionTranscriptItem>,
     pub(crate) diagnostics: Vec<CodingAgentSessionDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CodingAgentSessionTree {
+    pub(crate) tree: Vec<SessionTreeNode>,
+    pub(crate) active_leaf_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

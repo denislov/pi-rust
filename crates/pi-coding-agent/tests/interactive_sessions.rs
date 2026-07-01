@@ -101,8 +101,45 @@ async fn interactive_tree_command_opens_created_rust_native_session() {
 
     let frame = result.rendered_lines.join("\n");
     assert!(frame.contains("Session Tree"), "{frame}");
-    assert!(frame.contains("tree prompt"), "{frame}");
-    assert!(frame.contains("assistant: tree answer"), "{frame}");
+    assert!(frame.contains("user: tree prompt"), "{frame}");
+    assert!(!frame.contains("assistant: tree answer"), "{frame}");
+}
+
+#[tokio::test]
+async fn interactive_tree_navigation_forks_to_selected_rust_native_leaf() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::with_call_queue(vec![
+        FauxProvider::text_call("first answer", StopReason::Stop),
+        FauxProvider::text_call("second answer", StopReason::Stop),
+    ]);
+
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("first prompt\r", "first answer"),
+            ("second prompt\r", "second answer"),
+            ("/tree\r\x1b[A\r", "session.forked"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let frame = result.rendered_lines.join("\n");
+    assert!(frame.contains("Navigated to selected point"), "{frame}");
+
+    let sessions = rust_session_dirs(temp.path());
+    assert_eq!(sessions.len(), 2);
+    let event_logs = sessions
+        .iter()
+        .map(|session| std::fs::read_to_string(session.join("events.jsonl")).unwrap())
+        .collect::<Vec<_>>();
+    let forked = event_logs
+        .iter()
+        .find(|events| events.contains(r#""kind":"session.forked""#))
+        .expect("forked session should record provenance");
+    assert!(forked.contains("first prompt"), "{forked}");
+    assert!(!forked.contains("second prompt"), "{forked}");
 }
 
 #[tokio::test]

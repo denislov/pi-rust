@@ -12,9 +12,8 @@ use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, clone_session_to_sibling, export_path_arg,
-    export_transcript as export_session_transcript, fork_rust_native_choice,
-    hydrate_rust_native_choice, resolve_command_path, rust_native_tree_from_hydrated_session,
-    session_choice_from_metadata,
+    export_transcript as export_session_transcript, fork_rust_native_choice, resolve_command_path,
+    rust_native_tree_for_choice, session_choice_from_metadata,
 };
 use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selector_arg};
 use crate::interactive::{Transcript, TranscriptItem};
@@ -389,9 +388,8 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
             .as_ref()
             .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
         {
-            match hydrate_rust_native_choice(choice) {
-                Ok(hydrated) => {
-                    let (tree, leaf_id) = rust_native_tree_from_hydrated_session(&hydrated);
+            match rust_native_tree_for_choice(choice) {
+                Ok((tree, leaf_id)) => {
                     if tree.is_empty() {
                         root.transcript
                             .push(TranscriptItem::system("No entries in session"));
