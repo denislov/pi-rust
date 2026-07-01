@@ -151,16 +151,16 @@ Guide: [Phase 5](superpowers/guides/2026-06-29-phase-5-plugin-kernel-guide.md)
 
 Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-guide.md)
 
-- [ ] Add `ManualCompactionFlow`.
-- [ ] Add explicit runtime vs session compaction boundaries.
+- [x] Add `ManualCompactionFlow`. P5 introduces `ManualCompactionOptions`, `ManualCompactionContext`, `ManualCompactionOutcome`, and a stable-node `ManualCompactionFlow`; `CodingAgentSession::compact()` now delegates summary selection/model execution/session-event recording to the flow and still commits/fails through `SessionService`.
+- [~] Add explicit runtime vs session compaction boundaries. Manual session compaction is now a `pi-coding-agent` workflow separate from `pi-agent-core` runtime compaction; adapter-facing `RuntimeCompactionCompleted` naming and active-leaf/new-leaf semantics remain follow-up compatibility/boundary cleanup.
 - [ ] Add `BranchSummaryFlow`.
 - [~] Add Rust-native `ExportFlow`. P1 export boundary slice now has session-owned Rust-native HTML export through `CodingAgentSession`/`SessionService`, public export view types, export capability reporting, and interactive adapter reuse for active Rust-native sessions; an explicit Flow graph wrapper remains follow-up work if export needs multi-step orchestration.
 - [ ] Add `PluginLoadFlow`.
 - [ ] Design and prototype subagent/supervisor flows.
 - [ ] Design and prototype self-healing edit workflow.
-- [ ] Add workflow capability integration.
-- [ ] Add workflow session event integration.
-- [ ] Add Phase 6 tests.
+- [~] Add workflow capability integration. Persistent-session compact capability already gates `ManualCompactionFlow`; broader workflow capability names and busy-state policy remain for later Phase 6 workflows.
+- [~] Add workflow session event integration. `ManualCompactionFlow` records `session.compaction.started/completed` through `TurnTransaction` and failure records `operation.failed`; active leaf/new leaf event taxonomy remains follow-up.
+- [~] Add Phase 6 tests. `manual_compaction_flow` unit coverage and session-level compact success/failure regression coverage are in place; branch summary, plugin load, subagent, self-healing edit, and export-flow wrappers still need tests when implemented.
 
 ## Cross-Cutting TODO
 
@@ -265,3 +265,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-07-01: P2 `pi-ai` scoped runtime/auth slice added. `AiClient` owns an isolated `ProviderRegistry`, uses injectable `ProviderAuthResolver` for API-key resolution, leaves global `register()`/`stream_model()` as compatibility wrappers over a global registry, and has public API coverage proving scoped providers do not leak into global state.
 - 2026-07-01: P3 `pi-tui` component downcast slice added. `Component` now inherits `Any`, `dyn Component` owns shared `as_any`/`as_any_mut` helpers, built-in components and the coding-agent root no longer need repeated downcast methods, and a regression test covers generic components without manual downcast implementations.
 - 2026-07-01: P4 `pi-agent-core` tool definition boundary slice added. `AgentTool::validate()` reports typed field errors for invalid tool definitions, `Agent::try_add_tool()` validates before mutating runtime tool state, the stable API facade exports `AgentToolDefinitionError`, and public API coverage verifies invalid tools do not enter provider context.
+- 2026-07-01: P5 `ManualCompactionFlow` slice added. Manual session compaction now has operation options/context/outcome, a stable-node Flow graph, session-event recording through the compaction transaction, `FlowService` execution helpers, and session-level success/failure regression coverage proving summary failures do not fold replay or move the active leaf.

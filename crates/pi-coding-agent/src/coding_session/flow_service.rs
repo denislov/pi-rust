@@ -3,6 +3,9 @@
 use pi_agent_core::flow::FlowOutcome;
 
 use super::CodingSessionError;
+use super::manual_compaction_flow::{
+    ManualCompactionContext, ManualCompactionFlow, ManualCompactionOutcome,
+};
 use super::prompt::{PromptTurnContext, PromptTurnOutcome};
 use super::prompt_flow::PromptTurnFlow;
 
@@ -16,6 +19,29 @@ impl FlowService {
 
     pub(crate) fn prompt_turn_flow(&self) -> Result<PromptTurnFlow, CodingSessionError> {
         PromptTurnFlow::new()
+    }
+
+    pub(crate) fn manual_compaction_flow(
+        &self,
+    ) -> Result<ManualCompactionFlow, CodingSessionError> {
+        ManualCompactionFlow::new()
+    }
+
+    pub(crate) async fn run_manual_compaction_graph(
+        &self,
+        ctx: &mut ManualCompactionContext,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        self.manual_compaction_flow()?.run(ctx).await
+    }
+
+    pub(crate) async fn run_manual_compaction(
+        &self,
+        ctx: &mut ManualCompactionContext,
+    ) -> Result<ManualCompactionOutcome, CodingSessionError> {
+        match self.run_manual_compaction_graph(ctx).await {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
     }
 
     pub(crate) async fn run_prompt_turn_graph(
@@ -120,5 +146,26 @@ mod tests {
         assert_eq!(outcome.last_node.as_str(), "emit_completion");
         assert!(context.final_message().is_some());
         registry::unregister(api);
+    }
+
+    #[test]
+    fn manual_compaction_flow_node_ids_are_stable() {
+        let service = FlowService::new();
+
+        service.manual_compaction_flow().unwrap();
+
+        assert_eq!(
+            crate::coding_session::manual_compaction_flow::ManualCompactionFlow::node_ids(),
+            &[
+                "start_compaction",
+                "load_session_replay",
+                "select_compaction_range",
+                "prepare_summary_context",
+                "run_summary_model",
+                "record_compaction_events",
+                "finalize_compaction",
+                "emit_completion",
+            ]
+        );
     }
 }

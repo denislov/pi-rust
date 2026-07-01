@@ -121,6 +121,13 @@ Tests:
 - replay can include summary event;
 - prompt after compaction uses compacted context if feature is enabled.
 
+Current P5 status:
+
+- `ManualCompactionFlow` now exists as a Rust-native session workflow with `ManualCompactionOptions`, `ManualCompactionContext`, `ManualCompactionOutcome`, stable node IDs, `FlowService` execution helpers, and session-owned `CodingAgentSession::compact()` integration.
+- The flow records `session.compaction.started` and `session.compaction.completed` through the manual-compaction transaction, then `SessionService` owns commit/fail finalization.
+- Failure coverage proves summary/model failure writes an operation failure without `session.compaction.completed`, without replay folding, and without changing the active leaf.
+- The P5 slice intentionally preserves existing active-leaf behavior. Producing a dedicated compaction leaf and splitting adapter-facing runtime/session compaction event names remain follow-up boundary cleanup.
+
 ## RuntimeCompactionFlow Boundary
 
 Runtime compaction remains agent-turn-local:
