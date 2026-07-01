@@ -4,16 +4,49 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
+use pi_agent_core::AgentMessage;
+use pi_agent_core::compaction::summarize::summarize;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use pi_ai::types::StreamOptions;
 
 use super::CodingSessionError;
-use super::prompt::PromptTurnTransaction;
+use super::prompt::{PromptTurnTransaction, RuntimeSnapshot};
+use super::runtime_service::RuntimeService;
 use super::session_log::event::{DiagnosticLevel, PersistedContentBlock, SessionEventEnvelope};
 use super::session_log::replay::{ReplayLeaf, SessionReplay, ToolCallStatus, TranscriptItem};
 
 const DEFAULT_ACTION: &str = "default";
 const NO_ABANDONED_BRANCH_REASON: &str =
     "No abandoned branch is available in the current Rust-native session view";
+const BRANCH_SUMMARY_PREAMBLE: &str = "The user explored a different conversation branch before returning here.\nSummary of that exploration:\n";
+const BRANCH_SUMMARY_INSTRUCTIONS: &str = r#"Create a structured summary of this conversation branch for context when returning later.
+
+Use this EXACT format:
+
+## Goal
+[What was the user trying to accomplish in this branch?]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Work that was started but not finished]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [What should happen next to continue this work]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages."#;
 
 pub(crate) const BRANCH_SUMMARY_NODE_IDS: &[&str] = &[
     "start_branch_summary",
@@ -81,11 +114,12 @@ enum BranchSummaryNodeKind {
     FinalizeBranchSummary,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct BranchSummaryOptions {
     source_leaf_id: Option<String>,
     target_leaf_id: Option<String>,
     custom_instructions: Option<String>,
+    runtime: Option<RuntimeSnapshot>,
 }
 
 impl BranchSummaryOptions {
@@ -106,6 +140,19 @@ impl BranchSummaryOptions {
     pub(crate) fn with_custom_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.custom_instructions = Some(instructions.into());
         self
+    }
+
+    pub(crate) fn with_runtime(mut self, runtime: RuntimeSnapshot) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    fn custom_instructions(&self) -> Option<&str> {
+        self.custom_instructions.as_deref()
+    }
+
+    fn runtime(&self) -> Option<&RuntimeSnapshot> {
+        self.runtime.as_ref()
     }
 }
 
@@ -130,6 +177,8 @@ pub(crate) struct BranchSummaryContext {
     selected_source_leaf_id: Option<String>,
     selected_target_leaf_id: Option<String>,
     selected_transcript: Vec<TranscriptItem>,
+    summary_messages: Vec<AgentMessage>,
+    stream_options: Option<StreamOptions>,
     outcome: Option<BranchSummaryOutcome>,
     failure_error: Option<CodingSessionError>,
 }
@@ -151,6 +200,8 @@ impl BranchSummaryContext {
             selected_source_leaf_id: None,
             selected_target_leaf_id: None,
             selected_transcript: Vec::new(),
+            summary_messages: Vec::new(),
+            stream_options: None,
             outcome: None,
             failure_error: None,
         }
@@ -256,6 +307,32 @@ impl BranchSummaryContext {
     }
 
     fn prepare_summary_prompt(&mut self) -> Result<(), CodingSessionError> {
+        if self.outcome.is_some() || !self.summary_messages.is_empty() {
+            return Ok(());
+        }
+        let Some(runtime) = self.options.runtime() else {
+            return Ok(());
+        };
+        let selected_replay = SessionReplay {
+            session_id: self.replay.session_id.clone(),
+            cwd: self.replay.cwd.clone(),
+            active_leaf_id: self.selected_source_leaf_id.clone(),
+            leaves: Vec::new(),
+            transcript: self.selected_transcript.clone(),
+            diagnostics: Vec::new(),
+        };
+        let service = RuntimeService::new();
+        let agent = service.build_agent_runtime(runtime)?;
+        service.hydrate_agent_runtime(&agent, runtime, &selected_replay);
+        let messages = agent.messages();
+        if messages.is_empty() {
+            self.outcome = Some(BranchSummaryOutcome::NoOp {
+                reason: NO_ABANDONED_BRANCH_REASON.into(),
+            });
+            return Ok(());
+        }
+        self.stream_options = agent.provider_request_snapshot().1;
+        self.summary_messages = messages;
         Ok(())
     }
 
@@ -275,7 +352,23 @@ impl BranchSummaryContext {
                 .ok_or_else(|| CodingSessionError::Session {
                     message: "branch summary target was not selected".into(),
                 })?;
-        let summary = render_transcript_summary(&self.selected_transcript);
+        let summary = if let Some(runtime) = self.options.runtime() {
+            let instructions = branch_summary_instructions(self.options.custom_instructions());
+            let summary = summarize(
+                runtime.model(),
+                &self.summary_messages,
+                Some(instructions.as_str()),
+                self.stream_options.clone(),
+                None,
+            )
+            .await
+            .map_err(|error| CodingSessionError::Provider {
+                message: error.to_string(),
+            })?;
+            format!("{BRANCH_SUMMARY_PREAMBLE}\n{}", summary.trim())
+        } else {
+            render_transcript_summary(&self.selected_transcript)
+        };
         self.outcome = Some(BranchSummaryOutcome::Created {
             summary,
             source_leaf_id,
@@ -476,10 +569,20 @@ fn transcript_for_leaves(
     selected
 }
 
+fn branch_summary_instructions(custom_instructions: Option<&str>) -> String {
+    match custom_instructions {
+        Some(custom) if !custom.trim().is_empty() => {
+            format!(
+                "{BRANCH_SUMMARY_INSTRUCTIONS}\n\nAdditional focus: {}",
+                custom.trim()
+            )
+        }
+        _ => BRANCH_SUMMARY_INSTRUCTIONS.to_owned(),
+    }
+}
+
 fn render_transcript_summary(items: &[TranscriptItem]) -> String {
-    let mut summary = String::from(
-        "The user explored a different conversation branch before returning here.\nSummary of that exploration:\n",
-    );
+    let mut summary = String::from(BRANCH_SUMMARY_PREAMBLE);
     for item in items {
         match item {
             TranscriptItem::UserInput { text, .. } if !text.trim().is_empty() => {
@@ -543,13 +646,103 @@ fn persisted_content_blocks_text(content: &[PersistedContentBlock]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use pi_agent_core::AgentResources;
+    use pi_ai::providers::faux::FauxProvider;
+    use pi_ai::registry;
+    use pi_ai::types::{Model, ModelCost, ModelInput};
+
     use super::*;
-    use crate::coding_session::CodingAgentSessionOptions;
     use crate::coding_session::session_log::event::{
         PersistedContentBlock, SessionEventData, SessionEventEnvelope,
     };
     use crate::coding_session::session_log::replay::{MessageStatus, ReplayLeaf, TranscriptItem};
     use crate::coding_session::session_service::SessionService;
+    use crate::coding_session::{CodingAgentSessionOptions, PromptTurnOptions};
+    use crate::prompt_options::PromptRunOptions;
+    use crate::runtime::{PromptInvocation, SessionRunOptions};
+
+    fn model(api: &str) -> Model {
+        Model {
+            id: "test-model".into(),
+            name: "Test Model".into(),
+            api: api.into(),
+            provider: "test".into(),
+            base_url: String::new(),
+            reasoning: false,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost::default(),
+            context_window: 0,
+            max_tokens: 0,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    fn branch_runtime(api: &str) -> crate::coding_session::prompt::RuntimeSnapshot {
+        PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: String::new(),
+            model: model(api),
+            api_key: None,
+            system_prompt: Some("system".into()),
+            max_turns: Some(2),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: Some(SessionRunOptions::disabled(".".into())),
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text(String::new()),
+        })
+        .runtime()
+        .cloned()
+        .unwrap()
+    }
+
+    fn branch_replay(session_id: &str) -> SessionReplay {
+        SessionReplay {
+            session_id: session_id.into(),
+            cwd: None,
+            active_leaf_id: Some("leaf_branch".into()),
+            leaves: vec![
+                ReplayLeaf {
+                    leaf_id: "leaf_root".into(),
+                    parent_leaf_id: None,
+                    transcript_start: 0,
+                    transcript_end: 1,
+                },
+                ReplayLeaf {
+                    leaf_id: "leaf_branch".into(),
+                    parent_leaf_id: Some("leaf_root".into()),
+                    transcript_start: 1,
+                    transcript_end: 3,
+                },
+            ],
+            transcript: vec![
+                TranscriptItem::UserInput {
+                    turn_id: "turn_root".into(),
+                    text: "root prompt".into(),
+                },
+                TranscriptItem::UserInput {
+                    turn_id: "turn_branch".into(),
+                    text: "branch prompt".into(),
+                },
+                TranscriptItem::AssistantMessage {
+                    message_id: "msg_branch".into(),
+                    content: vec![PersistedContentBlock::Text {
+                        text: "branch answer".into(),
+                    }],
+                    status: MessageStatus::Completed,
+                },
+            ],
+            diagnostics: Vec::new(),
+        }
+    }
 
     fn event_kinds(events: &[SessionEventEnvelope]) -> Vec<&'static str> {
         events
@@ -655,6 +848,51 @@ mod tests {
                 && target_leaf_id == "leaf_root"
         ));
         assert!(service.replay().unwrap().transcript.is_empty());
+    }
+
+    #[tokio::test]
+    async fn branch_summary_flow_uses_summary_model_when_runtime_is_available() {
+        let api = "branch-summary-flow-model-summary";
+        registry::register(
+            api,
+            Arc::new(FauxProvider::simple_text("model branch summary")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let service = SessionService::create(
+            &CodingAgentSessionOptions::new()
+                .with_session_id("sess_branch_summary_model")
+                .with_session_log_root(temp.path()),
+        )
+        .unwrap();
+        let transaction = service.begin_branch_summary_transaction();
+        let mut context = BranchSummaryContext::new(
+            BranchSummaryOptions::new()
+                .with_source_leaf_id("leaf_branch")
+                .with_target_leaf_id("leaf_root")
+                .with_runtime(branch_runtime(api))
+                .with_custom_instructions("keep branch decisions"),
+            branch_replay("sess_branch_summary_model"),
+            transaction,
+        );
+        let flow = BranchSummaryFlow::new().unwrap();
+
+        flow.run(&mut context).await.unwrap();
+
+        let BranchSummaryOutcome::Created { summary, .. } =
+            context.outcome().expect("branch summary outcome")
+        else {
+            panic!("expected created branch summary");
+        };
+        assert!(summary.contains("model branch summary"), "{summary}");
+        assert!(!summary.contains("branch prompt"), "{summary}");
+        assert!(!summary.contains("branch answer"), "{summary}");
+        assert!(matches!(
+            context.pending_session_events().last().map(|event| &event.data),
+            Some(SessionEventData::BranchSummaryCreated { summary, .. })
+                if summary.contains("model branch summary")
+                    && !summary.contains("branch prompt")
+        ));
+        registry::unregister(api);
     }
 
     #[tokio::test]

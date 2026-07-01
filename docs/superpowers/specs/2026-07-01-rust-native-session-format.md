@@ -159,7 +159,7 @@ Current product behavior depends on these invariants:
 - Replay records each committed prompt leaf with its parent leaf plus transcript start/end range. The parent is the active leaf at commit time.
 - `active_leaf.changed` updates replay's active leaf and is used by tree view and branch-summary range selection to model same-session branch returns.
 - Failed or aborted operations must not advance the active leaf.
-- Fork/clone/tree/compact/branch-summary actions use `SessionService` replay and leaf metadata instead of legacy JSONL assumptions.
+- Fork/clone/tree/compact/branch-summary actions use `SessionService` replay and leaf metadata instead of legacy JSONL assumptions; branch-summary provider runs summarize the selected abandoned leaf range through the configured runtime model.
 - Product paths should reject or ignore legacy TypeScript JSONL rather than silently importing it into this schema.
 
 ## Versioning Guidance
