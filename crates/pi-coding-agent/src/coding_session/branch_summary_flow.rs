@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -7,8 +8,8 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 
 use super::CodingSessionError;
 use super::prompt::PromptTurnTransaction;
-use super::session_log::event::{DiagnosticLevel, SessionEventEnvelope};
-use super::session_log::replay::SessionReplay;
+use super::session_log::event::{DiagnosticLevel, PersistedContentBlock, SessionEventEnvelope};
+use super::session_log::replay::{ReplayLeaf, SessionReplay, ToolCallStatus, TranscriptItem};
 
 const DEFAULT_ACTION: &str = "default";
 const NO_ABANDONED_BRANCH_REASON: &str =
@@ -126,6 +127,9 @@ pub(crate) struct BranchSummaryContext {
     turn_id: String,
     replay: SessionReplay,
     transaction: Option<PromptTurnTransaction>,
+    selected_source_leaf_id: Option<String>,
+    selected_target_leaf_id: Option<String>,
+    selected_transcript: Vec<TranscriptItem>,
     outcome: Option<BranchSummaryOutcome>,
     failure_error: Option<CodingSessionError>,
 }
@@ -144,6 +148,9 @@ impl BranchSummaryContext {
             turn_id,
             replay,
             transaction: Some(transaction),
+            selected_source_leaf_id: None,
+            selected_target_leaf_id: None,
+            selected_transcript: Vec::new(),
             outcome: None,
             failure_error: None,
         }
@@ -209,11 +216,42 @@ impl BranchSummaryContext {
     }
 
     fn select_abandoned_range(&mut self) -> Result<(), CodingSessionError> {
-        if self.outcome.is_none() {
+        if self.outcome.is_some() || !self.selected_transcript.is_empty() {
+            return Ok(());
+        }
+        let Some(source_leaf_id) = self
+            .options
+            .source_leaf_id
+            .as_deref()
+            .or(self.replay.active_leaf_id.as_deref())
+        else {
             self.outcome = Some(BranchSummaryOutcome::NoOp {
                 reason: NO_ABANDONED_BRANCH_REASON.into(),
             });
+            return Ok(());
+        };
+        let Some(target_leaf_id) = self.options.target_leaf_id.as_deref() else {
+            self.outcome = Some(BranchSummaryOutcome::NoOp {
+                reason: NO_ABANDONED_BRANCH_REASON.into(),
+            });
+            return Ok(());
+        };
+        let abandoned = abandoned_leaf_path(&self.replay.leaves, source_leaf_id, target_leaf_id)?;
+        if abandoned.is_empty() {
+            self.outcome = Some(BranchSummaryOutcome::NoOp {
+                reason: NO_ABANDONED_BRANCH_REASON.into(),
+            });
+            return Ok(());
         }
+        self.selected_transcript = transcript_for_leaves(&self.replay.transcript, &abandoned);
+        if self.selected_transcript.is_empty() {
+            self.outcome = Some(BranchSummaryOutcome::NoOp {
+                reason: NO_ABANDONED_BRANCH_REASON.into(),
+            });
+            return Ok(());
+        }
+        self.selected_source_leaf_id = Some(source_leaf_id.to_owned());
+        self.selected_target_leaf_id = Some(target_leaf_id.to_owned());
         Ok(())
     }
 
@@ -222,6 +260,27 @@ impl BranchSummaryContext {
     }
 
     async fn run_summary_model(&mut self) -> Result<(), CodingSessionError> {
+        if self.outcome.is_some() {
+            return Ok(());
+        }
+        let source_leaf_id =
+            self.selected_source_leaf_id
+                .clone()
+                .ok_or_else(|| CodingSessionError::Session {
+                    message: "branch summary range was not selected".into(),
+                })?;
+        let target_leaf_id =
+            self.selected_target_leaf_id
+                .clone()
+                .ok_or_else(|| CodingSessionError::Session {
+                    message: "branch summary target was not selected".into(),
+                })?;
+        let summary = render_transcript_summary(&self.selected_transcript);
+        self.outcome = Some(BranchSummaryOutcome::Created {
+            summary,
+            source_leaf_id,
+            target_leaf_id,
+        });
         Ok(())
     }
 
@@ -350,11 +409,146 @@ fn flow_error(error: FlowError) -> CodingSessionError {
     }
 }
 
+fn abandoned_leaf_path(
+    leaves: &[ReplayLeaf],
+    source_leaf_id: &str,
+    target_leaf_id: &str,
+) -> Result<Vec<ReplayLeaf>, CodingSessionError> {
+    let by_id = leaves
+        .iter()
+        .map(|leaf| (leaf.leaf_id.as_str(), leaf))
+        .collect::<HashMap<_, _>>();
+    let source_path = leaf_path_to_root(source_leaf_id, &by_id)?;
+    let target_path = leaf_path_to_root(target_leaf_id, &by_id)?;
+    let target_ids = target_path
+        .iter()
+        .map(|leaf| leaf.leaf_id.as_str())
+        .collect::<HashSet<_>>();
+    let mut abandoned = Vec::new();
+    for leaf in source_path {
+        if target_ids.contains(leaf.leaf_id.as_str()) {
+            break;
+        }
+        abandoned.push(leaf.clone());
+    }
+    abandoned.reverse();
+    Ok(abandoned)
+}
+
+fn leaf_path_to_root<'a>(
+    leaf_id: &str,
+    by_id: &HashMap<&str, &'a ReplayLeaf>,
+) -> Result<Vec<&'a ReplayLeaf>, CodingSessionError> {
+    let mut current = Some(leaf_id);
+    let mut path = Vec::new();
+    let mut visited = HashSet::new();
+    while let Some(leaf_id) = current {
+        if !visited.insert(leaf_id.to_owned()) {
+            return Err(CodingSessionError::Session {
+                message: format!("cycle detected in replay leaf ancestry at id: {leaf_id}"),
+            });
+        }
+        let leaf = by_id
+            .get(leaf_id)
+            .copied()
+            .ok_or_else(|| CodingSessionError::Session {
+                message: format!("leaf id not found in replay: {leaf_id}"),
+            })?;
+        path.push(leaf);
+        current = leaf.parent_leaf_id.as_deref();
+    }
+    Ok(path)
+}
+
+fn transcript_for_leaves(
+    transcript: &[TranscriptItem],
+    leaves: &[ReplayLeaf],
+) -> Vec<TranscriptItem> {
+    let mut selected = Vec::new();
+    for leaf in leaves {
+        let start = leaf.transcript_start.min(transcript.len());
+        let end = leaf.transcript_end.min(transcript.len());
+        if start >= end {
+            continue;
+        }
+        selected.extend(transcript[start..end].iter().cloned());
+    }
+    selected
+}
+
+fn render_transcript_summary(items: &[TranscriptItem]) -> String {
+    let mut summary = String::from(
+        "The user explored a different conversation branch before returning here.\nSummary of that exploration:\n",
+    );
+    for item in items {
+        match item {
+            TranscriptItem::UserInput { text, .. } if !text.trim().is_empty() => {
+                summary.push_str("\nUser:\n");
+                summary.push_str(text.trim());
+                summary.push('\n');
+            }
+            TranscriptItem::AssistantMessage { content, .. } => {
+                let text = persisted_content_blocks_text(content);
+                if !text.trim().is_empty() {
+                    summary.push_str("\nAssistant:\n");
+                    summary.push_str(text.trim());
+                    summary.push('\n');
+                }
+            }
+            TranscriptItem::ToolCall {
+                name,
+                status,
+                summary: tool_summary,
+                ..
+            } if !tool_summary.trim().is_empty() => {
+                summary.push_str("\nTool ");
+                summary.push_str(name);
+                if matches!(status, ToolCallStatus::Failed) {
+                    summary.push_str(" failed");
+                }
+                summary.push_str(":\n");
+                summary.push_str(tool_summary.trim());
+                summary.push('\n');
+            }
+            TranscriptItem::CompactionSummary { summary: text, .. }
+            | TranscriptItem::BranchSummary { summary: text, .. }
+                if !text.trim().is_empty() =>
+            {
+                summary.push_str("\nPrior summary:\n");
+                summary.push_str(text.trim());
+                summary.push('\n');
+            }
+            TranscriptItem::Diagnostic { message, .. } if !message.trim().is_empty() => {
+                summary.push_str("\nDiagnostic:\n");
+                summary.push_str(message.trim());
+                summary.push('\n');
+            }
+            _ => {}
+        }
+    }
+    summary
+}
+
+fn persisted_content_blocks_text(content: &[PersistedContentBlock]) -> String {
+    content
+        .iter()
+        .map(|block| match block {
+            PersistedContentBlock::Text { text } => text.clone(),
+            PersistedContentBlock::Thinking { thinking, .. } => thinking.clone(),
+            PersistedContentBlock::Image { mime_type, .. } => format!("[image:{mime_type}]"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::coding_session::CodingAgentSessionOptions;
-    use crate::coding_session::session_log::event::{SessionEventData, SessionEventEnvelope};
+    use crate::coding_session::session_log::event::{
+        PersistedContentBlock, SessionEventData, SessionEventEnvelope,
+    };
+    use crate::coding_session::session_log::replay::{MessageStatus, ReplayLeaf, TranscriptItem};
     use crate::coding_session::session_service::SessionService;
 
     fn event_kinds(events: &[SessionEventEnvelope]) -> Vec<&'static str> {
@@ -364,9 +558,103 @@ mod tests {
                 SessionEventData::OperationStarted { .. } => "operation.started",
                 SessionEventData::TurnStarted {} => "turn.started",
                 SessionEventData::DiagnosticEmitted { .. } => "diagnostic.emitted",
+                SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
                 _ => "other",
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn branch_summary_flow_records_summary_for_selected_abandoned_range() {
+        let temp = tempfile::tempdir().unwrap();
+        let service = SessionService::create(
+            &CodingAgentSessionOptions::new()
+                .with_session_id("sess_branch_summary_selected")
+                .with_session_log_root(temp.path()),
+        )
+        .unwrap();
+        let replay = SessionReplay {
+            session_id: "sess_branch_summary_selected".into(),
+            cwd: None,
+            active_leaf_id: Some("leaf_branch".into()),
+            leaves: vec![
+                ReplayLeaf {
+                    leaf_id: "leaf_root".into(),
+                    parent_leaf_id: None,
+                    transcript_start: 0,
+                    transcript_end: 1,
+                },
+                ReplayLeaf {
+                    leaf_id: "leaf_branch".into(),
+                    parent_leaf_id: Some("leaf_root".into()),
+                    transcript_start: 1,
+                    transcript_end: 3,
+                },
+            ],
+            transcript: vec![
+                TranscriptItem::UserInput {
+                    turn_id: "turn_root".into(),
+                    text: "root prompt".into(),
+                },
+                TranscriptItem::UserInput {
+                    turn_id: "turn_branch".into(),
+                    text: "branch prompt".into(),
+                },
+                TranscriptItem::AssistantMessage {
+                    message_id: "msg_branch".into(),
+                    content: vec![PersistedContentBlock::Text {
+                        text: "branch answer".into(),
+                    }],
+                    status: MessageStatus::Completed,
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+        let transaction = service.begin_branch_summary_transaction();
+        let mut context = BranchSummaryContext::new(
+            BranchSummaryOptions::new()
+                .with_source_leaf_id("leaf_branch")
+                .with_target_leaf_id("leaf_root"),
+            replay,
+            transaction,
+        );
+        let flow = BranchSummaryFlow::new().unwrap();
+
+        let outcome = flow.run(&mut context).await.unwrap();
+
+        assert_eq!(outcome.last_node.as_str(), "finalize_branch_summary");
+        let BranchSummaryOutcome::Created {
+            summary,
+            source_leaf_id,
+            target_leaf_id,
+        } = context.outcome().expect("branch summary outcome")
+        else {
+            panic!("expected created branch summary");
+        };
+        assert_eq!(source_leaf_id, "leaf_branch");
+        assert_eq!(target_leaf_id, "leaf_root");
+        assert!(summary.contains("branch prompt"), "{summary}");
+        assert!(summary.contains("branch answer"), "{summary}");
+        assert!(!summary.contains("root prompt"), "{summary}");
+        assert_eq!(
+            event_kinds(context.pending_session_events()),
+            vec![
+                "operation.started",
+                "turn.started",
+                "branch.summary.created"
+            ]
+        );
+        assert!(matches!(
+            context.pending_session_events().last().map(|event| &event.data),
+            Some(SessionEventData::BranchSummaryCreated {
+                summary,
+                source_leaf_id,
+                target_leaf_id,
+            }) if summary.contains("branch prompt")
+                && source_leaf_id == "leaf_branch"
+                && target_leaf_id == "leaf_root"
+        ));
+        assert!(service.replay().unwrap().transcript.is_empty());
     }
 
     #[tokio::test]

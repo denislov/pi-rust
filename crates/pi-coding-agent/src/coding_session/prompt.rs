@@ -579,6 +579,7 @@ impl PromptTurnContext {
             session_id: runtime_id,
             cwd: None,
             active_leaf_id: None,
+            leaves: Vec::new(),
             transcript,
             diagnostics: Vec::new(),
         });

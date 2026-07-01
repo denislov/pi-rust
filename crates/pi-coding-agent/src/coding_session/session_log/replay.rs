@@ -10,8 +10,17 @@ pub(crate) struct SessionReplay {
     pub(crate) session_id: String,
     pub(crate) cwd: Option<String>,
     pub(crate) active_leaf_id: Option<String>,
+    pub(crate) leaves: Vec<ReplayLeaf>,
     pub(crate) transcript: Vec<TranscriptItem>,
     pub(crate) diagnostics: Vec<ReplayDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReplayLeaf {
+    pub(crate) leaf_id: String,
+    pub(crate) parent_leaf_id: Option<String>,
+    pub(crate) transcript_start: usize,
+    pub(crate) transcript_end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,9 +84,12 @@ struct ReplayBuilder {
     cwd: Option<String>,
     active_leaf_id: Option<String>,
     transcript: Vec<TranscriptItem>,
+    leaves: Vec<ReplayLeaf>,
     diagnostics: Vec<ReplayDiagnostic>,
     message_indices: HashMap<String, usize>,
     tool_indices: HashMap<String, usize>,
+    operation_kinds: HashMap<String, super::event::OperationKind>,
+    operation_transcript_starts: HashMap<String, usize>,
 }
 
 pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
@@ -105,6 +117,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         session_id: builder.session_id.unwrap_or_default(),
         cwd: builder.cwd,
         active_leaf_id: builder.active_leaf_id,
+        leaves: builder.leaves,
         transcript: builder.transcript,
         diagnostics: builder.diagnostics,
     }
@@ -157,8 +170,15 @@ impl ReplayBuilder {
             SessionEventData::SessionCreated { cwd } => {
                 self.cwd = cwd.clone();
             }
-            SessionEventData::OperationStarted { .. }
-            | SessionEventData::SessionCloned { .. }
+            SessionEventData::OperationStarted { operation } => {
+                if let Some(operation_id) = event.operation_id.as_deref() {
+                    self.operation_kinds
+                        .insert(operation_id.to_owned(), operation.clone());
+                    self.operation_transcript_starts
+                        .insert(operation_id.to_owned(), self.transcript.len());
+                }
+            }
+            SessionEventData::SessionCloned { .. }
             | SessionEventData::SessionForked { .. }
             | SessionEventData::SessionCompactionStarted { .. }
             | SessionEventData::TurnStarted {}
@@ -183,6 +203,7 @@ impl ReplayBuilder {
             }
             SessionEventData::OperationCommitted { new_leaf_id } => {
                 if let Some(new_leaf_id) = new_leaf_id {
+                    self.record_prompt_leaf(event, new_leaf_id);
                     self.active_leaf_id = Some(new_leaf_id.clone());
                 }
             }
@@ -329,6 +350,26 @@ impl ReplayBuilder {
                 self.active_leaf_id = Some(leaf_id.clone());
             }
         }
+    }
+
+    fn record_prompt_leaf(&mut self, event: &SessionEventEnvelope, leaf_id: &str) {
+        let Some(operation_id) = event.operation_id.as_deref() else {
+            return;
+        };
+        if self.operation_kinds.get(operation_id) != Some(&super::event::OperationKind::Prompt) {
+            return;
+        }
+        let transcript_start = self
+            .operation_transcript_starts
+            .get(operation_id)
+            .copied()
+            .unwrap_or(self.transcript.len());
+        self.leaves.push(ReplayLeaf {
+            leaf_id: leaf_id.to_owned(),
+            parent_leaf_id: self.active_leaf_id.clone(),
+            transcript_start,
+            transcript_end: self.transcript.len(),
+        });
     }
 
     fn tool_mut(&mut self, tool_call_id: &str) -> Option<&mut String> {
@@ -781,6 +822,125 @@ mod tests {
         let replay = fold_events(&events);
 
         assert_eq!(replay.active_leaf_id.as_deref(), Some("leaf_global"));
+    }
+
+    #[test]
+    fn committed_prompt_operations_record_leaf_transcript_ranges() {
+        let events = vec![
+            event(
+                "evt_1",
+                Some("op_root"),
+                Some("turn_root"),
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            event(
+                "evt_2",
+                Some("op_root"),
+                Some("turn_root"),
+                SessionEventData::TurnInputRecorded {
+                    content: vec![PersistedContentBlock::Text {
+                        text: "root prompt".into(),
+                    }],
+                },
+            ),
+            event(
+                "evt_3",
+                Some("op_root"),
+                Some("turn_root"),
+                SessionEventData::OperationCommitted {
+                    new_leaf_id: Some("leaf_root".into()),
+                },
+            ),
+            event(
+                "evt_4",
+                Some("op_branch"),
+                Some("turn_branch"),
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            event(
+                "evt_5",
+                Some("op_branch"),
+                Some("turn_branch"),
+                SessionEventData::TurnInputRecorded {
+                    content: vec![PersistedContentBlock::Text {
+                        text: "branch prompt".into(),
+                    }],
+                },
+            ),
+            event(
+                "evt_6",
+                Some("op_branch"),
+                Some("turn_branch"),
+                SessionEventData::OperationCommitted {
+                    new_leaf_id: Some("leaf_branch".into()),
+                },
+            ),
+            event(
+                "evt_7",
+                None,
+                None,
+                SessionEventData::ActiveLeafChanged {
+                    leaf_id: "leaf_root".into(),
+                },
+            ),
+            event(
+                "evt_8",
+                Some("op_alt"),
+                Some("turn_alt"),
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            event(
+                "evt_9",
+                Some("op_alt"),
+                Some("turn_alt"),
+                SessionEventData::TurnInputRecorded {
+                    content: vec![PersistedContentBlock::Text {
+                        text: "alternate prompt".into(),
+                    }],
+                },
+            ),
+            event(
+                "evt_10",
+                Some("op_alt"),
+                Some("turn_alt"),
+                SessionEventData::OperationCommitted {
+                    new_leaf_id: Some("leaf_alt".into()),
+                },
+            ),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(
+            replay.leaves,
+            vec![
+                ReplayLeaf {
+                    leaf_id: "leaf_root".into(),
+                    parent_leaf_id: None,
+                    transcript_start: 0,
+                    transcript_end: 1,
+                },
+                ReplayLeaf {
+                    leaf_id: "leaf_branch".into(),
+                    parent_leaf_id: Some("leaf_root".into()),
+                    transcript_start: 1,
+                    transcript_end: 2,
+                },
+                ReplayLeaf {
+                    leaf_id: "leaf_alt".into(),
+                    parent_leaf_id: Some("leaf_root".into()),
+                    transcript_start: 2,
+                    transcript_end: 3,
+                },
+            ]
+        );
+        assert_eq!(replay.active_leaf_id.as_deref(), Some("leaf_alt"));
     }
 
     #[test]

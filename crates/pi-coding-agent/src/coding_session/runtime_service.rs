@@ -362,6 +362,7 @@ mod tests {
             session_id: "sess_replay".into(),
             cwd: None,
             active_leaf_id: None,
+            leaves: Vec::new(),
             transcript: vec![
                 TranscriptItem::CompactionSummary {
                     summary: "summary of earlier work".into(),

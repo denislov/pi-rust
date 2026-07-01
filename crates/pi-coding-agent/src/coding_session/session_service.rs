@@ -564,9 +564,13 @@ fn build_leaf_tree(
     let mut operation_kinds = HashMap::new();
     let mut operation_inputs = HashMap::new();
     let mut leaves = Vec::new();
-    let mut previous_leaf_id: Option<String> = None;
+    let mut current_parent_leaf_id: Option<String> = None;
 
     for event in events {
+        if let SessionEventData::ActiveLeafChanged { leaf_id } = &event.data {
+            current_parent_leaf_id = Some(leaf_id.clone());
+            continue;
+        }
         let Some(operation_id) = event.operation_id.as_deref() else {
             continue;
         };
@@ -584,7 +588,7 @@ fn build_leaf_tree(
             } if operation_kinds.get(operation_id) == Some(&OperationKind::Prompt) => {
                 leaves.push(LeafTreeEntry {
                     leaf_id: leaf_id.clone(),
-                    parent_leaf_id: previous_leaf_id.clone(),
+                    parent_leaf_id: current_parent_leaf_id.clone(),
                     timestamp: event.created_at.clone(),
                     text: operation_inputs
                         .get(operation_id)
@@ -592,14 +596,14 @@ fn build_leaf_tree(
                         .cloned()
                         .unwrap_or_else(|| leaf_id.clone()),
                 });
-                previous_leaf_id = Some(leaf_id.clone());
+                current_parent_leaf_id = Some(leaf_id.clone());
             }
             _ => {}
         }
     }
 
     CodingAgentSessionTree {
-        tree: linear_leaf_tree(leaves),
+        tree: leaf_tree(leaves),
         active_leaf_id,
     }
 }
@@ -617,32 +621,59 @@ fn text_from_persisted_content(content: &[PersistedContentBlock]) -> String {
         .join("\n")
 }
 
-fn linear_leaf_tree(leaves: Vec<LeafTreeEntry>) -> Vec<SessionTreeNode> {
-    let mut child: Option<SessionTreeNode> = None;
-    for leaf in leaves.into_iter().rev() {
-        let mut node = SessionTreeNode {
-            entry: SessionEntry::message(
-                leaf.leaf_id,
-                leaf.parent_leaf_id,
-                leaf.timestamp,
-                StoredAgentMessage::User {
-                    content: vec![ContentBlock::Text {
-                        text: leaf.text,
-                        text_signature: None,
-                    }],
-                    timestamp: 0,
-                },
-            ),
-            children: Vec::new(),
-            label: None,
-            label_timestamp: None,
-        };
-        if let Some(child) = child {
-            node.children.push(child);
+fn leaf_tree(leaves: Vec<LeafTreeEntry>) -> Vec<SessionTreeNode> {
+    let known_leaf_ids = leaves
+        .iter()
+        .map(|leaf| leaf.leaf_id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let mut children_by_parent: HashMap<Option<String>, Vec<LeafTreeEntry>> = HashMap::new();
+    for mut leaf in leaves {
+        if leaf
+            .parent_leaf_id
+            .as_ref()
+            .is_some_and(|parent| !known_leaf_ids.contains(parent))
+        {
+            leaf.parent_leaf_id = None;
         }
-        child = Some(node);
+        children_by_parent
+            .entry(leaf.parent_leaf_id.clone())
+            .or_default()
+            .push(leaf);
     }
-    child.into_iter().collect()
+    build_leaf_children(None, &mut children_by_parent)
+}
+
+fn build_leaf_children(
+    parent_leaf_id: Option<&str>,
+    children_by_parent: &mut HashMap<Option<String>, Vec<LeafTreeEntry>>,
+) -> Vec<SessionTreeNode> {
+    let key = parent_leaf_id.map(str::to_owned);
+    let leaves = children_by_parent.remove(&key).unwrap_or_default();
+    leaves
+        .into_iter()
+        .map(|leaf| {
+            let leaf_id = leaf.leaf_id.clone();
+            let mut node = SessionTreeNode {
+                entry: SessionEntry::message(
+                    leaf.leaf_id,
+                    leaf.parent_leaf_id,
+                    leaf.timestamp,
+                    StoredAgentMessage::User {
+                        content: vec![ContentBlock::Text {
+                            text: leaf.text,
+                            text_signature: None,
+                        }],
+                        timestamp: 0,
+                    },
+                ),
+                children: Vec::new(),
+                label: None,
+                label_timestamp: None,
+            };
+            node.children = build_leaf_children(Some(&leaf_id), children_by_parent);
+            node
+        })
+        .collect()
 }
 
 fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessionTranscriptItem {
@@ -1196,6 +1227,48 @@ mod tests {
         );
         assert!(finalized.session_id.is_none());
         assert!(finalized.leaf_id.is_none());
+    }
+
+    #[test]
+    fn tree_view_uses_active_leaf_changes_as_prompt_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_tree_branch")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let root_leaf = record_prompt(&mut service, "root prompt");
+        let branch_leaf = record_prompt(&mut service, "branch prompt");
+        let switch_event = SessionEventEnvelope::new(
+            service.session_id().to_owned(),
+            "evt_switch_root",
+            "2026-06-29T00:00:00Z",
+            SessionEventData::ActiveLeafChanged {
+                leaf_id: root_leaf.clone(),
+            },
+        );
+        service
+            .store
+            .append_events(&service.handle, &[switch_event])
+            .unwrap();
+        let alternate_leaf = record_prompt(&mut service, "alternate prompt");
+
+        let tree = SessionService::tree_view(&options).unwrap();
+
+        assert_eq!(
+            tree.active_leaf_id.as_deref(),
+            Some(alternate_leaf.as_str())
+        );
+        assert_eq!(tree.tree.len(), 1);
+        assert_eq!(tree.tree[0].entry.id, root_leaf);
+        let child_ids = tree.tree[0]
+            .children
+            .iter()
+            .map(|child| child.entry.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            child_ids,
+            vec![branch_leaf.as_str(), alternate_leaf.as_str()]
+        );
     }
 
     #[test]

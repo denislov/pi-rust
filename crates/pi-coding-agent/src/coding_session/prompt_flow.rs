@@ -548,6 +548,7 @@ mod tests {
             session_id: handle.manifest().session_id.clone(),
             cwd: None,
             active_leaf_id: None,
+            leaves: Vec::new(),
             transcript: Vec::new(),
             diagnostics: Vec::new(),
         });
@@ -1280,6 +1281,7 @@ mod tests {
             session_id: "sess_replay".into(),
             cwd: None,
             active_leaf_id: None,
+            leaves: Vec::new(),
             transcript: vec![
                 TranscriptItem::UserInput {
                     turn_id: "turn_old".into(),

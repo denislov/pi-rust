@@ -156,8 +156,10 @@ Current product behavior depends on these invariants:
 
 - Completed assistant/user/tool content is restored from committed events, not from live UI deltas.
 - Successful persistent prompt operations commit a new active leaf through `operation.committed { new_leaf_id }` and update `session.json.active_leaf_id`.
+- Replay records each committed prompt leaf with its parent leaf plus transcript start/end range. The parent is the active leaf at commit time.
+- `active_leaf.changed` updates replay's active leaf and is used by tree view and branch-summary range selection to model same-session branch returns.
 - Failed or aborted operations must not advance the active leaf.
-- Fork/clone/tree/compact actions use `SessionService` replay and leaf metadata instead of legacy JSONL assumptions.
+- Fork/clone/tree/compact/branch-summary actions use `SessionService` replay and leaf metadata instead of legacy JSONL assumptions.
 - Product paths should reject or ignore legacy TypeScript JSONL rather than silently importing it into this schema.
 
 ## Versioning Guidance

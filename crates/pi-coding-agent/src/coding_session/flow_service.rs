@@ -158,6 +158,7 @@ mod tests {
             session_id: "sess_flow_service".into(),
             cwd: None,
             active_leaf_id: None,
+            leaves: Vec::new(),
             transcript: Vec::new(),
             diagnostics: Vec::new(),
         });
