@@ -1,11 +1,24 @@
 mod common;
 
-use pi_agent_core::agent_turn_flow::{AgentTurnContext, PrepareContextNode};
+use pi_agent_core::agent_turn_flow::{
+    AgentTurnContext, MaybeCompactRuntimeContextNode, PrepareContextNode,
+};
 use pi_agent_core::flow::Flow;
 use pi_agent_core::{
-    Agent, AgentConfig, AgentMessage, AgentResources, AgentTool, PromptTemplate, Skill,
+    Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool, CompactionConfig,
+    CompactionSettings, PromptTemplate, Skill,
 };
-use pi_ai::types::StreamOptions;
+use pi_ai::providers::faux::FauxProvider;
+use pi_ai::registry;
+use pi_ai::types::{StopReason, StreamOptions};
+use std::sync::Arc;
+
+fn user_msg(id: &str, text: &str) -> AgentMessage {
+    AgentMessage::UserText {
+        message_id: id.into(),
+        text: text.into(),
+    }
+}
 
 #[test]
 fn agent_turn_context_snapshots_agent_state_without_draining_queues() {
@@ -30,10 +43,7 @@ fn agent_turn_context_snapshots_agent_state_without_draining_queues() {
     config.resources = resources;
 
     let agent = Agent::new(config);
-    agent.add_message(AgentMessage::UserText {
-        message_id: "user_0".into(),
-        text: "hello".into(),
-    });
+    agent.add_message(user_msg("user_0", "hello"));
     agent.add_tool(AgentTool::new_text(
         "echo",
         "echo input",
@@ -86,10 +96,7 @@ async fn prepare_context_node_builds_provider_request_from_context_snapshot() {
     });
 
     let agent = Agent::new(config);
-    agent.add_message(AgentMessage::UserText {
-        message_id: "user_0".into(),
-        text: "hello".into(),
-    });
+    agent.add_message(user_msg("user_0", "hello"));
     agent.add_tool(AgentTool::new_text(
         "echo",
         "echo input",
@@ -123,4 +130,66 @@ async fn prepare_context_node_builds_provider_request_from_context_snapshot() {
         expected_options.max_tokens
     );
     assert!(request.stream_options.cancel.is_some());
+}
+
+#[tokio::test]
+async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
+    let api = "agent-turn-flow-runtime-compaction";
+    let mut config = AgentConfig::new(common::faux_model_with_window(api, 100));
+    config.compaction = Some(CompactionConfig {
+        settings: CompactionSettings {
+            enabled: true,
+            reserve_tokens: 0,
+            keep_recent_tokens: 8,
+        },
+        custom_instructions: None,
+    });
+
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("old_1", &"old context ".repeat(40)));
+    agent.add_message(user_msg("old_2", &"more old context ".repeat(40)));
+
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("summary of old context", StopReason::Stop),
+        ])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("maybe_compact_runtime_context").unwrap();
+    flow.add_node(
+        "maybe_compact_runtime_context",
+        MaybeCompactRuntimeContextNode,
+    )
+    .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "maybe_compact_runtime_context");
+    assert!(matches!(
+        context.messages.first(),
+        Some(AgentMessage::CompactionSummary { summary, .. })
+            if summary == "summary of old context"
+    ));
+    assert!(context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::UserText { message_id, .. } if message_id == "old_2"
+    )));
+    assert_eq!(
+        context.runtime_compaction.summary.as_deref(),
+        Some("summary of old context")
+    );
+    assert_eq!(
+        context.runtime_compaction.first_kept_message_id.as_deref(),
+        Some("old_2")
+    );
+    assert!(context.runtime_compaction.tokens_before.unwrap() > 0);
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::SessionCompacted { summary, first_kept_message_id, .. }
+            if summary == "summary of old context" && first_kept_message_id == "old_2"
+    )));
+
+    registry::unregister(api);
 }
