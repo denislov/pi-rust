@@ -350,6 +350,19 @@ pub(super) fn default_export_path(cwd: &Path) -> PathBuf {
     cwd.join(format!("session-{stamp}.html"))
 }
 
+pub(super) fn export_rust_native_choice(
+    choice: &SessionChoice,
+    cwd: &Path,
+    args: &str,
+) -> Result<PathBuf, String> {
+    if choice.kind != SessionChoiceKind::RustNative {
+        return Err("session choice is not Rust-native".into());
+    }
+    let path = resolve_export_path(cwd, args);
+    CodingAgentSession::export_session_html(rust_native_choice_options(choice), &path)
+        .map_err(|error| error.to_string())
+}
+
 pub(super) fn export_transcript(
     cwd: &Path,
     session_label: &str,
@@ -357,14 +370,7 @@ pub(super) fn export_transcript(
     items: &[TranscriptItem],
     args: &str,
 ) -> Result<PathBuf, String> {
-    let path = export_path_arg(args)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_export_path(cwd));
-    let path = if path.is_absolute() {
-        path
-    } else {
-        cwd.join(path)
-    };
+    let path = resolve_export_path(cwd, args);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -375,6 +381,17 @@ pub(super) fn export_transcript(
     }
     export_transcript_html(session_label, items, &path)?;
     Ok(path)
+}
+
+fn resolve_export_path(cwd: &Path, args: &str) -> PathBuf {
+    let path = export_path_arg(args)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_export_path(cwd));
+    if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    }
 }
 
 fn export_transcript_html(
@@ -519,6 +536,41 @@ fn target_looks_like_rust_native_session_dir(target: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn export_rust_native_choice_uses_session_owned_export() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let root = temp.path().join("sessions");
+        let session_id = "sess_interactive_export";
+        let _session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_cwd(&cwd)
+                .with_session_log_root(&root),
+        )
+        .await
+        .unwrap();
+        let choice = SessionChoice {
+            id: session_id.into(),
+            cwd: normalized_path_string(&cwd),
+            path: root.join(session_id),
+            created_at: "2026-07-01T00:00:00Z".into(),
+            name: None,
+            entry_count: 0,
+            active_leaf_id: None,
+            kind: SessionChoiceKind::RustNative,
+        };
+
+        let exported = export_rust_native_choice(&choice, &cwd, "export/session.html").unwrap();
+
+        assert_eq!(exported, cwd.join("export/session.html"));
+        let html = std::fs::read_to_string(exported).unwrap();
+        assert!(html.contains("<!doctype html>"), "{html}");
+        assert!(html.contains(session_id), "{html}");
+        assert!(html.contains("Workspace"), "{html}");
+    }
 
     #[test]
     fn rust_native_tree_projection_builds_linear_readonly_tree() {

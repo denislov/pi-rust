@@ -140,6 +140,7 @@ impl CodingAgentCapabilities {
     pub(crate) fn phase_5(
         active_operation: Option<&str>,
         plugin_capabilities: &PluginCapabilities,
+        persistent_session: bool,
     ) -> Self {
         let prompt = match active_operation {
             Some(operation) => CapabilityStatus::Busy {
@@ -149,6 +150,13 @@ impl CodingAgentCapabilities {
         };
 
         let _ = plugin_capabilities;
+        let persistent_session_capability = if persistent_session {
+            CapabilityStatus::Available
+        } else {
+            CapabilityStatus::Disabled {
+                reason: "requires persistent Rust-native session".into(),
+            }
+        };
 
         Self {
             prompt,
@@ -161,15 +169,13 @@ impl CodingAgentCapabilities {
             follow_up: CapabilityStatus::Unsupported {
                 reason: "follow-up controls await AgentTurnFlow".into(),
             },
-            compact: CapabilityStatus::Available,
-            fork: CapabilityStatus::Available,
-            clone_session: CapabilityStatus::Available,
+            compact: persistent_session_capability.clone(),
+            fork: persistent_session_capability.clone(),
+            clone_session: persistent_session_capability.clone(),
             switch_session: CapabilityStatus::Unsupported {
                 reason: "session switching is not exposed on CodingAgentSession yet".into(),
             },
-            export: CapabilityStatus::Unsupported {
-                reason: "Rust-native session export is not implemented yet".into(),
-            },
+            export: persistent_session_capability,
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,

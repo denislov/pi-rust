@@ -38,9 +38,10 @@ pub mod api {
     pub use crate::args::{CliArgs, CliMode, help_text, parse_args};
     pub use crate::coding_session::{
         CapabilityStatus, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
-        CodingAgentSession, CodingAgentSessionOptions, CodingAgentSessionSummary,
-        CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
-        PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
+        CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
+        CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
+        CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError, PromptTurnMode,
+        PromptTurnOptions, PromptTurnOutcome,
     };
     pub use crate::error::CliError;
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};

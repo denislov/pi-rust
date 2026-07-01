@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use pi_agent_core::session::{SessionEntry, SessionTreeNode, StoredAgentMessage};
 use pi_ai::types::ContentBlock;
 
+use super::export::{CodingAgentSessionExport, export_from_replay, write_export_html};
 use super::prompt::PromptTurnTransaction;
 use super::session_log::event::{
     OperationKind, PersistedContentBlock, SessionEventData, SessionEventEnvelope,
@@ -336,13 +337,7 @@ impl SessionService {
     pub(crate) fn hydrated_view(&self) -> Result<CodingAgentSessionHydration, CodingSessionError> {
         let replay = self.replay()?;
         Ok(CodingAgentSessionHydration {
-            summary: CodingAgentSessionSummary {
-                session_id: self.handle.manifest().session_id.clone(),
-                session_dir: self.handle.session_dir().to_path_buf(),
-                created_at: self.handle.manifest().created_at.clone(),
-                updated_at: self.handle.manifest().updated_at.clone(),
-                active_leaf_id: self.handle.manifest().active_leaf_id.clone(),
-            },
+            summary: self.summary(),
             cwd: replay.cwd.clone(),
             transcript: replay
                 .transcript
@@ -357,6 +352,25 @@ impl SessionService {
                 })
                 .collect(),
         })
+    }
+
+    pub(crate) fn export_view(&self) -> Result<CodingAgentSessionExport, CodingSessionError> {
+        Ok(export_from_replay(self.summary(), self.replay()?))
+    }
+
+    pub(crate) fn export_html(&self, path: &Path) -> Result<PathBuf, CodingSessionError> {
+        let export = self.export_view()?;
+        write_export_html(&export, path)
+    }
+
+    fn summary(&self) -> CodingAgentSessionSummary {
+        CodingAgentSessionSummary {
+            session_id: self.handle.manifest().session_id.clone(),
+            session_dir: self.handle.session_dir().to_path_buf(),
+            created_at: self.handle.manifest().created_at.clone(),
+            updated_at: self.handle.manifest().updated_at.clone(),
+            active_leaf_id: self.handle.manifest().active_leaf_id.clone(),
+        }
     }
 
     fn copy_to_new_session(

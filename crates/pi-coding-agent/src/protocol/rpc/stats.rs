@@ -43,6 +43,7 @@ impl RpcState {
         let mut capabilities = CodingAgentCapabilities::phase_5(
             self.is_streaming().then_some("prompt"),
             &plugin_capabilities,
+            self.active_session_path.is_some(),
         );
         let coding_running = matches!(self.running, Some(RunningPrompt::Coding(_)));
 

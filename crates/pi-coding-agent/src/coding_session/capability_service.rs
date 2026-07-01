@@ -13,8 +13,9 @@ impl CapabilityService {
         &self,
         active_operation: Option<&str>,
         plugin_capabilities: &PluginCapabilities,
+        persistent_session: bool,
     ) -> CodingAgentCapabilities {
-        CodingAgentCapabilities::phase_5(active_operation, plugin_capabilities)
+        CodingAgentCapabilities::phase_5(active_operation, plugin_capabilities, persistent_session)
     }
 }
 
@@ -27,7 +28,7 @@ mod tests {
     #[test]
     fn capabilities_report_prompt_available_when_idle() {
         let plugin_capabilities = PluginCapabilities::new();
-        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities);
+        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities, true);
 
         assert_eq!(capabilities.prompt, CapabilityStatus::Available);
         assert_eq!(capabilities.tools, CapabilityStatus::Available);
@@ -39,7 +40,7 @@ mod tests {
     fn capabilities_report_prompt_busy_for_active_operation() {
         let plugin_capabilities = PluginCapabilities::new();
         let capabilities =
-            CapabilityService::new().capabilities(Some("prompt"), &plugin_capabilities);
+            CapabilityService::new().capabilities(Some("prompt"), &plugin_capabilities, true);
 
         assert_eq!(
             capabilities.prompt,
@@ -52,8 +53,33 @@ mod tests {
     #[test]
     fn capabilities_report_plugins_available_when_kernel_exists() {
         let plugin_capabilities = PluginCapabilities::new();
-        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities);
+        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities, true);
 
         assert_eq!(capabilities.plugins, CapabilityStatus::Available);
+    }
+
+    #[test]
+    fn capabilities_disable_persistent_session_operations_without_persistence() {
+        let plugin_capabilities = PluginCapabilities::new();
+        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities, false);
+
+        assert_eq!(
+            capabilities.export,
+            CapabilityStatus::Disabled {
+                reason: "requires persistent Rust-native session".into(),
+            }
+        );
+        assert_eq!(
+            capabilities.compact,
+            CapabilityStatus::Disabled {
+                reason: "requires persistent Rust-native session".into(),
+            }
+        );
+        assert_eq!(
+            capabilities.clone_session,
+            CapabilityStatus::Disabled {
+                reason: "requires persistent Rust-native session".into(),
+            }
+        );
     }
 }

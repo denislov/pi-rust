@@ -3,6 +3,7 @@ mod context;
 mod error;
 mod event;
 mod event_service;
+mod export;
 mod flow_service;
 mod plugin_service;
 mod prompt;
@@ -22,6 +23,7 @@ pub(crate) use context::{
 pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
 pub use event_service::CodingAgentEventReceiver;
+pub use export::{CodingAgentSessionExport, CodingAgentSessionExportItem};
 pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
@@ -39,6 +41,7 @@ use runtime_service::RuntimeService;
 use session_log::id::{IdGenerator, SystemIdGenerator};
 use session_log::replay::{TranscriptItem, transcript_item_id};
 use session_service::{FinalizedSessionWrite, SessionService};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -137,6 +140,40 @@ impl CodingAgentSession {
             .hydrated_view()
     }
 
+    pub fn export_session_html(
+        options: CodingAgentSessionOptions,
+        path: impl AsRef<Path>,
+    ) -> Result<PathBuf, CodingSessionError> {
+        SessionService::open(&options)?.export_html(path.as_ref())
+    }
+
+    pub fn export_current_html(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<PathBuf, CodingSessionError> {
+        match &self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                session_service.export_html(path.as_ref())
+            }
+            SessionPersistence::NonPersistent(_) => {
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability: "export requires a persistent Rust-native session".into(),
+                })
+            }
+        }
+    }
+
+    pub fn export_current(&self) -> Result<CodingAgentSessionExport, CodingSessionError> {
+        match &self.persistence {
+            SessionPersistence::Persistent(session_service) => session_service.export_view(),
+            SessionPersistence::NonPersistent(_) => {
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability: "export requires a persistent Rust-native session".into(),
+                })
+            }
+        }
+    }
+
     pub(crate) fn hydrate_current(
         &self,
     ) -> Result<Option<CodingAgentSessionHydration>, CodingSessionError> {
@@ -154,8 +191,12 @@ impl CodingAgentSession {
 
     pub fn capabilities(&self) -> CodingAgentCapabilities {
         let plugin_capabilities = self.plugin_service.capabilities();
-        self.capability_service
-            .capabilities(self.active_operation.as_deref(), &plugin_capabilities)
+        let persistent = matches!(self.persistence, SessionPersistence::Persistent(_));
+        self.capability_service.capabilities(
+            self.active_operation.as_deref(),
+            &plugin_capabilities,
+            persistent,
+        )
     }
 
     pub fn view(&self) -> CodingAgentSessionView {
@@ -1290,6 +1331,80 @@ mod tests {
                 }]
         ));
         registry::unregister(second_api);
+    }
+
+    #[tokio::test]
+    async fn export_current_html_writes_rust_native_session_transcript() {
+        let api = "coding-session-export-html";
+        registry::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::single_call(
+                    vec![FauxResponse {
+                        text_deltas: vec!["I will use echo.".into()],
+                        thinking_deltas: Vec::new(),
+                        tool_calls: vec![FauxToolCall {
+                            id: "toolu_export".into(),
+                            name: "echo".into(),
+                            deltas: Vec::new(),
+                            final_arguments: serde_json::json!({"text": "<hi>"}),
+                        }],
+                    }],
+                    StopReason::ToolUse,
+                ),
+                FauxProvider::text_call("tool final <done>", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_export_html")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::create(options).await.unwrap();
+        session
+            .prompt(prompt_options_with_tools(
+                api,
+                "use <tool>",
+                vec![echo_tool()],
+            ))
+            .await
+            .unwrap();
+        let output = temp.path().join("exports/session.html");
+
+        let exported = session.export_current_html(&output).unwrap();
+
+        assert_eq!(exported, output);
+        let html = std::fs::read_to_string(&exported).unwrap();
+        assert!(html.contains("<!doctype html>"), "{html}");
+        assert!(html.contains("sess_export_html"), "{html}");
+        assert!(html.contains("use &lt;tool&gt;"), "{html}");
+        assert!(html.contains("I will use echo."), "{html}");
+        assert!(html.contains("Tool: echo"), "{html}");
+        assert!(html.contains("&lt;hi&gt;"), "{html}");
+        assert!(html.contains("echo: &lt;hi&gt;"), "{html}");
+        assert!(html.contains("tool final &lt;done&gt;"), "{html}");
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn export_current_html_rejects_jsonl_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_export_jsonl")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let output = temp.path().join("session.jsonl");
+
+        let error = session.export_current_html(&output).unwrap_err();
+
+        assert_eq!(error.code(), "input");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: JSONL session export is no longer supported"
+        );
+        assert!(!output.exists());
     }
 
     fn outcome_turn_id(outcome: &PromptTurnOutcome) -> &str {

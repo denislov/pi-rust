@@ -10,8 +10,9 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
-    SessionChoiceKind, clone_rust_native_choice, export_transcript as export_session_transcript,
-    fork_rust_native_choice, rust_native_tree_for_choice,
+    SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
+    export_transcript as export_session_transcript, fork_rust_native_choice,
+    rust_native_tree_for_choice,
 };
 use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selector_arg};
 use crate::interactive::{Transcript, TranscriptItem};
@@ -325,6 +326,14 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
 }
 
 fn export_transcript(root: &InteractiveRoot, args: &str) -> Result<PathBuf, String> {
+    if let Some(choice) = root
+        .active_session
+        .as_ref()
+        .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
+    {
+        return export_rust_native_choice(choice, &root.cwd, args);
+    }
+
     export_session_transcript(
         &root.cwd,
         &root.session_label,

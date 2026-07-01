@@ -154,7 +154,7 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - [ ] Add `ManualCompactionFlow`.
 - [ ] Add explicit runtime vs session compaction boundaries.
 - [ ] Add `BranchSummaryFlow`.
-- [ ] Add Rust-native `ExportFlow`.
+- [~] Add Rust-native `ExportFlow`. P1 export boundary slice now has session-owned Rust-native HTML export through `CodingAgentSession`/`SessionService`, public export view types, export capability reporting, and interactive adapter reuse for active Rust-native sessions; an explicit Flow graph wrapper remains follow-up work if export needs multi-step orchestration.
 - [ ] Add `PluginLoadFlow`.
 - [ ] Design and prototype subagent/supervisor flows.
 - [ ] Design and prototype self-healing edit workflow.
@@ -261,3 +261,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-07-02: `pi-tui` TypeScript parity report reframed as historical context. Current planning now treats `pi-tui` as a Rust-native generic terminal UI crate, prioritizes public API and component trait hardening, removal of coding-agent `app.*` semantics from the base crate, controlled plugin UI/keybind adapter integration, and deterministic terminal regression coverage over TS `TUI` lifecycle/API shape parity.
 - 2026-07-01: P0 crate boundary hardening started. The design and implementation plan now define stable facade direction, migration-private surfaces, non-goals, and verification gates for `pi-ai`, `pi-agent-core`, `pi-coding-agent`, and `pi-tui` before P1-P4 code hardening proceeds.
 - 2026-07-01: P0 facade slice added. `pi-ai`, `pi-agent-core`, and `pi-tui` now expose stable `api` facade modules with public API smoke tests; existing `pi-coding-agent::api` coverage was verified, and deeper scoped runtime/auth/tool/UI invariants remain assigned to P1-P4.
+- 2026-07-01: P1 export boundary slice added. Rust-native session HTML export is now owned by `CodingAgentSession`/`SessionService`, public export view types are exposed through `pi_coding_agent::api`, export capability reports available for persistent sessions and disabled for non-persistent sessions, and interactive `/export` reuses the session-owned exporter when an active Rust-native session exists.

@@ -2,11 +2,11 @@ use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
     CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
     CliRunOptions, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
-    CodingAgentSession, CodingAgentSessionOptions, CodingAgentSessionSummary,
-    CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
-    PrintModeOptions, PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions,
-    PromptTurnOutcome, SessionMode, ToolFilter, builtin_tools, filter_tools, help_text, parse_args,
-    render_diagnostics,
+    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
+    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
+    CodingDiagnosticSeverity, CodingSessionError, PrintModeOptions, PromptInvocation,
+    PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, SessionMode,
+    ToolFilter, builtin_tools, filter_tools, help_text, parse_args, render_diagnostics,
 };
 
 fn model(api: &str) -> Model {
@@ -132,9 +132,7 @@ async fn coding_session_public_api_symbols_are_importable() {
             switch_session: CapabilityStatus::Unsupported {
                 reason: "session switching is not exposed on CodingAgentSession yet".into(),
             },
-            export: CapabilityStatus::Unsupported {
-                reason: "Rust-native session export is not implemented yet".into(),
-            },
+            export: CapabilityStatus::Available,
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,
@@ -144,6 +142,8 @@ async fn coding_session_public_api_symbols_are_importable() {
     let mut receiver = session.subscribe();
     assert!(receiver.try_recv().unwrap().is_none());
     let _receiver_type_name = std::any::type_name::<CodingAgentEventReceiver>();
+    let _export_type_name = std::any::type_name::<CodingAgentSessionExport>();
+    let _export_item_type_name = std::any::type_name::<CodingAgentSessionExportItem>();
 
     let error = CodingSessionError::UnsupportedCapability {
         capability: "prompt".into(),
