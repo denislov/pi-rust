@@ -1,4 +1,5 @@
 use crate::agent_loop;
+use crate::agent_turn_flow::AgentTurnContext;
 use crate::convert::convert_to_context;
 use crate::hooks::BeforeProviderRequestHook;
 use crate::resources::{format_prompt_template_invocation, format_skill_invocation};
@@ -76,6 +77,11 @@ impl Agent {
 
     pub fn messages(&self) -> Vec<AgentMessage> {
         self.state.read().unwrap().messages.clone()
+    }
+
+    pub(crate) fn agent_turn_context_snapshot(&self) -> AgentTurnContext {
+        let state = self.state.read().unwrap();
+        AgentTurnContext::from_state(&state)
     }
 
     pub fn before_provider_request_hook(&self) -> Option<BeforeProviderRequestHook> {

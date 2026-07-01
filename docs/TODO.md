@@ -48,7 +48,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [x] Implement Phase 1: `CodingAgentSession` skeleton and Rust-native session log. Product runtime shell/API boundary, typed session log schema, filesystem store, turn transactions, owner create/open persistence, and replay/fold transcript support are in place.
 - [~] Implement Phase 2: `PromptTurnFlow` on headless/json path. Prompt turn options/outcome/context, runtime snapshot boundary, real graph with stable node IDs, AgentEvent-to-product-event mapping, real ResolveRequest/PrepareInput/ResolveRuntime/LoadResources/OpenSession/BuildAgentRuntime/RecordUserInput/RunAgentTurn/FinalizeTurn/EmitCompletion nodes, pending agent-output event recording through TurnTransaction, SessionService-owned prompt transaction finalization with `SessionWrite*` product events, persistent and non-persistent `CodingAgentSession::prompt()` for runtime-backed options, successful persistent prompt active-leaf commits, completed user/assistant/tool-call replay hydration, Rust-native session open-or-create/list groundwork, Rust-native clone/fork/manual-compaction service APIs, enabled and no-session/disabled print routing including ForkTarget, and JSON protocol rendering/execution through `CodingAgentEvent`/`CodingAgentSession` are in place.
 - [~] Implement Phase 3: converge CLI/RPC/interactive adapters. Concrete `CodingAgentCapabilities`/`CapabilityStatus` model, RPC `get_state` capability reporting, RPC `CodingAgentEvent` adapter, enabled plus disabled-session RPC prompt routing, primary interactive prompt routing, JSON execution routing, Rust-native resume hydration, Rust-native active-session `/session` info and leaf-backed `/tree` navigation, Rust-native active-session `/clone`, `/fork`, and `/compact`, Rust-native active leaf propagation to RPC/interactive state, and adapter-provided cwd recording/filtering are in place.
-- [ ] Implement Phase 4: introduce `AgentTurnFlow` in `pi-agent-core`.
+- [~] Implement Phase 4: introduce `AgentTurnFlow` in `pi-agent-core`. Initial `agent_turn_flow` module, `AgentTurnContext` snapshot boundary, and `PrepareContextNode` are in place without changing `Agent::run()` behavior.
 - [ ] Implement Phase 5: plugin kernel on session/flow boundaries.
 - [ ] Implement Phase 6: advanced Flow workflows.
 
@@ -113,17 +113,17 @@ Guide: [Phase 3](superpowers/guides/2026-06-29-phase-3-adapter-convergence-guide
 
 Guide: [Phase 4](superpowers/guides/2026-06-29-phase-4-agent-turn-flow-guide.md)
 
-- [ ] Add `pi-agent-core/src/agent_turn_flow/` module.
-- [ ] Add `AgentTurnContext`.
-- [ ] Extract prepare-context node.
+- [x] Add `pi-agent-core/src/agent_turn_flow/` module.
+- [x] Add `AgentTurnContext`. Initial context construction snapshots current agent config, messages, tools, resources, queues, cancellation token, and empty turn-local accumulators without draining queues or changing loop behavior.
+- [x] Extract prepare-context node. `PrepareContextNode` now builds a `ProviderRequestSnapshot` from `AgentTurnContext` using the same context conversion and stream-option logic as the existing loop.
 - [ ] Extract runtime compaction node.
 - [ ] Extract provider stream node.
 - [ ] Extract decide-stop-or-tools node.
 - [ ] Extract tool execution node.
 - [ ] Preserve `AgentEvent` behavior.
 - [ ] Make `Agent::run()` delegate to `AgentTurnFlow`.
-- [ ] Add Phase 4 tests.
-- [ ] Run Phase 4 focused checks.
+- [~] Add Phase 4 tests. `agent_turn_flow` integration coverage verifies `AgentTurnContext` construction from existing `Agent` state without queue drainage and `PrepareContextNode` provider-request construction against the current `Agent` snapshot behavior.
+- [~] Run Phase 4 focused checks. Latest verified subset: `cargo fmt --check`, `cargo test -p pi-agent-core --test agent_turn_flow`, `cargo test -p pi-agent-core --test agent_loop`, `cargo test -p pi-agent-core --test parallel_tools`, `cargo test -p pi-agent-core --test hooks`, `cargo test -p pi-agent-core --test compaction`, and `cargo check --workspace`.
 
 ## Phase 5: Plugin Kernel
 
@@ -224,3 +224,5 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-06-30: Rust-native manual compaction implemented for active interactive sessions. `CodingAgentSession::compact()` now summarizes replayed Rust-native context through the existing compaction summarizer, writes `session.compaction.started`/`session.compaction.completed` events, folds replay into a compaction summary plus kept tail, emits product compaction events through `CodingEventBridge`, and `/compact` no longer falls back to the old runner for Rust-native sessions.
 - 2026-06-30: Print-mode `ForkTarget` now routes through Rust-native session ownership. Enabled print mode opens the source Rust-native session, forks it through `SessionService`, opens the new forked session, hydrates source transcript into the provider context, records `session.forked`, and keeps the source session unchanged.
 - 2026-06-30: Rust-native tree navigation implemented as leaf-backed fork-on-select. `SessionService::tree_view` builds `/tree` nodes from real committed `leaf_id` values, interactive `/tree` opens that view for Rust-native sessions, selecting the current leaf reports no-op, and selecting a historical leaf forks a new Rust-native session at that leaf instead of using temporary projection ids.
+- 2026-07-01: Phase 4 started with the `pi-agent-core::agent_turn_flow` module and `AgentTurnContext` snapshot boundary. `Agent::run()` still delegates to the existing loop while future extraction nodes get a stable low-level state container.
+- 2026-07-01: Phase 4 `PrepareContextNode` added. It builds provider request snapshots from `AgentTurnContext` with existing conversion/stream-option helpers, giving the next runtime-compaction extraction a node-shaped boundary without changing `Agent::run()`.
