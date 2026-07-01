@@ -1,3 +1,20 @@
+**当前定位更新（2026-07-02）**
+
+这份文档保留为 `pi-coding-agent` 早期对照 TypeScript `pi/packages/coding-agent` 的历史评估。它不再是 TS parity checklist，也不再定义 `pi-rust` 的产品层推进目标。
+
+当前项目方向以 Flow-centered runtime 为准：`CodingAgentSession` 是产品 runtime owner，`PromptTurnFlow` 是 prompt turn 主路径，`CodingAgentEvent` 是 CLI/RPC/interactive 适配器的 canonical product event stream，Rust-native `session.json` + typed `events.jsonl` 是当前会话事实来源。TypeScript `pi` 仍是产品行为、UX、命令面、RPC 能力、插件体验和测试 fixture 的参考，但 `pi-rust` 不追求 TS `coding-agent` SDK/root export/extension runtime 的同构替代。
+
+因此，本文中仍值得推进的主线是：
+
+- 收窄 `pi_coding_agent::api` 稳定入口，把根模块、adapter internals、protocol internals 和迁移期 helper 与长期公共 API 区分开；
+- 继续让 `CodingAgentSession` / `SessionService` / `RuntimeService` / `FlowService` 承接 TS `AgentSession` 的产品 owner 行为，而不是恢复旧 `session_runner` 或各 adapter 私有状态机；
+- 以 `CodingAgentCapabilities` / `CapabilityStatus` 和协议版本表达 RPC/TUI/JSON 可用能力，避免 adapter 命令面先声明、handler 再返回临时 unsupported 字符串；
+- 推进 plugin command/UI/keybind execution、`PluginLoadFlow`、trust/permission gating 和 scoped host API，借鉴 TS extension 体验但不暴露 raw session/auth/provider internals；
+- 把 manual compaction、branch summary、export、session switch、subagent/supervisor、自修复 edit 等产品能力落到 Phase 6 product Flows，而不是旧 JSONL runner 或低层 core；
+- 保持配置/认证/session 格式 Rust-native，仅把 TS settings/commands/UX 字段作为产品需求参考。
+
+本文中不再作为目标推进的内容是：TS `coding-agent` 完整 port、TS session JSONL 兼容、TS settings/auth 文件兼容、TS root SDK export parity、unknown CLI flags 直接透传给 extension runtime、以及围绕旧 `session_runner` / M5 RPC 子集继续扩展。
+
 **总体结论**
 
 按 TypeScript `pi/packages/coding-agent` 作为目标完整产品来衡量，`pi-rust/crates/pi-coding-agent` 目前不是完整 port，而是一个已经能跑的 Rust coding-agent 切片：覆盖了 CLI 参数解析、print/json/rpc 基础模式、session JSONL 持久化、内置工具、资源加载、主题桥接、基础交互 TUI 和一部分 RPC/interactive workflow。它的方向是对的，但离 TS coding-agent 的“产品层 + SDK 层 + 扩展平台”还有明显距离。
@@ -83,13 +100,24 @@ Interactive 方面，Rust 有 slash handling，包含 `/model`、`/resume`、`/e
 3. `CliArgs` 是手写 public struct，字段全面暴露，后续 CLI 行为变化容易成为 API break，见 [args.rs](/home/whai/dev_wkspace/pi2rust/pi-rust/crates/pi-coding-agent/src/args.rs:25)。
 4. Rust public API 和 TS public API 不是同构关系。TS 导出的是面向 npm/extension ecosystem 的大 SDK；Rust 当前导出的是嵌入 CLI/session runner 的小 SDK。若目标是 TS SDK parity，公共接口还远未稳定；若目标是 Rust-native CLI harness，则需要明确“只稳定 `api`，根模块迁移期不承诺”。
 
-**建议优先级**
+**建议优先级（按当前 Flow-centered 方向重述）**
 
-1. 先明确目标：`pi-coding-agent` 是要完整替代 TS coding-agent，还是只做 Rust CLI/headless harness。如果是完整替代，下一阶段应优先补 `AgentSession` 等价核心对象，而不是继续在 interactive/rpc 各自加功能。
-2. 收口 public API：把根模块标为迁移期内部使用，文档上只承诺 `pi_coding_agent::api`；对 `SessionPromptOptions`/`CliRunOptions` 引入 builder 或 `#[non_exhaustive]`。
-3. 把 shared session 操作上移：session stats、export/import、clone/fork/tree、manual compact、model/thinking switching 应变成 shared controller，RPC 和 interactive 复用。
-4. RPC 做 capability/version：不要只靠 “M5” 字符串；把 TS RPC command 分成 supported/unsupported/partial，并加协议级 `get_capabilities` 或清晰版本。
-5. 扩展体系要尽早决策。TS 的 CLI unknown flags、ExtensionRunner、extension UI、project trust、package manager 是 coding-agent 的大头；如果 Rust 不打算 port，需要在功能边界文档里明确，否则完整度评估会一直偏低。
-6. 配置兼容策略需要确定：现在 Rust 使用 `.pi-rust` 和严格 schema，适合独立迁移；如果未来要读取 TS `.pi` 配置，需要兼容未知字段、camelCase/snake_case、packages/extensions/projectTrust 等差异。
+1. **明确 `pi-coding-agent` 是 Rust-native 产品 owner，而不是 TS coding-agent 同构层。**
+   当前稳定方向是 `CodingAgentSession` + internal services + product Flows + `CodingAgentEvent`。TypeScript `AgentSession` 的产品行为可作为参考，但不应引入另一个同构 owner，也不应回到旧 `session_runner` / JSONL product path。
+
+2. **收口 public API 到 `pi_coding_agent::api`。**
+   根模块仍公开的 `interactive`、`protocol`、`request`、`resources`、`theme`、`runtime` 等应视为迁移期内部面。长期公共入口应优先通过 `api` facade 暴露；对 options 类型考虑 builder、constructor 或 `#[non_exhaustive]`，避免下游用结构体字面量固化迁移期字段。
+
+3. **继续把 shared product operations 上移到 `CodingAgentSession` services/flows。**
+   session stats、export、clone/fork/tree、manual compaction、model/thinking switching、session switch、branch summary、subagent/supervisor 和 self-healing edit 都应通过 shared service/Flow 暴露，再由 print/RPC/interactive 适配器复用。adapter 不应各自维护平行业务状态机。
+
+4. **把 RPC/TUI/JSON 能力表达成 capability/version contract。**
+   已有 `CodingAgentCapabilities` / `CapabilityStatus` 是正确方向。后续新增 TS 参考中的 retry、bash side-channel、export、switch session、plugin commands、extension UI 等能力时，应先进入 capability model 和协议版本规划，再接 handler。
+
+5. **推进 Rust-native plugin/extension 产品链路，而不是照搬 TS extension runtime。**
+   Phase 5 已有内部 Rust trait kernel。下一步重点是 command execution、UI/keybind dispatch、`PluginLoadFlow`、trust/permission gating、plugin diagnostics 和 adapter capability exposure。TS unknown CLI flags、package manager、extension UI 可作为体验参考，但不能绕过 scoped host 和 permission 边界。
+
+6. **保持 Rust-native config/auth/session 格式，同时借鉴 TS 产品字段。**
+   不读取 TS `.pi` settings/auth/session 作为默认兼容目标。可以把 TS 的 project trust、plugin/package source、branch summary policy、thinking budget、editor/autocomplete、markdown/images、analytics 等作为 Rust-native 设置需求候选，并通过严格 schema、migration 和 capability exposure 管理。
 
 我没有运行测试；这次只做了静态对比和结构审阅。当前工作区里 `pi-rust` 有未跟踪文档文件，我没有修改任何文件。

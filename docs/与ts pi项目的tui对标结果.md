@@ -1,6 +1,28 @@
+**当前定位更新（2026-07-02）**
+
+这份文档应作为 `pi-tui` 与 TS `packages/tui` 的历史对标和行为参考，而不是当前的 TS API parity checklist。`pi-tui` 现在的目标是成为 Rust-native 通用 terminal UI 基础库；`pi-coding-agent` 的 interactive adapter、产品 UI 行为、app 级 keybindings 和 plugin UI/keybind 接线应留在 `pi-coding-agent`。
+
+当前仍值得推进的主线：
+
+1. 收紧 `pi-tui` 与 `pi-coding-agent` 的职责边界：`pi-tui` 保持 generic，只提供 terminal、input、component、render、overlay、theme、image、autocomplete 等底层能力；`app.*` keybindings、模型/会话/树/工具面板等产品语义由 `pi-coding-agent` 注入和处理。
+2. 制定 `pi-tui` public API 稳定策略：明确 root re-export 与模块路径哪些是稳定承诺，哪些仍是内部/实验 API；对易扩展的 public struct 规划 `#[non_exhaustive]`、builder 或 facade 策略。
+3. 硬化 `Component` trait：避免 `as_any()` / `as_any_mut()` 默认 `panic!` 成为下游自定义组件的运行时隐患。
+4. 将 Phase 5 已有的 `UiProvider` / `KeybindProvider` 能力接到 interactive TUI，但通过 `pi-coding-agent` 的 capability-scoped adapter 完成，不让插件直接写 terminal、不暴露 raw `CodingAgentSession`。
+5. 用 `VirtualTerminal` 和 focused tests 补强 overlay/focus/dialog、terminal image、keybinding conflict、theme/render regression，而不是追求 TS 导出面逐项复刻。
+6. 借鉴 TS 的大型项目路径补全体验，但优先规划 Rust-native 的可取消/后台 autocomplete provider 边界；不要把 `fd`/AbortSignal parity 硬塞进 `pi-tui` core。
+
+当前不作为目标：
+
+1. 不追求 TS `TUI.start()/stop()/requestRender()` API shape parity，也不让 `pi-tui` 成为产品 event loop owner。
+2. 不追求 TS `packages/tui` 全量 component/export parity；TS 只作为 terminal/input/editor/overlay/autocomplete/image 行为和 regression 参考。
+3. 不把 coding-agent 的 model/session/tree/tool/plugin 产品语义继续下沉到 `pi-tui`。
+4. 不要求复刻 TS terminal-image 的全局 capability/cache/image-id API；Rust 侧可以继续优先显式注入、可测试的 API。
+
+后文的完整度百分比和功能对比可保留作背景，但后续推进应以上述 Rust-native 边界为准。
+
 **总体结论**
 
-`pi-rust/crates/pi-tui` 是目前 Rust 迁移里和 TS parity 最接近的 crate。它不是空壳，也不是只做了少量组件，而是已经覆盖了 TS `pi/packages/tui` 的大部分核心能力：组件体系、TUI 渲染、terminal 抽象、keyboard parsing、stdin buffer、keybindings、overlay、editor、autocomplete、markdown、terminal image、terminal color、fuzzy、width/ANSI 工具，以及测试用 `VirtualTerminal`。
+`pi-rust/crates/pi-tui` 是目前 Rust 侧功能覆盖度最高、也最接近可独立作为库使用的 crate。旧对标语境下它和 TS `pi/packages/tui` 的功能面最接近，但当前目标不是 TS API shape parity，而是把它稳定为 Rust-native 通用 terminal UI crate。它不是空壳，也不是只做了少量组件，而是已经覆盖了 TS `pi/packages/tui` 的大部分核心能力：组件体系、TUI 渲染、terminal 抽象、keyboard parsing、stdin buffer、keybindings、overlay、editor、autocomplete、markdown、terminal image、terminal color、fuzzy、width/ANSI 工具，以及测试用 `VirtualTerminal`。
 
 粗略完整度判断：
 
@@ -51,7 +73,7 @@ Terminal image 方面，Rust 有 `ImageProtocol`、`TerminalCapabilities`、`Cel
 
 1. `Component::as_any()` 默认 `panic!` 不够稳。下游组件如果忘记实现 downcast，`component_as` 可能在运行时炸掉，见 [component.rs](/home/whai/dev_wkspace/pi2rust/pi-rust/crates/pi-tui/src/component.rs:20)。更稳的默认应该返回 `None` 风格，或者把 downcast 能力拆成可选 trait。
 2. `pi-tui` 的默认 keybindings 已经包含 `app.model.*` 和 `app.tree.*` 这类 coding-agent 应用级 keybinding。TS `pi-tui` 的默认 `TUI_KEYBINDINGS` 基本停在 `tui.editor/input/select`，见 [pi/packages/tui/src/keybindings.ts](/home/whai/dev_wkspace/pi2rust/pi/packages/tui/src/keybindings.ts:4)。Rust 把 app 语义放进基础 TUI crate，会让职责边界变脏。
-3. TS `TUI` 内建 render scheduling，Rust 把 `RenderScheduler` 单独放出来但没有和 `Tui` 生命周期深度整合，见 [pi-rust/crates/pi-tui/src/lib.rs](/home/whai/dev_wkspace/pi2rust/pi-rust/crates/pi-tui/src/lib.rs:42)。这让上层需要自己写 event loop，灵活但容易重复。
+3. `RenderScheduler` 已经被 `pi-coding-agent` interactive loop 使用，不应再描述为完全未接入；剩余问题是是否需要把当前上层 event loop 写法沉淀成 `pi-tui` 的通用 run helper，还是继续让 app 组合输入、任务、theme watcher 和 render scheduling。
 4. Overlay focus restore 行为弱于 TS。对于多层 overlay、non-capturing overlay、临时隐藏/恢复等复杂场景，Rust 当前设计可能需要继续补齐。
 
 **职责边界清晰度**
@@ -79,12 +101,12 @@ Terminal image 方面，Rust 有 `ImageProtocol`、`TerminalCapabilities`、`Cel
 
 **建议优先级**
 
-1. 先把职责边界清理掉：从 `pi-tui` 默认 keybindings 中移出 `app.*`，让 `pi-coding-agent` 注入应用级 bindings。
-2. 给公共 API 定稳定策略：要么只承诺 `lib.rs` re-export，内部模块改 `pub(crate)` 或文档标注不稳定；要么接受所有模块 public 并加 `#[non_exhaustive]`。
-3. 补齐 `Tui` runtime lifecycle：明确 Rust 上层 event loop 标准写法，`start/stop/input/resize/render scheduling` 是否由 `pi-tui` 提供一个 `run` helper，还是永远由 app 组合。
-4. 改善 `Component` downcast 默认行为，避免 public trait 的默认 panic 成为下游隐患。
-5. 选择 autocomplete 方向：如果要接近 TS 体验，需要异步 provider 或后台 task 接口，以及 `fd`/ignore-aware 搜索；如果保留同步接口，应明确这是 Rust 版的简化设计。
-6. 为 overlay focus restore 增加 parity 测试，尤其是 nested overlay、non-capturing、hidden/show、unfocus target、visible callback 变化。
-7. 保持 `VirtualTerminal` 和 integration tests 的投入。Rust 侧目前测试覆盖方向很好，适合继续用 TS regression test 名单逐项迁移。
+1. 先清理职责边界：从 `pi-tui` 默认 keybindings 中移出 `app.*`，让 `pi-coding-agent` 注入应用级 bindings，并与 Phase 5 的 plugin keybind registry 合流。
+2. 给 `pi-tui` 公共 API 定稳定策略：明确稳定 facade、模块路径承诺、结构体扩展策略和 public API test 的覆盖范围。
+3. 改善 `Component` downcast 默认行为，避免 public trait 的默认 panic 成为下游隐患。
+4. 把 Phase 5 `UiProvider` / `KeybindProvider` 接到 interactive adapter：插件只注册受限 action/keybind/UI definition，真实 key dispatch、render 和权限/trust 仍由 `pi-coding-agent` 控制。
+5. 为 overlay/focus/dialog 增加 regression 测试，尤其是 nested overlay、non-capturing、hidden/show、unfocus target、visible callback 变化。
+6. 规划 autocomplete 的 Rust-native 扩展方向：保留 core 同步 provider 的确定性，同时允许上层提供可取消/后台搜索体验。
+7. 继续投入 `VirtualTerminal`、terminal image、terminal lifecycle、keybinding conflict、theme/render 的 deterministic tests 和 opt-in terminal smoke。
 
-这次我没有运行测试，只做了静态对比和结构审阅；没有修改任何文件。
+这份文档只表达静态对比、结构审阅和后续规划方向；具体代码改动应另行拆分设计和实现。

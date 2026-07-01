@@ -1,3 +1,20 @@
+**当前定位更新（2026-07-02）**
+
+这份文档保留为 `pi-agent-core` 早期对照 TypeScript `pi/packages/agent` 的历史评估。它不再是 TS parity checklist，也不再定义 `pi-rust` 的 agent runtime 推进目标。
+
+当前项目方向以 Flow-centered runtime 为准：`CodingAgentSession` 是产品 runtime owner，`PromptTurnFlow` 负责产品 prompt turn，`AgentTurnFlow` 负责低层 agent loop。TypeScript `pi` 仍是 agent 行为、工具执行语义、compaction/branch summary 产品体验和测试 fixture 的参考，但 `pi-rust` 不追求把 Rust `AgentHarness` 做成 TS `AgentHarness` 的同构替代。
+
+因此，本文中仍值得推进的主线是：
+
+- 收窄 `pi-agent-core` public exports，把 `AgentTurnFlow`、legacy `agent_loop`、session JSONL 和内部 helper 与稳定公共 API 区分开；
+- 强化低层 `Agent` / `AgentEvent` / tool / hook / `ExecutionEnv` contract，保持它们服务于 core runtime，而不是承担产品 session 或 UI wire protocol；
+- 为工具参数验证、argument preparation、tool result details 和 plugin tool 边界建立 Rust-native contract；
+- 推动 first-party tools、resource discovery 和未来 self-healing workflow 通过 `ExecutionEnv`，减少直接本地 `std::fs` 依赖；
+- 保持 runtime compaction 与 Rust-native session compaction 的边界，前者属于 `AgentTurnFlow`，后者属于 `pi-coding-agent` 的产品 Flow / `SessionService`；
+- 把 TS compaction、branch summary、message lifecycle 的经验作为 `CodingAgentEvent` 映射和 Phase 6 workflows 的行为参考。
+
+本文中不再作为目标推进的内容是：TS `Agent` / `AgentHarness` 同构、TS session JSONL 兼容、让 `pi-agent-core::AgentHarness` 拥有产品 session/model/env 生命周期、将低层 `AgentEvent` 改造成产品/RPC/TUI wire protocol、以及按 TS harness feature list 机械补齐 core API。
+
 **结论**
 
 `pi-rust/crates/pi-agent-core` 的移植深度明显高于“占位”：agent loop、工具调用、队列、hooks、resources、session JSONL、compaction、branch summary、proxy、harness observer/on hook 等都已经有实现和测试。相比刚才的 `pi-ai`，`pi-agent-core` 更接近 TS `pi/packages/agent` 的功能轮廓。
@@ -94,28 +111,28 @@ Rust 的职责边界当前是“核心 runtime + 若干移植模块”：
 - TS 等价 contract 尚未定型：尤其 `AgentEvent`、`AgentHarness`、session entry 类型、ExecutionEnv 接入方式。
 - 一些 public 类型是未来预留或半成品状态，如 harness phase 的 `Compaction/BranchSummary`。
 
-**建议优先级**
+**建议优先级（按当前 Flow-centered 方向重述）**
 
-1. **先决定 Rust 的目标 API 是“TS 等价”还是“Rust 原生核心”。**
-   如果目标是替代 TS agent，事件协议和 harness/session 生命周期必须向 TS 靠齐；如果目标是 Rust 原生 core，则应明确哪些 TS 能力由 `pi-coding-agent` 或 `pi-tui` 承担。
+1. **明确 `pi-agent-core` 是 Rust-native low-level runtime，而不是 TS harness 同构层。**
+   `AgentTurnFlow`、`Agent`、tools、hooks、queues、runtime compaction、`ExecutionEnv` 和 low-level `AgentEvent` 属于 core。产品 session ownership、Rust-native session log、adapter state、RPC/TUI event wire 和 product workflow ownership 属于 `pi-coding-agent::CodingAgentSession` / `CodingAgentEvent`。
 
-2. **收窄 public exports。**
-   保留稳定入口：`Agent`、`AgentConfig`、`AgentTool`、`AgentEvent`、`AgentHarness`、session repo/storage 的最小 API。内部模块如 `loop_runtime` 已是 `pub(crate)`，其他还可以继续收窄。
+2. **收窄 public exports 和内部状态暴露。**
+   保留稳定入口：`Agent`、`AgentConfig`、`AgentTool`、`AgentEvent`、必要 hooks、`ExecutionEnv` 和少量可复用 helper。`AgentTurnFlow` 具体节点、legacy `agent_loop` wrapper、JSONL session compatibility modules、资源加载 internals 和 `AgentState` 等应逐步标记为 migration-private、unstable 或收窄为内部实现细节。
 
-3. **对齐事件模型。**
-   建议新增一层 TS-style `AgentLifecycleEvent`，提供 `message_start/update/end/turn_end/agent_end`。底层 `LlmEvent` 可以保留为 debug/advanced 事件，但不要作为唯一公共事件。
+3. **稳定低层事件，并把产品生命周期映射留在 `CodingAgentEvent`。**
+   不建议把 `AgentEvent` 改造成 TS-style UI event protocol。更合适的方向是保持 `AgentEvent` 低层、完整、可映射，并用 `pi-coding-agent::EventService` 把它转换成 message/tool lifecycle 友好的 `CodingAgentEvent`。TS 的 `message_start/update/end` 经验应主要用于 product event mapping tests。
 
-4. **让 `AgentHarness` 真正拥有 session/env/models。**
-   Rust harness 应逐步接近 TS：持有 session storage、model resolver/streamer、env、tools/resources、pending writes、save point、compact/navigate tree。否则上层会重复实现 harness。
+4. **不要让 `AgentHarness` 重新拥有产品 session；保留它作为 core lifecycle/hook facade。**
+   TS harness 的 session/env/models/tools/resources 统一 owner 职责已经由 Rust 的 `CodingAgentSession`、`RuntimeService`、`SessionService` 和 plugin services 拆分承接。Rust `AgentHarness` 若继续存在，应聚焦 low-level observer/hook/provider request 边界，而不是恢复为产品 runtime owner。
 
-5. **把 resources/session repo 接到 `ExecutionEnv`。**
-   目前 `ExecutionEnv` 已经存在，应让 loaders 和 repo 使用 trait，而不是直接 `std::fs`。这会提升测试性和沙箱/远端适配能力。
+5. **把 first-party tools、resources 和未来 workflows 接到 `ExecutionEnv`。**
+   `ExecutionEnv` 已经是 core 的文件系统和 shell 能力边界。后续应优先让 first-party tools、resource discovery、self-healing edit workflow 等通过 trait 访问环境。旧 JSONL session repo 是否接入 `ExecutionEnv` 只作为 legacy 维护问题，不应反向影响 Rust-native session log。
 
-6. **补工具参数验证和 `prepareArguments` 等价能力。**
-   Rust 至少应提供 schema validation hook 或明确不验证。如果不验证，应在 public contract 中写清楚，避免上层误以为 `parameters` 会被执行期校验。
+6. **补工具参数验证和 argument preparation 的 Rust-native contract。**
+   Rust 至少应提供 schema validation hook、argument normalization/preparation hook，或明确声明 core 不做执行期校验。验证失败应产生一致的 tool error result，并与 plugin tool 注册边界复用同一套规则。
 
-7. **区分运行时 compaction 和 session compaction。**
-   当前自动压缩消息对长期会话有用，但应另有 session-tree compaction API，能产生 compaction entry、details、hook 结果，并与 `JsonlSessionStorage`/repo 一致。
+7. **继续区分 runtime compaction 和 product session compaction。**
+   `AgentTurnFlow` 的 compaction 只影响 provider context 和低层 `AgentEvent::SessionCompacted`，不写产品 session。持久 compaction、branch summary、tree navigation 和 new leaf 创建应通过 `pi-coding-agent` 的 Phase 6 workflows / `SessionService` 实现。
 
 **总体判断**
 

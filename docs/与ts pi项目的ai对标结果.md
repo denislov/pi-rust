@@ -1,3 +1,19 @@
+**当前定位更新（2026-07-02）**
+
+这份文档保留为 `pi-ai` 早期对照 TypeScript `pi/packages/ai` 的历史评估。它不再是 TS parity checklist，也不再定义 `pi-rust` 的推进目标。
+
+当前项目方向以 Flow-centered runtime 为准：TypeScript `pi` 仍是 provider 行为、wire protocol、产品体验和测试 fixture 的参考，但 `pi-rust` 不追求成为 `@earendil-works/pi-ai` 的同构替代。`pi-ai` 后续应服务于 Rust-native 产品运行时：提供模型目录、provider request/response/streaming、scoped provider runtime、auth resolution、transport hooks 和 provider capability 信息；不得反向依赖 `CodingAgentSession`、session log、CLI/RPC/TUI 或产品 Flow。
+
+因此，本文中仍值得推进的主线是：
+
+- 用 Rust-native scoped `AiClient` / provider runtime 取代“全局 registry 是主运行时”的默认形态；
+- 建立统一 provider auth resolver，集中处理 API key、bearer token、OAuth access/refresh、headers、base URL 和 auth source；
+- 明确 global `register()` / `stream_model()` 的兼容边界，避免继续扩大事实公共 API；
+- 为模型目录与内置 provider 注册关系增加 invariant 规划，避免 catalog 暴露不可运行模型或注册无 catalog 来源的 API；
+- 保持 provider wire JSON 与上游协议一致，用 serde/fixture/offline tests 守护。
+
+本文中不再作为目标推进的内容是：TS session/config/auth 兼容、TS `Models` 原样移植、TS SDK root export parity、按 TS provider 数量机械补齐 provider、以及扩大 TS `compat.ts` 风格的全局 lazy API。
+
 **结论**
 
 `pi-rust/crates/pi-ai` 已经不是空壳，核心 chat 数据结构、静态模型目录、主要 API 的请求/流式解析、重试/headers/hooks、faux provider 和一批离线测试都已落地；但它还没有达到 TS `pi/packages/ai` 的完整产品级边界。当前更像“Rust 运行时 PoC/核心子集”，不是 `@earendil-works/pi-ai` 的等价替代。
@@ -88,13 +104,13 @@ Rust 当前边界是“有雏形但未完全分层”：
 - 事件协议和 TS 不完全一致，若现在被 `pi-agent-core`/`pi-tui` 依赖，会把不完整协议固化。
 - 全局 `register()`/`stream_model()` 作为顶层 re-export，见 [lib.rs](/home/whai/dev_wkspace/pi2rust/pi-rust/crates/pi-ai/src/lib.rs:11)，一旦后续改成实例化 `Models`，迁移成本会比较高。
 
-**建议优先级**
+**建议优先级（按当前 Flow-centered 方向重述）**
 
-1. **先定 Rust 的公共 API 边界。**
-   建议新增 `AiClient` 或 `Models` 对等类型，承载 provider collection、auth resolver、stream/complete。保留 global registry 作为 compat 或测试辅助，而不是主 API。
+1. **先定 Rust-native scoped provider runtime 和公共 API 边界。**
+   建议新增 `AiClient` 或同等 scoped runtime 类型，承载 provider collection、model catalog view、auth resolver、stream/complete。保留 global registry 作为兼容、测试或启动期辅助，而不是长期主 API。该 runtime 只属于 `pi-ai` provider/model 层，不接触 `CodingAgentSession`、session persistence、CLI/RPC/TUI 或 product Flow。
 
-2. **把 TS `Models` 的 auth 模型移植为核心能力。**
-   优先实现 `CredentialStore`、`ProviderAuth`、`AuthResult`、env override、baseUrl/header/env merge。OAuth 可以分阶段，但接口边界应先定下来。
+2. **建立 Rust-native provider auth resolver。**
+   目标不是原样移植 TS `CredentialStore`，而是在 Rust-native `auth.toml`、env、CLI override 和 provider-specific auth 之间定义统一解析边界。优先规划 `ProviderAuth` / `AuthResolution` / auth source / header merge / base URL override / OAuth access-refresh 生命周期；OAuth 交互流可以分阶段，但 provider runtime 的接口边界应先定下来。
 
 3. **收敛事件和 usage 协议。**
    补齐 `Usage.reasoning`、`cacheWrite1h`、`cost.total`，并决定 Rust `AssistantMessageEvent` 是否严格兼容 TS 的 `text_end.content`、`toolcall_end.toolCall`。这应在更多上层 crate 依赖前完成。
@@ -102,8 +118,8 @@ Rust 当前边界是“有雏形但未完全分层”：
 4. **统一 provider transport。**
    让 Anthropic、DeepSeek、Google、Mistral、Bedrock 尽量走同一套发送/错误/hook/retry/timeout框架。provider 应只负责 request/response protocol，而不是重复 HTTP 控制流。
 
-5. **清理 API/provider 命名偏差。**
-   明确 `deepseek-chat-completions` 是否保留；补 `google-vertex`；决定是否同步 `ant-ling`、`nvidia`、`zai-coding-cn`。模型目录和内置注册表应互相校验，避免有模型无 provider 或有 provider 无模型。
+5. **清理 API/provider 命名偏差，并增加 catalog/register invariant。**
+   明确 `deepseek-chat-completions` 是否保留、隐藏或删除；只有在产品需要或 catalog 已暴露不可运行模型时才补 `google-vertex` 等 provider。模型目录和内置注册表应互相校验，避免有模型无 provider 或有 provider 无模型。
 
 6. **把图片侧做成 chat 侧对等架构。**
    Rust 现在只有类型和 OpenRouter 转换，下一步应补 image model catalog、image provider trait、auth 合并和 `generate_images()` runtime，而不是只加一个 ad hoc HTTP 函数。
