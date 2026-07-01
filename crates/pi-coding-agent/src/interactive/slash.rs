@@ -88,6 +88,10 @@ pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
             description: "Manually compact the session context".into(),
         },
         BuiltinSlashCommand {
+            name: "branch-summary".into(),
+            description: "Summarize an abandoned session branch".into(),
+        },
+        BuiltinSlashCommand {
             name: "resume".into(),
             description: "Resume a different session".into(),
         },

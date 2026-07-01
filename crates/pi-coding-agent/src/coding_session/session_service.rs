@@ -260,11 +260,36 @@ impl SessionService {
         transaction: Option<PromptTurnTransaction>,
         operation_id: impl Into<String>,
     ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        self.commit_non_leaf_transaction(
+            transaction,
+            operation_id,
+            "no active manual compaction transaction",
+        )
+    }
+
+    pub(crate) fn commit_branch_summary_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        self.commit_non_leaf_transaction(
+            transaction,
+            operation_id,
+            "no active branch summary transaction",
+        )
+    }
+
+    fn commit_non_leaf_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        missing_transaction_reason: &'static str,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
         let fallback_operation_id = operation_id.into();
         let Some(mut transaction) = transaction else {
             return Ok(Self::skipped_write(
                 fallback_operation_id,
-                "no active manual compaction transaction",
+                missing_transaction_reason,
             ));
         };
 

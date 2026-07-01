@@ -175,6 +175,23 @@ async fn coding_session_public_api_symbols_are_importable() {
     assert_eq!(prompt_error.code(), "config");
     assert!(prompt_error.to_string().contains("runtime snapshot"));
 
+    let branch_summary_error = session
+        .summarize_branch(
+            PromptTurnOptions::new(PromptInvocation::Text(String::new()))
+                .with_mode(PromptTurnMode::Print),
+            "leaf_abandoned",
+            "leaf_target",
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(branch_summary_error.code(), "config");
+    assert!(
+        branch_summary_error
+            .to_string()
+            .contains("branch summary options do not include a runtime snapshot")
+    );
+
     let diagnostic = CodingDiagnostic::warning("heads up").with_code("phase_2");
     assert_eq!(diagnostic.severity, CodingDiagnosticSeverity::Warning);
     assert_eq!(diagnostic.code.as_deref(), Some("phase_2"));

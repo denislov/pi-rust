@@ -51,6 +51,22 @@ impl PromptTask {
         Ok(Self::spawn_coding_compact(options, existing_session))
     }
 
+    pub(super) fn spawn_branch_summary(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        source_leaf_id: String,
+        target_leaf_id: String,
+        custom_instructions: Option<String>,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_branch_summary(
+            options,
+            existing_session,
+            source_leaf_id,
+            target_leaf_id,
+            custom_instructions,
+        ))
+    }
+
     pub(super) fn abort_once(&mut self) {
         if self.abort_requested {
             return;
@@ -96,6 +112,40 @@ impl PromptTask {
         tokio::spawn(async move {
             let result =
                 run_coding_compact_task(options, existing_session, event_tx, abort_rx).await;
+            let _ = done_tx.send(result.map(PromptTaskResult::Coding));
+        });
+
+        Self {
+            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_branch_summary(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        source_leaf_id: String,
+        target_leaf_id: String,
+        custom_instructions: Option<String>,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_branch_summary_task(
+                options,
+                existing_session,
+                source_leaf_id,
+                target_leaf_id,
+                custom_instructions,
+                event_tx,
+                abort_rx,
+            )
+            .await;
             let _ = done_tx.send(result.map(PromptTaskResult::Coding));
         });
 
@@ -194,6 +244,65 @@ async fn run_coding_compact_task(
                     }
                 }
                 outcome = &mut compact => {
+                    break outcome.map_err(CliError::from);
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(CodingPromptTaskResult {
+        session,
+        outcome,
+        update_usage: false,
+    })
+}
+
+async fn run_coding_branch_summary_task(
+    options: PromptRunOptions,
+    existing_session: Option<CodingAgentSession>,
+    source_leaf_id: String,
+    target_leaf_id: String,
+    custom_instructions: Option<String>,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<CodingPromptTaskResult, CliError> {
+    let mut session = match existing_session {
+        Some(session) => session,
+        None => {
+            open_interactive_coding_session(
+                options.session.as_ref(),
+                options.session_target.as_ref(),
+            )
+            .await?
+        }
+    };
+    let mut receiver = session.subscribe();
+    let branch_options = PromptTurnOptions::from_prompt_run_options(options);
+
+    let outcome = {
+        let mut branch_summary = Box::pin(session.summarize_branch(
+            branch_options,
+            source_leaf_id,
+            target_leaf_id,
+            custom_instructions,
+        ));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive branch summary abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut branch_summary => {
                     break outcome.map_err(CliError::from);
                 }
             }

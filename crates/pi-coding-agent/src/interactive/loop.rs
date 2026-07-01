@@ -14,7 +14,9 @@ use crate::interactive::app::{
 };
 use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
-use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
+use crate::interactive::root::{
+    InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
+};
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
     hydrated_session_from_rust_native,
@@ -581,6 +583,7 @@ fn handle_input_event<T: Terminal>(
         settings_update,
         auth_update,
         compact_instructions,
+        branch_summary_request,
         render_request,
     ) = {
         let root = root_mut(tui, root_id)?;
@@ -603,6 +606,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let branch_summary_request = if action == InteractiveAction::BranchSummary {
+            root.take_pending_branch_summary_request()
+        } else {
+            None
+        };
         let after = root.render_state();
         (
             action,
@@ -614,6 +622,7 @@ fn handle_input_event<T: Terminal>(
             settings_update,
             auth_update,
             compact_instructions,
+            branch_summary_request,
             RenderRequest::changed(before != after),
         )
     };
@@ -812,6 +821,22 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::BranchSummary => {
+            if running.is_some() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            let Some(request) = branch_summary_request else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            *running = Some(start_branch_summary_task(
+                tui,
+                root_id,
+                request,
+                prompt_context,
+                coding_session,
+            )?);
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
     }
 }
 
@@ -930,6 +955,64 @@ fn start_compact_task<T: Terminal>(
         ));
     }
     let task = PromptTask::spawn_compact(options, coding_session.take())?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
+}
+
+fn start_branch_summary_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    request: PendingBranchSummaryRequest,
+    prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<PromptTask, CliError> {
+    let use_rust_native = {
+        let root = root_mut(tui, root_id)?;
+        matches!(
+            root.active_session.as_ref().map(|choice| choice.kind),
+            Some(SessionChoiceKind::RustNative)
+        )
+    };
+
+    {
+        let root = root_mut(tui, root_id)?;
+        root.transcript
+            .push(TranscriptItem::system("Summarizing branch..."));
+        root.set_status(InteractiveStatus::Running);
+    }
+
+    let options = PromptRunOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(String::new()),
+    };
+
+    if !use_rust_native {
+        return Err(CliError::UnsupportedMode(
+            "branch summary requires an active Rust-native session".into(),
+        ));
+    }
+    let task = PromptTask::spawn_branch_summary(
+        options,
+        coding_session.take(),
+        request.source_leaf_id,
+        request.target_leaf_id,
+        request.custom_instructions,
+    )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }

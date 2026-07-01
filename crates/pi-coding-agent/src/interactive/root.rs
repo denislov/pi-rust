@@ -45,6 +45,7 @@ pub(super) enum InteractiveAction {
     None,
     Submit,
     CompactSession,
+    BranchSummary,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -79,6 +80,13 @@ pub(super) struct FooterStats {
     pub context_tokens: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingBranchSummaryRequest {
+    pub(super) source_leaf_id: String,
+    pub(super) target_leaf_id: String,
+    pub(super) custom_instructions: Option<String>,
+}
+
 pub(super) struct InteractiveRoot {
     pub(super) selecting_tree: bool,
     pub(super) tree_selector: Option<TreeSelectorState>,
@@ -92,6 +100,7 @@ pub(super) struct InteractiveRoot {
     pub(super) scroll_command: Arc<Mutex<Option<TranscriptScrollCommand>>>,
     pub(super) pending_submit: Option<String>,
     pub(super) pending_compact_instructions: Option<String>,
+    pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -243,6 +252,7 @@ impl InteractiveRoot {
             scroll_command,
             pending_submit: None,
             pending_compact_instructions: None,
+            pending_branch_summary_request: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,
@@ -355,6 +365,12 @@ impl InteractiveRoot {
 
     pub(super) fn take_pending_compact_instructions(&mut self) -> Option<String> {
         self.pending_compact_instructions.take()
+    }
+
+    pub(super) fn take_pending_branch_summary_request(
+        &mut self,
+    ) -> Option<PendingBranchSummaryRequest> {
+        self.pending_branch_summary_request.take()
     }
 
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {

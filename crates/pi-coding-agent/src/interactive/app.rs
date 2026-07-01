@@ -1148,6 +1148,7 @@ mod tests {
                 "logout",
                 "new",
                 "compact",
+                "branch-summary",
                 "resume",
                 "reload",
                 "quit",
@@ -1172,7 +1173,7 @@ mod tests {
         assert!(rendered.contains("/settings"), "{rendered}");
         assert!(rendered.contains("Open settings menu"), "{rendered}");
         assert!(rendered.contains("/model"), "{rendered}");
-        assert!(rendered.contains("(1/21)"), "{rendered}");
+        assert!(rendered.contains("(1/22)"), "{rendered}");
     }
 
     #[test]
@@ -1967,14 +1968,14 @@ mod tests {
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
-        assert!(moved.contains("(3/21)"), "{moved}");
+        assert!(moved.contains("(3/22)"), "{moved}");
 
         root.handle_input(&key_event("\t"));
 
         assert_eq!(root.editor.text(), "/model ");
         assert_eq!(root.take_action(), InteractiveAction::None);
         let rendered = root.render(80).join("\n");
-        assert!(!rendered.contains("(2/21)"), "{rendered}");
+        assert!(!rendered.contains("(2/22)"), "{rendered}");
     }
 
     #[test]
@@ -2554,6 +2555,42 @@ mod tests {
         let text = last_system_text(&root);
         assert!(text.contains("Nothing to clone yet"), "{text}");
         assert!(!text.contains("not implemented"), "{text}");
+    }
+
+    #[test]
+    fn branch_summary_command_sets_pending_request_for_rust_native_session() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/tmp/project"),
+            "faux-model".to_string(),
+            "Project Phoenix".to_string(),
+        );
+        root.set_active_session_choice(SessionChoice {
+            id: "sess_rust_native".to_string(),
+            cwd: "/tmp/project".to_string(),
+            path: PathBuf::from("/tmp/project/sessions/sess_rust_native"),
+            created_at: "2026-06-30T00:00:00Z".to_string(),
+            name: None,
+            entry_count: 2,
+            active_leaf_id: Some("leaf_branch".to_string()),
+            kind: SessionChoiceKind::RustNative,
+        });
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "branch-summary".to_string(),
+            args: "leaf_branch leaf_root keep decisions".to_string(),
+            original: "/branch-summary leaf_branch leaf_root keep decisions".to_string(),
+        });
+
+        assert_eq!(root.action, InteractiveAction::BranchSummary);
+        let request = root
+            .take_pending_branch_summary_request()
+            .expect("pending branch summary request");
+        assert_eq!(request.source_leaf_id, "leaf_branch");
+        assert_eq!(request.target_leaf_id, "leaf_root");
+        assert_eq!(
+            request.custom_instructions.as_deref(),
+            Some("keep decisions")
+        );
     }
 
     #[test]

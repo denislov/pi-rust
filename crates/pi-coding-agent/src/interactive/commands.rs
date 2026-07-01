@@ -8,7 +8,9 @@ use crate::config;
 use crate::interactive::app::welcome_line;
 use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
-use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
+use crate::interactive::root::{
+    InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
+};
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
     export_transcript as export_session_transcript, fork_rust_native_choice,
@@ -104,6 +106,7 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "logout" => handle_logout_command(root, &command.args),
         "fork" => handle_fork_command(root, &command.args),
         "compact" => handle_compact_command(root, &command.args),
+        "branch-summary" => handle_branch_summary_command(root, &command.args),
         "tree" => handle_tree_command(root),
         "scoped-models" | "share" => handle_pending_slash_command(root, &command),
         _ => {
@@ -154,6 +157,53 @@ fn handle_compact_command(root: &mut InteractiveRoot, args: &str) {
         Some(instructions.to_string())
     };
     root.action = InteractiveAction::CompactSession;
+}
+
+fn handle_branch_summary_command(root: &mut InteractiveRoot, args: &str) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before summarizing a branch.",
+        ));
+        return;
+    }
+    let active_rust_native = matches!(
+        root.active_session.as_ref().map(|choice| choice.kind),
+        Some(SessionChoiceKind::RustNative)
+    );
+    if !active_rust_native {
+        root.transcript.push(TranscriptItem::system(
+            "Nothing to summarize (no active Rust-native session)",
+        ));
+        return;
+    }
+
+    let mut parts = args.split_whitespace();
+    let Some(source_leaf_id) = parts.next() else {
+        root.transcript.push(TranscriptItem::system(
+            "Usage: /branch-summary <source-leaf-id> <target-leaf-id> [instructions]",
+        ));
+        return;
+    };
+    let Some(target_leaf_id) = parts.next() else {
+        root.transcript.push(TranscriptItem::system(
+            "Usage: /branch-summary <source-leaf-id> <target-leaf-id> [instructions]",
+        ));
+        return;
+    };
+    let custom_instructions = {
+        let instructions = parts.collect::<Vec<_>>().join(" ");
+        if instructions.is_empty() {
+            None
+        } else {
+            Some(instructions)
+        }
+    };
+    root.pending_branch_summary_request = Some(PendingBranchSummaryRequest {
+        source_leaf_id: source_leaf_id.to_owned(),
+        target_leaf_id: target_leaf_id.to_owned(),
+        custom_instructions,
+    });
+    root.action = InteractiveAction::BranchSummary;
 }
 
 fn handle_export_command(root: &mut InteractiveRoot, args: &str) {

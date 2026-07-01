@@ -31,12 +31,13 @@ pub use prompt::{
     PromptTurnOutcome,
 };
 
+use branch_summary_flow::{BranchSummaryContext, BranchSummaryOptions, BranchSummaryOutcome};
 use capability_service::CapabilityService;
 use event_service::EventService;
 use flow_service::FlowService;
 use manual_compaction_flow::{ManualCompactionContext, ManualCompactionOptions};
 use plugin_service::PluginService;
-use prompt::{PromptTurnContext, PromptTurnIds};
+use prompt::{PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
 use session_log::id::{IdGenerator, SystemIdGenerator};
 use session_log::replay::TranscriptItem;
@@ -243,6 +244,31 @@ impl CodingAgentSession {
         result
     }
 
+    pub async fn summarize_branch(
+        &mut self,
+        options: PromptTurnOptions,
+        source_leaf_id: impl Into<String>,
+        target_leaf_id: impl Into<String>,
+        custom_instructions: Option<String>,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        if self.active_operation.is_some() {
+            return Err(CodingSessionError::Busy {
+                operation: "branch_summary".into(),
+            });
+        }
+        self.active_operation = Some("branch_summary".into());
+        let result = self
+            .summarize_branch_inner(
+                options,
+                source_leaf_id.into(),
+                target_leaf_id.into(),
+                custom_instructions,
+            )
+            .await;
+        self.active_operation = None;
+        result
+    }
+
     fn from_services(session_service: SessionService) -> Result<Self, CodingSessionError> {
         let event_service = EventService::new();
         event_service.emit(CodingAgentEvent::SessionOpened {
@@ -381,6 +407,76 @@ impl CodingAgentSession {
         }
     }
 
+    async fn summarize_branch_inner(
+        &mut self,
+        options: PromptTurnOptions,
+        source_leaf_id: String,
+        target_leaf_id: String,
+        custom_instructions: Option<String>,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        let runtime = options
+            .runtime()
+            .cloned()
+            .ok_or_else(|| CodingSessionError::Config {
+                message: "branch summary options do not include a runtime snapshot".into(),
+            })?;
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "branch summary without persistent session".into(),
+            });
+        };
+
+        let mut branch_options = BranchSummaryOptions::new()
+            .with_source_leaf_id(source_leaf_id)
+            .with_target_leaf_id(target_leaf_id)
+            .with_runtime(runtime.clone());
+        if let Some(custom_instructions) = custom_instructions {
+            branch_options = branch_options.with_custom_instructions(custom_instructions);
+        }
+        let replay = session_service.replay()?;
+        let transaction = session_service.begin_branch_summary_transaction();
+        let mut context = BranchSummaryContext::new(branch_options, replay, transaction);
+        let operation_id = context.operation_id().to_owned();
+        let turn_id = context.turn_id().to_owned();
+
+        match self.flow_service.run_branch_summary(&mut context).await {
+            Ok(branch_summary) => {
+                let final_text = branch_summary_text(branch_summary);
+                let mut outcome = PromptTurnOutcome::Success {
+                    operation_id: operation_id.clone(),
+                    turn_id,
+                    session_id: Some(session_service.session_id().to_owned()),
+                    leaf_id: session_service.active_leaf_id().map(str::to_owned),
+                    final_text: final_text.clone(),
+                    final_message: branch_summary_final_message(&runtime, &final_text),
+                    diagnostics: Vec::new(),
+                };
+                let finalized = session_service
+                    .commit_branch_summary_transaction(context.take_transaction(), operation_id)?;
+                apply_finalized_session_write(&mut outcome, &finalized);
+                self.emit_session_write_events(&finalized);
+                Ok(outcome)
+            }
+            Err(error) => {
+                let mut outcome = PromptTurnOutcome::Failed {
+                    operation_id: operation_id.clone(),
+                    turn_id: Some(turn_id),
+                    error: error.clone(),
+                    diagnostics: Vec::new(),
+                };
+                let finalized = session_service.fail_prompt_transaction(
+                    context.take_transaction(),
+                    operation_id,
+                    error.code(),
+                    error.to_string(),
+                )?;
+                apply_finalized_session_write(&mut outcome, &finalized);
+                self.emit_session_write_events(&finalized);
+                Ok(outcome)
+            }
+        }
+    }
+
     fn prepare_prompt_context(
         &mut self,
         options: PromptTurnOptions,
@@ -504,6 +600,27 @@ impl CodingAgentSession {
             }
         }
     }
+}
+
+fn branch_summary_text(outcome: BranchSummaryOutcome) -> String {
+    match outcome {
+        BranchSummaryOutcome::Created { summary, .. } => summary,
+        BranchSummaryOutcome::NoOp { reason } => reason,
+    }
+}
+
+fn branch_summary_final_message(
+    runtime: &RuntimeSnapshot,
+    summary: &str,
+) -> pi_ai::types::AssistantMessage {
+    let mut message =
+        pi_ai::types::AssistantMessage::empty(&runtime.model().api, &runtime.model().id);
+    message.provider = Some(runtime.model().provider.clone());
+    message.content.push(pi_ai::types::ContentBlock::Text {
+        text: summary.to_owned(),
+        text_signature: None,
+    });
+    message
 }
 
 fn is_prompt_outcome_event(event: &CodingAgentEvent) -> bool {
@@ -993,6 +1110,92 @@ mod tests {
                 .any(|diagnostic| diagnostic.message.contains("operation")
                     && diagnostic.message.contains("failed"))
         );
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn branch_summary_persistent_session_records_model_summary() {
+        let api = "coding-session-branch-summary";
+        registry::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("root answer", StopReason::Stop),
+                FauxProvider::text_call("branch answer", StopReason::Stop),
+                FauxProvider::text_call("model branch summary", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_branch_summary_owner")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let root_leaf = match session
+            .prompt(prompt_options(api, "root question"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected root prompt success, got {other:?}"),
+        };
+        let branch_leaf = match session
+            .prompt(prompt_options(api, "branch question"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected branch prompt success, got {other:?}"),
+        };
+        let mut events = session.subscribe();
+
+        let outcome = session
+            .summarize_branch(
+                prompt_options(api, ""),
+                branch_leaf.clone(),
+                root_leaf.clone(),
+                Some("keep branch decisions".into()),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &outcome,
+            PromptTurnOutcome::Success {
+                final_text,
+                session_id: Some(session_id),
+                leaf_id: Some(_),
+                ..
+            } if final_text.contains("model branch summary")
+                && session_id == "sess_branch_summary_owner"
+        ));
+        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert_event_order(
+            &emitted_events,
+            &["session_write_pending", "session_write_committed"],
+        );
+        let replay = session.persistent_session_service().replay().unwrap();
+        assert!(matches!(
+            replay.transcript.last(),
+            Some(TranscriptItem::BranchSummary {
+                summary,
+                source_leaf_id,
+                target_leaf_id,
+            }) if summary.contains("model branch summary")
+                && source_leaf_id == &branch_leaf
+                && target_leaf_id == &root_leaf
+        ));
+        let event_log =
+            std::fs::read_to_string(temp.path().join("sess_branch_summary_owner/events.jsonl"))
+                .unwrap();
+        assert!(event_log.contains("branch.summary.created"));
         registry::unregister(api);
     }
 
