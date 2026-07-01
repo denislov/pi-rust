@@ -489,7 +489,7 @@ git commit -m "feat(coding-agent): reserve plugin flow extension points"
 - Modify: `docs/superpowers/plans/2026-07-01-phase-5-plugin-kernel-completion-plan.md`
 - Modify code files only if verification exposes issues.
 
-- [ ] **Step 1: Audit Phase 5 against the guide**
+- [x] **Step 1: Audit Phase 5 against the guide**
 
 Verify each guide handoff item:
 
@@ -502,7 +502,9 @@ Verify each guide handoff item:
 - plugin failures become diagnostics/errors, not panics;
 - plugin contexts do not expose `CodingAgentSession`, `SessionService`, storage, auth, raw shell, or raw filesystem.
 
-- [ ] **Step 2: Run focused checks**
+Actual audit result: the registry stores all six provider families; scoped registration hosts exist for tool, command, hook, UI, keybind, and FlowExtension providers; plugin tools merge through `RuntimeService`; prompt hooks run through `PromptTurnFlow`; FlowExtension exposes only named points; plugin modules and `PluginService` do not expose session/storage/auth/raw filesystem/raw shell/graph mutation APIs to plugins.
+
+- [x] **Step 2: Run focused checks**
 
 Run:
 
@@ -513,9 +515,9 @@ PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent coding_session
 PATH=$HOME/.cargo/bin:$PATH cargo check --workspace
 ```
 
-Expected: all pass with exit code 0.
+Expected: all pass with exit code 0. Actual: `cargo fmt --check`, `cargo test -p pi-coding-agent plugin`, `cargo test -p pi-coding-agent coding_session`, and `cargo check --workspace` all exited 0.
 
-- [ ] **Step 3: Run broad package checks**
+- [x] **Step 3: Run broad package checks**
 
 Run:
 
@@ -524,9 +526,9 @@ PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent
 PATH=$HOME/.cargo/bin:$PATH git diff --check
 ```
 
-Expected: package tests pass, and `git diff --check` exits 0.
+Expected: package tests pass, and `git diff --check` exits 0. Actual: `cargo test -p pi-coding-agent` exited 0, and `git diff --check` exited 0 after the completion documentation update.
 
-- [ ] **Step 4: Mark Phase 5 complete**
+- [x] **Step 4: Mark Phase 5 complete**
 
 Update `docs/TODO.md`:
 
@@ -535,7 +537,7 @@ Update `docs/TODO.md`:
 - progress log records the completed Phase 5 handoff;
 - latest verified checks list the exact commands from Steps 2 and 3.
 
-- [ ] **Step 5: Commit completion**
+- [x] **Step 5: Commit completion**
 
 ```bash
 git add docs/TODO.md docs/superpowers/plans/2026-07-01-phase-5-plugin-kernel-completion-plan.md
