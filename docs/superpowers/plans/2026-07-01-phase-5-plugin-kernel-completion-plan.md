@@ -372,11 +372,11 @@ git commit -m "feat(coding-agent): run plugin hooks in prompt flow"
 - Modify: `crates/pi-coding-agent/src/coding_session/plugin_service.rs`
 - Test: `plugin_service.rs`
 
-- [ ] **Step 1: Write failing UI/keybind collection tests**
+- [x] **Step 1: Write failing UI/keybind collection tests**
 
 Add tests for `collect_ui_actions()` and `collect_keybindings()`. They should verify definitions are collected and provider failures become diagnostics.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -384,13 +384,13 @@ Run:
 PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent collect_ui collect_keybindings
 ```
 
-Expected: compilation failure because UI/keybind provider types do not exist.
+Expected: compilation failure because UI/keybind provider types do not exist. Actual RED was verified with `collect_ui_actions_returns_registered_action_definitions` failing on missing UI/keybind imports.
 
-- [ ] **Step 3: Implement minimal provider boundaries**
+- [x] **Step 3: Implement minimal provider boundaries**
 
 `plugins/ui.rs` must define `UiActionDefinition`, `UiProvider`, and `UiRegistrationHost`. `plugins/keybind.rs` must define `KeybindDefinition`, `KeybindProvider`, and `KeybindRegistrationHost`. Definitions include only stable IDs, labels, descriptions, and action IDs. Do not render terminal output or wire real key handlers in this task.
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 Run:
 
@@ -401,7 +401,7 @@ PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent collect_keybindings
 
 Expected: UI/keybind boundary tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/plugins/ui.rs crates/pi-coding-agent/src/plugins/keybind.rs crates/pi-coding-agent/src/plugins/mod.rs crates/pi-coding-agent/src/plugins/registry.rs crates/pi-coding-agent/src/coding_session/plugin_service.rs docs/TODO.md docs/superpowers/plans/2026-07-01-phase-5-plugin-kernel-completion-plan.md

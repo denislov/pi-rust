@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use super::command::CommandProvider;
 use super::hook::HookProvider;
+use super::keybind::KeybindProvider;
 use super::tool::ToolProvider;
+use super::ui::UiProvider;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct PluginId(String);
@@ -58,6 +60,8 @@ pub(crate) struct PluginRegistry {
     tool_providers: Vec<Arc<dyn ToolProvider>>,
     command_providers: Vec<Arc<dyn CommandProvider>>,
     hook_providers: Vec<Arc<dyn HookProvider>>,
+    ui_providers: Vec<Arc<dyn UiProvider>>,
+    keybind_providers: Vec<Arc<dyn KeybindProvider>>,
 }
 
 impl PluginRegistry {
@@ -80,6 +84,16 @@ impl PluginRegistry {
         self.hook_providers.push(provider);
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn register_ui_provider(&mut self, provider: Arc<dyn UiProvider>) {
+        self.ui_providers.push(provider);
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn register_keybind_provider(&mut self, provider: Arc<dyn KeybindProvider>) {
+        self.keybind_providers.push(provider);
+    }
+
     pub(crate) fn tool_providers(&self) -> &[Arc<dyn ToolProvider>] {
         &self.tool_providers
     }
@@ -93,6 +107,16 @@ impl PluginRegistry {
     pub(crate) fn hook_providers(&self) -> &[Arc<dyn HookProvider>] {
         &self.hook_providers
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn ui_providers(&self) -> &[Arc<dyn UiProvider>] {
+        &self.ui_providers
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn keybind_providers(&self) -> &[Arc<dyn KeybindProvider>] {
+        &self.keybind_providers
+    }
 }
 
 impl fmt::Debug for PluginRegistry {
@@ -101,6 +125,8 @@ impl fmt::Debug for PluginRegistry {
             .field("tool_providers_len", &self.tool_providers.len())
             .field("command_providers_len", &self.command_providers.len())
             .field("hook_providers_len", &self.hook_providers.len())
+            .field("ui_providers_len", &self.ui_providers.len())
+            .field("keybind_providers_len", &self.keybind_providers.len())
             .finish()
     }
 }

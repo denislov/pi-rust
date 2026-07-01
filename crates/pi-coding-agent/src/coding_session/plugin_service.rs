@@ -9,8 +9,10 @@ use super::CodingSessionError;
 use super::prompt::CodingDiagnostic;
 use crate::plugins::{
     CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy, HookOutcome,
-    HookProvider, HookRegistration, HookRegistrationHost, PluginCapabilities, PluginError,
-    PluginRegistry, PromptHookContext, PromptHookPoint, ToolProvider, ToolRegistrationHost,
+    HookProvider, HookRegistration, HookRegistrationHost, KeybindDefinition, KeybindProvider,
+    KeybindRegistrationHost, PluginCapabilities, PluginError, PluginRegistry, PromptHookContext,
+    PromptHookPoint, ToolProvider, ToolRegistrationHost, UiActionDefinition, UiProvider,
+    UiRegistrationHost,
 };
 
 #[derive(Clone)]
@@ -75,6 +77,32 @@ impl PluginService {
         hooks
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn collect_ui_actions(&self) -> Vec<UiActionDefinition> {
+        let host = UiRegistrationHost;
+        let mut actions = Vec::new();
+        for provider in self.registry.ui_providers() {
+            match collect_provider_ui_actions(provider.as_ref(), &host) {
+                Ok(mut provided) => actions.append(&mut provided),
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+        actions
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn collect_keybindings(&self) -> Vec<KeybindDefinition> {
+        let host = KeybindRegistrationHost;
+        let mut keybindings = Vec::new();
+        for provider in self.registry.keybind_providers() {
+            match collect_provider_keybindings(provider.as_ref(), &host) {
+                Ok(mut provided) => keybindings.append(&mut provided),
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+        keybindings
+    }
+
     pub(crate) fn run_prompt_hook(
         &self,
         point: PromptHookPoint,
@@ -124,8 +152,8 @@ impl PluginService {
             tool_providers: self.registry.tool_providers().len(),
             command_providers: self.registry.command_providers().len(),
             hook_providers: self.registry.hook_providers().len(),
-            ui_providers: 0,
-            keybind_providers: 0,
+            ui_providers: self.registry.ui_providers().len(),
+            keybind_providers: self.registry.keybind_providers().len(),
             flow_extensions: 0,
             diagnostics: self.diagnostics().len(),
         }
@@ -209,6 +237,36 @@ fn collect_provider_hooks(
     }
 }
 
+#[allow(dead_code)]
+fn collect_provider_ui_actions(
+    provider: &dyn UiProvider,
+    host: &UiRegistrationHost,
+) -> Result<Vec<UiActionDefinition>, PluginError> {
+    let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+    match catch_unwind(AssertUnwindSafe(|| provider.ui_actions(host))) {
+        Ok(result) => result,
+        Err(panic) => Err(PluginError::Panic {
+            plugin_id,
+            message: panic_message(panic),
+        }),
+    }
+}
+
+#[allow(dead_code)]
+fn collect_provider_keybindings(
+    provider: &dyn KeybindProvider,
+    host: &KeybindRegistrationHost,
+) -> Result<Vec<KeybindDefinition>, PluginError> {
+    let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+    match catch_unwind(AssertUnwindSafe(|| provider.keybindings(host))) {
+        Ok(result) => result,
+        Err(panic) => Err(PluginError::Panic {
+            plugin_id,
+            message: panic_message(panic),
+        }),
+    }
+}
+
 fn run_provider_hook(
     provider: &dyn HookProvider,
     ctx: &PromptHookContext,
@@ -247,9 +305,10 @@ mod tests {
     use super::*;
     use crate::plugins::{
         CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy,
-        HookProvider, HookRegistration, HookRegistrationHost, PluginError, PluginId,
-        PluginMetadata, PluginRegistry, PluginSource, PromptHookPoint, ToolProvider,
-        ToolRegistrationHost,
+        HookProvider, HookRegistration, HookRegistrationHost, KeybindDefinition, KeybindProvider,
+        KeybindRegistrationHost, PluginError, PluginId, PluginMetadata, PluginRegistry,
+        PluginSource, PromptHookPoint, ToolProvider, ToolRegistrationHost, UiActionDefinition,
+        UiProvider, UiRegistrationHost,
     };
 
     struct StaticToolProvider {
@@ -363,6 +422,102 @@ mod tests {
                 point: PromptHookPoint::BeforeAgentTurn,
                 policy: HookFailurePolicy::FailOpen,
             }])
+        }
+    }
+
+    struct StaticUiProvider;
+
+    impl UiProvider for StaticUiProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("ui-plugin"),
+                "ui-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn ui_actions(
+            &self,
+            _host: &UiRegistrationHost,
+        ) -> Result<Vec<UiActionDefinition>, PluginError> {
+            Ok(vec![UiActionDefinition::new(
+                "ui.open_panel",
+                "Open panel",
+                "Open the plugin panel",
+                "plugin.open_panel",
+            )])
+        }
+    }
+
+    struct FailingUiProvider;
+
+    impl UiProvider for FailingUiProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("failing-ui-plugin"),
+                "failing-ui-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn ui_actions(
+            &self,
+            _host: &UiRegistrationHost,
+        ) -> Result<Vec<UiActionDefinition>, PluginError> {
+            Err(PluginError::Registration {
+                plugin_id: "failing-ui-plugin".into(),
+                message: "ui registration failed".into(),
+            })
+        }
+    }
+
+    struct StaticKeybindProvider;
+
+    impl KeybindProvider for StaticKeybindProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("keybind-plugin"),
+                "keybind-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn keybindings(
+            &self,
+            _host: &KeybindRegistrationHost,
+        ) -> Result<Vec<KeybindDefinition>, PluginError> {
+            Ok(vec![KeybindDefinition::new(
+                "keybind.open_panel",
+                "ctrl+p",
+                "Open the plugin panel",
+                "plugin.open_panel",
+            )])
+        }
+    }
+
+    struct FailingKeybindProvider;
+
+    impl KeybindProvider for FailingKeybindProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("failing-keybind-plugin"),
+                "failing-keybind-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn keybindings(
+            &self,
+            _host: &KeybindRegistrationHost,
+        ) -> Result<Vec<KeybindDefinition>, PluginError> {
+            Err(PluginError::Registration {
+                plugin_id: "failing-keybind-plugin".into(),
+                message: "keybind registration failed".into(),
+            })
         }
     }
 
@@ -486,6 +641,8 @@ mod tests {
         }));
         registry.register_command_provider(Arc::new(StaticCommandProvider));
         registry.register_hook_provider(Arc::new(StaticHookProvider));
+        registry.register_ui_provider(Arc::new(StaticUiProvider));
+        registry.register_keybind_provider(Arc::new(StaticKeybindProvider));
         let service = PluginService::with_registry(registry);
 
         let capabilities = service.capabilities();
@@ -493,7 +650,83 @@ mod tests {
         assert_eq!(capabilities.tool_providers, 1);
         assert_eq!(capabilities.command_providers, 1);
         assert_eq!(capabilities.hook_providers, 1);
+        assert_eq!(capabilities.ui_providers, 1);
+        assert_eq!(capabilities.keybind_providers, 1);
         assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn collect_ui_actions_returns_registered_action_definitions() {
+        let mut registry = PluginRegistry::new();
+        registry.register_ui_provider(Arc::new(StaticUiProvider));
+        let service = PluginService::with_registry(registry);
+
+        let actions = service.collect_ui_actions();
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id, "ui.open_panel");
+        assert_eq!(actions[0].label, "Open panel");
+        assert_eq!(actions[0].action_id, "plugin.open_panel");
+        assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn collect_ui_actions_isolates_provider_failures_as_diagnostics() {
+        let mut registry = PluginRegistry::new();
+        registry.register_ui_provider(Arc::new(FailingUiProvider));
+        registry.register_ui_provider(Arc::new(StaticUiProvider));
+        let service = PluginService::with_registry(registry);
+
+        let actions = service.collect_ui_actions();
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id, "ui.open_panel");
+        let diagnostics = service.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].plugin_id.as_deref(),
+            Some("failing-ui-plugin")
+        );
+        assert!(diagnostics[0].message.contains("ui registration failed"));
+    }
+
+    #[test]
+    fn collect_keybindings_returns_registered_keybinding_definitions() {
+        let mut registry = PluginRegistry::new();
+        registry.register_keybind_provider(Arc::new(StaticKeybindProvider));
+        let service = PluginService::with_registry(registry);
+
+        let keybindings = service.collect_keybindings();
+
+        assert_eq!(keybindings.len(), 1);
+        assert_eq!(keybindings[0].id, "keybind.open_panel");
+        assert_eq!(keybindings[0].key, "ctrl+p");
+        assert_eq!(keybindings[0].action_id, "plugin.open_panel");
+        assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn collect_keybindings_isolates_provider_failures_as_diagnostics() {
+        let mut registry = PluginRegistry::new();
+        registry.register_keybind_provider(Arc::new(FailingKeybindProvider));
+        registry.register_keybind_provider(Arc::new(StaticKeybindProvider));
+        let service = PluginService::with_registry(registry);
+
+        let keybindings = service.collect_keybindings();
+
+        assert_eq!(keybindings.len(), 1);
+        assert_eq!(keybindings[0].id, "keybind.open_panel");
+        let diagnostics = service.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].plugin_id.as_deref(),
+            Some("failing-keybind-plugin")
+        );
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("keybind registration failed")
+        );
     }
 
     #[test]
