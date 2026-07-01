@@ -1,13 +1,13 @@
 mod common;
 
 use pi_agent_core::agent_turn_flow::{
-    AgentTurnContext, DecideStopOrToolsNode, MaybeCompactRuntimeContextNode, PrepareContextNode,
-    ProviderStreamNode,
+    AgentTurnContext, DecideStopOrToolsNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
+    PrepareContextNode, ProviderStreamNode,
 };
-use pi_agent_core::flow::Flow;
+use pi_agent_core::flow::{Action, Flow};
 use pi_agent_core::{
     Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool, CompactionConfig,
-    CompactionSettings, PromptTemplate, Skill,
+    CompactionSettings, PromptTemplate, Skill, ToolExecutionMode,
 };
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
@@ -19,6 +19,17 @@ fn user_msg(id: &str, text: &str) -> AgentMessage {
         message_id: id.into(),
         text: text.into(),
     }
+}
+
+fn text_content(content: &[ContentBlock]) -> String {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[test]
@@ -190,6 +201,148 @@ async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
         event,
         AgentEvent::SessionCompacted { summary, first_kept_message_id, .. }
             if summary == "summary of old context" && first_kept_message_id == "old_2"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
+    let api = "agent-turn-flow-execute-tool";
+    let mut config = AgentConfig::new(common::faux_model(api));
+    config.tool_execution = ToolExecutionMode::Sequential;
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
+    agent.add_tool(AgentTool::new_text(
+        "echo",
+        "echo input",
+        serde_json::json!({"type": "object"}),
+        |args| async move {
+            Ok(args
+                .get("text")
+                .and_then(|value| value.as_str())
+                .unwrap_or("missing")
+                .to_string())
+        },
+    ));
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({"text": "hello"}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap()
+        .edge_on(
+            "decide_stop_or_tools",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "execute_tools");
+    assert_eq!(outcome.last_action.as_str(), "continue");
+    assert!(context.pending_tool_calls.is_empty());
+    assert_eq!(context.tool_results.len(), 1);
+    assert_eq!(text_content(&context.tool_results[0].content), "hello");
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallStart { tool_call_id, tool_name, arguments }
+            if tool_call_id == "call_1" && tool_name == "echo" && arguments == &serde_json::json!({"text": "hello"})
+    )));
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallEnd { tool_call_id, tool_name, result }
+            if tool_call_id == "call_1" && tool_name == "echo" && !result.is_error && text_content(&result.content) == "hello"
+    )));
+    assert!(context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::ToolResult { tool_call_id, tool_name, is_error: false, content, .. }
+            if tool_call_id == "call_1" && tool_name == "echo" && text_content(content) == "hello"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn execute_tools_node_records_unknown_tool_as_error_result() {
+    let api = "agent-turn-flow-execute-unknown-tool";
+    let mut config = AgentConfig::new(common::faux_model(api));
+    config.tool_execution = ToolExecutionMode::Sequential;
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "missing_tool",
+            serde_json::json!({}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap()
+        .edge_on(
+            "decide_stop_or_tools",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_action.as_str(), "continue");
+    assert_eq!(context.tool_results.len(), 1);
+    assert!(context.tool_results[0].is_error);
+    assert_eq!(
+        text_content(&context.tool_results[0].content),
+        "unknown tool: missing_tool"
+    );
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallEnd { tool_call_id, tool_name, result }
+            if tool_call_id == "call_1"
+                && tool_name == "missing_tool"
+                && result.is_error
+                && text_content(&result.content) == "unknown tool: missing_tool"
+    )));
+    assert!(context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::ToolResult { tool_call_id, tool_name, is_error: true, content, .. }
+            if tool_call_id == "call_1"
+                && tool_name == "missing_tool"
+                && text_content(content) == "unknown tool: missing_tool"
     )));
 
     registry::unregister(api);

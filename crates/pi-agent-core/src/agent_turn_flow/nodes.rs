@@ -7,8 +7,10 @@ use crate::compaction::summarize::summarize;
 use crate::convert::convert_to_context;
 use crate::flow::{Action, FlowNode};
 use crate::loop_runtime::context::stream_options_for_turn;
-use crate::loop_runtime::tools::extract_tool_calls;
-use crate::types::{AgentEvent, AgentMessage, ProviderRequestSnapshot};
+use crate::loop_runtime::tools::{
+    ToolCallExecution, append_tool_result_messages, extract_tool_calls,
+};
+use crate::types::{AgentEvent, AgentMessage, AgentToolResult, ProviderRequestSnapshot};
 use futures::StreamExt;
 use pi_ai::types::{AssistantMessageEvent, StopReason, Usage};
 
@@ -77,6 +79,21 @@ impl FlowNode<AgentTurnContext> for DecideStopOrToolsNode {
         ctx: &'a mut AgentTurnContext,
     ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
         Box::pin(async move { decide_stop_or_tools(ctx) })
+    }
+}
+
+pub struct ExecuteToolsNode;
+
+impl FlowNode<AgentTurnContext> for ExecuteToolsNode {
+    fn name(&self) -> &str {
+        "execute_tools"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { execute_tools(ctx).await })
     }
 }
 
@@ -259,6 +276,51 @@ pub fn decide_stop_or_tools(ctx: &mut AgentTurnContext) -> Result<Action, String
             }
         }
     }
+}
+
+pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    let pending = std::mem::take(&mut ctx.pending_tool_calls);
+    if pending.is_empty() {
+        return Action::new("continue").map_err(|err| err.to_string());
+    }
+
+    let mut executions = Vec::with_capacity(pending.len());
+    for call in pending {
+        ctx.events.push(AgentEvent::ToolCallStart {
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            arguments: call.arguments.clone(),
+        });
+
+        let tool = ctx
+            .tools
+            .iter()
+            .find(|tool| tool.name == call.name)
+            .cloned();
+        let result = match tool {
+            Some(tool) => match (tool.execute)(call.arguments.clone(), None).await {
+                Ok(output) => AgentToolResult::from_output(output),
+                Err(error) => AgentToolResult::error(error),
+            },
+            None => AgentToolResult::error(format!("unknown tool: {}", call.name)),
+        };
+
+        ctx.events.push(AgentEvent::ToolCallEnd {
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            result: result.clone(),
+        });
+        ctx.tool_results.push(result.clone());
+        executions.push(ToolCallExecution {
+            index: call.index,
+            tool_call_id: call.id,
+            tool_name: call.name,
+            result,
+        });
+    }
+
+    append_tool_result_messages(&mut ctx.messages, &executions);
+    Action::new("continue").map_err(|err| err.to_string())
 }
 
 fn default_action() -> Result<Action, String> {
