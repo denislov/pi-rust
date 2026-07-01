@@ -6,15 +6,19 @@ use pi_agent_core::agent_turn_flow::{
 };
 use pi_agent_core::flow::{Action, Flow};
 use pi_agent_core::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool, AgentToolOutput,
-    CompactionConfig, CompactionSettings, PromptTemplate, Skill, ToolExecutionMode,
+    AfterToolCallResult, Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool,
+    AgentToolOutput, BeforeToolCallResult, CompactionConfig, CompactionSettings, PromptTemplate,
+    Skill, ToolExecutionMode,
 };
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, StreamOptions,
 };
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::Duration;
 
 fn user_msg(id: &str, text: &str) -> AgentMessage {
@@ -337,6 +341,320 @@ async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
         AgentMessage::ToolResult { tool_call_id, tool_name, is_error: false, content, .. }
             if tool_call_id == "call_1" && tool_name == "echo" && text_content(content) == "hello"
     )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn execute_tools_node_honors_before_hook_block() {
+    let api = "agent-turn-flow-execute-before-hook";
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut config = AgentConfig::new(common::faux_model(api));
+    config.tool_execution = ToolExecutionMode::Sequential;
+    config.hooks.before_tool_call = Some(Arc::new(|ctx| {
+        assert_eq!(ctx.tool_name, "echo");
+        Box::pin(async move {
+            Ok(Some(BeforeToolCallResult {
+                block: true,
+                reason: Some("blocked by flow hook".into()),
+            }))
+        })
+    }));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
+    let calls_for_tool = calls.clone();
+    agent.add_tool(AgentTool {
+        name: "echo".into(),
+        description: "echo input".into(),
+        parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
+        execute: Arc::new(move |_, _on_update| {
+            calls_for_tool.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
+                    text: "executed".into(),
+                    text_signature: None,
+                }]))
+            })
+        }),
+    });
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap()
+        .edge_on(
+            "decide_stop_or_tools",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_action.as_str(), "continue");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(context.tool_results.len(), 1);
+    assert!(context.tool_results[0].is_error);
+    assert_eq!(
+        text_content(&context.tool_results[0].content),
+        "blocked by flow hook"
+    );
+    assert!(context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::ToolResult { tool_call_id, is_error: true, content, .. }
+            if tool_call_id == "call_1" && text_content(content) == "blocked by flow hook"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn execute_tools_node_honors_after_hook_result_update() {
+    let api = "agent-turn-flow-execute-after-hook";
+    let mut config = AgentConfig::new(common::faux_model(api));
+    config.tool_execution = ToolExecutionMode::Sequential;
+    config.hooks.after_tool_call = Some(Arc::new(|ctx| {
+        assert_eq!(ctx.tool_name, "echo");
+        assert!(!ctx.result.is_error);
+        assert_eq!(text_content(&ctx.result.content), "original");
+        Box::pin(async move {
+            Ok(Some(AfterToolCallResult {
+                content: Some(vec![ContentBlock::Text {
+                    text: "rewritten by flow hook".into(),
+                    text_signature: None,
+                }]),
+                is_error: Some(true),
+                terminate: Some(false),
+            }))
+        })
+    }));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
+    agent.add_tool(AgentTool::new_text(
+        "echo",
+        "echo input",
+        serde_json::json!({"type": "object"}),
+        |_| async { Ok("original".to_string()) },
+    ));
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap()
+        .edge_on(
+            "decide_stop_or_tools",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_action.as_str(), "continue");
+    assert_eq!(context.tool_results.len(), 1);
+    assert!(context.tool_results[0].is_error);
+    assert_eq!(
+        text_content(&context.tool_results[0].content),
+        "rewritten by flow hook"
+    );
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallEnd { result, .. }
+            if result.is_error && text_content(&result.content) == "rewritten by flow hook"
+    )));
+    assert!(context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::ToolResult { is_error: true, content, .. }
+            if text_content(content) == "rewritten by flow hook"
+    )));
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn execute_tools_node_emits_tool_update_events_before_end() {
+    let api = "agent-turn-flow-execute-tool-update";
+    let mut config = AgentConfig::new(common::faux_model(api));
+    config.tool_execution = ToolExecutionMode::Sequential;
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
+    agent.add_tool(AgentTool {
+        name: "echo".into(),
+        description: "echo input".into(),
+        parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
+        execute: Arc::new(|_, on_update| {
+            Box::pin(async move {
+                if let Some(on_update) = on_update {
+                    on_update(AgentToolOutput::new(vec![ContentBlock::Text {
+                        text: "progress".into(),
+                        text_signature: None,
+                    }]));
+                }
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
+                    text: "final".into(),
+                    text_signature: None,
+                }]))
+            })
+        }),
+    });
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap()
+        .edge_on(
+            "decide_stop_or_tools",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap();
+
+    flow.run(&mut context).await.unwrap();
+
+    let tool_events: Vec<_> = context
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolCallUpdate { update, .. } => {
+                Some(("update", text_content(&update.content)))
+            }
+            AgentEvent::ToolCallEnd { result, .. } => Some(("end", text_content(&result.content))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_events,
+        vec![
+            ("update", "progress".to_string()),
+            ("end", "final".to_string())
+        ]
+    );
+
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
+    let api = "agent-turn-flow-execute-terminate";
+    let mut config = AgentConfig::new(common::faux_model(api));
+    config.tool_execution = ToolExecutionMode::Sequential;
+    config.hooks.after_tool_call = Some(Arc::new(|_| {
+        Box::pin(async move {
+            Ok(Some(AfterToolCallResult {
+                content: None,
+                is_error: None,
+                terminate: Some(true),
+            }))
+        })
+    }));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
+    agent.add_tool(AgentTool::new_text(
+        "echo",
+        "echo input",
+        serde_json::json!({"type": "object"}),
+        |_| async { Ok("ok".to_string()) },
+    ));
+
+    registry::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_context").unwrap();
+    flow.add_node("prepare_context", PrepareContextNode)
+        .unwrap()
+        .add_node("provider_stream", ProviderStreamNode)
+        .unwrap()
+        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .edge("prepare_context", "provider_stream")
+        .unwrap()
+        .edge("provider_stream", "decide_stop_or_tools")
+        .unwrap()
+        .edge_on(
+            "decide_stop_or_tools",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_action.as_str(), "done");
+    assert!(context.tool_results.iter().all(|result| result.terminate));
+    assert!(
+        context
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentDone { .. }))
+    );
 
     registry::unregister(api);
 }

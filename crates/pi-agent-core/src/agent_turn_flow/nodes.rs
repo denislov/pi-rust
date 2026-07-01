@@ -1,20 +1,26 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
 use crate::compaction::summarize::summarize;
 use crate::convert::convert_to_context;
 use crate::flow::{Action, FlowNode};
+use crate::hooks::{AfterToolCallContext, AfterToolCallHook, BeforeToolCallContext};
 use crate::loop_runtime::context::stream_options_for_turn;
 use crate::loop_runtime::tools::{
     ToolCallExecution, ToolCallRequest, append_tool_result_messages, extract_tool_calls,
     should_use_sequential_tools,
 };
-use crate::types::{AgentEvent, AgentMessage, AgentTool, AgentToolResult, ProviderRequestSnapshot};
-use futures::StreamExt;
+use crate::types::{
+    AgentEvent, AgentMessage, AgentTool, AgentToolOutput, AgentToolResult, ProviderRequestSnapshot,
+    ToolUpdateCallback,
+};
+use futures::channel::mpsc;
 use futures::stream::FuturesUnordered;
-use pi_ai::types::{AssistantMessageEvent, StopReason, Usage};
+use futures::{FutureExt, StreamExt};
+use pi_ai::types::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
 
 use super::context::{AgentTurnContext, PendingToolCall, RuntimeCompactionState};
 
@@ -307,8 +313,14 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
                 arguments: call.arguments.clone(),
             });
 
-            let tool = find_tool(&ctx.tools, &call.name);
-            let result = execute_tool(tool, call.name.clone(), call.arguments.clone()).await;
+            let result = match before_tool_result(ctx, &call).await {
+                Some(result) => result,
+                None => {
+                    let tool = find_tool(&ctx.tools, &call.name);
+                    let result = execute_tool_with_updates(ctx, &call, tool).await;
+                    after_tool_result(ctx, &call, result).await
+                }
+            };
 
             ctx.events.push(AgentEvent::ToolCallEnd {
                 tool_call_id: call.id.clone(),
@@ -332,13 +344,38 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
             });
         }
 
-        let mut futures: FuturesUnordered<_> = pending
+        let after_hook = ctx.config.hooks.after_tool_call.clone();
+        let assistant_message = ctx.assistant_message.clone();
+        let messages = ctx.messages.clone();
+        let mut prepared = Vec::with_capacity(pending.len());
+        for call in pending {
+            let blocked = before_tool_result(ctx, &call).await;
+            let tool = find_tool(&ctx.tools, &call.name);
+            prepared.push((call, tool, blocked));
+        }
+
+        let mut futures: FuturesUnordered<_> = prepared
             .into_iter()
-            .map(|call| {
-                let tool = find_tool(&ctx.tools, &call.name);
+            .map(|(call, tool, blocked)| {
+                let after_hook = after_hook.clone();
+                let assistant_message = assistant_message.clone();
+                let messages = messages.clone();
                 async move {
-                    let result =
-                        execute_tool(tool, call.name.clone(), call.arguments.clone()).await;
+                    let result = match blocked {
+                        Some(result) => result,
+                        None => {
+                            let result =
+                                execute_tool(tool, call.name.clone(), call.arguments.clone()).await;
+                            apply_after_tool_hook(
+                                after_hook,
+                                assistant_message,
+                                messages,
+                                &call,
+                                result,
+                            )
+                            .await
+                        }
+                    };
                     ToolCallExecution {
                         index: call.index,
                         tool_call_id: call.id,
@@ -362,14 +399,157 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
         executions
     };
 
+    let all_terminate = !executions.is_empty()
+        && executions
+            .iter()
+            .all(|execution| execution.result.terminate);
     ctx.tool_results
         .extend(executions.iter().map(|execution| execution.result.clone()));
     append_tool_result_messages(&mut ctx.messages, &executions);
+
+    if all_terminate && let Some(message) = ctx.assistant_message.clone() {
+        ctx.events.push(AgentEvent::AgentDone { message });
+        return Action::new("done").map_err(|err| err.to_string());
+    }
+
     Action::new("continue").map_err(|err| err.to_string())
+}
+
+async fn before_tool_result(
+    ctx: &AgentTurnContext,
+    call: &PendingToolCall,
+) -> Option<AgentToolResult> {
+    let hook = ctx.config.hooks.before_tool_call.clone()?;
+    let assistant_message = ctx.assistant_message.clone()?;
+    let hook_context = BeforeToolCallContext {
+        assistant_message,
+        tool_call_id: call.id.clone(),
+        tool_name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        messages: ctx.messages.clone(),
+    };
+
+    match hook(hook_context).await {
+        Ok(Some(result)) if result.block => Some(AgentToolResult::error(
+            result.reason.unwrap_or_else(|| "blocked".into()),
+        )),
+        Err(error) => Some(AgentToolResult::error(error)),
+        _ => None,
+    }
+}
+
+async fn after_tool_result(
+    ctx: &AgentTurnContext,
+    call: &PendingToolCall,
+    result: AgentToolResult,
+) -> AgentToolResult {
+    apply_after_tool_hook(
+        ctx.config.hooks.after_tool_call.clone(),
+        ctx.assistant_message.clone(),
+        ctx.messages.clone(),
+        call,
+        result,
+    )
+    .await
+}
+
+async fn apply_after_tool_hook(
+    hook: Option<AfterToolCallHook>,
+    assistant_message: Option<AssistantMessage>,
+    messages: Vec<AgentMessage>,
+    call: &PendingToolCall,
+    mut result: AgentToolResult,
+) -> AgentToolResult {
+    let Some(hook) = hook else {
+        return result;
+    };
+    let Some(assistant_message) = assistant_message else {
+        return result;
+    };
+    let hook_context = AfterToolCallContext {
+        assistant_message,
+        tool_call_id: call.id.clone(),
+        tool_name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        result: result.clone(),
+        messages,
+    };
+
+    match hook(hook_context).await {
+        Ok(Some(after)) => {
+            if let Some(content) = after.content {
+                result.content = content;
+            }
+            if let Some(is_error) = after.is_error {
+                result.is_error = is_error;
+            }
+            if let Some(terminate) = after.terminate {
+                result.terminate = terminate;
+            }
+            result
+        }
+        Err(error) => AgentToolResult::error(error),
+        _ => result,
+    }
 }
 
 fn find_tool(tools: &[AgentTool], name: &str) -> Option<AgentTool> {
     tools.iter().find(|tool| tool.name == name).cloned()
+}
+
+async fn execute_tool_with_updates(
+    ctx: &mut AgentTurnContext,
+    call: &PendingToolCall,
+    tool: Option<AgentTool>,
+) -> AgentToolResult {
+    let (update_tx, mut update_rx) = mpsc::unbounded::<AgentToolOutput>();
+    let update_callback: ToolUpdateCallback = Arc::new(move |update| {
+        let _ = update_tx.unbounded_send(update);
+    });
+    let mut execute_future = Box::pin({
+        let arguments = call.arguments.clone();
+        let tool_name = call.name.clone();
+        async move {
+            match tool {
+                Some(tool) => match (tool.execute)(arguments, Some(update_callback)).await {
+                    Ok(output) => AgentToolResult::from_output(output),
+                    Err(error) => AgentToolResult::error(error),
+                },
+                None => AgentToolResult::error(format!("unknown tool: {}", tool_name)),
+            }
+        }
+    })
+    .fuse();
+    let mut update_open = true;
+    let result = loop {
+        if !update_open {
+            break execute_future.await;
+        }
+        futures::select! {
+            maybe_update = update_rx.next().fuse() => {
+                if let Some(update) = maybe_update {
+                    ctx.events.push(AgentEvent::ToolCallUpdate {
+                        tool_call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        update,
+                    });
+                } else {
+                    update_open = false;
+                }
+            }
+            completed = &mut execute_future => {
+                break completed;
+            }
+        }
+    };
+    while let Some(Some(update)) = update_rx.next().now_or_never() {
+        ctx.events.push(AgentEvent::ToolCallUpdate {
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            update,
+        });
+    }
+    result
 }
 
 async fn execute_tool(
