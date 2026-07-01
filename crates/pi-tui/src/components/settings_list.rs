@@ -365,15 +365,6 @@ impl Component for SettingsList {
             _ => {}
         }
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     fn invalidate(&mut self) {
         if let Some(submenu) = &mut self.active_submenu {
             submenu.invalidate();

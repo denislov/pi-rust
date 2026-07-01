@@ -208,14 +208,6 @@ impl Component for SelectList {
             _ => {}
         }
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
 }
 
 fn searchable_text(item: &SelectItem) -> String {

@@ -159,14 +159,6 @@ impl Component for Input {
     fn focused(&self) -> bool {
         self.focused
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
 }
 
 fn previous_grapheme_boundary(text: &str, cursor: usize) -> usize {

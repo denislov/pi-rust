@@ -80,14 +80,6 @@ impl Component for SelectorDialog {
     fn handle_input(&mut self, event: &InputEvent) {
         self.list.handle_input(event);
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
 }
 
 fn fit_line(line: &str, width: usize) -> String {

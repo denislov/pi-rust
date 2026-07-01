@@ -1,6 +1,8 @@
+use std::any::Any;
+
 pub type ComponentId = usize;
 
-pub trait Component {
+pub trait Component: Any {
     fn render(&mut self, width: usize) -> Vec<String>;
 
     fn set_viewport_size(&mut self, _width: usize, _height: usize) {}
@@ -17,15 +19,17 @@ pub trait Component {
         false
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        panic!("component does not support downcasting")
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        panic!("component does not support mutable downcasting")
-    }
-
     fn invalidate(&mut self) {}
+}
+
+impl dyn Component {
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    pub fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 pub struct Container {
@@ -69,13 +73,5 @@ impl Component for Container {
         for child in &mut self.children {
             child.invalidate();
         }
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 }
