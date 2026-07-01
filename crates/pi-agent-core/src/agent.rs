@@ -1,5 +1,4 @@
-use crate::agent_loop;
-use crate::agent_turn_flow::AgentTurnContext;
+use crate::agent_turn_flow::{AgentTurnContext, AgentTurnFlow};
 use crate::convert::convert_to_context;
 use crate::hooks::BeforeProviderRequestHook;
 use crate::resources::{format_prompt_template_invocation, format_skill_invocation};
@@ -205,7 +204,7 @@ impl Agent {
         };
         Box::pin(async_stream::stream! {
             let _guard = guard;
-            let mut stream = agent_loop::run_loop(state);
+            let mut stream = AgentTurnFlow::run_state(state);
             use futures::StreamExt;
             while let Some(event) = stream.next().await {
                 yield event;

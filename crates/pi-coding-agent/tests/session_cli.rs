@@ -213,7 +213,7 @@ async fn session_id_creates_and_reopens() {
 }
 
 #[tokio::test]
-async fn fork_target_is_explicitly_unsupported_for_rust_native_print_sessions() {
+async fn fork_target_routes_through_rust_native_print_session_cli() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
@@ -250,9 +250,23 @@ async fn fork_target_is_explicitly_unsupported_for_rust_native_print_sessions() 
         options2,
     )
     .await;
-    assert_eq!(result.exit_code, 1);
-    assert!(result.stderr.contains("Rust-native session fork"));
-    assert_eq!(session_dirs(&sessions).len(), 1);
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "fork\n");
+
+    let dirs = session_dirs(&sessions);
+    assert_eq!(dirs.len(), 2);
+    let fork_dir = dirs
+        .iter()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) != Some("fork-source-id"))
+        .expect("expected generated fork session directory");
+    let fork_events = std::fs::read_to_string(fork_dir.join("events.jsonl")).unwrap();
+    assert!(fork_events.contains(r#""kind":"session.forked""#));
+    assert!(fork_events.contains("source prompt"));
+    assert!(fork_events.contains("fork prompt"));
+
+    let source_events =
+        std::fs::read_to_string(sessions.join("fork-source-id/events.jsonl")).unwrap();
+    assert!(!source_events.contains("fork prompt"));
 
     registry::unregister(api2);
 }
