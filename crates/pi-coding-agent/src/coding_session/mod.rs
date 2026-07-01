@@ -263,7 +263,9 @@ impl CodingAgentSession {
         };
         apply_finalized_session_write(&mut outcome, &finalized);
 
-        self.emit_coding_events_before_prompt_outcome(context.coding_events());
+        if !context.live_events_enabled() {
+            self.emit_coding_events_before_prompt_outcome(context.coding_events());
+        }
         self.emit_session_write_events(&finalized);
         self.emit_prompt_outcome_event(&outcome);
         Ok(outcome)
@@ -398,6 +400,7 @@ impl CodingAgentSession {
         &mut self,
         options: PromptTurnOptions,
     ) -> Result<PromptTurnContext, CodingSessionError> {
+        let event_service = self.event_service.clone();
         match &mut self.persistence {
             SessionPersistence::Persistent(session_service) => {
                 let replay = session_service.replay()?;
@@ -409,6 +412,7 @@ impl CodingAgentSession {
                 context.set_session_id(session_service.session_id().to_owned());
                 context.set_replay(replay);
                 context.set_transaction(transaction);
+                context.enable_live_events(event_service);
                 Ok(context)
             }
             SessionPersistence::NonPersistent(state) => {
@@ -419,6 +423,7 @@ impl CodingAgentSession {
                 );
                 context
                     .set_non_persistent_session(state.runtime_id.clone(), state.transcript.clone());
+                context.enable_live_events(event_service);
                 Ok(context)
             }
         }
@@ -586,9 +591,11 @@ mod tests {
     };
 
     use super::*;
-    use crate::coding_session::session_log::event::{SessionEventData, SessionEventEnvelope};
+    use crate::coding_session::session_log::event::{
+        PersistedContentBlock, SessionEventData, SessionEventEnvelope,
+    };
     use crate::coding_session::session_log::replay::{MessageStatus, TranscriptItem};
-    use crate::protocol::session_runner::SessionPromptOptions;
+    use crate::prompt_options::PromptRunOptions;
     use crate::runtime::{PromptInvocation, SessionRunOptions};
 
     fn model(api: &str) -> Model {
@@ -618,7 +625,7 @@ mod tests {
         prompt: &str,
         tools: Vec<AgentTool>,
     ) -> PromptTurnOptions {
-        PromptTurnOptions::from_session_prompt_options(SessionPromptOptions {
+        PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: prompt.into(),
             model: model(api),
             api_key: None,
@@ -638,7 +645,7 @@ mod tests {
     }
 
     fn compact_options(api: &str, custom_instructions: Option<&str>) -> PromptTurnOptions {
-        PromptTurnOptions::from_session_prompt_options(SessionPromptOptions {
+        PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: String::new(),
             model: model(api),
             api_key: None,
@@ -774,16 +781,22 @@ mod tests {
                     text,
                 },
                 TranscriptItem::AssistantMessage {
-                    text: assistant_text,
+                    content,
                     status: MessageStatus::Completed,
                     ..
                 },
             ] if turn_id == outcome_turn_id(&outcome)
                 && text == "hello"
-                && assistant_text == "session answer"
+                && content == &vec![PersistedContentBlock::Text {
+                    text: "session answer".into(),
+                }]
         ));
-        let committed_leaf = std::fs::read_to_string(temp.path().join("sess_prompt/events.jsonl"))
-            .unwrap()
+        let event_log =
+            std::fs::read_to_string(temp.path().join("sess_prompt/events.jsonl")).unwrap();
+        assert!(!event_log.contains("\"message.delta\""));
+        assert!(event_log.contains("\"kind\":\"message.completed\""));
+        assert!(event_log.contains("\"content\""));
+        let committed_leaf = event_log
             .lines()
             .filter_map(|line| serde_json::from_str::<SessionEventEnvelope>(line).ok())
             .find_map(|event| match event.data {
@@ -1073,14 +1086,16 @@ mod tests {
                     tokens_before,
                 },
                 TranscriptItem::AssistantMessage {
-                    text,
+                    content,
                     status: MessageStatus::Completed,
                     ..
                 },
             ] if summary == "summary from compact"
                 && first_kept_message_id.starts_with("msg_")
                 && *tokens_before > 0
-                && text == "first answer"
+                && content == &vec![PersistedContentBlock::Text {
+                    text: "first answer".into(),
+                }]
         ));
         let event_log =
             std::fs::read_to_string(temp.path().join("sess_compact/events.jsonl")).unwrap();
@@ -1299,6 +1314,7 @@ mod tests {
             CodingAgentEvent::ProviderRequestStarted { .. } => "provider_request_started",
             CodingAgentEvent::AssistantMessageStarted { .. } => "assistant_message_started",
             CodingAgentEvent::AssistantMessageDelta { .. } => "assistant_message_delta",
+            CodingAgentEvent::AssistantThinkingDelta { .. } => "assistant_thinking_delta",
             CodingAgentEvent::AssistantMessageCompleted { .. } => "assistant_message_completed",
             CodingAgentEvent::ToolCallStarted { .. } => "tool_call_started",
             CodingAgentEvent::ToolCallUpdated { .. } => "tool_call_updated",

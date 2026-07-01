@@ -36,10 +36,6 @@ pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
             description: "Export session".into(),
         },
         BuiltinSlashCommand {
-            name: "import".into(),
-            description: "Import and resume a session from JSONL".into(),
-        },
-        BuiltinSlashCommand {
             name: "share".into(),
             description: "Share session as a secret GitHub gist".into(),
         },

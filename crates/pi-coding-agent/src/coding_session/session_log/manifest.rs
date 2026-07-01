@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const SESSION_SCHEMA: &str = "pi-rust.session";
 pub(crate) const SESSION_VERSION: u32 = 1;
 pub(crate) const EVENT_SCHEMA: &str = "pi-rust.session.event";
-pub(crate) const EVENT_VERSION: u32 = 1;
+pub(crate) const EVENT_VERSION: u32 = 2;
 pub(crate) const SESSION_MANIFEST_FILE: &str = "session.json";
 pub(crate) const SESSION_EVENT_LOG_FILE: &str = "events.jsonl";
 

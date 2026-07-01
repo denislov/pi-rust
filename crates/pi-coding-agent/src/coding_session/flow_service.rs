@@ -52,7 +52,7 @@ mod tests {
     use crate::coding_session::prompt::{PromptTurnIds, PromptTurnOptions};
     use crate::coding_session::session_log::replay::SessionReplay;
     use crate::coding_session::session_log::store::{CreateSessionOptions, SessionLogStore};
-    use crate::protocol::session_runner::SessionPromptOptions;
+    use crate::prompt_options::PromptRunOptions;
     use crate::runtime::PromptInvocation;
 
     fn model(api: &str) -> Model {
@@ -80,7 +80,7 @@ mod tests {
         let service = FlowService::new();
         let mut context = PromptTurnContext::new(
             PromptTurnIds::new("op_1", "turn_1"),
-            PromptTurnOptions::from_session_prompt_options(SessionPromptOptions {
+            PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
                 prompt: "hello".into(),
                 model: model(api),
                 api_key: None,

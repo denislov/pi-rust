@@ -8,6 +8,7 @@ use crate::runtime::{SessionMode, build_agent_config};
 
 use super::CodingSessionError;
 use super::prompt::RuntimeSnapshot;
+use super::session_log::event::PersistedContentBlock;
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 
 impl RuntimeService {
@@ -75,7 +76,7 @@ impl RuntimeService {
                 TranscriptItem::UserInput { .. } => {}
                 TranscriptItem::AssistantMessage {
                     message_id,
-                    text,
+                    content,
                     status: MessageStatus::Completed,
                 } => {
                     flush_replay_hydration_group(
@@ -84,12 +85,7 @@ impl RuntimeService {
                         &mut pending_tool_results,
                     );
                     let mut message = replay_assistant_message(runtime);
-                    if !text.is_empty() {
-                        message.content.push(ContentBlock::Text {
-                            text: text.clone(),
-                            text_signature: None,
-                        });
-                    }
+                    message.content = replay_content_blocks(content);
                     pending_assistant = Some((message_id.clone(), message));
                 }
                 TranscriptItem::ToolCall {
@@ -157,6 +153,31 @@ fn replay_assistant_message(runtime: &RuntimeSnapshot) -> AssistantMessage {
     message
 }
 
+fn replay_content_blocks(content: &[PersistedContentBlock]) -> Vec<ContentBlock> {
+    content
+        .iter()
+        .map(|block| match block {
+            PersistedContentBlock::Text { text } => ContentBlock::Text {
+                text: text.clone(),
+                text_signature: None,
+            },
+            PersistedContentBlock::Thinking {
+                thinking,
+                thinking_signature,
+                redacted,
+            } => ContentBlock::Thinking {
+                thinking: thinking.clone(),
+                thinking_signature: thinking_signature.clone(),
+                redacted: *redacted,
+            },
+            PersistedContentBlock::Image { mime_type, data } => ContentBlock::Image {
+                mime_type: mime_type.clone(),
+                data: data.clone(),
+            },
+        })
+        .collect()
+}
+
 fn pending_replay_assistant_message<'a>(
     pending_assistant: &'a mut Option<(String, AssistantMessage)>,
     runtime: &RuntimeSnapshot,
@@ -197,7 +218,7 @@ mod tests {
     use crate::coding_session::session_log::replay::{
         MessageStatus, ReplayDiagnostic, SessionReplay, ToolCallStatus, TranscriptItem,
     };
-    use crate::protocol::session_runner::SessionPromptOptions;
+    use crate::prompt_options::PromptRunOptions;
     use crate::runtime::{PromptInvocation, SessionRunOptions};
 
     fn model(api: &str) -> Model {
@@ -219,7 +240,7 @@ mod tests {
     }
 
     fn runtime_snapshot(api: &str) -> RuntimeSnapshot {
-        RuntimeSnapshot::from_session_prompt_options(SessionPromptOptions {
+        RuntimeSnapshot::from_prompt_run_options(PromptRunOptions {
             prompt: "hello".into(),
             model: model(api),
             api_key: Some("key".into()),
@@ -275,7 +296,16 @@ mod tests {
                 },
                 TranscriptItem::AssistantMessage {
                     message_id: "msg_1".into(),
-                    text: "previous answer".into(),
+                    content: vec![
+                        PersistedContentBlock::Thinking {
+                            thinking: "previous thought".into(),
+                            thinking_signature: None,
+                            redacted: None,
+                        },
+                        PersistedContentBlock::Text {
+                            text: "previous answer".into(),
+                        },
+                    ],
                     status: MessageStatus::Completed,
                 },
                 TranscriptItem::ToolCall {
@@ -287,7 +317,9 @@ mod tests {
                 },
                 TranscriptItem::AssistantMessage {
                     message_id: "msg_cancelled".into(),
-                    text: "cancelled answer".into(),
+                    content: vec![PersistedContentBlock::Text {
+                        text: "cancelled answer".into(),
+                    }],
                     status: MessageStatus::Cancelled,
                 },
                 TranscriptItem::Diagnostic {
@@ -321,7 +353,11 @@ mod tests {
             &messages[2],
             AgentMessage::Assistant { message_id, message }
                 if message_id == "msg_1"
-                    && message.content == vec![ContentBlock::Text {
+                    && message.content == vec![ContentBlock::Thinking {
+                        thinking: "previous thought".into(),
+                        thinking_signature: None,
+                        redacted: None,
+                    }, ContentBlock::Text {
                         text: "previous answer".into(),
                         text_signature: None,
                     }, ContentBlock::ToolCall {

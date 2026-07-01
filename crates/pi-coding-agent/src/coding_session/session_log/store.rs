@@ -704,18 +704,9 @@ mod tests {
             event(
                 "sess_replay_store",
                 "evt_4",
-                SessionEventData::MessageDelta {
-                    message_id: "msg_1".into(),
-                    text: "hi".into(),
-                },
-            )
-            .with_operation_id("op_1")
-            .with_turn_id("turn_1"),
-            event(
-                "sess_replay_store",
-                "evt_5",
                 SessionEventData::MessageCompleted {
                     message_id: "msg_1".into(),
+                    content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     finish_reason: Some("stop".into()),
                 },
             )
@@ -768,7 +759,7 @@ mod tests {
                 },
                 TranscriptItem::AssistantMessage {
                     message_id: "msg_1".into(),
-                    text: "hi".into(),
+                    content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     status: MessageStatus::Completed,
                 },
                 TranscriptItem::ToolCall {

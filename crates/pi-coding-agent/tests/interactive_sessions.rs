@@ -171,7 +171,7 @@ async fn interactive_mode_continues_same_session_across_prompts() {
 }
 
 #[tokio::test]
-async fn interactive_resume_loads_existing_session_messages_and_name() {
+async fn interactive_resume_ignores_legacy_jsonl_sessions() {
     let temp = tempfile::tempdir().unwrap();
     let legacy = write_legacy_session(
         temp.path(),
@@ -200,10 +200,9 @@ async fn interactive_resume_loads_existing_session_messages_and_name() {
             .unwrap();
     let frame = result.rendered_lines.join("\n");
 
-    assert!(frame.contains("previous prompt"), "{frame}");
-    assert!(frame.contains("previous answer"), "{frame}");
-    assert!(frame.contains("• Resume Target"), "{frame}");
-    assert!(!frame.contains("• session"), "{frame}");
+    assert!(!frame.contains("previous prompt"), "{frame}");
+    assert!(!frame.contains("previous answer"), "{frame}");
+    assert!(!frame.contains("• Resume Target"), "{frame}");
 }
 
 #[tokio::test]
@@ -237,7 +236,7 @@ async fn interactive_resume_loads_existing_rust_native_session_messages() {
 }
 
 #[tokio::test]
-async fn interactive_resume_command_loads_selected_session_messages_and_name() {
+async fn interactive_resume_command_ignores_legacy_jsonl_sessions() {
     let temp = tempfile::tempdir().unwrap();
     let legacy = write_legacy_session(
         temp.path(),
@@ -263,10 +262,10 @@ async fn interactive_resume_command_loads_selected_session_messages_and_name() {
         .unwrap();
     let frame = result.rendered_lines.join("\n");
 
-    assert!(frame.contains("selected prompt"), "{frame}");
-    assert!(frame.contains("selected answer"), "{frame}");
-    assert!(frame.contains("Session selected: Picked"), "{frame}");
-    assert!(frame.contains("• Picked"), "{frame}");
+    assert!(!frame.contains("selected prompt"), "{frame}");
+    assert!(!frame.contains("selected answer"), "{frame}");
+    assert!(!frame.contains("Session selected: Picked"), "{frame}");
+    assert!(!frame.contains("• Picked"), "{frame}");
 }
 
 #[tokio::test]

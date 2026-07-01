@@ -115,11 +115,10 @@ pub(crate) enum SessionEventData {
         message_id: String,
         role: PersistedRole,
     },
-    #[serde(rename = "message.delta")]
-    MessageDelta { message_id: String, text: String },
     #[serde(rename = "message.completed")]
     MessageCompleted {
         message_id: String,
+        content: Vec<PersistedContentBlock>,
         finish_reason: Option<String>,
     },
     #[serde(rename = "message.cancelled")]
@@ -181,11 +180,23 @@ pub(crate) enum PersistedRole {
     System,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub(crate) enum PersistedContentBlock {
-    Text { text: String },
-    Image { mime_type: String, data: String },
+    Text {
+        text: String,
+    },
+    Thinking {
+        thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking_signature: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        redacted: Option<bool>,
+    },
+    Image {
+        mime_type: String,
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -318,15 +329,9 @@ mod tests {
                 "message.started",
             ),
             (
-                SessionEventData::MessageDelta {
-                    message_id: "msg_1".into(),
-                    text: "hi".into(),
-                },
-                "message.delta",
-            ),
-            (
                 SessionEventData::MessageCompleted {
                     message_id: "msg_1".into(),
+                    content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     finish_reason: None,
                 },
                 "message.completed",

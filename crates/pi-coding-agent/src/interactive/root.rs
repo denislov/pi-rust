@@ -21,7 +21,7 @@ use crate::interactive::render::{
     TranscriptRenderCache, TranscriptRenderOptions, TranscriptRowSnapshot, TranscriptStyles,
     WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens, running_status_text,
 };
-use crate::interactive::session_actions::{HydratedSession, SessionChoice, SessionChoiceKind};
+use crate::interactive::session_actions::{HydratedSession, SessionChoice};
 use crate::interactive::session_selector;
 use crate::interactive::slash::{self, ParsedSlashCommand};
 use crate::interactive::transcript::TranscriptMutation;
@@ -599,10 +599,7 @@ impl InteractiveRoot {
     }
 
     pub(super) fn set_active_session_choice(&mut self, choice: SessionChoice) {
-        self.active_session_path = match choice.kind {
-            SessionChoiceKind::LegacyJsonl => Some(choice.path.clone()),
-            SessionChoiceKind::RustNative => None,
-        };
+        self.active_session_path = None;
         self.active_leaf_id = choice.active_leaf_id.clone();
         self.active_session = Some(choice);
     }

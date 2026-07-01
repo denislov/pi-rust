@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use pi_agent_core::resources::{parse_command_args, substitute_args};
-use pi_agent_core::session::JsonlSessionStorage;
 use pi_agent_core::{PromptTemplate, Skill};
 use pi_tui::{KeybindingsManager, TUI_KEYBINDINGS};
 
@@ -11,9 +10,8 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
-    SessionChoiceKind, clone_rust_native_choice, clone_session_to_sibling, export_path_arg,
-    export_transcript as export_session_transcript, fork_rust_native_choice, resolve_command_path,
-    rust_native_tree_for_choice, session_choice_from_metadata,
+    SessionChoiceKind, clone_rust_native_choice, export_transcript as export_session_transcript,
+    fork_rust_native_choice, rust_native_tree_for_choice,
 };
 use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selector_arg};
 use crate::interactive::{Transcript, TranscriptItem};
@@ -141,10 +139,9 @@ fn handle_compact_command(root: &mut InteractiveRoot, args: &str) {
         root.active_session.as_ref().map(|choice| choice.kind),
         Some(SessionChoiceKind::RustNative)
     );
-    if !active_rust_native && (root.active_session_path.is_none() || root.active_leaf_id.is_none())
-    {
+    if !active_rust_native {
         root.transcript.push(TranscriptItem::system(
-            "Nothing to compact (no messages yet)",
+            "Nothing to compact (no active Rust-native session)",
         ));
         return;
     }
@@ -171,37 +168,10 @@ fn handle_export_command(root: &mut InteractiveRoot, args: &str) {
 }
 
 fn handle_import_command(root: &mut InteractiveRoot, args: &str) {
-    let Some(input_path) = export_path_arg(args) else {
-        root.transcript
-            .push(TranscriptItem::system("Usage: /import <path.jsonl>"));
-        return;
-    };
-    let path = resolve_command_path(&root.cwd, &input_path);
-
-    match JsonlSessionStorage::open(&path) {
-        Ok(storage) => {
-            let leaf_id = storage.get_leaf_id().unwrap_or(None);
-            let choice = session_choice_from_metadata(storage.metadata());
-            root.session_label = choice.display_name().to_string();
-            let mut choice = choice;
-            choice.active_leaf_id = leaf_id;
-            root.set_active_session_choice(choice.clone());
-            root.selected_session = Some(choice);
-            root.selecting_session = false;
-            root.session_selection_selected = 0;
-            root.editor.set_text("");
-            root.transcript.push(TranscriptItem::system(format!(
-                "Session imported from: {}",
-                path.display()
-            )));
-        }
-        Err(error) => {
-            root.transcript.push(TranscriptItem::system(format!(
-                "Failed to import session: {}",
-                error.message
-            )));
-        }
-    }
+    let _ = args;
+    root.transcript.push(TranscriptItem::system(
+        "JSONL session import is no longer supported.".to_string(),
+    ));
 }
 
 fn handle_copy_command(root: &mut InteractiveRoot) {
@@ -254,34 +224,8 @@ fn handle_clone_command(root: &mut InteractiveRoot) {
         return;
     }
 
-    let Some(source_path) = root.active_session_path.clone() else {
-        root.transcript
-            .push(TranscriptItem::system("Nothing to clone yet"));
-        return;
-    };
-    let Some(leaf_id) = root.active_leaf_id.clone() else {
-        root.transcript
-            .push(TranscriptItem::system("Nothing to clone yet"));
-        return;
-    };
-
-    match clone_session_to_sibling(&source_path, &root.cwd, &leaf_id) {
-        Ok(storage) => {
-            let leaf_id = storage.get_leaf_id().unwrap_or(None);
-            let choice = session_choice_from_metadata(storage.metadata());
-            root.session_label = choice.display_name().to_string();
-            let mut choice = choice;
-            choice.active_leaf_id = leaf_id;
-            root.set_active_session_choice(choice.clone());
-            root.selected_session = Some(choice.clone());
-            root.editor.set_text("");
-            root.transcript
-                .push(TranscriptItem::system("Cloned to new session"));
-        }
-        Err(error) => {
-            root.transcript.push(TranscriptItem::system(error));
-        }
-    }
+    root.transcript
+        .push(TranscriptItem::system("Nothing to clone yet"));
 }
 
 fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
@@ -313,46 +257,8 @@ fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
         return;
     }
 
-    let Some(source_path) = root.active_session_path.clone() else {
-        root.transcript
-            .push(TranscriptItem::system("Nothing to fork yet"));
-        return;
-    };
-    let target_entry_id = if args.is_empty() {
-        let Some(leaf_id) = root.active_leaf_id.clone() else {
-            root.transcript
-                .push(TranscriptItem::system("Nothing to fork yet"));
-            return;
-        };
-        leaf_id
-    } else {
-        let mut parts = args.split_whitespace();
-        let entry_id = parts.next().unwrap_or_default();
-        if parts.next().is_some() {
-            root.transcript
-                .push(TranscriptItem::system("Usage: /fork [entry-id]"));
-            return;
-        }
-        entry_id.to_string()
-    };
-
-    match clone_session_to_sibling(&source_path, &root.cwd, &target_entry_id) {
-        Ok(storage) => {
-            let leaf_id = storage.get_leaf_id().unwrap_or(None);
-            let choice = session_choice_from_metadata(storage.metadata());
-            root.session_label = choice.display_name().to_string();
-            let mut choice = choice;
-            choice.active_leaf_id = leaf_id;
-            root.set_active_session_choice(choice.clone());
-            root.selected_session = Some(choice.clone());
-            root.editor.set_text("");
-            root.transcript
-                .push(TranscriptItem::system("Forked to new session"));
-        }
-        Err(error) => {
-            root.transcript.push(TranscriptItem::system(error));
-        }
-    }
+    root.transcript
+        .push(TranscriptItem::system("Nothing to fork yet"));
 }
 
 fn handle_reload_command(root: &mut InteractiveRoot) {
@@ -382,49 +288,23 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
         return;
     }
 
-    let Some(ref session_path) = root.active_session_path else {
-        if let Some(choice) = root
-            .active_session
-            .as_ref()
-            .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
-        {
-            match rust_native_tree_for_choice(choice) {
-                Ok((tree, leaf_id)) => {
-                    if tree.is_empty() {
-                        root.transcript
-                            .push(TranscriptItem::system("No entries in session"));
-                        return;
-                    }
-                    let filter_mode = pi_agent_core::session::TreeFilterMode::from_str(
-                        &root.settings.tree_filter_mode,
-                    );
-                    let selector = crate::interactive::tree_selector::TreeSelectorState::new(
-                        tree,
-                        leaf_id,
-                        filter_mode,
-                        root.viewport_width,
-                    );
-                    root.selecting_tree = true;
-                    root.tree_selector = Some(selector);
-                    root.selected_tree_entry_id = None;
-                    root.editor.set_text("");
-                }
-                Err(error) => root.transcript.push(TranscriptItem::system(format!(
-                    "Failed to open session: {error}"
-                ))),
-            }
-            return;
-        }
-
+    let Some(choice) = root
+        .active_session
+        .as_ref()
+        .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
+    else {
         root.transcript
             .push(TranscriptItem::system("No entries in session"));
         return;
     };
 
-    match JsonlSessionStorage::open(session_path) {
-        Ok(storage) => {
-            let tree = storage.get_tree();
-            let leaf_id = storage.get_leaf_id().ok().flatten();
+    match rust_native_tree_for_choice(choice) {
+        Ok((tree, leaf_id)) => {
+            if tree.is_empty() {
+                root.transcript
+                    .push(TranscriptItem::system("No entries in session"));
+                return;
+            }
             let filter_mode =
                 pi_agent_core::session::TreeFilterMode::from_str(&root.settings.tree_filter_mode);
             let selector = crate::interactive::tree_selector::TreeSelectorState::new(
@@ -438,12 +318,9 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
             root.selected_tree_entry_id = None;
             root.editor.set_text("");
         }
-        Err(error) => {
-            root.transcript.push(TranscriptItem::system(format!(
-                "Failed to open session: {}",
-                error.message
-            )));
-        }
+        Err(error) => root.transcript.push(TranscriptItem::system(format!(
+            "Failed to open session: {error}"
+        ))),
     }
 }
 
@@ -548,13 +425,8 @@ fn handle_session_command(root: &mut InteractiveRoot) {
         format_tokens(root.stats.output)
     );
     if let Some(choice) = &root.active_session {
-        let storage = match choice.kind {
-            SessionChoiceKind::RustNative => "rust-native",
-            SessionChoiceKind::LegacyJsonl => "legacy-jsonl",
-        };
         details.push_str(&format!(
-            "\nStorage: {}\nSession ID: {}\nEntries: {}\nPath: {}",
-            storage,
+            "\nStorage: rust-native\nSession ID: {}\nEntries: {}\nPath: {}",
             choice.id,
             choice.entry_count,
             choice.path.display()

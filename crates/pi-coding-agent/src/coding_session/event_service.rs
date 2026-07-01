@@ -9,7 +9,7 @@ use super::{CodingAgentEvent, CodingSessionError};
 
 const EVENT_CHANNEL_CAPACITY: usize = 128;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct EventService {
     sender: broadcast::Sender<CodingAgentEvent>,
 }
@@ -133,7 +133,7 @@ pub(crate) fn map_agent_event(
                 operation_id: context.operation_id.clone(),
                 turn_id: context.turn_id.clone(),
                 message_id: context.assistant_message_id.clone(),
-                final_text: content_blocks_text(&message.content),
+                final_text: assistant_text(&message.content),
             }]
         }
         AgentEvent::AgentError { error } => vec![CodingAgentEvent::PromptFailed {
@@ -162,7 +162,9 @@ fn map_assistant_event(
     event: &AssistantMessageEvent,
 ) -> Vec<CodingAgentEvent> {
     match event {
-        AssistantMessageEvent::Start { .. } | AssistantMessageEvent::TextStart { .. } => {
+        AssistantMessageEvent::Start { .. }
+        | AssistantMessageEvent::TextStart { .. }
+        | AssistantMessageEvent::ThinkingStart { .. } => {
             vec![CodingAgentEvent::AssistantMessageStarted {
                 operation_id: context.operation_id.clone(),
                 turn_id: context.turn_id.clone(),
@@ -171,6 +173,14 @@ fn map_assistant_event(
         }
         AssistantMessageEvent::TextDelta { delta, .. } => {
             vec![CodingAgentEvent::AssistantMessageDelta {
+                operation_id: context.operation_id.clone(),
+                turn_id: context.turn_id.clone(),
+                message_id: context.assistant_message_id.clone(),
+                text: delta.clone(),
+            }]
+        }
+        AssistantMessageEvent::ThinkingDelta { delta, .. } => {
+            vec![CodingAgentEvent::AssistantThinkingDelta {
                 operation_id: context.operation_id.clone(),
                 turn_id: context.turn_id.clone(),
                 message_id: context.assistant_message_id.clone(),
@@ -188,8 +198,6 @@ fn map_assistant_event(
         }],
         AssistantMessageEvent::Done { .. }
         | AssistantMessageEvent::TextEnd { .. }
-        | AssistantMessageEvent::ThinkingStart { .. }
-        | AssistantMessageEvent::ThinkingDelta { .. }
         | AssistantMessageEvent::ThinkingEnd { .. }
         | AssistantMessageEvent::ToolcallStart { .. }
         | AssistantMessageEvent::ToolcallDelta { .. }
@@ -205,6 +213,17 @@ fn content_blocks_text(content: &[ContentBlock]) -> String {
             ContentBlock::Thinking { thinking, .. } => thinking.clone(),
             ContentBlock::Image { mime_type, .. } => format!("[image:{mime_type}]"),
             ContentBlock::ToolCall { name, .. } => format!("[tool_call:{name}]"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assistant_text(content: &[ContentBlock]) -> String {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.clone()),
+            _ => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -353,6 +372,36 @@ mod tests {
                 turn_id: "turn_1".into(),
                 message_id: Some("msg_1".into()),
                 text: "hi".into(),
+            }]
+        );
+        assert_eq!(
+            map_agent_event(
+                &context,
+                &AgentEvent::LlmEvent(AssistantMessageEvent::ThinkingStart {
+                    content_index: 0,
+                    partial: AssistantMessage::empty("messages", "test-model"),
+                }),
+            ),
+            vec![CodingAgentEvent::AssistantMessageStarted {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+            }]
+        );
+        assert_eq!(
+            map_agent_event(
+                &context,
+                &AgentEvent::LlmEvent(AssistantMessageEvent::ThinkingDelta {
+                    content_index: 0,
+                    delta: "thinking".into(),
+                    partial: AssistantMessage::empty("messages", "test-model"),
+                }),
+            ),
+            vec![CodingAgentEvent::AssistantThinkingDelta {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                text: "thinking".into(),
             }]
         );
         assert_eq!(

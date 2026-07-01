@@ -4,9 +4,9 @@ use pi_coding_agent::api::{
     CliRunOptions, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
     CodingAgentSession, CodingAgentSessionOptions, CodingAgentSessionSummary,
     CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
-    PrintModeOptions, PromptInvocation, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
-    SessionMode, SessionPromptOptions, ToolFilter, builtin_tools, filter_tools, help_text,
-    parse_args, render_diagnostics,
+    PrintModeOptions, PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions,
+    PromptTurnOutcome, SessionMode, ToolFilter, builtin_tools, filter_tools, help_text, parse_args,
+    render_diagnostics,
 };
 
 fn model(api: &str) -> Model {
@@ -71,7 +71,7 @@ fn public_api_symbols_are_importable() {
     assert_eq!(read_only.len(), 1);
     assert_eq!(read_only[0].name, "read");
 
-    let _session_prompt_type_name = std::any::type_name::<SessionPromptOptions>();
+    let _prompt_run_type_name = std::any::type_name::<PromptRunOptions>();
 
     let diagnostic_text = render_diagnostics(&[CliDiagnostic {
         severity: CliDiagnosticSeverity::Warning,

@@ -7,14 +7,8 @@ use std::sync::atomic::AtomicUsize;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
-#[cfg(test)]
-use pi_agent_core::session::{
-    JsonlSessionStorage, SessionEntry, StoredAgentMessage, StoredUsage, create_timestamp,
-};
 use pi_agent_core::{AgentResources, session::create_session_id};
 use pi_ai::types::Model;
-#[cfg(test)]
-use pi_ai::types::{ContentBlock, StopReason};
 #[cfg(test)]
 use pi_tui::{Component, InputEvent, Terminal, visible_width};
 use pi_tui::{KeybindingsManager, ProcessTerminal, TuiTheme, dark_theme, light_theme};
@@ -1141,7 +1135,6 @@ mod tests {
                 "model",
                 "scoped-models",
                 "export",
-                "import",
                 "share",
                 "copy",
                 "name",
@@ -1179,7 +1172,7 @@ mod tests {
         assert!(rendered.contains("/settings"), "{rendered}");
         assert!(rendered.contains("Open settings menu"), "{rendered}");
         assert!(rendered.contains("/model"), "{rendered}");
-        assert!(rendered.contains("(1/22)"), "{rendered}");
+        assert!(rendered.contains("(1/21)"), "{rendered}");
     }
 
     #[test]
@@ -1974,7 +1967,7 @@ mod tests {
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
-        assert!(moved.contains("(3/22)"), "{moved}");
+        assert!(moved.contains("(3/21)"), "{moved}");
 
         root.handle_input(&key_event("\t"));
 
@@ -2039,12 +2032,12 @@ mod tests {
         root.session_choices = vec![SessionChoice {
             id: "session-alpha".to_string(),
             cwd: "/tmp/project".to_string(),
-            path: PathBuf::from("/tmp/sessions/session-alpha.jsonl"),
+            path: PathBuf::from("/tmp/sessions/session-alpha"),
             created_at: "2026-06-20T00:00:00Z".to_string(),
             name: Some("Project Alpha".to_string()),
             entry_count: 3,
             active_leaf_id: Some("leaf-alpha".to_string()),
-            kind: SessionChoiceKind::LegacyJsonl,
+            kind: SessionChoiceKind::RustNative,
         }];
 
         root.handle_slash_command(ParsedSlashCommand {
@@ -2065,10 +2058,7 @@ mod tests {
             .take_selected_session()
             .expect("session selection should be returned to loop");
         assert_eq!(selected.id, "session-alpha");
-        assert_eq!(
-            selected.path,
-            PathBuf::from("/tmp/sessions/session-alpha.jsonl")
-        );
+        assert_eq!(selected.path, PathBuf::from("/tmp/sessions/session-alpha"));
         assert!(!root.selecting_session);
     }
 
@@ -2083,22 +2073,22 @@ mod tests {
             SessionChoice {
                 id: "session-alpha".to_string(),
                 cwd: "/tmp/project".to_string(),
-                path: PathBuf::from("/tmp/sessions/session-alpha.jsonl"),
+                path: PathBuf::from("/tmp/sessions/session-alpha"),
                 created_at: "2026-06-20T00:00:00Z".to_string(),
                 name: Some("Project Alpha".to_string()),
                 entry_count: 3,
                 active_leaf_id: Some("leaf-alpha".to_string()),
-                kind: SessionChoiceKind::LegacyJsonl,
+                kind: SessionChoiceKind::RustNative,
             },
             SessionChoice {
                 id: "session-beta".to_string(),
                 cwd: "/tmp/other".to_string(),
-                path: PathBuf::from("/tmp/sessions/session-beta.jsonl"),
+                path: PathBuf::from("/tmp/sessions/session-beta"),
                 created_at: "2026-06-21T00:00:00Z".to_string(),
                 name: Some("Beta Tools".to_string()),
                 entry_count: 8,
                 active_leaf_id: Some("leaf-beta".to_string()),
-                kind: SessionChoiceKind::LegacyJsonl,
+                kind: SessionChoiceKind::RustNative,
             },
         ];
         root.handle_slash_command(ParsedSlashCommand {
@@ -2350,7 +2340,7 @@ mod tests {
     }
 
     #[test]
-    fn export_command_writes_current_transcript_to_jsonl_path() {
+    fn export_command_rejects_jsonl_path() {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("session-export.jsonl");
         let mut root = InteractiveRoot::new(
@@ -2372,17 +2362,13 @@ mod tests {
             original: format!("/export {}", output.display()),
         });
 
-        let text = std::fs::read_to_string(&output).unwrap();
-        let lines = text.lines().collect::<Vec<_>>();
-        assert_eq!(lines.len(), 3, "{text}");
-        assert!(lines[0].contains(r#""type":"session""#), "{text}");
-        assert!(lines[0].contains(r#""version":3"#), "{text}");
-        assert!(lines[1].contains(r#""role":"user""#), "{text}");
-        assert!(lines[1].contains("hello"), "{text}");
-        assert!(lines[2].contains(r#""role":"assistant""#), "{text}");
-        assert!(lines[2].contains("world"), "{text}");
+        assert!(!output.exists());
         let status = last_system_text(&root);
-        assert!(status.contains("Session exported to:"), "{status}");
+        assert!(
+            status
+                .contains("Failed to export session: JSONL session export is no longer supported"),
+            "{status}"
+        );
         assert!(!status.contains("not implemented"), "{status}");
     }
 
@@ -2475,9 +2461,10 @@ mod tests {
     }
 
     #[test]
-    fn import_command_opens_jsonl_and_selects_session() {
+    fn import_command_rejects_jsonl_session_paths() {
         let dir = tempfile::tempdir().unwrap();
-        let source = write_test_session(dir.path(), dir.path(), "hello import");
+        let source = dir.path().join("legacy-session.jsonl");
+        std::fs::write(&source, "{}").unwrap();
         let mut root = InteractiveRoot::new(
             dir.path().to_path_buf(),
             "faux-model".to_string(),
@@ -2490,22 +2477,19 @@ mod tests {
             original: format!("/import \"{}\"", source.display()),
         });
 
-        let selected = root
-            .take_selected_session()
-            .expect("/import should select imported session");
-        assert_eq!(selected.path, source);
-        assert_eq!(
-            root.active_session_path.as_deref(),
-            Some(selected.path.as_path())
-        );
-        assert!(root.active_leaf_id.is_some());
+        assert!(root.take_selected_session().is_none());
+        assert!(root.active_session_path.is_none());
+        assert!(root.active_leaf_id.is_none());
         let text = last_system_text(&root);
-        assert!(text.contains("Session imported from:"), "{text}");
+        assert!(
+            text.contains("JSONL session import is no longer supported."),
+            "{text}"
+        );
         assert!(!text.contains("not implemented"), "{text}");
     }
 
     #[test]
-    fn import_command_reports_usage_without_path() {
+    fn import_command_reports_unsupported_without_path() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
@@ -2520,24 +2504,25 @@ mod tests {
 
         assert!(root.take_selected_session().is_none());
         let text = last_system_text(&root);
-        assert!(text.contains("Usage: /import <path.jsonl>"), "{text}");
+        assert!(
+            text.contains("JSONL session import is no longer supported."),
+            "{text}"
+        );
         assert!(!text.contains("not implemented"), "{text}");
     }
 
     #[test]
-    fn clone_command_forks_active_session_and_selects_clone() {
+    fn clone_command_ignores_legacy_jsonl_active_path() {
         let dir = tempfile::tempdir().unwrap();
-        let source = write_test_session(dir.path(), dir.path(), "hello clone");
+        let source = dir.path().join("legacy-session.jsonl");
+        std::fs::write(&source, "{}").unwrap();
         let mut root = InteractiveRoot::new(
             dir.path().to_path_buf(),
             "faux-model".to_string(),
             "session".to_string(),
         );
-        root.active_session_path = Some(source.clone());
-        root.active_leaf_id = JsonlSessionStorage::open(&source)
-            .unwrap()
-            .get_leaf_id()
-            .unwrap();
+        root.active_session_path = Some(source);
+        root.active_leaf_id = Some("legacy-leaf".to_string());
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "clone".to_string(),
@@ -2545,20 +2530,9 @@ mod tests {
             original: "/clone".to_string(),
         });
 
-        let selected = root
-            .take_selected_session()
-            .expect("/clone should select cloned session");
-        assert_ne!(selected.path, source);
-        assert!(selected.path.exists(), "clone should create a session file");
-        let cloned = std::fs::read_to_string(&selected.path).unwrap();
-        assert!(cloned.contains("hello clone"), "{cloned}");
-        assert!(cloned.contains("parentSession"), "{cloned}");
-        assert_eq!(
-            root.active_session_path.as_deref(),
-            Some(selected.path.as_path())
-        );
+        assert!(root.take_selected_session().is_none());
         let text = last_system_text(&root);
-        assert!(text.contains("Cloned to new session"), "{text}");
+        assert!(text.contains("Nothing to clone yet"), "{text}");
         assert!(!text.contains("not implemented"), "{text}");
     }
 
@@ -2583,58 +2557,17 @@ mod tests {
     }
 
     #[test]
-    fn fork_command_forks_active_session_at_requested_entry_id() {
+    fn fork_command_ignores_legacy_jsonl_active_path() {
         let dir = tempfile::tempdir().unwrap();
-        let source = write_test_session(dir.path(), dir.path(), "hello fork");
+        let source = dir.path().join("legacy-session.jsonl");
+        std::fs::write(&source, "{}").unwrap();
         let mut root = InteractiveRoot::new(
             dir.path().to_path_buf(),
             "faux-model".to_string(),
             "session".to_string(),
         );
-        root.active_session_path = Some(source.clone());
-        root.active_leaf_id = JsonlSessionStorage::open(&source)
-            .unwrap()
-            .get_leaf_id()
-            .unwrap();
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "fork".to_string(),
-            args: "entry-user".to_string(),
-            original: "/fork entry-user".to_string(),
-        });
-
-        let selected = root
-            .take_selected_session()
-            .expect("/fork should select forked session");
-        assert_ne!(selected.path, source);
-        assert!(selected.path.exists(), "fork should create a session file");
-        let forked = std::fs::read_to_string(&selected.path).unwrap();
-        assert!(forked.contains("hello fork"), "{forked}");
-        assert!(!forked.contains("response to hello fork"), "{forked}");
-        assert!(forked.contains("parentSession"), "{forked}");
-        assert_eq!(
-            root.active_session_path.as_deref(),
-            Some(selected.path.as_path())
-        );
-        let text = last_system_text(&root);
-        assert!(text.contains("Forked to new session"), "{text}");
-        assert!(!text.contains("not implemented"), "{text}");
-    }
-
-    #[test]
-    fn fork_command_defaults_to_active_leaf_when_no_entry_id_is_given() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = write_test_session(dir.path(), dir.path(), "hello fork leaf");
-        let mut root = InteractiveRoot::new(
-            dir.path().to_path_buf(),
-            "faux-model".to_string(),
-            "session".to_string(),
-        );
-        root.active_session_path = Some(source.clone());
-        root.active_leaf_id = JsonlSessionStorage::open(&source)
-            .unwrap()
-            .get_leaf_id()
-            .unwrap();
+        root.active_session_path = Some(source);
+        root.active_leaf_id = Some("legacy-leaf".to_string());
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "fork".to_string(),
@@ -2642,14 +2575,9 @@ mod tests {
             original: "/fork".to_string(),
         });
 
-        let selected = root
-            .take_selected_session()
-            .expect("/fork should select forked session");
-        let forked = std::fs::read_to_string(&selected.path).unwrap();
-        assert!(forked.contains("hello fork leaf"), "{forked}");
-        assert!(forked.contains("response to hello fork leaf"), "{forked}");
+        assert!(root.take_selected_session().is_none());
         let text = last_system_text(&root);
-        assert!(text.contains("Forked to new session"), "{text}");
+        assert!(text.contains("Nothing to fork yet"), "{text}");
         assert!(!text.contains("not implemented"), "{text}");
     }
 
@@ -2677,10 +2605,19 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("project");
         std::fs::create_dir_all(&cwd).unwrap();
-        let session_path = write_test_session(temp.path(), &cwd, "hello tree");
-        let mut root = InteractiveRoot::new(cwd, "faux-model".to_string(), "session".to_string());
-        root.active_session_path = Some(session_path);
-        root.active_leaf_id = Some("entry-assistant".to_string());
+        let session_path = write_rust_native_session(temp.path(), &cwd, "hello tree");
+        let mut root =
+            InteractiveRoot::new(cwd.clone(), "faux-model".to_string(), "session".to_string());
+        root.set_active_session_choice(SessionChoice {
+            id: "sess_tree_fixture".to_string(),
+            cwd: cwd.display().to_string(),
+            path: session_path,
+            created_at: "2026-06-30T00:00:00Z".to_string(),
+            name: None,
+            entry_count: 2,
+            active_leaf_id: Some("leaf_1".to_string()),
+            kind: SessionChoiceKind::RustNative,
+        });
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "tree".to_string(),
@@ -2717,33 +2654,25 @@ mod tests {
     }
 
     #[test]
-    fn double_escape_fork_action_forks_active_leaf() {
+    fn double_escape_fork_action_ignores_legacy_jsonl_active_path() {
         let dir = tempfile::tempdir().unwrap();
-        let source = write_test_session(dir.path(), dir.path(), "hello double escape fork");
+        let source = dir.path().join("legacy-session.jsonl");
+        std::fs::write(&source, "{}").unwrap();
         let mut root = InteractiveRoot::new(
             dir.path().to_path_buf(),
             "faux-model".to_string(),
             "session".to_string(),
         );
         root.settings.double_escape_action = "fork".to_string();
-        root.active_session_path = Some(source.clone());
-        root.active_leaf_id = JsonlSessionStorage::open(&source)
-            .unwrap()
-            .get_leaf_id()
-            .unwrap();
+        root.active_session_path = Some(source);
+        root.active_leaf_id = Some("legacy-leaf".to_string());
 
         root.handle_input(&key_event("\x1b"));
         root.handle_input(&key_event("\x1b"));
 
-        let selected = root
-            .take_selected_session()
-            .expect("double escape fork should select forked session");
-        assert_ne!(selected.path, source);
-        let forked = std::fs::read_to_string(&selected.path).unwrap();
-        assert!(forked.contains("hello double escape fork"), "{forked}");
-        assert!(forked.contains("parentSession"), "{forked}");
+        assert!(root.take_selected_session().is_none());
         let text = last_system_text(&root);
-        assert!(text.contains("Forked to new session"), "{text}");
+        assert!(text.contains("Nothing to fork yet"), "{text}");
     }
 
     #[test]
@@ -3283,54 +3212,116 @@ mod tests {
         }
     }
 
-    fn write_test_session(root: &Path, cwd: &Path, text: &str) -> PathBuf {
-        let path = root.join(format!("{}.jsonl", create_session_id()));
-        let timestamp = create_timestamp();
-        let mut storage = JsonlSessionStorage::create(
-            &path,
-            cwd.display().to_string(),
-            "test-session",
-            timestamp.clone(),
-            None,
+    fn write_rust_native_session(root: &Path, cwd: &Path, text: &str) -> PathBuf {
+        let session_id = "sess_tree_fixture";
+        let session_dir = root.join(session_id);
+        std::fs::create_dir_all(session_dir.join("blobs")).unwrap();
+        std::fs::create_dir_all(session_dir.join("index")).unwrap();
+        let manifest = serde_json::json!({
+            "schema": "pi-rust.session",
+            "version": 1,
+            "session_id": session_id,
+            "created_at": "2026-06-30T00:00:00Z",
+            "updated_at": "2026-06-30T00:00:02Z",
+            "active_leaf_id": "leaf_1",
+            "event_log": "events.jsonl"
+        });
+        std::fs::write(
+            session_dir.join("session.json"),
+            serde_json::to_string(&manifest).unwrap(),
         )
         .unwrap();
-        storage
-            .append_entry(SessionEntry::message(
-                "entry-user".to_string(),
+
+        let event = |event_id: &str,
+                     operation_id: Option<&str>,
+                     turn_id: Option<&str>,
+                     created_at: &str,
+                     kind: &str,
+                     data: serde_json::Value| {
+            let mut value = serde_json::json!({
+                "schema": "pi-rust.session.event",
+                "version": 2,
+                "session_id": session_id,
+                "event_id": event_id,
+                "created_at": created_at,
+                "kind": kind,
+                "data": data
+            });
+            if let Some(operation_id) = operation_id {
+                value["operation_id"] = serde_json::json!(operation_id);
+            }
+            if let Some(turn_id) = turn_id {
+                value["turn_id"] = serde_json::json!(turn_id);
+            }
+            serde_json::to_string(&value).unwrap()
+        };
+        let events = vec![
+            event(
+                "evt_0",
                 None,
-                timestamp.clone(),
-                StoredAgentMessage::User {
-                    content: vec![ContentBlock::Text {
-                        text: text.to_string(),
-                        text_signature: None,
-                    }],
-                    timestamp: 0,
-                },
-            ))
-            .unwrap();
-        storage
-            .append_entry(SessionEntry::message(
-                "entry-assistant".to_string(),
-                Some("entry-user".to_string()),
-                timestamp,
-                StoredAgentMessage::Assistant {
-                    content: vec![ContentBlock::Text {
-                        text: format!("response to {text}"),
-                        text_signature: None,
-                    }],
-                    api: "test".to_string(),
-                    provider: "test".to_string(),
-                    model: "faux-model".to_string(),
-                    response_model: None,
-                    response_id: None,
-                    usage: StoredUsage::default(),
-                    stop_reason: StopReason::Stop,
-                    error_message: None,
-                    timestamp: 0,
-                },
-            ))
-            .unwrap();
-        path
+                None,
+                "2026-06-30T00:00:00Z",
+                "session.created",
+                serde_json::json!({ "cwd": cwd.display().to_string() }),
+            ),
+            event(
+                "evt_1",
+                Some("op_1"),
+                Some("turn_1"),
+                "2026-06-30T00:00:01Z",
+                "operation.started",
+                serde_json::json!({ "operation": { "kind": "prompt" } }),
+            ),
+            event(
+                "evt_2",
+                Some("op_1"),
+                Some("turn_1"),
+                "2026-06-30T00:00:01Z",
+                "turn.input.recorded",
+                serde_json::json!({
+                    "content": [{ "type": "text", "data": { "text": text } }]
+                }),
+            ),
+            event(
+                "evt_3",
+                Some("op_1"),
+                Some("turn_1"),
+                "2026-06-30T00:00:01Z",
+                "operation.committed",
+                serde_json::json!({ "new_leaf_id": "leaf_1" }),
+            ),
+            event(
+                "evt_4",
+                Some("op_2"),
+                Some("turn_2"),
+                "2026-06-30T00:00:02Z",
+                "operation.started",
+                serde_json::json!({ "operation": { "kind": "prompt" } }),
+            ),
+            event(
+                "evt_5",
+                Some("op_2"),
+                Some("turn_2"),
+                "2026-06-30T00:00:02Z",
+                "turn.input.recorded",
+                serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "data": { "text": format!("follow-up {text}") }
+                    }]
+                }),
+            ),
+            event(
+                "evt_6",
+                Some("op_2"),
+                Some("turn_2"),
+                "2026-06-30T00:00:02Z",
+                "operation.committed",
+                serde_json::json!({ "new_leaf_id": "leaf_2" }),
+            ),
+        ];
+        std::fs::write(session_dir.join("events.jsonl"), events.join("\n") + "\n").unwrap();
+        session_dir
     }
 
     #[derive(Default)]
@@ -3690,7 +3681,7 @@ pub mod test_harness {
             ops,
             rendered_lines,
             session_file: session_dir
-                .and_then(|dir| first_jsonl_file(dir).ok())
+                .and_then(|dir| first_rust_native_event_log(dir).ok())
                 .unwrap_or_default(),
         }
     }
@@ -3718,12 +3709,12 @@ pub mod test_harness {
         }
     }
 
-    fn first_jsonl_file(root: &Path) -> Result<PathBuf, std::io::Error> {
+    fn first_rust_native_event_log(root: &Path) -> Result<PathBuf, std::io::Error> {
         let mut files = Vec::new();
-        collect_jsonl_files(root, &mut files)?;
+        collect_rust_native_event_logs(root, &mut files)?;
         files.sort();
         files.into_iter().next().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "no jsonl session file")
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no rust-native event log")
         })
     }
 
@@ -3744,7 +3735,7 @@ pub mod test_harness {
 
     fn session_files_contain(root: &Path, needle: &str) -> bool {
         let mut files = Vec::new();
-        if collect_jsonl_files(root, &mut files).is_err() {
+        if collect_rust_native_event_logs(root, &mut files).is_err() {
             return false;
         }
         files.iter().any(|path| {
@@ -3754,16 +3745,23 @@ pub mod test_harness {
         })
     }
 
-    fn collect_jsonl_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), std::io::Error> {
+    fn collect_rust_native_event_logs(
+        root: &Path,
+        out: &mut Vec<PathBuf>,
+    ) -> Result<(), std::io::Error> {
         if !root.exists() {
             return Ok(());
         }
         for entry in std::fs::read_dir(root)? {
             let path = entry?.path();
-            if path.is_dir() {
-                collect_jsonl_files(&path, out)?;
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
-                out.push(path);
+            if !path.is_dir() {
+                continue;
+            }
+            let event_log = path.join("events.jsonl");
+            if path.join("session.json").is_file() && event_log.is_file() {
+                out.push(event_log);
+            } else {
+                collect_rust_native_event_logs(&path, out)?;
             }
         }
         Ok(())

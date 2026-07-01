@@ -1,6 +1,6 @@
 use crate::config::{self, Config, ConfigPaths};
 use crate::input::{self, ProcessedPromptInput};
-use crate::protocol::session_runner::SessionPromptOptions;
+use crate::prompt_options::PromptRunOptions;
 use crate::resources::{self, LoadedResources};
 use crate::runtime::{
     CliRunOptions, PromptInvocation, SessionRunOptions, effective_no_context_files,
@@ -51,7 +51,7 @@ pub struct ResolvedPromptRequest {
     pub context: ResolvedCliContext,
     pub processed_prompt: ProcessedPromptInput,
     pub invocation: PromptInvocation,
-    pub session_options: SessionPromptOptions,
+    pub session_options: PromptRunOptions,
 }
 
 pub fn resolve_cli_context(
@@ -180,7 +180,7 @@ pub fn resolve_prompt_request(
     )?;
     let invocation = resolve_invocation(&context, &processed_prompt);
 
-    let session_options = SessionPromptOptions {
+    let session_options = PromptRunOptions {
         prompt: match &invocation {
             PromptInvocation::Text(text) => text.clone(),
             PromptInvocation::Content(_) => processed_prompt.text.clone(),

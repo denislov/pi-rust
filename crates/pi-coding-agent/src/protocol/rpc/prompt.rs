@@ -2,13 +2,13 @@ use crate::CliError;
 use crate::coding_session::{
     CodingAgentSession, CodingAgentSessionOptions, PromptTurnMode, PromptTurnOptions,
 };
+use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::has_images;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::{
     CodingPromptTaskResult, CodingRunningPrompt, RpcState, RunningPrompt,
 };
 use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
-use crate::protocol::session_runner::SessionPromptOptions;
 use crate::protocol::types::{ProtocolEvent, RpcResponse, StreamingBehavior};
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::resolve_session_dir;
@@ -106,7 +106,7 @@ impl RpcState {
                 }
             },
         };
-        let prompt_options = PromptTurnOptions::from_session_prompt_options(SessionPromptOptions {
+        let prompt_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: message.clone(),
             model: self.model.clone(),
             api_key: self.api_key.clone(),

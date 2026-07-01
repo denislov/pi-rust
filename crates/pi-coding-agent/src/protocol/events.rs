@@ -3,248 +3,7 @@ use crate::protocol::types::{
     CompactionProtocolResult, CompactionReason, ProtocolEvent, ToolExecutionResult,
 };
 use pi_agent_core::session::{StoredAgentMessage, StoredUsage, StoredUsageCost};
-use pi_agent_core::{AgentEvent, AgentToolResult};
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
-use std::collections::HashMap;
-
-pub struct ProtocolEventAdapter {
-    api: String,
-    provider: String,
-    model: String,
-    messages: Vec<StoredAgentMessage>,
-    current_assistant: Option<AssistantMessage>,
-    current_tool_results: Vec<StoredAgentMessage>,
-    tool_args: HashMap<String, serde_json::Value>,
-    assistant_open: bool,
-}
-
-impl ProtocolEventAdapter {
-    pub fn new(api: String, model: String) -> Self {
-        Self::new_with_provider(api, String::new(), model)
-    }
-
-    pub fn new_with_provider(api: String, provider: String, model: String) -> Self {
-        Self {
-            api,
-            provider,
-            model,
-            messages: Vec::new(),
-            current_assistant: None,
-            current_tool_results: Vec::new(),
-            tool_args: HashMap::new(),
-            assistant_open: false,
-        }
-    }
-
-    pub fn push(&mut self, event: &AgentEvent) -> Vec<ProtocolEvent> {
-        match event {
-            AgentEvent::TurnStart { .. } => {
-                let mut events = self.finish_current_turn();
-                events.push(ProtocolEvent::TurnStart);
-                events
-            }
-            AgentEvent::BeforeProviderRequest { .. } => Vec::new(),
-            AgentEvent::LlmEvent(event) => self.push_llm_event(event),
-            AgentEvent::ToolCallStart {
-                tool_call_id,
-                tool_name,
-                ..
-            } => vec![ProtocolEvent::ToolExecutionStart {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                args: self
-                    .tool_args
-                    .get(tool_call_id)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-            }],
-            AgentEvent::ToolCallUpdate {
-                tool_call_id,
-                tool_name,
-                update,
-            } => vec![ProtocolEvent::ToolExecutionUpdate {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                result: ToolExecutionResult {
-                    content: update.content.clone(),
-                    terminate: false,
-                    details: update.details.clone(),
-                },
-            }],
-            AgentEvent::ToolCallEnd {
-                tool_call_id,
-                tool_name,
-                result,
-            } => self.push_tool_call_end(tool_call_id, tool_name, result),
-            AgentEvent::AgentDone { message } => {
-                self.current_assistant = Some(message.clone());
-                let mut events = self.finish_current_turn();
-                events.push(ProtocolEvent::AgentEnd {
-                    messages: self.messages.clone(),
-                });
-                events
-            }
-            AgentEvent::AgentError { error } => {
-                let message = stored_error_assistant(&self.api, &self.provider, &self.model, error);
-                self.messages.push(message.clone());
-                vec![
-                    ProtocolEvent::MessageStart {
-                        message: message.clone(),
-                    },
-                    ProtocolEvent::MessageEnd {
-                        message: message.clone(),
-                    },
-                    ProtocolEvent::TurnEnd {
-                        message,
-                        tool_results: Vec::new(),
-                    },
-                    ProtocolEvent::AgentEnd {
-                        messages: self.messages.clone(),
-                    },
-                ]
-            }
-            AgentEvent::SessionCompacted {
-                summary,
-                first_kept_message_id,
-                tokens_before,
-                details,
-            } => vec![
-                ProtocolEvent::CompactionStart {
-                    reason: CompactionReason::Threshold,
-                },
-                ProtocolEvent::CompactionEnd {
-                    reason: CompactionReason::Threshold,
-                    result: Some(CompactionProtocolResult {
-                        summary: summary.clone(),
-                        first_kept_message_id: first_kept_message_id.clone(),
-                        tokens_before: *tokens_before,
-                        details: details.clone(),
-                    }),
-                    aborted: false,
-                    will_retry: false,
-                    error_message: None,
-                },
-            ],
-        }
-    }
-
-    fn push_llm_event(&mut self, event: &AssistantMessageEvent) -> Vec<ProtocolEvent> {
-        match event {
-            AssistantMessageEvent::Start { partial, .. } => {
-                self.current_assistant = Some(partial.clone());
-                self.assistant_open = true;
-                vec![ProtocolEvent::MessageStart {
-                    message: stored_assistant(partial),
-                }]
-            }
-            AssistantMessageEvent::Done { message, .. }
-            | AssistantMessageEvent::Error { message, .. } => {
-                self.current_assistant = Some(message.clone());
-                self.record_tool_args(message);
-                if self.assistant_open {
-                    Vec::new()
-                } else {
-                    self.assistant_open = true;
-                    vec![ProtocolEvent::MessageStart {
-                        message: stored_assistant(message),
-                    }]
-                }
-            }
-            _ => {
-                let Some(partial) = assistant_event_partial(event) else {
-                    return Vec::new();
-                };
-                self.current_assistant = Some(partial.clone());
-                self.record_tool_args(partial);
-
-                let mut events = Vec::new();
-                if !self.assistant_open {
-                    self.assistant_open = true;
-                    events.push(ProtocolEvent::MessageStart {
-                        message: stored_assistant(partial),
-                    });
-                }
-                events.push(ProtocolEvent::MessageUpdate {
-                    message: stored_assistant(partial),
-                    assistant_message_event: event.clone(),
-                });
-                events
-            }
-        }
-    }
-
-    fn push_tool_call_end(
-        &mut self,
-        tool_call_id: &str,
-        tool_name: &str,
-        result: &AgentToolResult,
-    ) -> Vec<ProtocolEvent> {
-        let tool_result = StoredAgentMessage::ToolResult {
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: tool_name.to_string(),
-            content: result.content.clone(),
-            is_error: result.is_error,
-            timestamp: 0,
-        };
-        self.current_tool_results.push(tool_result.clone());
-
-        vec![
-            ProtocolEvent::ToolExecutionEnd {
-                tool_call_id: tool_call_id.to_string(),
-                tool_name: tool_name.to_string(),
-                result: ToolExecutionResult {
-                    content: result.content.clone(),
-                    terminate: result.terminate,
-                    details: result.details.clone(),
-                },
-                is_error: result.is_error,
-            },
-            ProtocolEvent::MessageStart {
-                message: tool_result.clone(),
-            },
-            ProtocolEvent::MessageEnd {
-                message: tool_result,
-            },
-        ]
-    }
-
-    fn finish_current_turn(&mut self) -> Vec<ProtocolEvent> {
-        let Some(message) = self.current_assistant.take() else {
-            return Vec::new();
-        };
-
-        let stored = stored_assistant(&message);
-        if !self.messages.contains(&stored) {
-            self.messages.push(stored.clone());
-        }
-        for tool_result in &self.current_tool_results {
-            if !self.messages.contains(tool_result) {
-                self.messages.push(tool_result.clone());
-            }
-        }
-
-        let events = vec![
-            ProtocolEvent::MessageEnd {
-                message: stored.clone(),
-            },
-            ProtocolEvent::TurnEnd {
-                message: stored,
-                tool_results: self.current_tool_results.clone(),
-            },
-        ];
-        self.current_tool_results.clear();
-        self.assistant_open = false;
-        events
-    }
-
-    fn record_tool_args(&mut self, message: &AssistantMessage) {
-        for block in &message.content {
-            if let ContentBlock::ToolCall { id, arguments, .. } = block {
-                self.tool_args.insert(id.clone(), arguments.clone());
-            }
-        }
-    }
-}
 
 pub struct CodingProtocolEventAdapter {
     api: String,
@@ -294,7 +53,7 @@ impl CodingProtocolEventAdapter {
                 }]
             }
             CodingAgentEvent::AssistantMessageDelta { text, .. } => {
-                let message = self.append_assistant_text(text);
+                let (content_index, message) = self.append_assistant_text(text);
                 let mut events = Vec::new();
                 if !self.assistant_open {
                     self.assistant_open = true;
@@ -305,7 +64,26 @@ impl CodingProtocolEventAdapter {
                 events.push(ProtocolEvent::MessageUpdate {
                     message: stored_assistant(&message),
                     assistant_message_event: AssistantMessageEvent::TextDelta {
-                        content_index: 0,
+                        content_index,
+                        delta: text.clone(),
+                        partial: message,
+                    },
+                });
+                events
+            }
+            CodingAgentEvent::AssistantThinkingDelta { text, .. } => {
+                let (content_index, message) = self.append_assistant_thinking(text);
+                let mut events = Vec::new();
+                if !self.assistant_open {
+                    self.assistant_open = true;
+                    events.push(ProtocolEvent::MessageStart {
+                        message: stored_assistant(&message),
+                    });
+                }
+                events.push(ProtocolEvent::MessageUpdate {
+                    message: stored_assistant(&message),
+                    assistant_message_event: AssistantMessageEvent::ThinkingDelta {
+                        content_index,
                         delta: text.clone(),
                         partial: message,
                     },
@@ -313,7 +91,10 @@ impl CodingProtocolEventAdapter {
                 events
             }
             CodingAgentEvent::AssistantMessageCompleted { final_text, .. } => {
-                let message = self.assistant_message(final_text);
+                let mut message = self.ensure_assistant();
+                if message.content.is_empty() && !final_text.is_empty() {
+                    message.content = text_content(final_text);
+                }
                 let mut events = Vec::new();
                 if !self.assistant_open {
                     self.assistant_open = true;
@@ -414,11 +195,18 @@ impl CodingProtocolEventAdapter {
             .expect("assistant was inserted when missing")
     }
 
-    fn append_assistant_text(&mut self, text: &str) -> AssistantMessage {
+    fn append_assistant_text(&mut self, text: &str) -> (u32, AssistantMessage) {
         let mut message = self.ensure_assistant();
-        append_text_content(&mut message, text);
+        let content_index = append_text_content(&mut message, text);
         self.current_assistant = Some(message.clone());
-        message
+        (content_index, message)
+    }
+
+    fn append_assistant_thinking(&mut self, text: &str) -> (u32, AssistantMessage) {
+        let mut message = self.ensure_assistant();
+        let content_index = append_thinking_content(&mut message, text);
+        self.current_assistant = Some(message.clone());
+        (content_index, message)
     }
 
     fn assistant_message(&self, text: &str) -> AssistantMessage {
@@ -519,30 +307,40 @@ impl CodingProtocolEventAdapter {
     }
 }
 
-fn assistant_event_partial(event: &AssistantMessageEvent) -> Option<&AssistantMessage> {
-    match event {
-        AssistantMessageEvent::Start { partial, .. }
-        | AssistantMessageEvent::TextStart { partial, .. }
-        | AssistantMessageEvent::TextDelta { partial, .. }
-        | AssistantMessageEvent::TextEnd { partial, .. }
-        | AssistantMessageEvent::ThinkingStart { partial, .. }
-        | AssistantMessageEvent::ThinkingDelta { partial, .. }
-        | AssistantMessageEvent::ThinkingEnd { partial, .. }
-        | AssistantMessageEvent::ToolcallStart { partial, .. }
-        | AssistantMessageEvent::ToolcallDelta { partial, .. }
-        | AssistantMessageEvent::ToolcallEnd { partial, .. } => Some(partial),
-        AssistantMessageEvent::Done { message, .. }
-        | AssistantMessageEvent::Error { message, .. } => Some(message),
+fn append_text_content(message: &mut AssistantMessage, text: &str) -> u32 {
+    let last_index = message.content.len().saturating_sub(1) as u32;
+    match message.content.last_mut() {
+        Some(ContentBlock::Text { text: existing, .. }) => {
+            existing.push_str(text);
+            last_index
+        }
+        _ => {
+            let index = message.content.len() as u32;
+            message.content.push(ContentBlock::Text {
+                text: text.to_string(),
+                text_signature: None,
+            });
+            index
+        }
     }
 }
 
-fn append_text_content(message: &mut AssistantMessage, text: &str) {
+fn append_thinking_content(message: &mut AssistantMessage, text: &str) -> u32 {
+    let last_index = message.content.len().saturating_sub(1) as u32;
     match message.content.last_mut() {
-        Some(ContentBlock::Text { text: existing, .. }) => existing.push_str(text),
-        _ => message.content.push(ContentBlock::Text {
-            text: text.to_string(),
-            text_signature: None,
-        }),
+        Some(ContentBlock::Thinking { thinking, .. }) => {
+            thinking.push_str(text);
+            last_index
+        }
+        _ => {
+            let index = message.content.len() as u32;
+            message.content.push(ContentBlock::Thinking {
+                thinking: text.to_string(),
+                thinking_signature: None,
+                redacted: None,
+            });
+            index
+        }
     }
 }
 

@@ -22,7 +22,7 @@ pub(crate) enum TranscriptItem {
     },
     AssistantMessage {
         message_id: String,
-        text: String,
+        content: Vec<PersistedContentBlock>,
         status: MessageStatus,
     },
     ToolCall {
@@ -199,27 +199,16 @@ impl ReplayBuilder {
                     .insert(message_id.clone(), self.transcript.len());
                 self.transcript.push(TranscriptItem::AssistantMessage {
                     message_id: message_id.clone(),
-                    text: String::new(),
+                    content: Vec::new(),
                     status: MessageStatus::Started,
                 });
             }
-            SessionEventData::MessageDelta { message_id, text } => {
-                if let Some(message) = self.message_mut(message_id) {
-                    message.push_str(text);
-                } else {
-                    self.warn(format!(
-                        "message delta references unknown message: {message_id}"
-                    ));
-                }
-            }
             SessionEventData::MessageCompleted {
                 message_id,
+                content,
                 finish_reason: _,
             } => {
-                if self
-                    .set_message_status(message_id, MessageStatus::Completed)
-                    .is_err()
-                {
+                if self.complete_message(message_id, content.clone()).is_err() {
                     self.warn(format!(
                         "message completion references unknown message: {message_id}"
                     ));
@@ -326,19 +315,31 @@ impl ReplayBuilder {
         }
     }
 
-    fn message_mut(&mut self, message_id: &str) -> Option<&mut String> {
-        let index = *self.message_indices.get(message_id)?;
-        match self.transcript.get_mut(index)? {
-            TranscriptItem::AssistantMessage { text, .. } => Some(text),
-            _ => None,
-        }
-    }
-
     fn tool_mut(&mut self, tool_call_id: &str) -> Option<&mut String> {
         let index = *self.tool_indices.get(tool_call_id)?;
         match self.transcript.get_mut(index)? {
             TranscriptItem::ToolCall { summary, .. } => Some(summary),
             _ => None,
+        }
+    }
+
+    fn complete_message(
+        &mut self,
+        message_id: &str,
+        content: Vec<PersistedContentBlock>,
+    ) -> Result<(), ()> {
+        let index = *self.message_indices.get(message_id).ok_or(())?;
+        match self.transcript.get_mut(index).ok_or(())? {
+            TranscriptItem::AssistantMessage {
+                content: current,
+                status,
+                ..
+            } => {
+                *current = content;
+                *status = MessageStatus::Completed;
+                Ok(())
+            }
+            _ => Err(()),
         }
     }
 
@@ -436,6 +437,7 @@ fn content_blocks_text(content: &[PersistedContentBlock]) -> String {
         .iter()
         .map(|block| match block {
             PersistedContentBlock::Text { text } => text.clone(),
+            PersistedContentBlock::Thinking { thinking, .. } => thinking.clone(),
             PersistedContentBlock::Image { mime_type, .. } => format!("[image:{mime_type}]"),
         })
         .collect::<Vec<_>>()
@@ -503,15 +505,9 @@ mod tests {
             ),
             op_event(
                 "evt_5",
-                SessionEventData::MessageDelta {
-                    message_id: "msg_1".into(),
-                    text: "hi".into(),
-                },
-            ),
-            op_event(
-                "evt_6",
                 SessionEventData::MessageCompleted {
                     message_id: "msg_1".into(),
+                    content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     finish_reason: Some("stop".into()),
                 },
             ),
@@ -558,7 +554,7 @@ mod tests {
                 },
                 TranscriptItem::AssistantMessage {
                     message_id: "msg_1".into(),
-                    text: "hi".into(),
+                    content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     status: MessageStatus::Completed,
                 },
                 TranscriptItem::ToolCall {
@@ -648,13 +644,6 @@ mod tests {
             ),
             op_event(
                 "evt_3",
-                SessionEventData::MessageDelta {
-                    message_id: "msg_1".into(),
-                    text: "partial".into(),
-                },
-            ),
-            op_event(
-                "evt_4",
                 SessionEventData::ToolCallStarted {
                     tool_call_id: "tool_1".into(),
                     name: "bash".into(),
@@ -690,7 +679,7 @@ mod tests {
             vec![
                 TranscriptItem::AssistantMessage {
                     message_id: "msg_1".into(),
-                    text: "partial".into(),
+                    content: Vec::new(),
                     status: MessageStatus::Cancelled,
                 },
                 TranscriptItem::ToolCall {
@@ -801,15 +790,11 @@ mod tests {
             ),
             op_event(
                 "evt_4",
-                SessionEventData::MessageDelta {
-                    message_id: "msg_old".into(),
-                    text: "old answer".into(),
-                },
-            ),
-            op_event(
-                "evt_5",
                 SessionEventData::MessageCompleted {
                     message_id: "msg_old".into(),
+                    content: vec![PersistedContentBlock::Text {
+                        text: "old answer".into(),
+                    }],
                     finish_reason: Some("stop".into()),
                 },
             ),
@@ -822,15 +807,11 @@ mod tests {
             ),
             op_event(
                 "evt_7",
-                SessionEventData::MessageDelta {
-                    message_id: "msg_kept".into(),
-                    text: "kept answer".into(),
-                },
-            ),
-            op_event(
-                "evt_8",
                 SessionEventData::MessageCompleted {
                     message_id: "msg_kept".into(),
+                    content: vec![PersistedContentBlock::Text {
+                        text: "kept answer".into(),
+                    }],
                     finish_reason: Some("stop".into()),
                 },
             ),
@@ -862,7 +843,9 @@ mod tests {
                 },
                 TranscriptItem::AssistantMessage {
                     message_id: "msg_kept".into(),
-                    text: "kept answer".into(),
+                    content: vec![PersistedContentBlock::Text {
+                        text: "kept answer".into(),
+                    }],
                     status: MessageStatus::Completed,
                 },
             ]

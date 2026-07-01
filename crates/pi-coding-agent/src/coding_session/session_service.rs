@@ -584,6 +584,7 @@ fn text_from_persisted_content(content: &[PersistedContentBlock]) -> String {
         .iter()
         .filter_map(|block| match block {
             PersistedContentBlock::Text { text } => Some(text.trim()),
+            PersistedContentBlock::Thinking { thinking, .. } => Some(thinking.trim()),
             PersistedContentBlock::Image { .. } => None,
         })
         .filter(|text| !text.is_empty())
@@ -624,11 +625,11 @@ fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessio
         TranscriptItem::UserInput { text, .. } => CodingAgentSessionTranscriptItem::User { text },
         TranscriptItem::AssistantMessage {
             message_id,
-            text,
+            content,
             status,
         } => CodingAgentSessionTranscriptItem::Assistant {
             id: message_id,
-            text,
+            text: persisted_content_blocks_text(&content),
             done: !matches!(status, MessageStatus::Started),
         },
         TranscriptItem::ToolCall {
@@ -655,6 +656,24 @@ fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessio
             CodingAgentSessionTranscriptItem::Diagnostic { message }
         }
     }
+}
+
+fn persisted_content_blocks_text(
+    content: &[super::session_log::event::PersistedContentBlock],
+) -> String {
+    content
+        .iter()
+        .map(|block| match block {
+            super::session_log::event::PersistedContentBlock::Text { text } => text.clone(),
+            super::session_log::event::PersistedContentBlock::Thinking { thinking, .. } => {
+                thinking.clone()
+            }
+            super::session_log::event::PersistedContentBlock::Image { mime_type, .. } => {
+                format!("[image:{mime_type}]")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl From<SessionSummary> for CodingAgentSessionSummary {

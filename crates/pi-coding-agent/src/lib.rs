@@ -8,6 +8,7 @@ pub mod interactive;
 mod list_models;
 pub mod models;
 pub mod print_mode;
+pub mod prompt_options;
 pub mod protocol;
 pub mod request;
 pub mod resources;
@@ -19,12 +20,13 @@ pub mod tools;
 pub use args::{CliArgs, CliMode, help_text, parse_args};
 pub use error::CliError;
 pub use print_mode::{PrintModeOptions, run_print_mode};
+pub use prompt_options::PromptRunOptions;
 pub use runtime::{
     CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, PromptInvocation, SessionMode,
     SessionRunOptions, build_agent_config, effective_no_context_files, effective_session_dir,
     select_model,
 };
-pub use session::{ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session};
+pub use session::{ResolvedSessionTarget, encode_cwd};
 pub use tools::builtin_tools;
 
 /// Stable library facade for embedding or scripting `pi-coding-agent`.
@@ -41,10 +43,7 @@ pub mod api {
     };
     pub use crate::error::CliError;
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};
-    pub use crate::protocol::session_runner::{
-        SessionPromptAbortHandle, SessionPromptControlHandle, SessionPromptOptions,
-        SessionPromptResult, SpawnedSessionPrompt, run_session_prompt, spawn_session_prompt,
-    };
+    pub use crate::prompt_options::PromptRunOptions;
     pub use crate::request::{
         CliDiagnostic, CliDiagnosticSeverity, ResolvedCliContext, ResolvedPromptRequest,
         render_diagnostics, resolve_cli_context, resolve_prompt_request, resolve_session_target,
@@ -54,9 +53,7 @@ pub mod api {
         SessionRunOptions, build_agent_config, effective_no_context_files, effective_session_dir,
         select_model,
     };
-    pub use crate::session::{
-        ActiveSession, ResolvedSessionTarget, encode_cwd, open_active_session,
-    };
+    pub use crate::session::{ResolvedSessionTarget, encode_cwd};
     pub use crate::tools::{ToolFilter, builtin_tools, filter_tools};
     pub use crate::{CliOutput, run_cli, run_cli_with_options, run_cli_with_options_and_stdin};
 }

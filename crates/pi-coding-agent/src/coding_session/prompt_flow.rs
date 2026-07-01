@@ -426,14 +426,16 @@ mod tests {
     use super::*;
     use crate::coding_session::event::CodingAgentEvent;
     use crate::coding_session::prompt::{PromptTurnIds, PromptTurnOptions};
-    use crate::coding_session::session_log::event::{SessionEventData, SessionEventEnvelope};
+    use crate::coding_session::session_log::event::{
+        PersistedContentBlock, SessionEventData, SessionEventEnvelope,
+    };
     use crate::coding_session::session_log::replay::{
         MessageStatus, SessionReplay, TranscriptItem,
     };
     use crate::coding_session::session_log::store::{
         CreateSessionOptions, SessionHandle, SessionLogStore,
     };
-    use crate::protocol::session_runner::{SessionPromptOptions, assistant_text};
+    use crate::prompt_options::{PromptRunOptions, assistant_text};
     use crate::runtime::PromptInvocation;
 
     fn model(api: &str) -> Model {
@@ -479,7 +481,7 @@ mod tests {
         invocation: PromptInvocation,
     ) -> PromptTurnContext {
         registry::register(api, Arc::new(FauxProvider::simple_text(response)));
-        let options = PromptTurnOptions::from_session_prompt_options(SessionPromptOptions {
+        let options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: "hello".into(),
             model: model(api),
             api_key: None,
@@ -545,7 +547,6 @@ mod tests {
                 SessionEventData::TurnStarted {} => "turn.started",
                 SessionEventData::TurnInputRecorded { .. } => "turn.input.recorded",
                 SessionEventData::MessageStarted { .. } => "message.started",
-                SessionEventData::MessageDelta { .. } => "message.delta",
                 SessionEventData::MessageCompleted { .. } => "message.completed",
                 SessionEventData::MessageCancelled { .. } => "message.cancelled",
                 SessionEventData::ToolCallStarted { .. } => "tool.call.started",
@@ -1016,7 +1017,6 @@ mod tests {
                 "operation.started",
                 "turn.started",
                 "message.started",
-                "message.delta",
                 "message.completed",
             ]
         );
@@ -1026,7 +1026,10 @@ mod tests {
                 .iter()
                 .any(|event| matches!(
                     &event.data,
-                    SessionEventData::MessageDelta { text, .. } if text == "flow answer"
+                    SessionEventData::MessageCompleted { content, .. }
+                        if content == &vec![PersistedContentBlock::Text {
+                            text: "flow answer".into(),
+                        }]
                 ))
         );
         assert!(matches!(
@@ -1056,7 +1059,6 @@ mod tests {
                 "turn.started",
                 "turn.input.recorded",
                 "message.started",
-                "message.delta",
                 "message.completed",
             ]
         );
@@ -1128,7 +1130,9 @@ mod tests {
                 },
                 TranscriptItem::AssistantMessage {
                     message_id: "msg_old".into(),
-                    text: "answer".into(),
+                    content: vec![PersistedContentBlock::Text {
+                        text: "answer".into(),
+                    }],
                     status: MessageStatus::Completed,
                 },
             ],

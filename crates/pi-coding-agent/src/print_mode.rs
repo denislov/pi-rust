@@ -3,7 +3,7 @@ use crate::coding_session::{
     CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PromptTurnOptions,
     PromptTurnOutcome,
 };
-use crate::protocol::session_runner::SessionPromptOptions;
+use crate::prompt_options::PromptRunOptions;
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
 use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
@@ -50,8 +50,8 @@ impl PrintModeOptions {
     }
 }
 
-impl From<SessionPromptOptions> for PrintModeOptions {
-    fn from(options: SessionPromptOptions) -> Self {
+impl From<PromptRunOptions> for PrintModeOptions {
+    fn from(options: PromptRunOptions) -> Self {
         Self {
             prompt: options.prompt,
             model: options.model,
@@ -78,8 +78,8 @@ pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliErro
     print_text_from_prompt_outcome(outcome)
 }
 
-fn session_prompt_options_from_print_options(options: PrintModeOptions) -> SessionPromptOptions {
-    SessionPromptOptions {
+fn session_prompt_options_from_print_options(options: PrintModeOptions) -> PromptRunOptions {
+    PromptRunOptions {
         prompt: options.prompt,
         model: options.model,
         api_key: options.api_key,
@@ -99,7 +99,7 @@ fn session_prompt_options_from_print_options(options: PrintModeOptions) -> Sessi
 }
 
 async fn run_print_mode_with_coding_session(
-    options: SessionPromptOptions,
+    options: PromptRunOptions,
 ) -> Result<PromptTurnOutcome, CliError> {
     let Some(session_options) = options.session.as_ref() else {
         return run_non_persistent_print_mode(options).await;
@@ -115,14 +115,14 @@ async fn run_print_mode_with_coding_session(
 
     let mut session =
         open_print_coding_session(session_options, options.session_target.as_ref()).await?;
-    let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
+    let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = session.prompt(prompt_options).await?;
     Ok(outcome)
 }
 
 async fn run_non_persistent_print_mode(
-    options: SessionPromptOptions,
+    options: PromptRunOptions,
 ) -> Result<PromptTurnOutcome, CliError> {
     ensure_non_persistent_print_target(options.session_target.as_ref())?;
     let coding_options = options
@@ -131,7 +131,7 @@ async fn run_non_persistent_print_mode(
         .map(|session| CodingAgentSessionOptions::new().with_cwd(session.cwd.clone()))
         .unwrap_or_else(CodingAgentSessionOptions::new);
     let mut session = CodingAgentSession::non_persistent(coding_options).await?;
-    let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
+    let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
     Ok(session.prompt(prompt_options).await?)
 }
 

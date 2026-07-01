@@ -11,14 +11,14 @@ use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Model}
 
 use crate::args::CliMode;
 use crate::config::Settings;
-use crate::protocol::session_runner::{SessionPromptOptions, assistant_text};
+use crate::prompt_options::{PromptRunOptions, assistant_text};
 use crate::request::ResolvedPromptRequest;
 use crate::runtime::{PromptInvocation, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
 
 use super::CodingSessionError;
 use super::event::CodingAgentEvent;
-use super::event_service::{AgentEventMappingContext, map_agent_event};
+use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
 use super::session_log::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
     SessionEventEnvelope,
@@ -96,11 +96,11 @@ impl PromptTurnOptions {
         self.session_name.as_deref()
     }
 
-    pub(crate) fn from_session_prompt_options(options: SessionPromptOptions) -> Self {
+    pub(crate) fn from_prompt_run_options(options: PromptRunOptions) -> Self {
         let invocation = options.invocation.clone();
         let session_target = options.session_target.clone();
         let session_name = options.session_name.clone();
-        let runtime = RuntimeSnapshot::from_session_prompt_options(options);
+        let runtime = RuntimeSnapshot::from_prompt_run_options(options);
         Self {
             invocation,
             mode: PromptTurnMode::Print,
@@ -134,7 +134,7 @@ impl TryFrom<ResolvedPromptRequest> for PromptTurnOptions {
 
     fn try_from(request: ResolvedPromptRequest) -> Result<Self, Self::Error> {
         let mut options = PromptTurnOptions::try_from(&request)?;
-        options.runtime = Some(RuntimeSnapshot::from_session_prompt_options(
+        options.runtime = Some(RuntimeSnapshot::from_prompt_run_options(
             request.session_options,
         ));
         Ok(options)
@@ -272,8 +272,8 @@ impl std::fmt::Debug for RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
-    pub(crate) fn from_session_prompt_options(options: SessionPromptOptions) -> Self {
-        let SessionPromptOptions {
+    pub(crate) fn from_prompt_run_options(options: PromptRunOptions) -> Self {
+        let PromptRunOptions {
             prompt: _,
             model,
             api_key,
@@ -382,7 +382,7 @@ pub(crate) struct PromptTurnContext {
     agent_observations: Vec<AgentRunObservation>,
     coding_events: Vec<CodingAgentEvent>,
     assistant_session_message_id: Option<String>,
-    assistant_session_delta_seen: bool,
+    live_event_service: Option<EventService>,
     tool_session_call_ids: HashMap<String, String>,
     diagnostics: Vec<CodingDiagnostic>,
 }
@@ -405,7 +405,7 @@ impl PromptTurnContext {
             agent_observations: Vec::new(),
             coding_events: Vec::new(),
             assistant_session_message_id: None,
-            assistant_session_delta_seen: false,
+            live_event_service: None,
             tool_session_call_ids: HashMap::new(),
             diagnostics: Vec::new(),
         }
@@ -619,6 +619,14 @@ impl PromptTurnContext {
             .unwrap_or_default()
     }
 
+    pub(crate) fn enable_live_events(&mut self, event_service: EventService) {
+        self.live_event_service = Some(event_service);
+    }
+
+    pub(crate) fn live_events_enabled(&self) -> bool {
+        self.live_event_service.is_some()
+    }
+
     pub(crate) fn completed_transcript_items(&self) -> Vec<TranscriptItem> {
         let mut transcript = Vec::new();
 
@@ -633,14 +641,14 @@ impl PromptTurnContext {
         }
 
         if let Some(message) = self.final_message.as_ref() {
-            let text = assistant_text(message);
-            if !text.is_empty() {
+            let content = persisted_assistant_content_blocks(&message.content);
+            if !content.is_empty() {
                 transcript.push(TranscriptItem::AssistantMessage {
                     message_id: self
                         .assistant_session_message_id
                         .clone()
                         .unwrap_or_else(|| format!("msg_{}", self.turn_id())),
-                    text,
+                    content,
                     status: MessageStatus::Completed,
                 });
             }
@@ -682,13 +690,23 @@ impl PromptTurnContext {
         &mut self,
         event: AgentEvent,
     ) -> Result<Vec<CodingAgentEvent>, CodingSessionError> {
-        let mapping_context = AgentEventMappingContext::new(
+        self.record_agent_event_to_transaction(&event)?;
+        let mut mapping_context = AgentEventMappingContext::new(
             self.operation_id().to_owned(),
             self.turn_id().to_owned(),
         );
+        if let Some(message_id) = self.assistant_session_message_id.clone() {
+            mapping_context = mapping_context.with_assistant_message_id(message_id);
+        }
         let coding_events = map_agent_event(&mapping_context, &event);
-        self.record_agent_event_to_transaction(&event)?;
         self.coding_events.extend(coding_events.clone());
+        if let Some(event_service) = &self.live_event_service {
+            for event in &coding_events {
+                if !is_prompt_outcome_event(event) {
+                    event_service.emit(event.clone());
+                }
+            }
+        }
         self.agent_observations.push(AgentRunObservation {
             event,
             coding_events: coding_events.clone(),
@@ -768,16 +786,12 @@ impl PromptTurnContext {
             } => self.record_tool_result_to_transaction(tool_call_id, tool_name, result),
             AgentEvent::AgentDone { message } => {
                 let message_id = self.ensure_assistant_session_message_started()?;
-                if !self.assistant_session_delta_seen {
-                    let final_text = assistant_text(message);
-                    if !final_text.is_empty() {
-                        self.transaction_mut_required()?
-                            .append_assistant_delta(&message_id, final_text)?;
-                        self.assistant_session_delta_seen = true;
-                    }
-                }
-                self.transaction_mut_required()?
-                    .complete_assistant_message(message_id, stop_reason_string(message))
+                let content = persisted_assistant_content_blocks(&message.content);
+                self.transaction_mut_required()?.complete_assistant_message(
+                    message_id,
+                    content,
+                    stop_reason_string(message),
+                )
             }
             AgentEvent::AgentError { error } => self
                 .transaction_mut_required()?
@@ -793,15 +807,12 @@ impl PromptTurnContext {
         event: &AssistantMessageEvent,
     ) -> Result<(), CodingSessionError> {
         match event {
-            AssistantMessageEvent::Start { .. } | AssistantMessageEvent::TextStart { .. } => {
+            AssistantMessageEvent::Start { .. }
+            | AssistantMessageEvent::TextStart { .. }
+            | AssistantMessageEvent::ThinkingStart { .. }
+            | AssistantMessageEvent::TextDelta { .. }
+            | AssistantMessageEvent::ThinkingDelta { .. } => {
                 self.ensure_assistant_session_message_started()?;
-                Ok(())
-            }
-            AssistantMessageEvent::TextDelta { delta, .. } => {
-                let message_id = self.ensure_assistant_session_message_started()?;
-                self.transaction_mut_required()?
-                    .append_assistant_delta(message_id, delta.clone())?;
-                self.assistant_session_delta_seen = true;
                 Ok(())
             }
             AssistantMessageEvent::Error { message, .. } => {
@@ -815,8 +826,6 @@ impl PromptTurnContext {
             }
             AssistantMessageEvent::Done { .. }
             | AssistantMessageEvent::TextEnd { .. }
-            | AssistantMessageEvent::ThinkingStart { .. }
-            | AssistantMessageEvent::ThinkingDelta { .. }
             | AssistantMessageEvent::ThinkingEnd { .. }
             | AssistantMessageEvent::ToolcallStart { .. }
             | AssistantMessageEvent::ToolcallDelta { .. }
@@ -995,8 +1004,14 @@ fn persisted_content_block(content: &ContentBlock) -> PersistedContentBlock {
             mime_type: mime_type.clone(),
             data: data.clone(),
         },
-        ContentBlock::Thinking { thinking, .. } => PersistedContentBlock::Text {
-            text: thinking.clone(),
+        ContentBlock::Thinking {
+            thinking,
+            thinking_signature,
+            redacted,
+        } => PersistedContentBlock::Thinking {
+            thinking: thinking.clone(),
+            thinking_signature: thinking_signature.clone(),
+            redacted: *redacted,
         },
         ContentBlock::ToolCall {
             name, arguments, ..
@@ -1006,15 +1021,50 @@ fn persisted_content_block(content: &ContentBlock) -> PersistedContentBlock {
     }
 }
 
+fn persisted_assistant_content_blocks(content: &[ContentBlock]) -> Vec<PersistedContentBlock> {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => {
+                Some(PersistedContentBlock::Text { text: text.clone() })
+            }
+            ContentBlock::Thinking {
+                thinking,
+                thinking_signature,
+                redacted,
+            } => Some(PersistedContentBlock::Thinking {
+                thinking: thinking.clone(),
+                thinking_signature: thinking_signature.clone(),
+                redacted: *redacted,
+            }),
+            ContentBlock::Image { mime_type, data } => Some(PersistedContentBlock::Image {
+                mime_type: mime_type.clone(),
+                data: data.clone(),
+            }),
+            ContentBlock::ToolCall { .. } => None,
+        })
+        .collect()
+}
+
 fn persisted_content_blocks_text(content: &[PersistedContentBlock]) -> String {
     content
         .iter()
         .map(|block| match block {
             PersistedContentBlock::Text { text } => text.clone(),
+            PersistedContentBlock::Thinking { thinking, .. } => thinking.clone(),
             PersistedContentBlock::Image { mime_type, .. } => format!("[image:{mime_type}]"),
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn is_prompt_outcome_event(event: &CodingAgentEvent) -> bool {
+    matches!(
+        event,
+        CodingAgentEvent::PromptCompleted { .. }
+            | CodingAgentEvent::PromptFailed { .. }
+            | CodingAgentEvent::PromptAborted { .. }
+    )
 }
 
 fn content_blocks_text(content: &[ContentBlock]) -> String {
@@ -1061,8 +1111,8 @@ mod tests {
         }
     }
 
-    fn session_prompt_options() -> SessionPromptOptions {
-        SessionPromptOptions {
+    fn session_prompt_options() -> PromptRunOptions {
+        PromptRunOptions {
             prompt: "hello".into(),
             model: model(),
             api_key: Some("key".into()),
@@ -1106,7 +1156,7 @@ mod tests {
 
     #[test]
     fn runtime_snapshot_moves_existing_session_prompt_runtime_inputs() {
-        let snapshot = RuntimeSnapshot::from_session_prompt_options(session_prompt_options());
+        let snapshot = RuntimeSnapshot::from_prompt_run_options(session_prompt_options());
 
         assert_eq!(snapshot.model().id, "test-model");
         assert_eq!(snapshot.api_key(), Some("key"));

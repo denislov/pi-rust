@@ -3,16 +3,16 @@ use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     PromptTurnOptions, PromptTurnOutcome,
 };
+use crate::prompt_options::PromptRunOptions;
 use crate::protocol::events::CodingProtocolEventAdapter;
 use crate::protocol::jsonl::serialize_json_line;
-use crate::protocol::session_runner::SessionPromptOptions;
 use crate::protocol::types::ProtocolEvent;
 use crate::runtime::{SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
 use pi_agent_core::session::{SessionHeader, create_session_id, create_timestamp};
 use std::path::PathBuf;
 
-pub async fn run_json_mode(options: SessionPromptOptions) -> CliOutput {
+pub async fn run_json_mode(options: PromptRunOptions) -> CliOutput {
     let header = SessionHeader {
         entry_type: "session".into(),
         version: 3,
@@ -85,13 +85,13 @@ pub async fn run_json_mode(options: SessionPromptOptions) -> CliOutput {
 }
 
 async fn run_json_prompt(
-    options: SessionPromptOptions,
+    options: PromptRunOptions,
     stdout: &mut String,
     adapter: &mut CodingProtocolEventAdapter,
 ) -> Result<PromptTurnOutcome, CodingSessionError> {
     let mut session = open_json_coding_session(&options).await?;
     let mut receiver = session.subscribe();
-    let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
+    let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
     let (done_tx, mut done_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
@@ -116,7 +116,7 @@ async fn run_json_prompt(
 }
 
 async fn open_json_coding_session(
-    options: &SessionPromptOptions,
+    options: &PromptRunOptions,
 ) -> Result<CodingAgentSession, CodingSessionError> {
     let Some(session_options) = options.session.as_ref() else {
         return CodingAgentSession::non_persistent(CodingAgentSessionOptions::new()).await;
@@ -173,7 +173,7 @@ fn json_coding_session_root(options: &SessionRunOptions) -> Result<PathBuf, Codi
     }
 }
 
-fn json_header_cwd(options: &SessionPromptOptions) -> String {
+fn json_header_cwd(options: &PromptRunOptions) -> String {
     options
         .session
         .as_ref()

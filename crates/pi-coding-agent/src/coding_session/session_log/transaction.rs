@@ -110,24 +110,10 @@ where
         Ok(message_id)
     }
 
-    pub(crate) fn append_assistant_delta(
-        &mut self,
-        message_id: impl Into<String>,
-        text: impl Into<String>,
-    ) -> Result<(), CodingSessionError> {
-        self.ensure_open()?;
-        let message_id = message_id.into();
-        self.ensure_message_open(&message_id)?;
-        self.push_event(SessionEventData::MessageDelta {
-            message_id,
-            text: text.into(),
-        });
-        Ok(())
-    }
-
     pub(crate) fn complete_assistant_message(
         &mut self,
         message_id: impl Into<String>,
+        content: Vec<PersistedContentBlock>,
         finish_reason: Option<String>,
     ) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
@@ -136,6 +122,7 @@ where
         self.open_messages.remove(&message_id);
         self.push_event(SessionEventData::MessageCompleted {
             message_id,
+            content,
             finish_reason,
         });
         Ok(())
@@ -437,7 +424,6 @@ mod tests {
                 SessionEventData::TurnStarted {} => "turn.started",
                 SessionEventData::TurnInputRecorded { .. } => "turn.input.recorded",
                 SessionEventData::MessageStarted { .. } => "message.started",
-                SessionEventData::MessageDelta { .. } => "message.delta",
                 SessionEventData::MessageCompleted { .. } => "message.completed",
                 SessionEventData::MessageCancelled { .. } => "message.cancelled",
                 SessionEventData::ToolCallStarted { .. } => "tool.call.started",
@@ -472,9 +458,12 @@ mod tests {
         }])
         .unwrap();
         let message_id = tx.start_assistant_message().unwrap();
-        tx.append_assistant_delta(&message_id, "hi").unwrap();
-        tx.complete_assistant_message(&message_id, Some("stop".into()))
-            .unwrap();
+        tx.complete_assistant_message(
+            &message_id,
+            vec![PersistedContentBlock::Text { text: "hi".into() }],
+            Some("stop".into()),
+        )
+        .unwrap();
         let tool_call_id = tx
             .record_tool_started("read", serde_json::json!({"path": "src/lib.rs"}))
             .unwrap();
@@ -495,7 +484,6 @@ mod tests {
                 "turn.started",
                 "turn.input.recorded",
                 "message.started",
-                "message.delta",
                 "message.completed",
                 "tool.call.started",
                 "tool.call.updated",
@@ -540,8 +528,7 @@ mod tests {
     fn abort_cancels_open_lifecycle_events_and_does_not_update_leaf() {
         let (_temp, store, handle) = setup();
         let mut tx = begin(&store, handle.clone());
-        let message_id = tx.start_assistant_message().unwrap();
-        tx.append_assistant_delta(&message_id, "partial").unwrap();
+        tx.start_assistant_message().unwrap();
         let _tool_call_id = tx
             .record_tool_started("bash", serde_json::json!({}))
             .unwrap();
@@ -555,7 +542,6 @@ mod tests {
                 "operation.started",
                 "turn.started",
                 "message.started",
-                "message.delta",
                 "tool.call.started",
                 "message.cancelled",
                 "tool.call.cancelled",
@@ -575,8 +561,7 @@ mod tests {
     fn fail_emits_error_diagnostic_and_failure_marker() {
         let (_temp, store, handle) = setup();
         let mut tx = begin(&store, handle.clone());
-        let message_id = tx.start_assistant_message().unwrap();
-        tx.append_assistant_delta(&message_id, "partial").unwrap();
+        tx.start_assistant_message().unwrap();
 
         tx.fail("provider", "stream failed").unwrap();
 
@@ -587,7 +572,6 @@ mod tests {
                 "operation.started",
                 "turn.started",
                 "message.started",
-                "message.delta",
                 "message.cancelled",
                 "diagnostic.emitted",
                 "operation.failed",
@@ -614,13 +598,16 @@ mod tests {
         let (_temp, store, handle) = setup();
         let mut tx = begin(&store, handle);
         let message_id = tx.start_assistant_message().unwrap();
-        tx.complete_assistant_message(&message_id, None).unwrap();
+        tx.complete_assistant_message(&message_id, Vec::new(), None)
+            .unwrap();
         let tool_call_id = tx
             .record_tool_started("read", serde_json::json!({}))
             .unwrap();
         tx.record_tool_failed(&tool_call_id, "not found").unwrap();
 
-        let message_error = tx.append_assistant_delta(&message_id, "late").unwrap_err();
+        let message_error = tx
+            .complete_assistant_message(&message_id, Vec::new(), None)
+            .unwrap_err();
         let tool_error = tx
             .record_tool_completed(
                 &tool_call_id,

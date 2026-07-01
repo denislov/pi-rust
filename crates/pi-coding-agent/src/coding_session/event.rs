@@ -42,6 +42,12 @@ pub enum CodingAgentEvent {
         message_id: Option<String>,
         text: String,
     },
+    AssistantThinkingDelta {
+        operation_id: String,
+        turn_id: String,
+        message_id: Option<String>,
+        text: String,
+    },
     AssistantMessageCompleted {
         operation_id: String,
         turn_id: String,

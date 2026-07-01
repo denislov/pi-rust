@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pi_agent_core::session::{JsonlSessionStorage, create_session_id};
+use pi_agent_core::session::create_session_id;
 use pi_ai::types::Usage;
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
@@ -17,10 +17,10 @@ use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskRes
 use crate::interactive::root::{InteractiveAction, InteractiveRoot, InteractiveStatus};
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
-    hydrated_session_from_rust_native, session_choice_from_metadata,
+    hydrated_session_from_rust_native,
 };
-use crate::interactive::{CodingEventBridge, InteractiveEventBridge, TranscriptItem, UiEvent};
-use crate::protocol::session_runner::{SessionPromptOptions, SessionPromptResult};
+use crate::interactive::{CodingEventBridge, TranscriptItem, UiEvent};
+use crate::prompt_options::PromptRunOptions;
 use crate::runtime::PromptInvocation;
 use crate::session::ResolvedSessionTarget;
 use crate::{CliArgs, CliError, CliRunOptions};
@@ -85,8 +85,7 @@ fn print_exit_resume_hint(active_session_path: Option<&std::path::Path>) {
             .file_stem()
             .and_then(|s| s.to_str())
             .map(|s| {
-                // Session files are `{timestamp}_{uuid}.jsonl`;
-                // the session id is the full stem.
+                // Rust-native session paths use the session id as the directory name.
                 s.to_string()
             })
             .unwrap_or_else(|| path.display().to_string());
@@ -263,7 +262,6 @@ async fn run_started_interactive_loop<T: Terminal>(
     let mut stdin_buffer = StdinBuffer::new();
     let mut running: Option<PromptTask> = None;
     let mut coding_session: Option<CodingAgentSession> = None;
-    let mut agent_bridge = InteractiveEventBridge::new();
     let mut coding_bridge = CodingEventBridge::new();
     let mut input_open = true;
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
@@ -343,7 +341,6 @@ async fn run_started_interactive_loop<T: Terminal>(
                                 apply_prompt_task_event(
                                     tui,
                                     root_id,
-                                    &mut agent_bridge,
                                     &mut coding_bridge,
                                     event,
                                 )?,
@@ -374,7 +371,6 @@ async fn run_started_interactive_loop<T: Terminal>(
                             apply_prompt_task_event(
                                 tui,
                                 root_id,
-                                &mut agent_bridge,
                                 &mut coding_bridge,
                                 event,
                             )?,
@@ -694,18 +690,10 @@ fn handle_input_event<T: Terminal>(
         prompt_context.api_key = api_key;
     }
 
-    // Process tree label changes (no navigation needed, just persist).
+    // Tree label persistence for Rust-native sessions is not implemented yet.
     {
         let root = root_mut(tui, root_id)?;
-        if let Some((entry_id, label)) = root.take_pending_tree_label_change() {
-            if let Some(ref session_path) = root.active_session_path.clone() {
-                if let Ok(mut storage) = JsonlSessionStorage::open(session_path) {
-                    let _ = storage.append_label_change(&entry_id, label.as_deref());
-                    let choice = session_choice_from_metadata(storage.metadata());
-                    root.session_label = choice.display_name().to_string();
-                }
-            }
-        }
+        let _ = root.take_pending_tree_label_change();
     }
 
     // Process tree navigation.
@@ -740,97 +728,10 @@ fn handle_input_event<T: Terminal>(
                         ))),
                     }
                 }
-            } else if let Some(ref session_path) = root.active_session_path.clone() {
-                match JsonlSessionStorage::open(session_path) {
-                    Ok(mut storage) => {
-                        // Check if already at this point.
-                        let current_leaf = storage.get_leaf_id().ok().flatten();
-                        if current_leaf.as_deref() == Some(&target_id) {
-                            root.transcript
-                                .push(TranscriptItem::system("Already at this point".to_string()));
-                        } else {
-                            // Navigate.
-                            let target_entry = storage.get_entry(&target_id);
-                            let is_user_message = target_entry.is_some()
-                                && target_entry.unwrap().entry_type == "message"
-                                && target_entry
-                                    .unwrap()
-                                    .field("message")
-                                    .and_then(|m| m.get("role"))
-                                    .and_then(|r| r.as_str())
-                                    == Some("user");
-                            let is_custom_message = target_entry.is_some()
-                                && (target_entry.unwrap().entry_type == "custom_message"
-                                    || target_entry.unwrap().entry_type == "custom");
-
-                            if is_user_message || is_custom_message {
-                                // Set leaf to parent and extract text for editor.
-                                let parent_id = target_entry.unwrap().parent_id.clone();
-                                let text = target_entry
-                                    .unwrap()
-                                    .field("message")
-                                    .and_then(|m| m.get("content"))
-                                    .and_then(|c| c.as_array())
-                                    .and_then(|arr| arr.first())
-                                    .and_then(|b| b.get("text"))
-                                    .and_then(|t| t.as_str())
-                                    .map(str::to_string)
-                                    .unwrap_or_default();
-
-                                // Branch to parent.
-                                if let Some(ref pid) = parent_id {
-                                    let _ = storage.branch(pid);
-                                } else {
-                                    let _ = storage.reset_leaf();
-                                }
-
-                                // Reload storage to get fresh leaf_id.
-                                if let Ok(reloaded) = JsonlSessionStorage::open(session_path) {
-                                    let leaf_id = reloaded.get_leaf_id().ok().flatten();
-                                    root.active_leaf_id = leaf_id;
-                                }
-                                root.editor.set_text(text.clone());
-                            } else {
-                                // Navigate to this entry directly.
-                                let _ = storage.branch(&target_id);
-                                if let Ok(reloaded) = JsonlSessionStorage::open(session_path) {
-                                    let leaf_id = reloaded.get_leaf_id().ok().flatten();
-                                    root.active_leaf_id = leaf_id;
-                                }
-                            }
-
-                            // Update session label.
-                            let choice = session_choice_from_metadata(storage.metadata());
-                            root.session_label = choice.display_name().to_string();
-
-                            // Re-hydrate transcript.
-                            if let Ok(reopened) = JsonlSessionStorage::open(session_path) {
-                                if let Ok(hydrated) =
-                                    crate::interactive::session_actions::hydrate_session_storage(
-                                        reopened,
-                                    )
-                                {
-                                    root.apply_hydrated_session(
-                                        hydrated,
-                                        Some("Navigated to selected point".to_string()),
-                                    );
-                                }
-                            }
-
-                            // Update session_target.
-                            prompt_context.session_target =
-                                Some(ResolvedSessionTarget::OpenTarget(
-                                    session_path.display().to_string(),
-                                ));
-                        }
-                    }
-                    Err(error) => {
-                        root.transcript.push(TranscriptItem::system(format!(
-                            "Failed to navigate tree: {}",
-                            error.message
-                        )));
-                    }
-                }
+            } else {
+                root.transcript.push(TranscriptItem::system(
+                    "No active Rust-native session for tree navigation".to_string(),
+                ));
             }
         }
     }
@@ -939,7 +840,7 @@ fn start_prompt_task<T: Terminal>(
         root.set_status(InteractiveStatus::Running);
     }
 
-    let options = SessionPromptOptions {
+    let options = PromptRunOptions {
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
@@ -1003,7 +904,7 @@ fn start_compact_task<T: Terminal>(
         root.set_status(InteractiveStatus::Running);
     }
 
-    let options = SessionPromptOptions {
+    let options = PromptRunOptions {
         prompt: String::new(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
@@ -1023,11 +924,12 @@ fn start_compact_task<T: Terminal>(
         },
     };
 
-    let task = if use_rust_native {
-        PromptTask::spawn_compact(options, coding_session.take())?
-    } else {
-        PromptTask::spawn_legacy(options)?
-    };
+    if !use_rust_native {
+        return Err(CliError::UnsupportedMode(
+            "manual compaction requires an active Rust-native session".into(),
+        ));
+    }
+    let task = PromptTask::spawn_compact(options, coding_session.take())?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
@@ -1037,14 +939,11 @@ fn start_compact_task<T: Terminal>(
 fn apply_prompt_task_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
-    agent_bridge: &mut InteractiveEventBridge,
     coding_bridge: &mut CodingEventBridge,
     event: PromptTaskEvent,
 ) -> Result<RenderRequest, CliError> {
-    let ui_events = match event {
-        PromptTaskEvent::Agent(event) => agent_bridge.handle(&event),
-        PromptTaskEvent::Coding(event) => coding_bridge.handle(&event),
-    };
+    let PromptTaskEvent::Coding(event) = event;
+    let ui_events = coding_bridge.handle(&event);
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
     root.apply_events(ui_events);
@@ -1063,7 +962,6 @@ fn finish_prompt<T: Terminal>(
     }
     let root = root_mut(tui, root_id)?;
     match result {
-        Ok(PromptTaskResult::Legacy(result)) => finish_legacy_prompt(root, result),
         Ok(PromptTaskResult::Coding(result)) => {
             finish_coding_prompt(root, &result.session, result.outcome, result.update_usage);
             *coding_session = Some(result.session);
@@ -1076,20 +974,6 @@ fn finish_prompt<T: Terminal>(
     }
     root.set_status(InteractiveStatus::Idle);
     Ok(())
-}
-
-fn finish_legacy_prompt(root: &mut InteractiveRoot, result: SessionPromptResult) {
-    root.clear_active_session();
-    root.active_session_path = result.session_path;
-    root.active_leaf_id = result.leaf_id;
-    if let Some(path) = root.active_session_path.as_ref()
-        && let Ok(storage) = pi_agent_core::session::JsonlSessionStorage::open(path)
-    {
-        let mut choice = session_choice_from_metadata(storage.metadata());
-        choice.active_leaf_id = root.active_leaf_id.clone();
-        root.set_active_session_choice(choice.clone());
-        root.session_label = choice.display_name().to_string();
-    }
 }
 
 fn finish_coding_prompt(

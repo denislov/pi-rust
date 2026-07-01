@@ -5,22 +5,16 @@ use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     PromptTurnOptions, PromptTurnOutcome,
 };
-use crate::protocol::session_runner::{
-    SessionPromptAbortHandle, SessionPromptOptions, SessionPromptResult, SpawnedSessionPrompt,
-    spawn_session_prompt,
-};
+use crate::prompt_options::PromptRunOptions;
 use crate::runtime::SessionMode;
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
-use pi_agent_core::AgentEvent;
 use tokio::sync::{mpsc, oneshot};
 
 pub(super) enum PromptTaskEvent {
-    Agent(AgentEvent),
     Coding(CodingAgentEvent),
 }
 
 pub(super) enum PromptTaskResult {
-    Legacy(SessionPromptResult),
     Coding(CodingPromptTaskResult),
 }
 
@@ -31,7 +25,6 @@ pub(super) struct CodingPromptTaskResult {
 }
 
 enum PromptTaskAbortHandle {
-    Legacy(SessionPromptAbortHandle),
     Coding(Option<oneshot::Sender<()>>),
 }
 
@@ -45,22 +38,14 @@ pub(super) struct PromptTask {
 
 impl PromptTask {
     pub(super) fn spawn_prompt(
-        options: SessionPromptOptions,
+        options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
     ) -> Result<Self, CliError> {
-        if should_use_legacy_prompt_task(&options) {
-            return Self::spawn_legacy(options);
-        }
-
         Ok(Self::spawn_coding(options, existing_session))
     }
 
-    pub(super) fn spawn_legacy(options: SessionPromptOptions) -> Result<Self, CliError> {
-        Self::from_legacy_spawned(spawn_session_prompt(options)?)
-    }
-
     pub(super) fn spawn_compact(
-        options: SessionPromptOptions,
+        options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
     ) -> Result<Self, CliError> {
         Ok(Self::spawn_coding_compact(options, existing_session))
@@ -70,56 +55,15 @@ impl PromptTask {
         if self.abort_requested {
             return;
         }
-        match &mut self.abort {
-            PromptTaskAbortHandle::Legacy(abort) => abort.abort(),
-            PromptTaskAbortHandle::Coding(abort) => {
-                if let Some(abort) = abort.take() {
-                    let _ = abort.send(());
-                }
-            }
+        let PromptTaskAbortHandle::Coding(abort) = &mut self.abort;
+        if let Some(abort) = abort.take() {
+            let _ = abort.send(());
         }
         self.abort_requested = true;
     }
 
-    fn from_legacy_spawned(spawned: SpawnedSessionPrompt) -> Result<Self, CliError> {
-        let SpawnedSessionPrompt {
-            abort,
-            mut events,
-            done,
-        } = spawned;
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let (done_tx, done_rx) = oneshot::channel();
-
-        tokio::spawn(async move {
-            while let Some(event) = events.recv().await {
-                if event_tx.send(PromptTaskEvent::Agent(event)).is_err() {
-                    break;
-                }
-            }
-        });
-
-        tokio::spawn(async move {
-            let result = done
-                .await
-                .map_err(|_| {
-                    CliError::AgentFailure("prompt task dropped before completion".to_string())
-                })
-                .and_then(|result| result)
-                .map(PromptTaskResult::Legacy);
-            let _ = done_tx.send(result);
-        });
-
-        Ok(Self {
-            abort: PromptTaskAbortHandle::Legacy(abort),
-            events: event_rx,
-            done: done_rx,
-            abort_requested: false,
-            events_closed: false,
-        })
-    }
-
     fn spawn_coding(
-        options: SessionPromptOptions,
+        options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -142,7 +86,7 @@ impl PromptTask {
     }
 
     fn spawn_coding_compact(
-        options: SessionPromptOptions,
+        options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -166,7 +110,7 @@ impl PromptTask {
 }
 
 async fn run_coding_prompt_task(
-    options: SessionPromptOptions,
+    options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
@@ -182,7 +126,7 @@ async fn run_coding_prompt_task(
         }
     };
     let mut receiver = session.subscribe();
-    let prompt_options = PromptTurnOptions::from_session_prompt_options(options);
+    let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
         let mut prompt = Box::pin(session.prompt(prompt_options));
@@ -217,7 +161,7 @@ async fn run_coding_prompt_task(
 }
 
 async fn run_coding_compact_task(
-    options: SessionPromptOptions,
+    options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
@@ -233,7 +177,7 @@ async fn run_coding_compact_task(
         }
     };
     let mut receiver = session.subscribe();
-    let compact_options = PromptTurnOptions::from_session_prompt_options(options);
+    let compact_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
         let mut compact = Box::pin(session.compact(compact_options));
@@ -265,26 +209,6 @@ async fn run_coding_compact_task(
         outcome,
         update_usage: false,
     })
-}
-
-fn should_use_legacy_prompt_task(options: &SessionPromptOptions) -> bool {
-    if matches!(
-        options.invocation,
-        crate::runtime::PromptInvocation::Compact { .. }
-    ) {
-        return true;
-    }
-
-    match options.session_target.as_ref() {
-        Some(ResolvedSessionTarget::ForkTarget(_)) => true,
-        Some(ResolvedSessionTarget::OpenTarget(target)) => target_looks_like_legacy_jsonl(target),
-        _ => false,
-    }
-}
-
-fn target_looks_like_legacy_jsonl(target: &str) -> bool {
-    let path = std::path::Path::new(target);
-    path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") || path.is_file()
 }
 
 fn interactive_coding_session_root(
@@ -332,8 +256,13 @@ async fn open_interactive_coding_session(
             CodingAgentSession::open_or_create(options.with_session_id(session_id.clone())).await?,
         ),
         ResolvedSessionTarget::OpenTarget(target) => {
-            if target_looks_like_session_dir(target) {
+            if target_looks_like_rust_native_session_dir(target) {
                 Ok(CodingAgentSession::open(options.with_session_path(target)).await?)
+            } else if target_looks_like_legacy_jsonl(target) {
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability: "legacy JSONL session targets".into(),
+                }
+                .into())
             } else {
                 Ok(CodingAgentSession::open(options.with_session_id(target.clone())).await?)
             }
@@ -348,14 +277,25 @@ async fn open_interactive_coding_session(
                 })?;
             Ok(CodingAgentSession::open(options.with_session_id(session_id)).await?)
         }
-        ResolvedSessionTarget::ForkTarget(_) => Err(CodingSessionError::UnsupportedCapability {
-            capability: "Rust-native session fork".into(),
+        ResolvedSessionTarget::ForkTarget(source) => {
+            let forked = CodingAgentSession::fork_session(
+                options.clone().with_session_id(source.clone()),
+                None,
+            )?;
+            Ok(
+                CodingAgentSession::open(options.with_session_id(forked.summary.session_id))
+                    .await?,
+            )
         }
-        .into()),
     }
 }
 
-fn target_looks_like_session_dir(target: &str) -> bool {
+fn target_looks_like_rust_native_session_dir(target: &str) -> bool {
     let path = std::path::Path::new(target);
-    path.is_dir() && path.join("session.json").is_file()
+    path.is_dir() && path.join("session.json").is_file() && path.join("events.jsonl").is_file()
+}
+
+fn target_looks_like_legacy_jsonl(target: &str) -> bool {
+    let path = std::path::Path::new(target);
+    path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") || path.is_file()
 }
