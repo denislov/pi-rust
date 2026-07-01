@@ -1,79 +1,62 @@
-# pi → Rust 移植路线图（索引）
+# pi-rust Roadmap Index
 
-> 状态：M0–M11 完成 · 最后核对：2026-06-28
-> 适用范围：`pi-rust/` 工作区（把 TypeScript `pi` monorepo 移植为 Rust）
-> 参考基准：`pi/`（上游 TS 实现，行为权威来源）
+> 状态：Flow-centered runtime Phase 1-4 已落地；下一阶段为 Phase 5 Plugin Kernel
+> 最后核对：2026-07-01
+> 适用范围：`pi-rust/` 工作区
 
-本文件是**导航索引**。详细内容已按里程碑拆分到 [`docs/roadmap/`](docs/roadmap/)，防止单文件膨胀。
+本文件是当前路线图入口。详细执行清单以 [`docs/TODO.md`](docs/TODO.md) 为准；旧 M7-M13 文档保留为 TS parity 背景和历史拆分索引。
 
 ---
 
-## 0. 目标与约束（本轮确认）
+## 1. 当前方向
 
-**终极目标**：完全对标 `pi` 的全部功能。实现时**基于 Rust 特性重构，不照搬 TS**。
+`pi-rust` 不再按“逐字迁移 TypeScript pi”推进。当前目标是以 TS `pi` 作为行为/产品参考，以 PocketFlow 的显式图编排作为架构参考，构建 Rust-native、可声明、可观测、可测试的 agent runtime。
 
-| 约束 | 决策 |
+| 领域 | 当前决策 |
 |---|---|
-| 对标范围 | **核心优先，周边后置**（导出/分享/包管理等排到 [M13](docs/roadmap/M13-peripherals.md)） |
-| 配置 / 认证 | Rust 原生格式，**不**读 pi 的 settings/auth |
-| 会话 | session JSONL 与 pi **互通**（唯一线缆兼容点，需保持不漂移） |
-| 插件系统 | **不继承** pi 的 TS 模块系统；自研**分层：Rust trait 内核 + Lua 脚本层**（[M12](docs/roadmap/M12-plugin-system.md)） |
+| 产品目标 | 覆盖 TS pi 的核心能力，但不复制 TS 内部结构 |
+| 会话持久化 | 使用 Rust-native `session.json` + `events.jsonl` typed event log，不保持 TS session JSONL 互通 |
+| Runtime 架构 | `CodingAgentSession` 作为产品所有者；`PromptTurnFlow` 负责产品 turn；`AgentTurnFlow` 负责低层 agent loop |
+| Adapter | print/json/RPC/interactive 消费统一 `CodingAgentEvent` 或其边界 adapter |
+| 插件系统 | 先做 Rust trait 内核边界，再考虑 Lua 脚本层 |
+| 测试策略 | 默认 deterministic/offline；真实 provider 或终端 smoke 必须显式 opt-in |
 
 ---
 
-## 1. 完成度（已核实）
+## 2. 当前完成状态
 
-| 包 / crate | TS 源码 | Rust 源码 | 粗略覆盖 | 状态 |
-|---|---:|---:|---:|---|
-| `pi-ai` | 30,553 | 30,694¹ | ~90% | ✅ M2+M8，缺 Vertex provider（见下方风险） |
-| `pi-agent-core` | 8,067 | 10,187 | ~126%² | ✅ M4+M9 |
-| `pi-coding-agent` | 48,013 | 24,019 | ~50% | ✅ M5/M7/M10，生态/扩展待补（M12/M13） |
-| `pi-tui` | 11,696 | 10,616 | ~91% | ✅ M6+M11 基础设施，交互 polish 持续 |
-| `pi-mom`/`pi-pods`/`pi-web-ui` | — | 各 14 | — | ⬜ 空壳，范围未定（[cross-cutting](docs/roadmap/cross-cutting.md)） |
-| **合计** | **~98K** | **~75.5K** | **~77%** | — |
-
-> ¹ `pi-ai` 中 9,591 行 `.rs` + 21,103 行 `models_generated.json`。
-> ² `pi-agent-core` Rust 行数多于 TS 是因为额外实现了 harness、compaction、
->   skills/prompt templates 加载等 TS 中分布在多个包的逻辑。
-> "TS 源码"为 `src/**/*.ts`（去 `*.test.ts`）行数，来自上游 `pi/` 仓库。
-> 健康度：截至 2026-06-28 核对工作区编译通过，`cargo fmt --check`、
-> `cargo check --workspace`、`cargo test --workspace`、`scripts/tui-smoke.sh` 全绿。
-> 完成信号以实际代码与 Git 提交为准。
-
-**已完成项** → [docs/roadmap/done.md](docs/roadmap/done.md)
+| Phase | 状态 | 说明 |
+|---|---|---|
+| Phase 1 | Done | `CodingAgentSession` skeleton、Rust-native session log、transaction/replay 基础已落地 |
+| Phase 2 | 主要完成 | `PromptTurnFlow`、runtime snapshot、session finalization、print/json convergence 已落地；测试/check 子项仍在 TODO 中跟踪 |
+| Phase 3 | 主要完成 | RPC/interactive adapter convergence、Rust-native resume/tree/fork/clone/compact、旧 JSONL 产品路径清理已落地；测试/check 子项仍在 TODO 中跟踪 |
+| Phase 4 | Done | `AgentTurnFlow` 已成为 `Agent::run()` 的低层 runtime entrypoint；旧 `agent_loop` 仅保留兼容 wrapper |
+| Phase 5 | Open | Plugin Kernel：registry、capability-scoped providers、tool/hook integration、failure isolation |
+| Phase 6 | Open | Advanced Flow workflows：manual compaction/export/branch/plugin-load/subagent 等 first-party flows |
 
 ---
 
-## 2. 依赖关系
+## 3. 主要文档入口
 
-```
-pi-ai  ──┬──>  pi-agent-core  ──>  pi-coding-agent
-         │                              ▲
-pi-tui ──┴──────────────────────────────┘   (交互模式时接入)
-```
-
----
-
-## 3. 里程碑（剩余工作，核心优先排序）
-
-| # | 里程碑 | 状态 | 依赖 | 详情 |
-|---|---|---|---|---|
-| **M7** | 配置 + 认证基座（Rust 原生） | ✅ | — | [M7-config-auth](docs/roadmap/M7-config-auth.md) |
-| **M8** | pi-ai provider 广度 + 认证 | ✅ | M7 | [M8-provider-breadth](docs/roadmap/M8-provider-breadth.md) |
-| **M9** | agent-core harness 完备 | ✅ | — | [M9-agent-harness](docs/roadmap/M9-agent-harness.md) |
-| **M10** | 资源发现 + 输入路径 | ✅ | M7 | [M10-resources-input](docs/roadmap/M10-resources-input.md) |
-| **M11** | 交互体验补全（含 TUI-7 发布门） | ✅ | M7,M9,M10 | [M11-interactive-ux](docs/roadmap/M11-interactive-ux.md) |
-| **M12** | 插件系统（Rust trait + Lua） | ⬜ | M9,M11 | [M12-plugin-system](docs/roadmap/M12-plugin-system.md) |
-| **M13** | 周边能力（后置） | ⬜ | M11 | [M13-peripherals](docs/roadmap/M13-peripherals.md) |
-| 横切 | 辅助 crate / 兼容 / 风险 | — | — | [cross-cutting](docs/roadmap/cross-cutting.md) |
-
-> 旧标签映射：旧"M7 周边能力"拆进 M7–M13；TUI-7 smoke 并入 M11 作交互发布门；TUI-8 剩余并入 M11。
+- 当前执行清单：[`docs/TODO.md`](docs/TODO.md)
+- 架构总览：[`docs/superpowers/ARCHITECTURE.md`](docs/superpowers/ARCHITECTURE.md)
+- Flow-centered 设计：[`docs/superpowers/specs/2026-06-29-flow-centered-runtime-architecture-design.md`](docs/superpowers/specs/2026-06-29-flow-centered-runtime-architecture-design.md)
+- Flow-centered 实施计划：[`docs/superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md`](docs/superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
+- Rust-native session format：[`docs/superpowers/specs/2026-07-01-rust-native-session-format.md`](docs/superpowers/specs/2026-07-01-rust-native-session-format.md)
+- 横切约束与风险：[`docs/roadmap/cross-cutting.md`](docs/roadmap/cross-cutting.md)
 
 ---
 
-## 4. 当前焦点（M12 → M13）
+## 4. 旧 roadmap 文档
 
-已完成 M0–M11。剩余的未落地工作：
+这些文档仍可用于理解早期 TS parity 缺口，但不再作为当前架构约束来源：
 
-1. **M12 插件系统** — 最大缺失子系统（对标 TS extension 体系）。分两期：Rust trait 内核 + mlua Lua 脚本层。
-2. **M13 周边能力** — 完整 HTML 导出 parity、gist 分享、package manager（`/copy`、`/export`、`/import`、`/clone` 基础能力已落地）。
+- [`docs/roadmap/M7-config-auth.md`](docs/roadmap/M7-config-auth.md)
+- [`docs/roadmap/M8-provider-breadth.md`](docs/roadmap/M8-provider-breadth.md)
+- [`docs/roadmap/M9-agent-harness.md`](docs/roadmap/M9-agent-harness.md)
+- [`docs/roadmap/M10-resources-input.md`](docs/roadmap/M10-resources-input.md)
+- [`docs/roadmap/M11-interactive-ux.md`](docs/roadmap/M11-interactive-ux.md)
+- [`docs/roadmap/M12-plugin-system.md`](docs/roadmap/M12-plugin-system.md)
+- [`docs/roadmap/M13-peripherals.md`](docs/roadmap/M13-peripherals.md)
+
+当旧里程碑文档与 `docs/TODO.md`、Flow-centered specs 或当前代码冲突时，以后者为准。

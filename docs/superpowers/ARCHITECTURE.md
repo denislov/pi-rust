@@ -520,7 +520,7 @@ graph TB
     end
 
     subgraph outputs["输出目标"]
-        PM["print_mode<br/>• 终端文本渲染<br/>• 新旧 session 路径混合"]
+        PM["print_mode<br/>• 终端文本渲染<br/>• Rust-native / no-session 路径"]
         JM["json_mode<br/>• JSONL 协议输出<br/>• 流式事件"]
         RPC_OUT["RPC<br/>• get_state / prompt<br/>• 能力报告"]
         TUI["Interactive (TUI)<br/>• 终端交互<br/>• session 操作<br/>(resume/tree/abort)"]
@@ -544,9 +544,9 @@ graph TB
 graph TB
     subgraph filesystem["文件系统 (项目目录下)"]
         direction TB
-        SESSION_DIR[".pi/sessions/&lt;session_id&gt;/"]
-        SESSION_JSON["session.json<br/>{ id, created_at, active_leaf,<br/>  cwd, model, ... }"]
-        EVENTS_JSONL["events.jsonl<br/>每行一个 SessionEventEnvelope<br/>{ id, kind, timestamp, data }"]
+        SESSION_DIR["&lt;session-root&gt;/&lt;session_id&gt;/"]
+        SESSION_JSON["session.json<br/>schema=pi-rust.session v1<br/>{ session_id, created_at, updated_at,<br/>  active_leaf_id?, event_log }"]
+        EVENTS_JSONL["events.jsonl<br/>每行一个 SessionEventEnvelope<br/>schema=pi-rust.session.event v2<br/>{ event_id, kind, created_at, data }"]
     end
 
     subgraph memory["内存"]
@@ -596,19 +596,19 @@ gantt
     Non-persistent 运行时        :done, p2e, 2026-06-29, 2d
     Print/JSON 收敛              :done, p2f, 2026-06-29, 2d
 
-    section Phase 3 (进行中)
+    section Phase 3 (主要完成)
     CodingAgentCapabilities     :done, p3a, 2026-06-29, 1d
     RPC Adapter + 能力报告       :done, p3b, 2026-06-29, 2d
     Interactive CodingEventBridge :done, p3c, 2026-06-29, 2d
     Session 操作 (resume/tree)   :done, p3d, 2026-06-29, 2d
     Adapter cwd 过滤             :done, p3e, 2026-06-29, 1d
-    Fork/Clone/Compact actions  :active, p3f, 2026-06-30, 2d
-    停用旧 JSONL 写入            :active, p3g, 2026-06-30, 2d
+    Fork/Clone/Compact actions  :done, p3f, 2026-06-30, 2d
+    停用旧 JSONL 写入            :done, p3g, 2026-06-30, 2d
 
-    section Phase 4-6 (未开始)
-    AgentTurnFlow               :p4, 2026-07-01, 3d
-    Plugin Kernel               :p5, 2026-07-04, 4d
-    Advanced Workflows          :p6, 2026-07-08, 4d
+    section Phase 4-6
+    AgentTurnFlow               :done, p4, 2026-07-01, 1d
+    Plugin Kernel               :active, p5, 2026-07-01, 4d
+    Advanced Workflows          :p6, 2026-07-05, 4d
 ```
 
 ---

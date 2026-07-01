@@ -30,6 +30,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [Rust-native session fork and clone design](superpowers/specs/2026-06-30-rust-native-session-fork-clone-design.md)
 - [Rust-native manual compaction design](superpowers/specs/2026-06-30-rust-native-manual-compaction-design.md)
 - [Rust-native tree navigation design](superpowers/specs/2026-06-30-rust-native-tree-navigation-design.md)
+- [Rust-native session format](superpowers/specs/2026-07-01-rust-native-session-format.md)
 - [Flow-centered implementation plan](superpowers/plans/2026-06-29-flow-centered-runtime-architecture-plan.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
 - [Phase 2 guide](superpowers/guides/2026-06-29-phase-2-prompt-turn-flow-guide.md)
@@ -159,9 +160,9 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 
 ## Cross-Cutting TODO
 
-- [ ] Update `docs/roadmap/cross-cutting.md` to remove TS session compatibility as a current invariant.
-- [ ] Add a dedicated Rust-native session format doc once Phase 1 schema stabilizes.
-- [~] Prefer retiring migrated legacy paths over preserving compatibility. Workspace `AGENTS.md` now states that old TypeScript and old Rust runner paths are behavioral references, not compatibility targets; implementation/docs should remove migrated old paths or document explicit temporary stop conditions.
+- [x] Update `docs/roadmap/cross-cutting.md` to remove TS session compatibility as a current invariant. Cross-cutting docs now name Rust-native `session.json` + typed `events.jsonl` as the current format and treat TS JSONL as historical/rejected input.
+- [x] Add a dedicated Rust-native session format doc once Phase 1 schema stabilizes. `docs/superpowers/specs/2026-07-01-rust-native-session-format.md` records the current manifest, event envelope, event kinds, replay invariants, and versioning guidance.
+- [x] Prefer retiring migrated legacy paths over preserving compatibility. Current roadmap/cross-cutting/architecture docs now state that old TypeScript and old Rust runner paths are behavioral references or explicit rejection targets, not compatibility requirements.
 - [ ] Keep `pi-agent-core` free of coding-agent product ownership.
 - [ ] Keep `CodingAgentSession` as owner/coordinator, not a monolithic implementation class.
 - [ ] Keep plugin/Lua APIs from depending on internal operation contexts.
@@ -236,3 +237,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-07-01: Phase 4 `ExecuteToolsNode` now honors sequential vs parallel tool execution selection, emits parallel tool end events in completion order, and still appends tool-result messages in assistant order; hook, update callback, terminate, and `Agent::run()` delegation parity remain follow-up work.
 - 2026-07-01: Phase 4 tool execution node parity advanced: `ExecuteToolsNode` applies before/after tool hooks, emits sequential tool update callbacks, and finishes with `AgentDone` when all tool results terminate. Remaining Phase 4 focus is preserving full `AgentEvent` behavior and delegating `Agent::run()` to `AgentTurnFlow`.
 - 2026-07-01: Phase 4 runtime delegation completed. `AgentTurnFlow` now exposes the low-level runtime entrypoint, `Agent::run()` delegates to it, and the old `agent_loop` module is reduced to a compatibility wrapper over the AgentTurnFlow runtime.
+- 2026-07-01: Documentation cleanup aligned roadmap/cross-cutting/architecture docs with the Flow-centered runtime state, removed TS session JSONL compatibility as a current invariant, and added the Rust-native session format spec.
