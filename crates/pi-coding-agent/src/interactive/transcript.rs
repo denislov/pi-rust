@@ -274,7 +274,8 @@ impl Transcript {
 
     pub(crate) fn apply_event_with_mutation(&mut self, event: UiEvent) -> TranscriptMutation {
         match event {
-            UiEvent::AgentStarted | UiEvent::TurnStarted => TranscriptMutation::none(),
+            UiEvent::AgentStarted => TranscriptMutation::none(),
+            UiEvent::TurnStarted => self.close_open_assistant(),
             UiEvent::AssistantDelta { text } => self.append_assistant_delta(&text),
             UiEvent::ThinkingDelta { text } => self.append_assistant_thinking(&text),
             UiEvent::AssistantDone => self.mark_assistant_done(),
@@ -282,13 +283,19 @@ impl Transcript {
                 call_id,
                 name,
                 args,
-            } => TranscriptMutation::single(self.push_with_index(TranscriptItem::Tool {
-                call_id,
-                name,
-                args,
-                result: None,
-                is_error: false,
-            })),
+            } => {
+                let mut mutation = self.close_open_assistant();
+                mutation.extend(TranscriptMutation::single(self.push_with_index(
+                    TranscriptItem::Tool {
+                        call_id,
+                        name,
+                        args,
+                        result: None,
+                        is_error: false,
+                    },
+                )));
+                mutation
+            }
             UiEvent::ToolFinished {
                 call_id,
                 result,
@@ -395,6 +402,23 @@ impl Transcript {
             thinking: String::new(),
             done: true,
         }))
+    }
+
+    fn close_open_assistant(&mut self) -> TranscriptMutation {
+        let Some(index) = self
+            .items
+            .iter()
+            .rposition(|item| matches!(item, TranscriptItem::Assistant { done: false, .. }))
+        else {
+            return TranscriptMutation::none();
+        };
+        let TranscriptItem::Assistant { done, .. } = &mut self.items[index] else {
+            unreachable!("rposition matched unfinished assistant");
+        };
+        *done = true;
+        self.bump_item_revision(index);
+        self.bump_content_revision();
+        TranscriptMutation::single(index)
     }
 
     fn finish_tool(&mut self, call_id: &str, result: String, is_error: bool) -> TranscriptMutation {

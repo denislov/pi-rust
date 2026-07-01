@@ -35,6 +35,84 @@ fn transcript_keeps_scrolled_view_locked_when_new_output_arrives() {
 }
 
 #[test]
+fn tool_event_closes_current_assistant_before_next_assistant_delta() {
+    let mut transcript = Transcript::new();
+
+    transcript.apply_event(UiEvent::AssistantDelta {
+        text: "I will inspect the file.".to_string(),
+    });
+    transcript.apply_event(UiEvent::ToolStarted {
+        call_id: "tool_1".to_string(),
+        name: "read".to_string(),
+        args: serde_json::json!({"path": "src/lib.rs"}),
+    });
+    transcript.apply_event(UiEvent::ToolFinished {
+        call_id: "tool_1".to_string(),
+        result: "file contents".to_string(),
+        is_error: false,
+    });
+    transcript.apply_event(UiEvent::AssistantDelta {
+        text: "The file contains a Rust module.".to_string(),
+    });
+
+    assert_eq!(
+        transcript.items(),
+        &[
+            TranscriptItem::Assistant {
+                id: "assistant_0".to_string(),
+                markdown: "I will inspect the file.".to_string(),
+                thinking: String::new(),
+                done: true,
+            },
+            TranscriptItem::Tool {
+                call_id: "tool_1".to_string(),
+                name: "read".to_string(),
+                args: serde_json::json!({"path": "src/lib.rs"}),
+                result: Some("file contents".to_string()),
+                is_error: false,
+            },
+            TranscriptItem::Assistant {
+                id: "assistant_2".to_string(),
+                markdown: "The file contains a Rust module.".to_string(),
+                thinking: String::new(),
+                done: false,
+            },
+        ]
+    );
+}
+
+#[test]
+fn turn_started_closes_current_assistant_without_creating_empty_message() {
+    let mut transcript = Transcript::new();
+
+    transcript.apply_event(UiEvent::AssistantDelta {
+        text: "first turn".to_string(),
+    });
+    transcript.apply_event(UiEvent::TurnStarted);
+    transcript.apply_event(UiEvent::AssistantDelta {
+        text: "second turn".to_string(),
+    });
+
+    assert_eq!(
+        transcript.items(),
+        &[
+            TranscriptItem::Assistant {
+                id: "assistant_0".to_string(),
+                markdown: "first turn".to_string(),
+                thinking: String::new(),
+                done: true,
+            },
+            TranscriptItem::Assistant {
+                id: "assistant_1".to_string(),
+                markdown: "second turn".to_string(),
+                thinking: String::new(),
+                done: false,
+            },
+        ]
+    );
+}
+
+#[test]
 fn system_item_is_pushed_and_rendered_as_a_line() {
     let mut transcript = Transcript::new();
     transcript.push(TranscriptItem::system("welcome to pi"));
