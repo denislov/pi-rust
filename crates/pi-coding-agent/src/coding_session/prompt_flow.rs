@@ -10,6 +10,7 @@ use pi_agent_core::{AgentEvent, AgentMessage, AgentStream};
 use super::CodingSessionError;
 use super::prompt::{CodingDiagnostic, PromptTurnContext};
 use super::runtime_service::RuntimeService;
+use crate::plugins::PromptHookPoint;
 use crate::runtime::PromptInvocation;
 
 const DEFAULT_ACTION: &str = "default";
@@ -193,7 +194,11 @@ fn resolve_request(ctx: &mut PromptTurnContext) -> Result<Action, String> {
 }
 
 fn prepare_input(ctx: &mut PromptTurnContext) -> Result<Action, String> {
+    ctx.run_prompt_hook(PromptHookPoint::BeforePromptPrepare)
+        .map_err(|error| error.to_string())?;
     ctx.prepare_input().map_err(|error| error.to_string())?;
+    ctx.run_prompt_hook(PromptHookPoint::AfterInputPrepared)
+        .map_err(|error| error.to_string())?;
     default_action()
 }
 
@@ -205,6 +210,8 @@ fn resolve_runtime(ctx: &mut PromptTurnContext) -> Result<Action, String> {
 
 fn load_resources(ctx: &mut PromptTurnContext) -> Result<Action, String> {
     ctx.load_resources_from_runtime()
+        .map_err(|error| error.to_string())?;
+    ctx.run_prompt_hook(PromptHookPoint::AfterResourcesLoaded)
         .map_err(|error| error.to_string())?;
     default_action()
 }
@@ -281,6 +288,8 @@ fn record_user_input(ctx: &mut PromptTurnContext) -> Result<Action, String> {
 }
 
 async fn run_agent_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
+    ctx.run_prompt_hook(PromptHookPoint::BeforeAgentTurn)
+        .map_err(|error| error.to_string())?;
     let mut stream = start_agent_turn(ctx).map_err(|error| error.to_string())?;
     while let Some(event) = stream.next().await {
         match &event {
@@ -307,6 +316,8 @@ async fn run_agent_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
         .to_string());
     }
 
+    ctx.run_prompt_hook(PromptHookPoint::AfterAgentTurn)
+        .map_err(|error| error.to_string())?;
     default_action()
 }
 
@@ -331,6 +342,8 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
             }
             .to_string());
         }
+        ctx.run_prompt_hook(PromptHookPoint::BeforeSessionCommit)
+            .map_err(|error| error.to_string())?;
         return default_action();
     }
 
@@ -342,6 +355,8 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
             }
             .to_string());
         }
+        ctx.run_prompt_hook(PromptHookPoint::BeforeSessionCommit)
+            .map_err(|error| error.to_string())?;
         return default_action();
     }
 
@@ -353,6 +368,8 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
 
 fn emit_completion(ctx: &mut PromptTurnContext) -> Result<Action, String> {
     ctx.record_prompt_completed()
+        .map_err(|error| error.to_string())?;
+    ctx.run_prompt_hook(PromptHookPoint::AfterSessionCommit)
         .map_err(|error| error.to_string())?;
     default_action()
 }
@@ -425,6 +442,7 @@ mod tests {
 
     use super::*;
     use crate::coding_session::event::CodingAgentEvent;
+    use crate::coding_session::plugin_service::PluginService;
     use crate::coding_session::prompt::{PromptTurnIds, PromptTurnOptions};
     use crate::coding_session::session_log::event::{
         PersistedContentBlock, SessionEventData, SessionEventEnvelope,
@@ -434,6 +452,11 @@ mod tests {
     };
     use crate::coding_session::session_log::store::{
         CreateSessionOptions, SessionHandle, SessionLogStore,
+    };
+    use crate::plugins::{
+        HookDiagnostic, HookFailurePolicy, HookOutcome, HookProvider, HookRegistration,
+        HookRegistrationHost, PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource,
+        PromptHookContext, PromptHookPoint,
     };
     use crate::prompt_options::{PromptRunOptions, assistant_text};
     use crate::runtime::PromptInvocation;
@@ -530,6 +553,76 @@ mod tests {
         });
         context.begin_transaction(&store, handle.clone()).unwrap();
         (temp, store, handle)
+    }
+
+    struct PromptFlowHookProvider {
+        point: PromptHookPoint,
+        policy: HookFailurePolicy,
+        fail: bool,
+    }
+
+    impl HookProvider for PromptFlowHookProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("prompt-flow-hook-plugin"),
+                "prompt-flow-hook-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn hooks(
+            &self,
+            _host: &HookRegistrationHost,
+        ) -> Result<Vec<HookRegistration>, PluginError> {
+            Ok(vec![HookRegistration {
+                point: self.point,
+                policy: self.policy,
+            }])
+        }
+
+        fn run_hook(&self, ctx: &PromptHookContext) -> Result<HookOutcome, PluginError> {
+            assert_eq!(ctx.point, self.point);
+            if self.fail {
+                return Err(PluginError::Execution {
+                    plugin_id: "prompt-flow-hook-plugin".into(),
+                    message: "plugin hook failed".into(),
+                });
+            }
+            Ok(HookOutcome {
+                diagnostics: vec![HookDiagnostic {
+                    message: format!("hook before agent turn for {}", ctx.operation_id),
+                }],
+            })
+        }
+    }
+
+    fn plugin_service_with_hook(
+        point: PromptHookPoint,
+        policy: HookFailurePolicy,
+    ) -> PluginService {
+        plugin_service_with_hook_provider(PromptFlowHookProvider {
+            point,
+            policy,
+            fail: false,
+        })
+    }
+
+    fn plugin_service_with_failing_hook(
+        point: PromptHookPoint,
+        policy: HookFailurePolicy,
+    ) -> PluginService {
+        plugin_service_with_hook_provider(PromptFlowHookProvider {
+            point,
+            policy,
+            fail: true,
+        })
+    }
+
+    fn plugin_service_with_hook_provider(provider: PromptFlowHookProvider) -> PluginService {
+        let mut registry = PluginRegistry::new();
+        registry.register_hook_provider(Arc::new(provider));
+        PluginService::with_registry(registry)
     }
 
     fn session_event_kinds(context: &PromptTurnContext) -> Vec<&'static str> {
@@ -673,6 +766,69 @@ mod tests {
         )
         .unwrap();
         flow
+    }
+
+    #[tokio::test]
+    async fn prompt_turn_flow_runs_noncritical_prompt_hooks_as_diagnostics() {
+        let api = "prompt-flow-plugin-hook";
+        let flow = PromptTurnFlow::new().unwrap();
+        let mut context = context_with_runtime(api, "done");
+        let _session = attach_session_boundary(&mut context);
+        context.set_plugin_service(plugin_service_with_hook(
+            PromptHookPoint::BeforeAgentTurn,
+            HookFailurePolicy::FailOpen,
+        ));
+
+        flow.run(&mut context).await.unwrap();
+
+        assert!(
+            context
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("hook before agent turn"))
+        );
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn prompt_turn_flow_continues_for_fail_open_hook_error_as_diagnostic() {
+        let api = "prompt-flow-plugin-open-hook";
+        let flow = PromptTurnFlow::new().unwrap();
+        let mut context = context_with_runtime(api, "done");
+        let _session = attach_session_boundary(&mut context);
+        context.set_plugin_service(plugin_service_with_failing_hook(
+            PromptHookPoint::BeforeAgentTurn,
+            HookFailurePolicy::FailOpen,
+        ));
+
+        flow.run(&mut context).await.unwrap();
+
+        assert_eq!(
+            context.final_message().map(assistant_text),
+            Some("done".into())
+        );
+        assert!(context.diagnostics().iter().any(|diagnostic| {
+            diagnostic.message.contains("plugin hook failed")
+                && diagnostic.code.as_deref() == Some("plugin_hook")
+        }));
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn prompt_turn_flow_aborts_for_fail_closed_hook_error() {
+        let api = "prompt-flow-plugin-critical-hook";
+        let flow = PromptTurnFlow::new().unwrap();
+        let mut context = context_with_runtime(api, "done");
+        let _session = attach_session_boundary(&mut context);
+        context.set_plugin_service(plugin_service_with_failing_hook(
+            PromptHookPoint::BeforeAgentTurn,
+            HookFailurePolicy::FailClosed,
+        ));
+
+        let error = flow.run(&mut context).await.unwrap_err();
+
+        assert!(error.to_string().contains("plugin hook"));
+        registry::unregister(api);
     }
 
     #[tokio::test]

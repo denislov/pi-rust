@@ -5,10 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use pi_agent_core::AgentTool;
 
+use super::CodingSessionError;
+use super::prompt::CodingDiagnostic;
 use crate::plugins::{
-    CommandDefinition, CommandProvider, CommandRegistrationHost, HookProvider, HookRegistration,
-    HookRegistrationHost, PluginCapabilities, PluginError, PluginRegistry, ToolProvider,
-    ToolRegistrationHost,
+    CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy, HookOutcome,
+    HookProvider, HookRegistration, HookRegistrationHost, PluginCapabilities, PluginError,
+    PluginRegistry, PromptHookContext, PromptHookPoint, ToolProvider, ToolRegistrationHost,
 };
 
 #[derive(Clone)]
@@ -71,6 +73,50 @@ impl PluginService {
             }
         }
         hooks
+    }
+
+    pub(crate) fn run_prompt_hook(
+        &self,
+        point: PromptHookPoint,
+        ctx: PromptHookContext,
+    ) -> Result<Vec<CodingDiagnostic>, CodingSessionError> {
+        let host = HookRegistrationHost;
+        let mut diagnostics = Vec::new();
+        for provider in self.registry.hook_providers() {
+            let registrations = match collect_provider_hooks(provider.as_ref(), &host) {
+                Ok(registrations) => registrations,
+                Err(error) => {
+                    self.record_plugin_error(error);
+                    continue;
+                }
+            };
+            for registration in registrations
+                .into_iter()
+                .filter(|registration| registration.point == point)
+            {
+                match run_provider_hook(provider.as_ref(), &ctx) {
+                    Ok(outcome) => {
+                        diagnostics.extend(outcome.diagnostics.into_iter().map(|diagnostic| {
+                            CodingDiagnostic::warning(diagnostic.message).with_code("plugin_hook")
+                        }))
+                    }
+                    Err(error) => match registration.policy {
+                        HookFailurePolicy::FailOpen => {
+                            let message = error.to_string();
+                            self.record_plugin_error(error);
+                            diagnostics
+                                .push(CodingDiagnostic::warning(message).with_code("plugin_hook"));
+                        }
+                        HookFailurePolicy::FailClosed => {
+                            let message = format!("plugin hook failed at {point:?}: {error}");
+                            self.record_plugin_error(error);
+                            return Err(CodingSessionError::Plugin { message });
+                        }
+                    },
+                }
+            }
+        }
+        Ok(diagnostics)
     }
 
     pub(crate) fn capabilities(&self) -> PluginCapabilities {
@@ -155,6 +201,20 @@ fn collect_provider_hooks(
 ) -> Result<Vec<HookRegistration>, PluginError> {
     let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
     match catch_unwind(AssertUnwindSafe(|| provider.hooks(host))) {
+        Ok(result) => result,
+        Err(panic) => Err(PluginError::Panic {
+            plugin_id,
+            message: panic_message(panic),
+        }),
+    }
+}
+
+fn run_provider_hook(
+    provider: &dyn HookProvider,
+    ctx: &PromptHookContext,
+) -> Result<HookOutcome, PluginError> {
+    let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+    match catch_unwind(AssertUnwindSafe(|| provider.run_hook(ctx))) {
         Ok(result) => result,
         Err(panic) => Err(PluginError::Panic {
             plugin_id,

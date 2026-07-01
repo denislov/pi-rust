@@ -11,6 +11,7 @@ use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Model}
 
 use crate::args::CliMode;
 use crate::config::Settings;
+use crate::plugins::{PromptHookContext, PromptHookPoint};
 use crate::prompt_options::{PromptRunOptions, assistant_text};
 use crate::request::ResolvedPromptRequest;
 use crate::runtime::{PromptInvocation, SessionRunOptions};
@@ -442,6 +443,22 @@ impl PromptTurnContext {
 
     pub(crate) fn plugin_service(&self) -> &PluginService {
         &self.plugin_service
+    }
+
+    pub(crate) fn run_prompt_hook(
+        &mut self,
+        point: PromptHookPoint,
+    ) -> Result<(), CodingSessionError> {
+        let hook_context = PromptHookContext {
+            operation_id: self.operation_id().to_owned(),
+            turn_id: self.turn_id().to_owned(),
+            session_id: self.session_id.clone(),
+            point,
+        };
+        for diagnostic in self.plugin_service.run_prompt_hook(point, hook_context)? {
+            self.record_diagnostic(diagnostic);
+        }
+        Ok(())
     }
 
     pub(crate) fn set_runtime(&mut self, runtime: RuntimeSnapshot) {

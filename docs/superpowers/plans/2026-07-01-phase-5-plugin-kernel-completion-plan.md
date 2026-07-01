@@ -252,7 +252,7 @@ git commit -m "feat(coding-agent): add plugin prompt hook boundary"
 - Test: `prompt_flow.rs`
 - Test: `plugin_service.rs`
 
-- [ ] **Step 1: Write failing hook execution tests**
+- [x] **Step 1: Write failing hook execution tests**
 
 Add a `prompt_flow.rs` test that registers a hook provider and verifies hook diagnostics are recorded as coding diagnostics without exposing session storage:
 
@@ -274,7 +274,7 @@ async fn prompt_turn_flow_runs_noncritical_prompt_hooks_as_diagnostics() {
 }
 ```
 
-Add a fail-closed test:
+Add fail-open returned-error and fail-closed tests:
 
 ```rust
 #[tokio::test]
@@ -292,17 +292,18 @@ async fn prompt_turn_flow_aborts_for_fail_closed_hook_error() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
 ```bash
-PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent prompt_turn_flow_runs_noncritical_prompt_hooks_as_diagnostics prompt_turn_flow_aborts_for_fail_closed_hook_error
+PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent prompt_turn_flow_runs_noncritical_prompt_hooks_as_diagnostics
+PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent prompt_turn_flow_aborts_for_fail_closed_hook_error
 ```
 
-Expected: compilation/test failure because hook execution is not wired.
+Expected: compilation/test failure because hook execution is not wired. Actual RED was verified before implementation with the noncritical hook test failing on missing hook execution types and trait method.
 
-- [ ] **Step 3: Implement scoped hook execution**
+- [x] **Step 3: Implement scoped hook execution**
 
 Extend `plugins/hook.rs`:
 
@@ -328,7 +329,7 @@ pub(crate) struct HookOutcome {
 
 Add `HookProvider::run_hook(&self, ctx: &PromptHookContext) -> Result<HookOutcome, PluginError>`. `PluginService::run_prompt_hook(point, context)` catches panics and returned errors. Fail-open errors become plugin diagnostics and `CodingDiagnostic::warn`; fail-closed errors return `CodingSessionError::Plugin`.
 
-- [ ] **Step 4: Wire PromptTurnFlow hook points**
+- [x] **Step 4: Wire PromptTurnFlow hook points**
 
 Call hooks at these stable points:
 
@@ -340,18 +341,20 @@ Call hooks at these stable points:
 - `BeforeSessionCommit`: inside `finalize_turn` before readiness returns success.
 - `AfterSessionCommit`: after `emit_completion` records prompt completion. This is still before owner-level session finalization; document that Phase 5 hook cannot observe durable commit results yet.
 
-- [ ] **Step 5: Run tests to verify GREEN**
+- [x] **Step 5: Run tests to verify GREEN**
 
 Run:
 
 ```bash
-PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent plugin_hook
+PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent prompt_turn_flow_runs_noncritical_prompt_hooks_as_diagnostics
+PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent prompt_turn_flow_continues_for_fail_open_hook_error_as_diagnostic
+PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent prompt_turn_flow_aborts_for_fail_closed_hook_error
 PATH=$HOME/.cargo/bin:$PATH cargo test -p pi-coding-agent prompt_turn_flow
 ```
 
 Expected: hook execution and existing prompt flow tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/plugins/hook.rs crates/pi-coding-agent/src/coding_session/plugin_service.rs crates/pi-coding-agent/src/coding_session/prompt.rs crates/pi-coding-agent/src/coding_session/prompt_flow.rs docs/TODO.md docs/superpowers/plans/2026-07-01-phase-5-plugin-kernel-completion-plan.md
