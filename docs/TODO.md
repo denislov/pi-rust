@@ -50,7 +50,7 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [~] Implement Phase 2: `PromptTurnFlow` on headless/json path. Prompt turn options/outcome/context, runtime snapshot boundary, real graph with stable node IDs, AgentEvent-to-product-event mapping, real ResolveRequest/PrepareInput/ResolveRuntime/LoadResources/OpenSession/BuildAgentRuntime/RecordUserInput/RunAgentTurn/FinalizeTurn/EmitCompletion nodes, pending agent-output event recording through TurnTransaction, live product event broadcast during PromptTurnFlow execution, assistant thinking deltas, completed-message-only assistant session persistence, SessionService-owned prompt transaction finalization with `SessionWrite*` product events, persistent and non-persistent `CodingAgentSession::prompt()` for runtime-backed options, successful persistent prompt active-leaf commits, completed user/assistant/tool-call replay hydration, Rust-native session open-or-create/list groundwork, Rust-native clone/fork/manual-compaction service APIs, enabled and no-session/disabled print routing including ForkTarget, and JSON protocol rendering/execution through `CodingAgentEvent`/`CodingAgentSession` are in place.
 - [~] Implement Phase 3: converge CLI/RPC/interactive adapters. Concrete `CodingAgentCapabilities`/`CapabilityStatus` model, RPC `get_state` capability reporting, RPC `CodingAgentEvent` adapter, enabled plus disabled-session RPC prompt routing, primary interactive prompt routing, JSON execution routing, Rust-native resume hydration, Rust-native active-session `/session` info and leaf-backed `/tree` navigation, Rust-native active-session `/clone`, `/fork`, and `/compact`, Rust-native active leaf propagation to RPC/interactive state, adapter-provided cwd recording/filtering, and live assistant text/thinking propagation to RPC and interactive adapters are in place.
 - [x] Implement Phase 4: introduce `AgentTurnFlow` in `pi-agent-core`. `agent_turn_flow` now owns the low-level runtime entrypoint, `AgentTurnContext` snapshot boundary, `PrepareContextNode`, runtime compaction node, provider stream node, decide-stop-or-tools node, and tool execution node with sequential/parallel execution, hooks, update callbacks, and terminate behavior. `Agent::run()` now delegates to `AgentTurnFlow`, and the old `agent_loop` module remains only as a compatibility wrapper.
-- [~] Implement Phase 5: plugin kernel on session/flow boundaries. Initial internal Rust trait kernel slice is in place: plugin registry, `ToolProvider`, `ToolRegistrationHost`, `PluginService` tool collection with error/panic diagnostics, and `RuntimeService` plugin-tool merging through the session-owned plugin service.
+- [~] Implement Phase 5: plugin kernel on session/flow boundaries. Initial internal Rust trait kernel slices are in place: plugin registry, `ToolProvider`, `ToolRegistrationHost`, tool collection with diagnostics, `CommandProvider`, `CommandRegistrationHost`, command collection with diagnostics, and `RuntimeService` plugin-tool merging through the session-owned plugin service.
 - [ ] Implement Phase 6: advanced Flow workflows.
 
 ## Phase 1: CodingAgentSession and Rust-Native Session Log
@@ -130,18 +130,18 @@ Guide: [Phase 4](superpowers/guides/2026-06-29-phase-4-agent-turn-flow-guide.md)
 
 Guide: [Phase 5](superpowers/guides/2026-06-29-phase-5-plugin-kernel-guide.md)
 
-- [~] Add plugin registry module. Initial internal `crate::plugins::PluginRegistry` stores Rust `ToolProvider` instances with plugin metadata/source types; command/hook/UI/keybind/flow registries remain open.
-- [~] Add capability-scoped plugin hosts. Initial `ToolRegistrationHost` establishes the scoped-host pattern without exposing `CodingAgentSession`, `SessionService`, auth, filesystem, shell, or Flow internals.
+- [~] Add plugin registry module. Initial internal `crate::plugins::PluginRegistry` stores Rust `ToolProvider` and `CommandProvider` instances with plugin metadata/source types; hook/UI/keybind/flow registries remain open.
+- [~] Add capability-scoped plugin hosts. Initial `ToolRegistrationHost` and `CommandRegistrationHost` establish the scoped-host pattern without exposing `CodingAgentSession`, `SessionService`, auth, filesystem, shell, or Flow internals.
 - [~] Add `ToolProvider`. Internal Rust trait exists and returns `AgentTool` values through `PluginService::collect_tools()`.
-- [ ] Add `CommandProvider`.
+- [~] Add `CommandProvider`. Internal Rust trait, `CommandDefinition`, registration host, registry storage, and `PluginService::collect_commands()` exist; slash/RPC execution and adapter capability exposure remain later slices.
 - [ ] Add `HookProvider`.
 - [ ] Add minimal `UiProvider` and `KeybindProvider` boundaries.
 - [ ] Reserve first-party `FlowExtension`.
 - [~] Integrate plugin tools through `RuntimeService`. `RuntimeService::build_agent_runtime_with_plugins()` merges plugin tools into the provider-visible Agent tool context; CLI tool filtering for plugin tools remains a later slice.
 - [ ] Integrate prompt hooks through `PromptTurnFlow`.
-- [~] Add plugin failure isolation. Tool provider `PluginError` values and panics are captured as plugin diagnostics while healthy providers still contribute tools.
-- [~] Add Phase 5 tests. Unit coverage verifies tool collection, returned-error isolation, panic isolation, and RuntimeService provider-context merging.
-- [~] Run Phase 5 focused checks. Latest focused check: `cargo test -p pi-coding-agent plugin` passes for the initial registry/tool-provider/runtime slice.
+- [~] Add plugin failure isolation. Tool/command provider `PluginError` values and collection-boundary panics are captured as plugin diagnostics while healthy providers still contribute capabilities.
+- [~] Add Phase 5 tests. Unit coverage verifies tool collection, command collection, returned-error isolation, panic isolation, and RuntimeService provider-context merging.
+- [~] Run Phase 5 focused checks. Latest verified subset: `cargo fmt --check`, `cargo test -p pi-coding-agent plugin`, `cargo test -p pi-coding-agent coding_session`, `cargo check --workspace`, and `cargo test -p pi-coding-agent` pass for the registry/tool-provider/command-provider/runtime slice.
 
 ## Phase 6: Advanced Flow Workflows
 
@@ -239,3 +239,4 @@ Guide: [Phase 6](superpowers/guides/2026-06-29-phase-6-advanced-flow-workflows-g
 - 2026-07-01: Phase 4 runtime delegation completed. `AgentTurnFlow` now exposes the low-level runtime entrypoint, `Agent::run()` delegates to it, and the old `agent_loop` module is reduced to a compatibility wrapper over the AgentTurnFlow runtime.
 - 2026-07-01: Documentation cleanup aligned roadmap/cross-cutting/architecture docs with the Flow-centered runtime state, removed TS session JSONL compatibility as a current invariant, and added the Rust-native session format spec.
 - 2026-07-01: Phase 5 started with the internal Rust plugin kernel slice: `crate::plugins` now has plugin metadata/source types, `PluginRegistry`, `ToolProvider`, and `ToolRegistrationHost`; `PluginService` collects plugin tools with error/panic isolation; `PromptTurnContext` carries the session-owned plugin service into `RuntimeService`; focused plugin tests pass.
+- 2026-07-01: Phase 5 command boundary started. `CommandProvider`, `CommandDefinition`, `CommandRegistrationHost`, registry storage, and `PluginService::collect_commands()` now exist as internal staging APIs with diagnostics for provider failures; command execution/adapters remain follow-up work.

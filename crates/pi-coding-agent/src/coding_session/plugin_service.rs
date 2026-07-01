@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use pi_agent_core::AgentTool;
 
-use crate::plugins::{PluginError, PluginRegistry, ToolProvider, ToolRegistrationHost};
+use crate::plugins::{
+    CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginRegistry,
+    ToolProvider, ToolRegistrationHost,
+};
 
 #[derive(Clone)]
 pub(crate) struct PluginService {
@@ -41,6 +44,19 @@ impl PluginService {
             }
         }
         tools
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn collect_commands(&self) -> Vec<CommandDefinition> {
+        let host = CommandRegistrationHost;
+        let mut commands = Vec::new();
+        for provider in self.registry.command_providers() {
+            match collect_provider_commands(provider.as_ref(), &host) {
+                Ok(mut provided) => commands.append(&mut provided),
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+        commands
     }
 
     pub(crate) fn diagnostics(&self) -> Vec<PluginDiagnostic> {
@@ -81,10 +97,7 @@ fn collect_provider_tools(
     provider: &dyn ToolProvider,
     host: &ToolRegistrationHost,
 ) -> Result<Vec<AgentTool>, PluginError> {
-    let plugin_id = catch_unwind(AssertUnwindSafe(|| {
-        provider.metadata().id.as_str().to_owned()
-    }))
-    .unwrap_or_else(|panic| format!("<panic:{}>", panic_message(panic)));
+    let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
     match catch_unwind(AssertUnwindSafe(|| provider.tools(host))) {
         Ok(result) => result,
         Err(panic) => Err(PluginError::Panic {
@@ -92,6 +105,26 @@ fn collect_provider_tools(
             message: panic_message(panic),
         }),
     }
+}
+
+#[allow(dead_code)]
+fn collect_provider_commands(
+    provider: &dyn CommandProvider,
+    host: &CommandRegistrationHost,
+) -> Result<Vec<CommandDefinition>, PluginError> {
+    let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+    match catch_unwind(AssertUnwindSafe(|| provider.commands(host))) {
+        Ok(result) => result,
+        Err(panic) => Err(PluginError::Panic {
+            plugin_id,
+            message: panic_message(panic),
+        }),
+    }
+}
+
+fn provider_plugin_id(metadata_id: impl FnOnce() -> String) -> String {
+    catch_unwind(AssertUnwindSafe(metadata_id))
+        .unwrap_or_else(|panic| format!("<panic:{}>", panic_message(panic)))
 }
 
 fn panic_message(panic: Box<dyn Any + Send>) -> String {
@@ -112,8 +145,8 @@ mod tests {
 
     use super::*;
     use crate::plugins::{
-        PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource, ToolProvider,
-        ToolRegistrationHost,
+        CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginId,
+        PluginMetadata, PluginRegistry, PluginSource, ToolProvider, ToolRegistrationHost,
     };
 
     struct StaticToolProvider {
@@ -161,6 +194,52 @@ mod tests {
         }
     }
 
+    struct StaticCommandProvider;
+
+    impl CommandProvider for StaticCommandProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("commands-plugin"),
+                "commands-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn commands(
+            &self,
+            _host: &CommandRegistrationHost,
+        ) -> Result<Vec<CommandDefinition>, PluginError> {
+            Ok(vec![CommandDefinition::new(
+                "plugin.say_hello",
+                "Say hello from a plugin",
+            )])
+        }
+    }
+
+    struct FailingCommandProvider;
+
+    impl CommandProvider for FailingCommandProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("failing-command-plugin"),
+                "failing-command-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn commands(
+            &self,
+            _host: &CommandRegistrationHost,
+        ) -> Result<Vec<CommandDefinition>, PluginError> {
+            Err(PluginError::Registration {
+                plugin_id: "failing-command-plugin".into(),
+                message: "command registration failed".into(),
+            })
+        }
+    }
+
     struct PanickingToolProvider;
 
     impl ToolProvider for PanickingToolProvider {
@@ -176,6 +255,43 @@ mod tests {
         fn tools(&self, _host: &ToolRegistrationHost) -> Result<Vec<AgentTool>, PluginError> {
             panic!("tool provider panicked")
         }
+    }
+
+    #[test]
+    fn collect_commands_returns_registered_command_provider_definitions() {
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(StaticCommandProvider));
+        let service = PluginService::with_registry(registry);
+
+        let commands = service.collect_commands();
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].id, "plugin.say_hello");
+        assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn collect_commands_isolates_provider_failures_as_diagnostics() {
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(FailingCommandProvider));
+        registry.register_command_provider(Arc::new(StaticCommandProvider));
+        let service = PluginService::with_registry(registry);
+
+        let commands = service.collect_commands();
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].id, "plugin.say_hello");
+        let diagnostics = service.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].plugin_id.as_deref(),
+            Some("failing-command-plugin")
+        );
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("command registration failed")
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use super::command::CommandProvider;
 use super::tool::ToolProvider;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -54,6 +55,7 @@ impl PluginMetadata {
 #[derive(Clone, Default)]
 pub(crate) struct PluginRegistry {
     tool_providers: Vec<Arc<dyn ToolProvider>>,
+    command_providers: Vec<Arc<dyn CommandProvider>>,
 }
 
 impl PluginRegistry {
@@ -66,8 +68,18 @@ impl PluginRegistry {
         self.tool_providers.push(provider);
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn register_command_provider(&mut self, provider: Arc<dyn CommandProvider>) {
+        self.command_providers.push(provider);
+    }
+
     pub(crate) fn tool_providers(&self) -> &[Arc<dyn ToolProvider>] {
         &self.tool_providers
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn command_providers(&self) -> &[Arc<dyn CommandProvider>] {
+        &self.command_providers
     }
 }
 
@@ -75,6 +87,7 @@ impl fmt::Debug for PluginRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PluginRegistry")
             .field("tool_providers_len", &self.tool_providers.len())
+            .field("command_providers_len", &self.command_providers.len())
             .finish()
     }
 }
