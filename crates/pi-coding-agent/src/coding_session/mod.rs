@@ -46,6 +46,8 @@ use session_log::replay::TranscriptItem;
 use session_service::{FinalizedSessionWrite, SessionService};
 use std::path::{Path, PathBuf};
 
+use crate::plugins::PluginSource;
+
 #[derive(Debug)]
 pub struct CodingAgentSession {
     persistence: SessionPersistence,
@@ -54,6 +56,7 @@ pub struct CodingAgentSession {
     event_service: EventService,
     capability_service: CapabilityService,
     plugin_service: PluginService,
+    default_plugin_load_options: PluginLoadOptions,
     active_operation: Option<String>,
 }
 
@@ -79,22 +82,37 @@ impl TransientSessionState {
     }
 }
 
+fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
+    let cwd = options
+        .cwd()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(default_cwd);
+    let paths = crate::config::resolve_paths(&cwd);
+    PluginLoadOptions::new()
+        .with_discovery_root(paths.project_dir.join("plugins"), PluginSource::Project)
+        .with_discovery_root(paths.global_dir.join("plugins"), PluginSource::User)
+}
+
+fn default_cwd() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
 impl CodingAgentSession {
     pub async fn create(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::create(&options)?;
-        Self::from_services(session_service)
+        Self::from_services(session_service, default_plugin_load_options(&options))
     }
 
     pub async fn open(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::open(&options)?;
-        Self::from_services(session_service)
+        Self::from_services(session_service, default_plugin_load_options(&options))
     }
 
     pub async fn open_or_create(
         options: CodingAgentSessionOptions,
     ) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::open_or_create(&options)?;
-        Self::from_services(session_service)
+        Self::from_services(session_service, default_plugin_load_options(&options))
     }
 
     pub async fn non_persistent(
@@ -105,7 +123,10 @@ impl CodingAgentSession {
                 message: "non-persistent coding sessions do not accept a session id or path".into(),
             });
         }
-        Self::from_transient(TransientSessionState::new())
+        Self::from_transient(
+            TransientSessionState::new(),
+            default_plugin_load_options(&options),
+        )
     }
 
     pub fn list(
@@ -193,9 +214,10 @@ impl CodingAgentSession {
         target_leaf_id: Option<&str>,
     ) -> Result<Self, CodingSessionError> {
         match &self.persistence {
-            SessionPersistence::Persistent(session_service) => {
-                Self::from_services(session_service.fork_current(target_leaf_id)?)
-            }
+            SessionPersistence::Persistent(session_service) => Self::from_services(
+                session_service.fork_current(target_leaf_id)?,
+                self.default_plugin_load_options.clone(),
+            ),
             SessionPersistence::NonPersistent(_) => {
                 Err(CodingSessionError::UnsupportedCapability {
                     capability: "fork requires a persistent Rust-native session".into(),
@@ -260,6 +282,12 @@ impl CodingAgentSession {
         let result = self.compact_inner(options).await;
         self.active_operation = None;
         result
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn reload_plugins(&mut self) -> Result<PluginLoadOutcome, CodingSessionError> {
+        self.load_plugins(self.default_plugin_load_options.clone())
+            .await
     }
 
     #[allow(dead_code)]
@@ -332,7 +360,10 @@ impl CodingAgentSession {
         result
     }
 
-    fn from_services(session_service: SessionService) -> Result<Self, CodingSessionError> {
+    fn from_services(
+        session_service: SessionService,
+        default_plugin_load_options: PluginLoadOptions,
+    ) -> Result<Self, CodingSessionError> {
         let event_service = EventService::new();
         event_service.emit(CodingAgentEvent::SessionOpened {
             session_id: session_service.session_id().to_owned(),
@@ -345,11 +376,15 @@ impl CodingAgentSession {
             event_service,
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
+            default_plugin_load_options,
             active_operation: None,
         })
     }
 
-    fn from_transient(state: TransientSessionState) -> Result<Self, CodingSessionError> {
+    fn from_transient(
+        state: TransientSessionState,
+        default_plugin_load_options: PluginLoadOptions,
+    ) -> Result<Self, CodingSessionError> {
         Ok(Self {
             persistence: SessionPersistence::NonPersistent(state),
             runtime_service: RuntimeService::new(),
@@ -357,6 +392,7 @@ impl CodingAgentSession {
             event_service: EventService::new(),
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
+            default_plugin_load_options,
             active_operation: None,
         })
     }
@@ -791,7 +827,10 @@ fn emit_session_write_committed(event_service: &EventService, finalized: &Finali
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        fs,
+        sync::{Arc, Mutex},
+    };
 
     use async_stream::stream;
     use pi_agent_core::{AgentResources, AgentTool, AgentToolOutput};
@@ -1025,6 +1064,87 @@ mod tests {
         let tools = contexts[0].tools.as_ref().unwrap();
         assert!(tools.iter().any(|tool| tool.name == "plugin_echo"));
         registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn reload_plugins_discovers_default_project_and_user_roots() {
+        let _guard = crate::test_support::env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("project");
+        let global = temp.path().join("global");
+        let previous_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+        let project_plugin = cwd.join(".pi-rust/plugins/project-lua");
+        let user_plugin = global.join("plugins/user-lua");
+        fs::create_dir_all(&project_plugin).unwrap();
+        fs::create_dir_all(&user_plugin).unwrap();
+        fs::write(
+            project_plugin.join("plugin.toml"),
+            r#"
+id = "project-lua"
+name = "Project Lua"
+version = "0.1.0"
+runtime = "lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            user_plugin.join("plugin.toml"),
+            r#"
+id = "user-lua"
+name = "User Lua"
+version = "0.1.0"
+runtime = "lua"
+"#,
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", &global);
+        }
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_cwd(&cwd)
+                .with_session_id("sess_plugin_reload_defaults")
+                .with_session_log_root(temp.path().join("sessions")),
+        )
+        .await
+        .unwrap();
+        let mut events = session.subscribe();
+
+        let outcome = session.reload_plugins().await.unwrap();
+
+        assert!(outcome.loaded_plugin_ids.is_empty());
+        assert_eq!(outcome.diagnostics.len(), 2);
+        assert!(
+            outcome
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.plugin_id.as_deref() == Some("project-lua"))
+        );
+        assert!(
+            outcome
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.plugin_id.as_deref() == Some("user-lua"))
+        );
+        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert_eq!(
+            emitted_events
+                .iter()
+                .filter(|event| matches!(event, CodingAgentEvent::Diagnostic { .. }))
+                .count(),
+            2
+        );
+        assert!(
+            emitted_events
+                .iter()
+                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged))
+        );
+        unsafe {
+            match previous_pi_rust_dir {
+                Some(value) => std::env::set_var("PI_RUST_DIR", value),
+                None => std::env::remove_var("PI_RUST_DIR"),
+            }
+        }
     }
 
     #[tokio::test]
