@@ -162,7 +162,7 @@ Current product behavior depends on these invariants:
 - Failed or aborted operations must not advance the active leaf.
 - Fork/clone/tree/compact/branch-summary actions use `SessionService` replay and leaf metadata instead of legacy JSONL assumptions; `/branch-summary <source-leaf-id> <target-leaf-id> [instructions]` persists a provider summary for the selected abandoned leaf range through the configured runtime model.
 - Fork/clone copies committed history through the selected leaf. If a later complete branch-summary operation targets that leaf, the copy includes the operation boundary plus `branch.summary.created` event so replay hydrates the summary without copying abandoned prompt history.
-- Interactive `/tree` navigation that leaves a different active leaf first summarizes the abandoned active branch, then forks to the selected target leaf with the created summary available in the new session transcript.
+- Interactive `/tree` navigation that leaves a different active leaf first summarizes the abandoned active branch, then forks to the selected target leaf with the created summary available in the new session transcript. If a complete summary already exists for the same source/target leaves, navigation reuses it without appending another `branch.summary.created` event.
 - Product paths should reject or ignore legacy TypeScript JSONL rather than silently importing it into this schema.
 
 ## Versioning Guidance

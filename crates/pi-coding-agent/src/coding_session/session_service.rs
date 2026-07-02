@@ -160,6 +160,32 @@ impl SessionService {
         self.handle.manifest().active_leaf_id.as_deref()
     }
 
+    pub(crate) fn branch_summary_for(
+        &self,
+        source_leaf_id: &str,
+        target_leaf_id: &str,
+    ) -> Result<Option<String>, CodingSessionError> {
+        let source_leaf_id = normalize_leaf_id(source_leaf_id)?;
+        let target_leaf_id = normalize_leaf_id(target_leaf_id)?;
+        Ok(self
+            .replay()?
+            .transcript
+            .into_iter()
+            .rev()
+            .find_map(|item| match item {
+                TranscriptItem::BranchSummary {
+                    summary,
+                    source_leaf_id: summary_source_leaf_id,
+                    target_leaf_id: summary_target_leaf_id,
+                } if summary_source_leaf_id == source_leaf_id
+                    && summary_target_leaf_id == target_leaf_id =>
+                {
+                    Some(summary)
+                }
+                _ => None,
+            }))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn switch_active_leaf(
         &mut self,

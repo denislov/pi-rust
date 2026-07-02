@@ -396,11 +396,10 @@ async fn run_coding_branch_summary_navigation_task(
     let branch_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
-        let mut branch_summary = Box::pin(session.summarize_branch(
+        let mut branch_summary = Box::pin(session.summarize_branch_for_navigation(
             branch_options,
             source_leaf_id,
             target_leaf_id.clone(),
-            None,
         ));
         loop {
             tokio::select! {

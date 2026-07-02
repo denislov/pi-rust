@@ -285,6 +285,35 @@ impl CodingAgentSession {
         result
     }
 
+    pub(crate) async fn summarize_branch_for_navigation(
+        &mut self,
+        options: PromptTurnOptions,
+        source_leaf_id: impl Into<String>,
+        target_leaf_id: impl Into<String>,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        if self.active_operation.is_some() {
+            return Err(CodingSessionError::Busy {
+                operation: "branch_summary".into(),
+            });
+        }
+        let source_leaf_id = source_leaf_id.into();
+        let target_leaf_id = target_leaf_id.into();
+        if let Some(outcome) = self.reused_branch_summary_outcome(
+            &options,
+            source_leaf_id.as_str(),
+            target_leaf_id.as_str(),
+        )? {
+            return Ok(outcome);
+        }
+
+        self.active_operation = Some("branch_summary".into());
+        let result = self
+            .summarize_branch_inner(options, source_leaf_id, target_leaf_id, None)
+            .await;
+        self.active_operation = None;
+        result
+    }
+
     fn from_services(session_service: SessionService) -> Result<Self, CodingSessionError> {
         let event_service = EventService::new();
         event_service.emit(CodingAgentEvent::SessionOpened {
@@ -421,6 +450,41 @@ impl CodingAgentSession {
                 Ok(outcome)
             }
         }
+    }
+
+    fn reused_branch_summary_outcome(
+        &self,
+        options: &PromptTurnOptions,
+        source_leaf_id: &str,
+        target_leaf_id: &str,
+    ) -> Result<Option<PromptTurnOutcome>, CodingSessionError> {
+        let runtime = options
+            .runtime()
+            .cloned()
+            .ok_or_else(|| CodingSessionError::Config {
+                message: "branch summary options do not include a runtime snapshot".into(),
+            })?;
+        let SessionPersistence::Persistent(session_service) = &self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "branch summary without persistent session".into(),
+            });
+        };
+        let Some(summary) = session_service.branch_summary_for(source_leaf_id, target_leaf_id)?
+        else {
+            return Ok(None);
+        };
+        let mut ids = SystemIdGenerator;
+        let operation_id = ids.next_operation_id();
+        let turn_id = ids.next_turn_id();
+        Ok(Some(PromptTurnOutcome::Success {
+            operation_id,
+            turn_id,
+            session_id: Some(session_service.session_id().to_owned()),
+            leaf_id: session_service.active_leaf_id().map(str::to_owned),
+            final_text: summary.clone(),
+            final_message: branch_summary_final_message(&runtime, &summary),
+            diagnostics: Vec::new(),
+        }))
     }
 
     async fn summarize_branch_inner(
@@ -1212,6 +1276,92 @@ mod tests {
             std::fs::read_to_string(temp.path().join("sess_branch_summary_owner/events.jsonl"))
                 .unwrap();
         assert!(event_log.contains("branch.summary.created"));
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn branch_summary_navigation_reuses_existing_summary_without_rewriting_session() {
+        let api = "coding-session-branch-summary-navigation-reuse";
+        registry::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("root answer", StopReason::Stop),
+                FauxProvider::text_call("branch answer", StopReason::Stop),
+                FauxProvider::text_call("model branch summary", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_branch_summary_navigation_reuse")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let root_leaf = match session
+            .prompt(prompt_options(api, "root question"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected root prompt success, got {other:?}"),
+        };
+        let branch_leaf = match session
+            .prompt(prompt_options(api, "branch question"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected branch prompt success, got {other:?}"),
+        };
+        session
+            .summarize_branch(
+                prompt_options(api, ""),
+                branch_leaf.clone(),
+                root_leaf.clone(),
+                None,
+            )
+            .await
+            .unwrap();
+        let event_log_path = temp
+            .path()
+            .join("sess_branch_summary_navigation_reuse/events.jsonl");
+        let event_log_before = std::fs::read_to_string(&event_log_path).unwrap();
+        let summary_count_before = event_log_before.matches("branch.summary.created").count();
+        let mut events = session.subscribe();
+
+        let outcome = session
+            .summarize_branch_for_navigation(
+                prompt_options(api, ""),
+                branch_leaf.clone(),
+                root_leaf.clone(),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &outcome,
+            PromptTurnOutcome::Success {
+                final_text,
+                session_id: Some(session_id),
+                leaf_id: Some(active_leaf),
+                ..
+            } if final_text.contains("model branch summary")
+                && session_id == "sess_branch_summary_navigation_reuse"
+                && active_leaf.as_str() == branch_leaf.as_str()
+        ));
+        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert!(emitted_events.is_empty(), "{emitted_events:#?}");
+        let event_log_after = std::fs::read_to_string(&event_log_path).unwrap();
+        assert_eq!(event_log_after, event_log_before);
+        assert_eq!(summary_count_before, 1);
+        assert_eq!(event_log_after.matches("branch.summary.created").count(), 1);
         registry::unregister(api);
     }
 
