@@ -518,6 +518,112 @@ end
     }
 
     #[tokio::test]
+    async fn plugin_load_flow_loads_lua_manifest_ui_action_provider() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-ui");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-ui"
+name = "Lua UI"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:ui_action({
+    id = "ui.open_panel",
+    label = "Open panel",
+    description = "opens a Lua panel",
+    action_id = "lua.open_panel"
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(outcome.loaded_plugin_ids, vec!["lua-ui"]);
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.ui_providers, 1);
+        let actions = context
+            .loaded_plugin_service()
+            .unwrap()
+            .collect_ui_actions();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id, "ui.open_panel");
+        assert_eq!(actions[0].label, "Open panel");
+        assert_eq!(actions[0].description, "opens a Lua panel");
+        assert_eq!(actions[0].action_id, "lua.open_panel");
+    }
+
+    #[tokio::test]
+    async fn plugin_load_flow_loads_lua_manifest_keybind_provider() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-keybind");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-keybind"
+name = "Lua Keybind"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:keybind({
+    id = "keybind.open_panel",
+    key = "ctrl+shift+p",
+    description = "opens the Lua panel",
+    action_id = "lua.open_panel"
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(outcome.loaded_plugin_ids, vec!["lua-keybind"]);
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.keybind_providers, 1);
+        let keybindings = context
+            .loaded_plugin_service()
+            .unwrap()
+            .collect_keybindings();
+        assert_eq!(keybindings.len(), 1);
+        assert_eq!(keybindings[0].id, "keybind.open_panel");
+        assert_eq!(keybindings[0].key, "ctrl+shift+p");
+        assert_eq!(keybindings[0].description, "opens the Lua panel");
+        assert_eq!(keybindings[0].action_id, "lua.open_panel");
+    }
+
+    #[tokio::test]
     async fn plugin_load_flow_discovers_project_and_user_manifest_files() {
         let service = FlowService::new();
         let temp = tempfile::tempdir().unwrap();

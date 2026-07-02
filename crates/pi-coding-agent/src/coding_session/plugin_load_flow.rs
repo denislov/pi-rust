@@ -15,9 +15,10 @@ use super::CodingSessionError;
 use super::plugin_service::{PluginDiagnostic, PluginService};
 use crate::plugins::{
     CommandDefinition, CommandProvider, CommandRegistrationHost, HookDiagnostic, HookFailurePolicy,
-    HookOutcome, HookProvider, HookRegistration, HookRegistrationHost, PluginCapabilities,
-    PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource, PromptHookContext,
-    PromptHookPoint, ToolProvider, ToolRegistrationHost,
+    HookOutcome, HookProvider, HookRegistration, HookRegistrationHost, KeybindDefinition,
+    KeybindProvider, KeybindRegistrationHost, PluginCapabilities, PluginError, PluginId,
+    PluginMetadata, PluginRegistry, PluginSource, PromptHookContext, PromptHookPoint, ToolProvider,
+    ToolRegistrationHost, UiActionDefinition, UiProvider, UiRegistrationHost,
 };
 
 const DEFAULT_ACTION: &str = "default";
@@ -651,11 +652,29 @@ struct LuaHookSpec {
     policy: HookFailurePolicy,
 }
 
+#[derive(Debug, Clone)]
+struct LuaUiActionSpec {
+    id: String,
+    label: String,
+    description: String,
+    action_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct LuaKeybindSpec {
+    id: String,
+    key: String,
+    description: String,
+    action_id: String,
+}
+
 #[derive(Debug, Clone, Default)]
 struct LuaPluginSpecs {
     tools: Vec<LuaToolSpec>,
     commands: Vec<LuaCommandSpec>,
     hooks: Vec<LuaHookSpec>,
+    ui_actions: Vec<LuaUiActionSpec>,
+    keybindings: Vec<LuaKeybindSpec>,
 }
 
 struct LuaToolProvider {
@@ -776,6 +795,54 @@ impl HookProvider for LuaHookProvider {
     }
 }
 
+struct LuaUiProvider {
+    metadata: PluginMetadata,
+    actions: Vec<LuaUiActionSpec>,
+}
+
+impl UiProvider for LuaUiProvider {
+    fn metadata(&self) -> PluginMetadata {
+        self.metadata.clone()
+    }
+
+    fn ui_actions(
+        &self,
+        _host: &UiRegistrationHost,
+    ) -> Result<Vec<UiActionDefinition>, PluginError> {
+        Ok(self
+            .actions
+            .iter()
+            .cloned()
+            .map(|spec| {
+                UiActionDefinition::new(spec.id, spec.label, spec.description, spec.action_id)
+            })
+            .collect())
+    }
+}
+
+struct LuaKeybindProvider {
+    metadata: PluginMetadata,
+    keybindings: Vec<LuaKeybindSpec>,
+}
+
+impl KeybindProvider for LuaKeybindProvider {
+    fn metadata(&self) -> PluginMetadata {
+        self.metadata.clone()
+    }
+
+    fn keybindings(
+        &self,
+        _host: &KeybindRegistrationHost,
+    ) -> Result<Vec<KeybindDefinition>, PluginError> {
+        Ok(self
+            .keybindings
+            .iter()
+            .cloned()
+            .map(|spec| KeybindDefinition::new(spec.id, spec.key, spec.description, spec.action_id))
+            .collect())
+    }
+}
+
 fn load_lua_plugin_registry(
     manifest: &PluginLoadManifest,
 ) -> Result<PluginRegistry, PluginDiagnostic> {
@@ -823,6 +890,18 @@ fn load_lua_plugin_registry(
             commands: specs.commands,
         }));
     }
+    if !specs.ui_actions.is_empty() {
+        registry.register_ui_provider(Arc::new(LuaUiProvider {
+            metadata: metadata.clone(),
+            actions: specs.ui_actions,
+        }));
+    }
+    if !specs.keybindings.is_empty() {
+        registry.register_keybind_provider(Arc::new(LuaKeybindProvider {
+            metadata: metadata.clone(),
+            keybindings: specs.keybindings,
+        }));
+    }
     for hook in specs.hooks {
         registry.register_hook_provider(Arc::new(LuaHookProvider {
             metadata: metadata.clone(),
@@ -839,6 +918,8 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
     let tools = Arc::new(Mutex::new(Vec::new()));
     let commands = Arc::new(Mutex::new(Vec::new()));
     let hooks = Arc::new(Mutex::new(Vec::new()));
+    let ui_actions = Arc::new(Mutex::new(Vec::new()));
+    let keybindings = Arc::new(Mutex::new(Vec::new()));
     let host = lua
         .create_table()
         .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
@@ -884,6 +965,34 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
         .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
     host.set("hook", hook_fn)
         .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
+    let ui_actions_for_host = Arc::clone(&ui_actions);
+    let ui_action_fn = lua
+        .create_function(move |_lua, args: Variadic<Value>| {
+            let table = lua_definition_table(args, "ui_action")?;
+            let spec = lua_ui_action_spec_from_table(table)?;
+            ui_actions_for_host
+                .lock()
+                .map_err(|_| mlua::Error::external("Lua UI action registry lock poisoned"))?
+                .push(spec);
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua ui_action host: {error}"))?;
+    host.set("ui_action", ui_action_fn)
+        .map_err(|error| format!("failed to install Lua ui_action host: {error}"))?;
+    let keybindings_for_host = Arc::clone(&keybindings);
+    let keybind_fn = lua
+        .create_function(move |_lua, args: Variadic<Value>| {
+            let table = lua_definition_table(args, "keybind")?;
+            let spec = lua_keybind_spec_from_table(table)?;
+            keybindings_for_host
+                .lock()
+                .map_err(|_| mlua::Error::external("Lua keybind registry lock poisoned"))?
+                .push(spec);
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua keybind host: {error}"))?;
+    host.set("keybind", keybind_fn)
+        .map_err(|error| format!("failed to install Lua keybind host: {error}"))?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -912,6 +1021,14 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
         hooks: hooks
             .lock()
             .map_err(|_| "Lua hook registry lock poisoned".to_owned())?
+            .clone(),
+        ui_actions: ui_actions
+            .lock()
+            .map_err(|_| "Lua UI action registry lock poisoned".to_owned())?
+            .clone(),
+        keybindings: keybindings
+            .lock()
+            .map_err(|_| "Lua keybind registry lock poisoned".to_owned())?
             .clone(),
     })
 }
@@ -957,6 +1074,8 @@ fn run_lua_tool(
         .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
     host.set("hook", hook_fn)
         .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
+    install_lua_noop_host(&lua, &host, "ui_action")?;
+    install_lua_noop_host(&lua, &host, "keybind")?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -1035,6 +1154,8 @@ fn run_lua_command(
         .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
     host.set("hook", hook_fn)
         .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
+    install_lua_noop_host(&lua, &host, "ui_action")?;
+    install_lua_noop_host(&lua, &host, "keybind")?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -1129,6 +1250,8 @@ fn run_lua_hook(
         .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
     host.set("hook", hook_fn)
         .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
+    install_lua_noop_host(&lua, &host, "ui_action")?;
+    install_lua_noop_host(&lua, &host, "keybind")?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -1197,6 +1320,14 @@ fn create_lua() -> Result<Lua, mlua::Error> {
     )
 }
 
+fn install_lua_noop_host(lua: &Lua, host: &Table, capability: &str) -> Result<(), String> {
+    let noop_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(()))
+        .map_err(|error| format!("failed to create Lua {capability} host: {error}"))?;
+    host.set(capability, noop_fn)
+        .map_err(|error| format!("failed to install Lua {capability} host: {error}"))
+}
+
 fn lua_definition_table(args: Variadic<Value>, capability: &str) -> mlua::Result<Table> {
     args.into_iter()
         .rev()
@@ -1255,6 +1386,42 @@ fn lua_hook_spec_from_table(table: Table, index: usize) -> mlua::Result<LuaHookS
         point,
         policy,
     })
+}
+
+fn lua_ui_action_spec_from_table(table: Table) -> mlua::Result<LuaUiActionSpec> {
+    let id = required_lua_string(&table, "id", "Lua UI action")?;
+    let label = required_lua_string(&table, "label", "Lua UI action")?;
+    let description = required_lua_string(&table, "description", "Lua UI action")?;
+    let action_id = lua_action_id_from_table(&table, "Lua UI action")?;
+    Ok(LuaUiActionSpec {
+        id,
+        label,
+        description,
+        action_id,
+    })
+}
+
+fn lua_keybind_spec_from_table(table: Table) -> mlua::Result<LuaKeybindSpec> {
+    let id = required_lua_string(&table, "id", "Lua keybind")?;
+    let key = required_lua_string(&table, "key", "Lua keybind")?;
+    let description = required_lua_string(&table, "description", "Lua keybind")?;
+    let action_id = lua_action_id_from_table(&table, "Lua keybind")?;
+    Ok(LuaKeybindSpec {
+        id,
+        key,
+        description,
+        action_id,
+    })
+}
+
+fn lua_action_id_from_table(table: &Table, kind: &str) -> mlua::Result<String> {
+    let mut action_id: Option<String> = table.get("action_id")?;
+    if action_id.is_none() {
+        action_id = table.get("action")?;
+    }
+    action_id
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| mlua::Error::external(format!("{kind} action_id must not be empty")))
 }
 
 fn lua_prompt_hook_point_from_str(value: &str) -> mlua::Result<PromptHookPoint> {
