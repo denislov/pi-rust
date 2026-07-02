@@ -14,8 +14,8 @@ use serde::Deserialize;
 use super::CodingSessionError;
 use super::plugin_service::{PluginDiagnostic, PluginService};
 use crate::plugins::{
-    PluginCapabilities, PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource,
-    ToolProvider, ToolRegistrationHost,
+    CommandDefinition, CommandProvider, CommandRegistrationHost, PluginCapabilities, PluginError,
+    PluginId, PluginMetadata, PluginRegistry, PluginSource, ToolProvider, ToolRegistrationHost,
 };
 
 const DEFAULT_ACTION: &str = "default";
@@ -636,6 +636,18 @@ struct LuaToolSpec {
     input_schema: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+struct LuaCommandSpec {
+    id: String,
+    description: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct LuaPluginSpecs {
+    tools: Vec<LuaToolSpec>,
+    commands: Vec<LuaCommandSpec>,
+}
+
 struct LuaToolProvider {
     metadata: PluginMetadata,
     entry_path: PathBuf,
@@ -677,6 +689,49 @@ impl ToolProvider for LuaToolProvider {
     }
 }
 
+struct LuaCommandProvider {
+    metadata: PluginMetadata,
+    entry_path: PathBuf,
+    source: Arc<str>,
+    commands: Vec<LuaCommandSpec>,
+}
+
+impl CommandProvider for LuaCommandProvider {
+    fn metadata(&self) -> PluginMetadata {
+        self.metadata.clone()
+    }
+
+    fn commands(
+        &self,
+        _host: &CommandRegistrationHost,
+    ) -> Result<Vec<CommandDefinition>, PluginError> {
+        Ok(self
+            .commands
+            .iter()
+            .cloned()
+            .map(|spec| CommandDefinition::new(spec.id, spec.description))
+            .collect())
+    }
+
+    fn run_command(
+        &self,
+        command_id: &str,
+        args: serde_json::Value,
+    ) -> Result<String, PluginError> {
+        run_lua_command(
+            self.metadata.id.as_str(),
+            &self.entry_path,
+            &self.source,
+            command_id,
+            args,
+        )
+        .map_err(|message| PluginError::Execution {
+            plugin_id: self.metadata.id.as_str().to_owned(),
+            message,
+        })
+    }
+}
+
 fn load_lua_plugin_registry(
     manifest: &PluginLoadManifest,
 ) -> Result<PluginRegistry, PluginDiagnostic> {
@@ -695,36 +750,49 @@ fn load_lua_plugin_registry(
             entry_path.display()
         ),
     })?;
-    let tools =
-        collect_lua_tool_specs(entry_path, &source).map_err(|message| PluginDiagnostic {
+    let specs =
+        collect_lua_plugin_specs(entry_path, &source).map_err(|message| PluginDiagnostic {
             plugin_id: plugin_id.clone(),
             message,
         })?;
+    let metadata = PluginMetadata::new(
+        PluginId::new(manifest.id.clone()),
+        manifest.name.clone(),
+        manifest.version.clone(),
+        PluginSource::Lua,
+    );
+    let source: Arc<str> = Arc::from(source);
     let mut registry = PluginRegistry::new();
-    registry.register_tool_provider(Arc::new(LuaToolProvider {
-        metadata: PluginMetadata::new(
-            PluginId::new(manifest.id.clone()),
-            manifest.name.clone(),
-            manifest.version.clone(),
-            PluginSource::Lua,
-        ),
-        entry_path: entry_path.clone(),
-        source: Arc::from(source),
-        tools,
-    }));
+    if !specs.tools.is_empty() {
+        registry.register_tool_provider(Arc::new(LuaToolProvider {
+            metadata: metadata.clone(),
+            entry_path: entry_path.clone(),
+            source: Arc::clone(&source),
+            tools: specs.tools,
+        }));
+    }
+    if !specs.commands.is_empty() {
+        registry.register_command_provider(Arc::new(LuaCommandProvider {
+            metadata,
+            entry_path: entry_path.clone(),
+            source,
+            commands: specs.commands,
+        }));
+    }
     Ok(registry)
 }
 
-fn collect_lua_tool_specs(entry_path: &Path, source: &str) -> Result<Vec<LuaToolSpec>, String> {
+fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPluginSpecs, String> {
     let lua = create_lua().map_err(|error| format!("failed to create Lua runtime: {error}"))?;
     let tools = Arc::new(Mutex::new(Vec::new()));
+    let commands = Arc::new(Mutex::new(Vec::new()));
     let host = lua
         .create_table()
         .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
     let tools_for_host = Arc::clone(&tools);
     let tool_fn = lua
         .create_function(move |lua, args: Variadic<Value>| {
-            let table = lua_tool_definition_table(args)?;
+            let table = lua_definition_table(args, "tool")?;
             let spec = lua_tool_spec_from_table(lua, table)?;
             tools_for_host
                 .lock()
@@ -735,6 +803,20 @@ fn collect_lua_tool_specs(entry_path: &Path, source: &str) -> Result<Vec<LuaTool
         .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
     host.set("tool", tool_fn)
         .map_err(|error| format!("failed to install Lua tool host: {error}"))?;
+    let commands_for_host = Arc::clone(&commands);
+    let command_fn = lua
+        .create_function(move |lua, args: Variadic<Value>| {
+            let table = lua_definition_table(args, "command")?;
+            let spec = lua_command_spec_from_table(lua, table)?;
+            commands_for_host
+                .lock()
+                .map_err(|_| mlua::Error::external("Lua command registry lock poisoned"))?
+                .push(spec);
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua command host: {error}"))?;
+    host.set("command", command_fn)
+        .map_err(|error| format!("failed to install Lua command host: {error}"))?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -751,11 +833,16 @@ fn collect_lua_tool_specs(entry_path: &Path, source: &str) -> Result<Vec<LuaTool
     register
         .call::<()>(host)
         .map_err(|error| format!("Lua plugin register(host) failed: {error}"))?;
-    let collected = tools
-        .lock()
-        .map_err(|_| "Lua tool registry lock poisoned".to_owned())?
-        .clone();
-    Ok(collected)
+    Ok(LuaPluginSpecs {
+        tools: tools
+            .lock()
+            .map_err(|_| "Lua tool registry lock poisoned".to_owned())?
+            .clone(),
+        commands: commands
+            .lock()
+            .map_err(|_| "Lua command registry lock poisoned".to_owned())?
+            .clone(),
+    })
 }
 
 fn run_lua_tool(
@@ -774,8 +861,8 @@ fn run_lua_tool(
     let run_key_for_host = Arc::clone(&run_key);
     let tool_fn = lua
         .create_function(move |lua, args: Variadic<Value>| {
-            let table = lua_tool_definition_table(args)?;
-            let name = required_lua_string(&table, "name")?;
+            let table = lua_definition_table(args, "tool")?;
+            let name = required_lua_string(&table, "name", "Lua tool")?;
             if name == target_name {
                 let run: Function = table.get("run")?;
                 let key = lua.create_registry_value(run)?;
@@ -789,6 +876,11 @@ fn run_lua_tool(
         .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
     host.set("tool", tool_fn)
         .map_err(|error| format!("failed to install Lua tool host: {error}"))?;
+    let command_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(()))
+        .map_err(|error| format!("failed to create Lua command host: {error}"))?;
+    host.set("command", command_fn)
+        .map_err(|error| format!("failed to install Lua command host: {error}"))?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -819,10 +911,83 @@ fn run_lua_tool(
     let output: Value = run
         .call(lua_args)
         .map_err(|error| format!("Lua tool {tool_name} failed: {error}"))?;
-    let text = lua_tool_output_text(output)
+    let text = lua_text_output(output)
         .map_err(|error| format!("Lua tool {tool_name} returned invalid output: {error}"))?;
     lua.remove_registry_value(key)
         .map_err(|error| format!("failed to release Lua tool {tool_name}: {error}"))?;
+    Ok(text)
+}
+
+fn run_lua_command(
+    plugin_id: &str,
+    entry_path: &Path,
+    source: &str,
+    command_id: &str,
+    args: serde_json::Value,
+) -> Result<String, String> {
+    let lua = create_lua().map_err(|error| format!("failed to create Lua runtime: {error}"))?;
+    let run_key = Arc::new(Mutex::new(None));
+    let host = lua
+        .create_table()
+        .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    let tool_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(()))
+        .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
+    host.set("tool", tool_fn)
+        .map_err(|error| format!("failed to install Lua tool host: {error}"))?;
+    let target_id = command_id.to_owned();
+    let run_key_for_host = Arc::clone(&run_key);
+    let command_fn = lua
+        .create_function(move |lua, args: Variadic<Value>| {
+            let table = lua_definition_table(args, "command")?;
+            let id = lua_command_id_from_table(&table)?;
+            if id == target_id {
+                let run: Function = table.get("run")?;
+                let key = lua.create_registry_value(run)?;
+                *run_key_for_host
+                    .lock()
+                    .map_err(|_| mlua::Error::external("Lua command registry lock poisoned"))? =
+                    Some(key);
+            }
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua command host: {error}"))?;
+    host.set("command", command_fn)
+        .map_err(|error| format!("failed to install Lua command host: {error}"))?;
+    lua.load(source)
+        .set_name(entry_path.display().to_string())
+        .exec()
+        .map_err(|error| {
+            format!(
+                "failed to execute Lua plugin entry {}: {error}",
+                entry_path.display()
+            )
+        })?;
+    let register: Function = lua
+        .globals()
+        .get("register")
+        .map_err(|error| format!("Lua plugin entry must define register(host): {error}"))?;
+    register
+        .call::<()>(host)
+        .map_err(|error| format!("Lua plugin register(host) failed: {error}"))?;
+    let key = run_key
+        .lock()
+        .map_err(|_| "Lua command registry lock poisoned".to_owned())?
+        .take()
+        .ok_or_else(|| format!("Lua plugin {plugin_id} did not register command {command_id}"))?;
+    let run: Function = lua
+        .registry_value(&key)
+        .map_err(|error| format!("failed to resolve Lua command {command_id}: {error}"))?;
+    let lua_args = lua.to_value(&args).map_err(|error| {
+        format!("failed to convert command input for Lua command {command_id}: {error}")
+    })?;
+    let output: Value = run
+        .call(lua_args)
+        .map_err(|error| format!("Lua command {command_id} failed: {error}"))?;
+    let text = lua_text_output(output)
+        .map_err(|error| format!("Lua command {command_id} returned invalid output: {error}"))?;
+    lua.remove_registry_value(key)
+        .map_err(|error| format!("failed to release Lua command {command_id}: {error}"))?;
     Ok(text)
 }
 
@@ -833,19 +998,23 @@ fn create_lua() -> Result<Lua, mlua::Error> {
     )
 }
 
-fn lua_tool_definition_table(args: Variadic<Value>) -> mlua::Result<Table> {
+fn lua_definition_table(args: Variadic<Value>, capability: &str) -> mlua::Result<Table> {
     args.into_iter()
         .rev()
         .find_map(|value| match value {
             Value::Table(table) => Some(table),
             _ => None,
         })
-        .ok_or_else(|| mlua::Error::external("host.tool requires a tool definition table"))
+        .ok_or_else(|| {
+            mlua::Error::external(format!(
+                "host.{capability} requires a {capability} definition table"
+            ))
+        })
 }
 
 fn lua_tool_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<LuaToolSpec> {
-    let name = required_lua_string(&table, "name")?;
-    let description = required_lua_string(&table, "description")?;
+    let name = required_lua_string(&table, "name", "Lua tool")?;
+    let description = required_lua_string(&table, "description", "Lua tool")?;
     let schema_value: Value = table
         .get("input_schema")
         .or_else(|_| table.get("parameters"))?;
@@ -863,17 +1032,37 @@ fn lua_tool_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<LuaToolSpec
     })
 }
 
-fn required_lua_string(table: &Table, field: &str) -> mlua::Result<String> {
+fn lua_command_spec_from_table(_lua: &Lua, table: Table) -> mlua::Result<LuaCommandSpec> {
+    let id = lua_command_id_from_table(&table)?;
+    let description = required_lua_string(&table, "description", "Lua command")?;
+    let _: Function = table.get("run")?;
+    Ok(LuaCommandSpec { id, description })
+}
+
+fn lua_command_id_from_table(table: &Table) -> mlua::Result<String> {
+    table
+        .get::<String>("id")
+        .or_else(|_| table.get::<String>("name"))
+        .and_then(|value| {
+            if value.trim().is_empty() {
+                Err(mlua::Error::external("Lua command id must not be empty"))
+            } else {
+                Ok(value)
+            }
+        })
+}
+
+fn required_lua_string(table: &Table, field: &str, kind: &str) -> mlua::Result<String> {
     let value: String = table.get(field)?;
     if value.trim().is_empty() {
         return Err(mlua::Error::external(format!(
-            "Lua tool {field} must not be empty"
+            "{kind} {field} must not be empty"
         )));
     }
     Ok(value)
 }
 
-fn lua_tool_output_text(value: Value) -> mlua::Result<String> {
+fn lua_text_output(value: Value) -> mlua::Result<String> {
     match value {
         Value::String(text) => Ok(text.to_str()?.to_owned()),
         Value::Table(table) => {

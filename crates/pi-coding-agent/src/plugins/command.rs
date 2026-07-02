@@ -30,4 +30,7 @@ pub(crate) trait CommandProvider: Send + Sync {
         &self,
         host: &CommandRegistrationHost,
     ) -> Result<Vec<CommandDefinition>, PluginError>;
+
+    fn run_command(&self, command_id: &str, args: serde_json::Value)
+    -> Result<String, PluginError>;
 }

@@ -395,6 +395,60 @@ end
     }
 
     #[tokio::test]
+    async fn plugin_load_flow_loads_lua_manifest_command_provider() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-command");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-command"
+name = "Lua Command"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:command({
+    id = "lua.say_hello",
+    description = "greets from lua command",
+    run = function(input)
+      return { content = "hello " .. input.name }
+    end
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(outcome.loaded_plugin_ids, vec!["lua-command"]);
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.command_providers, 1);
+        let loaded_service = context.loaded_plugin_service().unwrap();
+        let commands = loaded_service.collect_commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].id, "lua.say_hello");
+        assert_eq!(commands[0].description, "greets from lua command");
+        let output = loaded_service
+            .run_command("lua.say_hello", serde_json::json!({"name": "pi"}))
+            .unwrap();
+        assert_eq!(output, "hello pi");
+    }
+
+    #[tokio::test]
     async fn plugin_load_flow_discovers_project_and_user_manifest_files() {
         let service = FlowService::new();
         let temp = tempfile::tempdir().unwrap();
@@ -483,6 +537,15 @@ version = "0.1.0"
                 "plugin.command",
                 "runs a plugin command",
             )])
+        }
+
+        fn run_command(
+            &self,
+            command_id: &str,
+            _args: serde_json::Value,
+        ) -> Result<String, PluginError> {
+            assert_eq!(command_id, "plugin.command");
+            Ok("plugin command".to_owned())
         }
     }
 

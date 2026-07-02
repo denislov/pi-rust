@@ -65,6 +65,38 @@ impl PluginService {
     }
 
     #[allow(dead_code)]
+    pub(crate) fn run_command(
+        &self,
+        command_id: &str,
+        args: serde_json::Value,
+    ) -> Result<String, CodingSessionError> {
+        let host = CommandRegistrationHost;
+        for provider in self.registry.command_providers() {
+            let commands = match collect_provider_commands(provider.as_ref(), &host) {
+                Ok(commands) => commands,
+                Err(error) => {
+                    self.record_plugin_error(error);
+                    continue;
+                }
+            };
+            if !commands.iter().any(|command| command.id == command_id) {
+                continue;
+            }
+            return match run_provider_command(provider.as_ref(), command_id, args.clone()) {
+                Ok(output) => Ok(output),
+                Err(error) => {
+                    let message = error.to_string();
+                    self.record_plugin_error(error);
+                    Err(CodingSessionError::Plugin { message })
+                }
+            };
+        }
+        Err(CodingSessionError::Plugin {
+            message: format!("plugin command not found: {command_id}"),
+        })
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn collect_prompt_hooks(&self) -> Vec<HookRegistration> {
         let host = HookRegistrationHost;
         let mut hooks = Vec::new();
@@ -227,6 +259,21 @@ fn collect_provider_commands(
 ) -> Result<Vec<CommandDefinition>, PluginError> {
     let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
     match catch_unwind(AssertUnwindSafe(|| provider.commands(host))) {
+        Ok(result) => result,
+        Err(panic) => Err(PluginError::Panic {
+            plugin_id,
+            message: panic_message(panic),
+        }),
+    }
+}
+
+fn run_provider_command(
+    provider: &dyn CommandProvider,
+    command_id: &str,
+    args: serde_json::Value,
+) -> Result<String, PluginError> {
+    let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+    match catch_unwind(AssertUnwindSafe(|| provider.run_command(command_id, args))) {
         Ok(result) => result,
         Err(panic) => Err(PluginError::Panic {
             plugin_id,
@@ -406,6 +453,20 @@ mod tests {
                 "Say hello from a plugin",
             )])
         }
+
+        fn run_command(
+            &self,
+            command_id: &str,
+            args: serde_json::Value,
+        ) -> Result<String, PluginError> {
+            assert_eq!(command_id, "plugin.say_hello");
+            Ok(format!(
+                "hello {}",
+                args.get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("world")
+            ))
+        }
     }
 
     struct FailingCommandProvider;
@@ -427,6 +488,51 @@ mod tests {
             Err(PluginError::Registration {
                 plugin_id: "failing-command-plugin".into(),
                 message: "command registration failed".into(),
+            })
+        }
+
+        fn run_command(
+            &self,
+            _command_id: &str,
+            _args: serde_json::Value,
+        ) -> Result<String, PluginError> {
+            Err(PluginError::Execution {
+                plugin_id: "failing-command-plugin".into(),
+                message: "command execution should not be reached".into(),
+            })
+        }
+    }
+
+    struct FailingCommandExecutionProvider;
+
+    impl CommandProvider for FailingCommandExecutionProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("failing-command-exec-plugin"),
+                "failing-command-exec-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn commands(
+            &self,
+            _host: &CommandRegistrationHost,
+        ) -> Result<Vec<CommandDefinition>, PluginError> {
+            Ok(vec![CommandDefinition::new(
+                "plugin.fail",
+                "Fails from a plugin",
+            )])
+        }
+
+        fn run_command(
+            &self,
+            _command_id: &str,
+            _args: serde_json::Value,
+        ) -> Result<String, PluginError> {
+            Err(PluginError::Execution {
+                plugin_id: "failing-command-exec-plugin".into(),
+                message: "command execution failed".into(),
             })
         }
     }
@@ -702,6 +808,41 @@ mod tests {
                 .message
                 .contains("command registration failed")
         );
+    }
+
+    #[test]
+    fn run_command_executes_registered_command_provider() {
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(StaticCommandProvider));
+        let service = PluginService::with_registry(registry);
+
+        let output = service
+            .run_command("plugin.say_hello", serde_json::json!({"name": "pi"}))
+            .unwrap();
+
+        assert_eq!(output, "hello pi");
+        assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn run_command_records_provider_execution_failure_as_diagnostic() {
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(FailingCommandExecutionProvider));
+        let service = PluginService::with_registry(registry);
+
+        let error = service
+            .run_command("plugin.fail", serde_json::json!({}))
+            .unwrap_err();
+
+        assert_eq!(error.code(), "plugin");
+        assert!(error.to_string().contains("command execution failed"));
+        let diagnostics = service.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].plugin_id.as_deref(),
+            Some("failing-command-exec-plugin")
+        );
+        assert!(diagnostics[0].message.contains("command execution failed"));
     }
 
     #[test]
