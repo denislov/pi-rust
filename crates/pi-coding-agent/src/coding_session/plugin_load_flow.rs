@@ -669,6 +669,7 @@ struct LuaDialogFieldSpec {
     kind: String,
     default_value: serde_json::Value,
     required: bool,
+    options: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -859,6 +860,7 @@ impl UiProvider for LuaUiProvider {
                             field.default_value,
                             field.required,
                         )
+                        .with_options(field.options)
                     })
                     .collect();
                 UiDialogDefinition::new(spec.id, spec.title, spec.description, spec.action_id)
@@ -1518,6 +1520,7 @@ fn lua_dialog_field_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<Lua
         lua.from_value(default_lua)?
     };
     let required = table.get::<Option<bool>>("required")?.unwrap_or(false);
+    let options = lua_dialog_field_options_from_table(&table)?;
     Ok(LuaDialogFieldSpec {
         id,
         label,
@@ -1525,7 +1528,35 @@ fn lua_dialog_field_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<Lua
         kind,
         default_value,
         required,
+        options,
     })
+}
+
+fn lua_dialog_field_options_from_table(table: &Table) -> mlua::Result<Vec<String>> {
+    let mut options_value: Value = table.get("options")?;
+    if matches!(options_value, Value::Nil) {
+        options_value = table.get("choices")?;
+    }
+    let options_table = match options_value {
+        Value::Nil => return Ok(Vec::new()),
+        Value::Table(table) => table,
+        _ => {
+            return Err(mlua::Error::external(
+                "Lua dialog field options must be an array table",
+            ));
+        }
+    };
+    let mut options = Vec::new();
+    for option in options_table.sequence_values::<String>() {
+        let option = option?;
+        if option.trim().is_empty() {
+            return Err(mlua::Error::external(
+                "Lua dialog field options must not contain empty values",
+            ));
+        }
+        options.push(option);
+    }
+    Ok(options)
 }
 
 fn lua_field_default_value(table: &Table) -> mlua::Result<Value> {

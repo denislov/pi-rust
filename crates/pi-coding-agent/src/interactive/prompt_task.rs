@@ -595,6 +595,7 @@ fn plugin_ui_dialogs(session: &CodingAgentSession) -> Vec<PluginUiDialog> {
                         field.default_value,
                         field.required,
                     )
+                    .with_options(field.options)
                 })
                 .collect();
             PluginUiDialog::new(

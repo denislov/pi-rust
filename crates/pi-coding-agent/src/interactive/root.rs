@@ -111,6 +111,7 @@ pub(super) struct PluginUiDialogField {
     pub(super) kind: String,
     pub(super) default_value: serde_json::Value,
     pub(super) required: bool,
+    pub(super) options: Vec<String>,
 }
 
 impl PluginUiDialogField {
@@ -129,7 +130,13 @@ impl PluginUiDialogField {
             kind: kind.into(),
             default_value,
             required,
+            options: Vec::new(),
         }
+    }
+
+    pub(super) fn with_options(mut self, options: Vec<String>) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -223,10 +230,15 @@ impl ActivePluginUiDialog {
 }
 
 fn plugin_dialog_initial_field_text(field: &PluginUiDialogField) -> String {
-    match &field.default_value {
+    let value = match &field.default_value {
         serde_json::Value::Null => String::new(),
         serde_json::Value::String(value) => value.clone(),
         other => other.to_string(),
+    };
+    if value.is_empty() && plugin_dialog_field_is_choice(field) {
+        field.options.first().cloned().unwrap_or(value)
+    } else {
+        value
     }
 }
 
@@ -237,7 +249,9 @@ fn plugin_dialog_form_value(field: &PluginUiDialogField, raw: &str) -> serde_jso
 
     let kind = normalized_dialog_field_kind(&field.kind);
     match kind.as_str() {
-        "text" | "string" => serde_json::Value::String(raw.to_string()),
+        "text" | "string" | "select" | "choice" | "enum" => {
+            serde_json::Value::String(raw.to_string())
+        }
         "boolean" | "bool" => plugin_dialog_bool_value(raw)
             .map(serde_json::Value::Bool)
             .unwrap_or_else(|| serde_json::Value::String(raw.to_string())),
@@ -260,10 +274,32 @@ fn plugin_dialog_field_is_bool(field: &PluginUiDialogField) -> bool {
     )
 }
 
+fn plugin_dialog_field_is_choice(field: &PluginUiDialogField) -> bool {
+    matches!(
+        normalized_dialog_field_kind(&field.kind).as_str(),
+        "select" | "choice" | "enum"
+    )
+}
+
+fn plugin_dialog_next_choice_value(field: &PluginUiDialogField, current: &str) -> Option<String> {
+    if !plugin_dialog_field_is_choice(field) || field.options.is_empty() {
+        return None;
+    }
+    let current = current.trim();
+    let next_index = field
+        .options
+        .iter()
+        .position(|option| option == current)
+        .map(|index| (index + 1) % field.options.len())
+        .unwrap_or(0);
+    field.options.get(next_index).cloned()
+}
+
 fn plugin_dialog_filtered_insert(field: &PluginUiDialogField, current: &str, text: &str) -> String {
     match normalized_dialog_field_kind(&field.kind).as_str() {
         "integer" => plugin_dialog_numeric_filtered_insert(current, text, false),
         "number" => plugin_dialog_numeric_filtered_insert(current, text, true),
+        "select" | "choice" | "enum" => String::new(),
         _ => text.to_string(),
     }
 }
@@ -330,6 +366,14 @@ fn plugin_dialog_number_value(raw: &str) -> Option<serde_json::Number> {
         .parse::<f64>()
         .ok()
         .and_then(serde_json::Number::from_f64)
+}
+
+fn plugin_dialog_field_kind_label(field: &PluginUiDialogField) -> String {
+    if plugin_dialog_field_is_choice(field) && !field.options.is_empty() {
+        format!("{}: {}", field.kind, field.options.join("/"))
+    } else {
+        field.kind.clone()
+    }
 }
 
 fn normalized_dialog_field_kind(kind: &str) -> String {
@@ -848,6 +892,9 @@ impl InteractiveRoot {
                             "true".to_string()
                         };
                         field_changed = true;
+                    } else if let Some(next_value) = plugin_dialog_next_choice_value(field, value) {
+                        *value = next_value;
+                        field_changed = true;
                     } else {
                         let inserted = plugin_dialog_filtered_insert(field, value, " ");
                         if !inserted.is_empty() {
@@ -915,11 +962,9 @@ impl InteractiveRoot {
                 .get(index)
                 .map(|value| value.replace('\n', "\\n"))
                 .unwrap_or_default();
+            let kind = plugin_dialog_field_kind_label(field);
             lines.push(fit_line(
-                &format!(
-                    "{prefix} {}{} [{}]: {value}",
-                    field.label, required, field.kind
-                ),
+                &format!("{prefix} {}{} [{kind}]: {value}", field.label, required),
                 width,
             ));
             if active_dialog

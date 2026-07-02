@@ -36,6 +36,7 @@ pub(crate) struct UiDialogFieldDefinition {
     pub(crate) kind: String,
     pub(crate) default_value: serde_json::Value,
     pub(crate) required: bool,
+    pub(crate) options: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -55,7 +56,13 @@ impl UiDialogFieldDefinition {
             kind: kind.into(),
             default_value,
             required,
+            options: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_options(mut self, options: Vec<String>) -> Self {
+        self.options = options;
+        self
     }
 }
 

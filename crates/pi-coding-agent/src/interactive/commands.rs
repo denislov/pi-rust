@@ -328,6 +328,22 @@ fn validate_plugin_dialog_field(
         "boolean" | "bool" => value.is_boolean(),
         "number" => value.is_number(),
         "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "select" | "choice" | "enum" => {
+            let Some(selected) = value.as_str() else {
+                return Err(format!(
+                    "Plugin dialog field {} must be {}",
+                    field.label, field.kind
+                ));
+            };
+            if !field.options.is_empty() && !field.options.iter().any(|option| option == selected) {
+                return Err(format!(
+                    "Plugin dialog field {} must be one of: {}",
+                    field.label,
+                    field.options.join(", ")
+                ));
+            }
+            true
+        }
         _ => true,
     };
     if valid_type {
