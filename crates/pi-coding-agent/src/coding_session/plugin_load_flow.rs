@@ -14,8 +14,10 @@ use serde::Deserialize;
 use super::CodingSessionError;
 use super::plugin_service::{PluginDiagnostic, PluginService};
 use crate::plugins::{
-    CommandDefinition, CommandProvider, CommandRegistrationHost, PluginCapabilities, PluginError,
-    PluginId, PluginMetadata, PluginRegistry, PluginSource, ToolProvider, ToolRegistrationHost,
+    CommandDefinition, CommandProvider, CommandRegistrationHost, HookDiagnostic, HookFailurePolicy,
+    HookOutcome, HookProvider, HookRegistration, HookRegistrationHost, PluginCapabilities,
+    PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource, PromptHookContext,
+    PromptHookPoint, ToolProvider, ToolRegistrationHost,
 };
 
 const DEFAULT_ACTION: &str = "default";
@@ -642,10 +644,18 @@ struct LuaCommandSpec {
     description: String,
 }
 
+#[derive(Debug, Clone)]
+struct LuaHookSpec {
+    index: usize,
+    point: PromptHookPoint,
+    policy: HookFailurePolicy,
+}
+
 #[derive(Debug, Clone, Default)]
 struct LuaPluginSpecs {
     tools: Vec<LuaToolSpec>,
     commands: Vec<LuaCommandSpec>,
+    hooks: Vec<LuaHookSpec>,
 }
 
 struct LuaToolProvider {
@@ -732,6 +742,40 @@ impl CommandProvider for LuaCommandProvider {
     }
 }
 
+struct LuaHookProvider {
+    metadata: PluginMetadata,
+    entry_path: PathBuf,
+    source: Arc<str>,
+    hook: LuaHookSpec,
+}
+
+impl HookProvider for LuaHookProvider {
+    fn metadata(&self) -> PluginMetadata {
+        self.metadata.clone()
+    }
+
+    fn hooks(&self, _host: &HookRegistrationHost) -> Result<Vec<HookRegistration>, PluginError> {
+        Ok(vec![HookRegistration {
+            point: self.hook.point,
+            policy: self.hook.policy,
+        }])
+    }
+
+    fn run_hook(&self, ctx: &PromptHookContext) -> Result<HookOutcome, PluginError> {
+        run_lua_hook(
+            self.metadata.id.as_str(),
+            &self.entry_path,
+            &self.source,
+            &self.hook,
+            ctx,
+        )
+        .map_err(|message| PluginError::Execution {
+            plugin_id: self.metadata.id.as_str().to_owned(),
+            message,
+        })
+    }
+}
+
 fn load_lua_plugin_registry(
     manifest: &PluginLoadManifest,
 ) -> Result<PluginRegistry, PluginDiagnostic> {
@@ -773,10 +817,18 @@ fn load_lua_plugin_registry(
     }
     if !specs.commands.is_empty() {
         registry.register_command_provider(Arc::new(LuaCommandProvider {
-            metadata,
+            metadata: metadata.clone(),
             entry_path: entry_path.clone(),
-            source,
+            source: Arc::clone(&source),
             commands: specs.commands,
+        }));
+    }
+    for hook in specs.hooks {
+        registry.register_hook_provider(Arc::new(LuaHookProvider {
+            metadata: metadata.clone(),
+            entry_path: entry_path.clone(),
+            source: Arc::clone(&source),
+            hook,
         }));
     }
     Ok(registry)
@@ -786,6 +838,7 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
     let lua = create_lua().map_err(|error| format!("failed to create Lua runtime: {error}"))?;
     let tools = Arc::new(Mutex::new(Vec::new()));
     let commands = Arc::new(Mutex::new(Vec::new()));
+    let hooks = Arc::new(Mutex::new(Vec::new()));
     let host = lua
         .create_table()
         .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
@@ -817,6 +870,20 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
         .map_err(|error| format!("failed to create Lua command host: {error}"))?;
     host.set("command", command_fn)
         .map_err(|error| format!("failed to install Lua command host: {error}"))?;
+    let hooks_for_host = Arc::clone(&hooks);
+    let hook_fn = lua
+        .create_function(move |_lua, args: Variadic<Value>| {
+            let table = lua_definition_table(args, "hook")?;
+            let mut hooks = hooks_for_host
+                .lock()
+                .map_err(|_| mlua::Error::external("Lua hook registry lock poisoned"))?;
+            let spec = lua_hook_spec_from_table(table, hooks.len())?;
+            hooks.push(spec);
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
+    host.set("hook", hook_fn)
+        .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -841,6 +908,10 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
         commands: commands
             .lock()
             .map_err(|_| "Lua command registry lock poisoned".to_owned())?
+            .clone(),
+        hooks: hooks
+            .lock()
+            .map_err(|_| "Lua hook registry lock poisoned".to_owned())?
             .clone(),
     })
 }
@@ -881,6 +952,11 @@ fn run_lua_tool(
         .map_err(|error| format!("failed to create Lua command host: {error}"))?;
     host.set("command", command_fn)
         .map_err(|error| format!("failed to install Lua command host: {error}"))?;
+    let hook_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(()))
+        .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
+    host.set("hook", hook_fn)
+        .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -954,6 +1030,11 @@ fn run_lua_command(
         .map_err(|error| format!("failed to create Lua command host: {error}"))?;
     host.set("command", command_fn)
         .map_err(|error| format!("failed to install Lua command host: {error}"))?;
+    let hook_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(()))
+        .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
+    host.set("hook", hook_fn)
+        .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
         .exec()
@@ -989,6 +1070,124 @@ fn run_lua_command(
     lua.remove_registry_value(key)
         .map_err(|error| format!("failed to release Lua command {command_id}: {error}"))?;
     Ok(text)
+}
+
+fn run_lua_hook(
+    plugin_id: &str,
+    entry_path: &Path,
+    source: &str,
+    spec: &LuaHookSpec,
+    ctx: &PromptHookContext,
+) -> Result<HookOutcome, String> {
+    let lua = create_lua().map_err(|error| format!("failed to create Lua runtime: {error}"))?;
+    let run_key = Arc::new(Mutex::new(None));
+    let seen_hooks = Arc::new(Mutex::new(0usize));
+    let host = lua
+        .create_table()
+        .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    let tool_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(()))
+        .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
+    host.set("tool", tool_fn)
+        .map_err(|error| format!("failed to install Lua tool host: {error}"))?;
+    let command_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(()))
+        .map_err(|error| format!("failed to create Lua command host: {error}"))?;
+    host.set("command", command_fn)
+        .map_err(|error| format!("failed to install Lua command host: {error}"))?;
+    let target_index = spec.index;
+    let target_point = spec.point;
+    let run_key_for_host = Arc::clone(&run_key);
+    let seen_hooks_for_host = Arc::clone(&seen_hooks);
+    let hook_fn = lua
+        .create_function(move |lua, args: Variadic<Value>| {
+            let table = lua_definition_table(args, "hook")?;
+            let current_index = {
+                let mut seen_hooks = seen_hooks_for_host
+                    .lock()
+                    .map_err(|_| mlua::Error::external("Lua hook registry lock poisoned"))?;
+                let current_index = *seen_hooks;
+                *seen_hooks += 1;
+                current_index
+            };
+            let hook_spec = lua_hook_spec_from_table(table.clone(), current_index)?;
+            if current_index == target_index {
+                if hook_spec.point != target_point {
+                    return Err(mlua::Error::external(
+                        "Lua hook registration changed while running",
+                    ));
+                }
+                let run: Function = table.get("run")?;
+                let key = lua.create_registry_value(run)?;
+                *run_key_for_host
+                    .lock()
+                    .map_err(|_| mlua::Error::external("Lua hook registry lock poisoned"))? =
+                    Some(key);
+            }
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua hook host: {error}"))?;
+    host.set("hook", hook_fn)
+        .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
+    lua.load(source)
+        .set_name(entry_path.display().to_string())
+        .exec()
+        .map_err(|error| {
+            format!(
+                "failed to execute Lua plugin entry {}: {error}",
+                entry_path.display()
+            )
+        })?;
+    let register: Function = lua
+        .globals()
+        .get("register")
+        .map_err(|error| format!("Lua plugin entry must define register(host): {error}"))?;
+    register
+        .call::<()>(host)
+        .map_err(|error| format!("Lua plugin register(host) failed: {error}"))?;
+    let key = run_key
+        .lock()
+        .map_err(|_| "Lua hook registry lock poisoned".to_owned())?
+        .take()
+        .ok_or_else(|| {
+            format!(
+                "Lua plugin {plugin_id} did not register hook {}",
+                prompt_hook_point_name(spec.point)
+            )
+        })?;
+    let run: Function = lua.registry_value(&key).map_err(|error| {
+        format!(
+            "failed to resolve Lua hook {}: {error}",
+            prompt_hook_point_name(spec.point)
+        )
+    })?;
+    let lua_ctx = lua
+        .to_value(&lua_prompt_hook_context(ctx))
+        .map_err(|error| {
+            format!(
+                "failed to convert hook context for Lua hook {}: {error}",
+                prompt_hook_point_name(spec.point)
+            )
+        })?;
+    let output: Value = run.call(lua_ctx).map_err(|error| {
+        format!(
+            "Lua hook {} failed: {error}",
+            prompt_hook_point_name(spec.point)
+        )
+    })?;
+    let outcome = lua_hook_outcome(output).map_err(|error| {
+        format!(
+            "Lua hook {} returned invalid output: {error}",
+            prompt_hook_point_name(spec.point)
+        )
+    })?;
+    lua.remove_registry_value(key).map_err(|error| {
+        format!(
+            "failed to release Lua hook {}: {error}",
+            prompt_hook_point_name(spec.point)
+        )
+    })?;
+    Ok(outcome)
 }
 
 fn create_lua() -> Result<Lua, mlua::Error> {
@@ -1037,6 +1236,148 @@ fn lua_command_spec_from_table(_lua: &Lua, table: Table) -> mlua::Result<LuaComm
     let description = required_lua_string(&table, "description", "Lua command")?;
     let _: Function = table.get("run")?;
     Ok(LuaCommandSpec { id, description })
+}
+
+fn lua_hook_spec_from_table(table: Table, index: usize) -> mlua::Result<LuaHookSpec> {
+    let point_name = required_lua_string(&table, "point", "Lua hook")?;
+    let point = lua_prompt_hook_point_from_str(&point_name)?;
+    let mut policy_name: Option<String> = table.get("policy")?;
+    if policy_name.is_none() {
+        policy_name = table.get("failure_policy")?;
+    }
+    let policy = match policy_name.as_deref() {
+        Some(policy_name) => lua_hook_failure_policy_from_str(policy_name)?,
+        None => HookFailurePolicy::FailOpen,
+    };
+    let _: Function = table.get("run")?;
+    Ok(LuaHookSpec {
+        index,
+        point,
+        policy,
+    })
+}
+
+fn lua_prompt_hook_point_from_str(value: &str) -> mlua::Result<PromptHookPoint> {
+    match normalize_lua_name(value).as_str() {
+        "before_prompt_prepare" => Ok(PromptHookPoint::BeforePromptPrepare),
+        "after_input_prepared" => Ok(PromptHookPoint::AfterInputPrepared),
+        "after_resources_loaded" => Ok(PromptHookPoint::AfterResourcesLoaded),
+        "before_agent_turn" => Ok(PromptHookPoint::BeforeAgentTurn),
+        "after_agent_turn" => Ok(PromptHookPoint::AfterAgentTurn),
+        "before_session_commit" => Ok(PromptHookPoint::BeforeSessionCommit),
+        "after_session_commit" => Ok(PromptHookPoint::AfterSessionCommit),
+        other => Err(mlua::Error::external(format!(
+            "unsupported Lua hook point: {other}"
+        ))),
+    }
+}
+
+fn lua_hook_failure_policy_from_str(value: &str) -> mlua::Result<HookFailurePolicy> {
+    match normalize_lua_name(value).as_str() {
+        "fail_open" => Ok(HookFailurePolicy::FailOpen),
+        "fail_closed" => Ok(HookFailurePolicy::FailClosed),
+        other => Err(mlua::Error::external(format!(
+            "unsupported Lua hook failure policy: {other}"
+        ))),
+    }
+}
+
+fn normalize_lua_name(value: &str) -> String {
+    value
+        .trim()
+        .replace('-', "_")
+        .replace('.', "_")
+        .to_ascii_lowercase()
+}
+
+fn prompt_hook_point_name(point: PromptHookPoint) -> &'static str {
+    match point {
+        PromptHookPoint::BeforePromptPrepare => "before_prompt_prepare",
+        PromptHookPoint::AfterInputPrepared => "after_input_prepared",
+        PromptHookPoint::AfterResourcesLoaded => "after_resources_loaded",
+        PromptHookPoint::BeforeAgentTurn => "before_agent_turn",
+        PromptHookPoint::AfterAgentTurn => "after_agent_turn",
+        PromptHookPoint::BeforeSessionCommit => "before_session_commit",
+        PromptHookPoint::AfterSessionCommit => "after_session_commit",
+    }
+}
+
+fn lua_prompt_hook_context(ctx: &PromptHookContext) -> serde_json::Value {
+    serde_json::json!({
+        "operation_id": &ctx.operation_id,
+        "turn_id": &ctx.turn_id,
+        "session_id": &ctx.session_id,
+        "point": prompt_hook_point_name(ctx.point),
+    })
+}
+
+fn lua_hook_outcome(value: Value) -> mlua::Result<HookOutcome> {
+    let mut diagnostics = Vec::new();
+    match value {
+        Value::Nil => {}
+        Value::String(message) => {
+            push_lua_hook_diagnostic(&mut diagnostics, message.to_str()?.to_owned())?
+        }
+        Value::Table(table) => {
+            if let Some(message) = table.get::<Option<String>>("diagnostic")? {
+                push_lua_hook_diagnostic(&mut diagnostics, message)?;
+            }
+            if let Some(message) = table.get::<Option<String>>("message")? {
+                push_lua_hook_diagnostic(&mut diagnostics, message)?;
+            }
+            if let Some(value) = table.get::<Option<Value>>("diagnostics")? {
+                push_lua_hook_diagnostics_value(&mut diagnostics, value)?;
+            }
+        }
+        other => {
+            return Err(mlua::Error::external(format!(
+                "expected nil, string, or table hook output, got {}",
+                other.type_name()
+            )));
+        }
+    }
+    Ok(HookOutcome { diagnostics })
+}
+
+fn push_lua_hook_diagnostics_value(
+    diagnostics: &mut Vec<HookDiagnostic>,
+    value: Value,
+) -> mlua::Result<()> {
+    match value {
+        Value::Nil => Ok(()),
+        Value::String(message) => {
+            push_lua_hook_diagnostic(diagnostics, message.to_str()?.to_owned())
+        }
+        Value::Table(table) => {
+            if let Some(message) = table.get::<Option<String>>("message")? {
+                return push_lua_hook_diagnostic(diagnostics, message);
+            }
+            if let Some(message) = table.get::<Option<String>>("content")? {
+                return push_lua_hook_diagnostic(diagnostics, message);
+            }
+            for item in table.sequence_values::<Value>() {
+                push_lua_hook_diagnostics_value(diagnostics, item?)?;
+            }
+            Ok(())
+        }
+        other => Err(mlua::Error::external(format!(
+            "expected string or table hook diagnostic, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn push_lua_hook_diagnostic(
+    diagnostics: &mut Vec<HookDiagnostic>,
+    message: String,
+) -> mlua::Result<()> {
+    if message.trim().is_empty() {
+        return Err(mlua::Error::external(
+            "Lua hook diagnostic message must not be empty",
+        ));
+    }
+    diagnostics.push(HookDiagnostic { message });
+    Ok(())
 }
 
 fn lua_command_id_from_table(table: &Table) -> mlua::Result<String> {

@@ -127,8 +127,9 @@ mod tests {
     use crate::coding_session::session_log::replay::SessionReplay;
     use crate::coding_session::session_log::store::{CreateSessionOptions, SessionLogStore};
     use crate::plugins::{
-        CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginRegistry,
-        PluginSource, ToolProvider, ToolRegistrationHost,
+        CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy,
+        PluginError, PluginRegistry, PluginSource, PromptHookContext, PromptHookPoint,
+        ToolProvider, ToolRegistrationHost,
     };
     use crate::prompt_options::PromptRunOptions;
     use crate::runtime::PromptInvocation;
@@ -446,6 +447,74 @@ end
             .run_command("lua.say_hello", serde_json::json!({"name": "pi"}))
             .unwrap();
         assert_eq!(output, "hello pi");
+    }
+
+    #[tokio::test]
+    async fn plugin_load_flow_loads_lua_manifest_hook_provider() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-hook");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-hook"
+name = "Lua Hook"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:hook({
+    point = "before_agent_turn",
+    policy = "fail_open",
+    run = function(ctx)
+      return { diagnostics = { "lua hook saw " .. ctx.point .. " for " .. ctx.operation_id } }
+    end
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(outcome.loaded_plugin_ids, vec!["lua-hook"]);
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.hook_providers, 1);
+        let loaded_service = context.loaded_plugin_service().unwrap();
+        let hooks = loaded_service.collect_prompt_hooks();
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].point, PromptHookPoint::BeforeAgentTurn);
+        assert_eq!(hooks[0].policy, HookFailurePolicy::FailOpen);
+
+        let diagnostics = loaded_service
+            .run_prompt_hook(
+                PromptHookPoint::BeforeAgentTurn,
+                PromptHookContext {
+                    operation_id: "op_1".to_owned(),
+                    turn_id: "turn_1".to_owned(),
+                    session_id: Some("session_1".to_owned()),
+                    point: PromptHookPoint::BeforeAgentTurn,
+                },
+            )
+            .unwrap();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "lua hook saw before_agent_turn for op_1"
+        );
+        assert_eq!(diagnostics[0].code.as_deref(), Some("plugin_hook"));
     }
 
     #[tokio::test]
