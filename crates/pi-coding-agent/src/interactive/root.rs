@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 
 use pi_ai::types::Model;
 use pi_tui::{
-    Component, ERROR, Editor, InputEvent, KeybindingsManager, MarkdownTheme, STATUS_IDLE,
-    STATUS_RUNNING, SYSTEM, SettingItem, SettingsList, SettingsListOptions, Style, TUI_KEYBINDINGS,
-    TuiTheme, color_enabled, dark_theme, light_theme, matches_key, paint_with, truncate_to_width,
-    truncate_to_width_with_ellipsis, visible_width,
+    Component, ERROR, Editor, InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager,
+    MarkdownTheme, STATUS_IDLE, STATUS_RUNNING, SYSTEM, SettingItem, SettingsList,
+    SettingsListOptions, Style, TUI_KEYBINDINGS, TuiTheme, color_enabled, dark_theme, light_theme,
+    matches_key, paint_with, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
 };
 
 use crate::config::{AuthStore, Settings};
@@ -143,6 +143,127 @@ pub(super) struct PendingPluginUiDialog {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ActivePluginUiDialog {
+    pub(super) dialog: PendingPluginUiDialog,
+    pub(super) values: Vec<String>,
+    pub(super) selected_field: usize,
+}
+
+impl ActivePluginUiDialog {
+    pub(super) fn new(dialog: PendingPluginUiDialog) -> Self {
+        let values = dialog
+            .fields
+            .iter()
+            .map(plugin_dialog_initial_field_text)
+            .collect();
+        Self {
+            dialog,
+            values,
+            selected_field: 0,
+        }
+    }
+
+    fn selected_field_mut(&mut self) -> Option<(&PluginUiDialogField, &mut String)> {
+        let field = self.dialog.fields.get(self.selected_field)?;
+        let value = self.values.get_mut(self.selected_field)?;
+        Some((field, value))
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let len = self.dialog.fields.len();
+        if len == 0 {
+            self.selected_field = 0;
+            return;
+        }
+        let current = self.selected_field.min(len - 1) as isize;
+        let next = (current + delta).rem_euclid(len as isize) as usize;
+        self.selected_field = next;
+    }
+
+    fn args_json(&self) -> serde_json::Value {
+        let mut args = serde_json::Map::new();
+        for (index, field) in self.dialog.fields.iter().enumerate() {
+            let raw = self
+                .values
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or_default();
+            args.insert(field.id.clone(), plugin_dialog_form_value(field, raw));
+        }
+        serde_json::Value::Object(args)
+    }
+}
+
+fn plugin_dialog_initial_field_text(field: &PluginUiDialogField) -> String {
+    match &field.default_value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(value) => value.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn plugin_dialog_form_value(field: &PluginUiDialogField, raw: &str) -> serde_json::Value {
+    if !field.default_value.is_null() && raw == plugin_dialog_initial_field_text(field) {
+        return field.default_value.clone();
+    }
+
+    let kind = normalized_dialog_field_kind(&field.kind);
+    match kind.as_str() {
+        "text" | "string" => serde_json::Value::String(raw.to_string()),
+        "boolean" | "bool" => plugin_dialog_bool_value(raw)
+            .map(serde_json::Value::Bool)
+            .unwrap_or_else(|| serde_json::Value::String(raw.to_string())),
+        "integer" => plugin_dialog_integer_value(raw)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(raw.to_string())),
+        "number" => plugin_dialog_number_value(raw)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(raw.to_string())),
+        _ => {
+            serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+        }
+    }
+}
+
+fn plugin_dialog_field_is_bool(field: &PluginUiDialogField) -> bool {
+    matches!(
+        normalized_dialog_field_kind(&field.kind).as_str(),
+        "boolean" | "bool"
+    )
+}
+
+fn plugin_dialog_bool_value(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn plugin_dialog_integer_value(raw: &str) -> Option<serde_json::Number> {
+    let trimmed = raw.trim();
+    if let Ok(value) = trimmed.parse::<i64>() {
+        return Some(value.into());
+    }
+    trimmed.parse::<u64>().ok().map(Into::into)
+}
+
+fn plugin_dialog_number_value(raw: &str) -> Option<serde_json::Number> {
+    let trimmed = raw.trim();
+    if let Some(integer) = plugin_dialog_integer_value(trimmed) {
+        return Some(integer);
+    }
+    trimmed
+        .parse::<f64>()
+        .ok()
+        .and_then(serde_json::Number::from_f64)
+}
+
+fn normalized_dialog_field_kind(kind: &str) -> String {
+    kind.trim().replace('-', "_").to_ascii_lowercase()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PluginUiAction {
     pub(super) id: String,
     pub(super) label: String,
@@ -253,7 +374,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
-    pub(super) active_plugin_ui_dialog: Option<PendingPluginUiDialog>,
+    pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -328,6 +449,7 @@ pub(super) struct InteractiveRenderState {
     model_selection_selected: usize,
     selecting_session: bool,
     session_selection_selected: usize,
+    active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
 }
 
 impl InteractiveRoot {
@@ -554,6 +676,135 @@ impl InteractiveRoot {
 
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
         self.scroll_command.lock().unwrap().take()
+    }
+
+    pub(super) fn has_active_plugin_ui_dialog(&self) -> bool {
+        self.active_plugin_ui_dialog.is_some()
+    }
+
+    pub(super) fn handle_plugin_dialog_form_input(&mut self, event: &InputEvent) -> bool {
+        if self.active_plugin_ui_dialog.is_none() {
+            return false;
+        }
+        let InputEvent::Key(key_event) = event else {
+            return true;
+        };
+        if key_event.kind == KeyEventKind::Release {
+            return true;
+        }
+
+        if matches_key(event, "escape") || matches_key(event, "ctrl+c") {
+            self.active_plugin_ui_dialog = None;
+            self.editor.set_text("");
+            self.transcript
+                .push(TranscriptItem::system("Plugin dialog canceled"));
+            return true;
+        }
+        if matches_key(event, "enter") {
+            self.submit_active_plugin_dialog_form();
+            return true;
+        }
+
+        let Some(active_dialog) = self.active_plugin_ui_dialog.as_mut() else {
+            return true;
+        };
+        if active_dialog.dialog.fields.is_empty() {
+            return true;
+        }
+
+        match &key_event.key {
+            Key::Tab => {
+                if key_event.modifiers.contains(KeyModifiers::SHIFT) {
+                    active_dialog.move_selection(-1);
+                } else {
+                    active_dialog.move_selection(1);
+                }
+            }
+            Key::Down => active_dialog.move_selection(1),
+            Key::Up => active_dialog.move_selection(-1),
+            Key::Backspace => {
+                if let Some((_, value)) = active_dialog.selected_field_mut() {
+                    value.pop();
+                }
+            }
+            Key::Delete => {
+                if let Some((_, value)) = active_dialog.selected_field_mut() {
+                    value.clear();
+                }
+            }
+            Key::Space
+                if !key_event
+                    .modifiers
+                    .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
+            {
+                if let Some((field, value)) = active_dialog.selected_field_mut() {
+                    if plugin_dialog_field_is_bool(field) {
+                        *value = if value.trim().eq_ignore_ascii_case("true") {
+                            "false".to_string()
+                        } else {
+                            "true".to_string()
+                        };
+                    } else {
+                        value.push(' ');
+                    }
+                }
+            }
+            Key::Char(text)
+                if !key_event
+                    .modifiers
+                    .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
+            {
+                if let Some((_, value)) = active_dialog.selected_field_mut() {
+                    value.push_str(text);
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    fn submit_active_plugin_dialog_form(&mut self) {
+        let Some(active_dialog) = self.active_plugin_ui_dialog.as_ref() else {
+            return;
+        };
+        let action_id = active_dialog.dialog.action_id.clone();
+        let args = active_dialog.args_json();
+        let raw_args = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+        self.editor
+            .set_text(format!("/plugin-command {action_id} {raw_args}"));
+        commands::queue_plugin_command(self, &action_id, &raw_args);
+    }
+
+    pub(super) fn render_plugin_dialog_form(&self, width: usize) -> Vec<String> {
+        let Some(active_dialog) = &self.active_plugin_ui_dialog else {
+            return Vec::new();
+        };
+        let mut lines = Vec::new();
+        if active_dialog.dialog.fields.is_empty() {
+            lines.push(fit_line("Plugin dialog has no fields", width));
+            return lines;
+        }
+        for (index, field) in active_dialog.dialog.fields.iter().enumerate() {
+            let prefix = if index == active_dialog.selected_field {
+                ">"
+            } else {
+                " "
+            };
+            let required = if field.required { " *" } else { "" };
+            let value = active_dialog
+                .values
+                .get(index)
+                .map(|value| value.replace('\n', "\\n"))
+                .unwrap_or_default();
+            lines.push(fit_line(
+                &format!(
+                    "{prefix} {}{} [{}]: {value}",
+                    field.label, required, field.kind
+                ),
+                width,
+            ));
+        }
+        lines
     }
 
     pub(super) fn apply_prompt_context(&mut self, prompt_context: &PromptContext) {
@@ -1114,6 +1365,7 @@ impl InteractiveRoot {
             model_selection_selected: self.model_selection_selected,
             selecting_session: self.selecting_session,
             session_selection_selected: self.session_selection_selected,
+            active_plugin_ui_dialog: self.active_plugin_ui_dialog.clone(),
         }
     }
 
@@ -1588,6 +1840,8 @@ impl Component for InteractiveRoot {
             lines.extend(self.render_session_selector(width));
         } else if self.selecting_settings {
             lines.extend(self.render_settings_menu(width));
+        } else if self.active_plugin_ui_dialog.is_some() {
+            lines.extend(self.render_plugin_dialog_form(width));
         } else {
             lines.extend(self.render_slash_suggestions(width));
         }

@@ -15,8 +15,9 @@ use crate::interactive::app::{
 use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{
-    InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
-    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog, PluginUiDialogField,
+    ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
+    PendingBranchSummaryRequest, PendingPluginCommandRequest, PendingPluginUiAction,
+    PendingPluginUiDialog, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
@@ -961,7 +962,7 @@ fn dispatch_plugin_ui_dialog<T: Terminal>(
     } else {
         format!(" - {}", dialog.description)
     };
-    root.active_plugin_ui_dialog = Some(dialog.clone());
+    root.active_plugin_ui_dialog = Some(ActivePluginUiDialog::new(dialog.clone()));
     root.transcript.push(TranscriptItem::system(format!(
         "Plugin UI dialog {}: {}{}",
         dialog.dialog_id, dialog.title, description

@@ -228,7 +228,7 @@ fn handle_plugin_slash_command(root: &mut InteractiveRoot, command_id: &str, arg
     queue_plugin_command(root, command_id, args.trim());
 }
 
-fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str, raw_args: &str) {
+pub(super) fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str, raw_args: &str) {
     if root.status == InteractiveStatus::Running {
         root.transcript.push(TranscriptItem::system(
             "Wait for the current run to finish before running a plugin command.",
@@ -250,7 +250,8 @@ fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str, raw_args: 
         }
     };
 
-    if let Some(dialog) = root.active_plugin_ui_dialog.clone() {
+    if let Some(active_dialog) = root.active_plugin_ui_dialog.clone() {
+        let dialog = active_dialog.dialog;
         if dialog.action_id == command_id {
             if let Err(message) = validate_plugin_dialog_args(&dialog, &parsed_args) {
                 root.transcript.push(TranscriptItem::system(message));

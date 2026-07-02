@@ -68,6 +68,13 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         return;
     }
 
+    if root.status == InteractiveStatus::Idle
+        && root.has_active_plugin_ui_dialog()
+        && root.handle_plugin_dialog_form_input(event)
+    {
+        return;
+    }
+
     if matches_key(event, "ctrl+c") || matches_key(event, "escape") {
         match root.status {
             InteractiveStatus::Running => {
