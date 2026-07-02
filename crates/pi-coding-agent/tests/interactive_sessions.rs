@@ -143,6 +143,48 @@ async fn interactive_tree_navigation_forks_to_selected_rust_native_leaf() {
 }
 
 #[tokio::test]
+async fn interactive_tree_navigation_summarizes_abandoned_leaf_before_forking() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::with_call_queue(vec![
+        FauxProvider::text_call("first answer", StopReason::Stop),
+        FauxProvider::text_call("second answer", StopReason::Stop),
+        FauxProvider::text_call("model branch summary", StopReason::Stop),
+    ]);
+
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("first prompt\r", "first answer"),
+            ("second prompt\r", "second answer"),
+            ("/tree\r\x1b[A\r", "model branch summary"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let frame = result.rendered_lines.join("\n");
+    assert!(frame.contains("Navigated to selected point"), "{frame}");
+    assert!(frame.contains("model branch summary"), "{frame}");
+
+    let sessions = rust_session_dirs(temp.path());
+    assert_eq!(sessions.len(), 2);
+    let event_logs = sessions
+        .iter()
+        .map(|session| std::fs::read_to_string(session.join("events.jsonl")).unwrap())
+        .collect::<Vec<_>>();
+    let forked = event_logs
+        .iter()
+        .find(|events| events.contains(r#""kind":"session.forked""#))
+        .expect("forked session should record provenance");
+    assert!(
+        forked.contains(r#""kind":"branch.summary.created""#),
+        "{forked}"
+    );
+    assert!(forked.contains("model branch summary"), "{forked}");
+}
+
+#[tokio::test]
 async fn interactive_mode_continues_same_session_across_prompts() {
     let temp = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![

@@ -1,6 +1,6 @@
 # Rust-Native Session Format
 
-Last verified: 2026-07-01
+Last verified: 2026-07-02
 
 This document records the current `pi-coding-agent` session persistence format. It describes the Rust-native product session log, not the legacy TypeScript `pi` session JSONL format.
 
@@ -160,6 +160,8 @@ Current product behavior depends on these invariants:
 - `active_leaf.changed` updates replay's active leaf and is used by tree view and branch-summary range selection to model same-session branch returns.
 - Failed or aborted operations must not advance the active leaf.
 - Fork/clone/tree/compact/branch-summary actions use `SessionService` replay and leaf metadata instead of legacy JSONL assumptions; `/branch-summary <source-leaf-id> <target-leaf-id> [instructions]` persists a provider summary for the selected abandoned leaf range through the configured runtime model.
+- Fork/clone copies committed history through the selected leaf. If a later complete branch-summary operation targets that leaf, the copy includes the operation boundary plus `branch.summary.created` event so replay hydrates the summary without copying abandoned prompt history.
+- Interactive `/tree` navigation that leaves a different active leaf first summarizes the abandoned active branch, then forks to the selected target leaf with the created summary available in the new session transcript.
 - Product paths should reject or ignore legacy TypeScript JSONL rather than silently importing it into this schema.
 
 ## Versioning Guidance

@@ -186,6 +186,22 @@ impl CodingAgentSession {
         }
     }
 
+    pub(crate) fn fork_current_session(
+        &self,
+        target_leaf_id: Option<&str>,
+    ) -> Result<Self, CodingSessionError> {
+        match &self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                Self::from_services(session_service.fork_current(target_leaf_id)?)
+            }
+            SessionPersistence::NonPersistent(_) => {
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability: "fork requires a persistent Rust-native session".into(),
+                })
+            }
+        }
+    }
+
     pub fn subscribe(&self) -> CodingAgentEventReceiver {
         self.event_service.subscribe()
     }

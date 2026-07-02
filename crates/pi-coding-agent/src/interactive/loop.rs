@@ -706,6 +706,11 @@ fn handle_input_event<T: Terminal>(
     }
 
     // Process tree navigation.
+    let mut tree_navigation_summary: Option<(String, String)> = None;
+    let mut tree_navigation_fork: Option<(
+        crate::interactive::session_actions::SessionChoice,
+        String,
+    )> = None;
     {
         let root = root_mut(tui, root_id)?;
         if let Some(target_id) = root.take_selected_tree_entry_id() {
@@ -715,33 +720,59 @@ fn handle_input_event<T: Terminal>(
                 .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
                 .cloned()
             {
-                if choice.active_leaf_id.as_deref() == Some(target_id.as_str())
-                    || root.active_leaf_id.as_deref() == Some(target_id.as_str())
-                {
+                let current_leaf_id = choice
+                    .active_leaf_id
+                    .clone()
+                    .or_else(|| root.active_leaf_id.clone());
+                if current_leaf_id.as_deref() == Some(target_id.as_str()) {
                     root.transcript
                         .push(TranscriptItem::system("Already at this point".to_string()));
+                } else if let Some(source_leaf_id) = current_leaf_id {
+                    tree_navigation_summary = Some((source_leaf_id, target_id));
                 } else {
-                    match fork_rust_native_choice(&choice, Some(&target_id)) {
-                        Ok(hydrated) => {
-                            root.apply_hydrated_session(
-                                hydrated,
-                                Some("Navigated to selected point".to_string()),
-                            );
-                            if let Some(active) = root.active_session.as_ref() {
-                                prompt_context.session_target =
-                                    Some(ResolvedSessionTarget::OpenTarget(active.id.clone()));
-                            }
-                        }
-                        Err(error) => root.transcript.push(TranscriptItem::system(format!(
-                            "Failed to navigate tree: {error}"
-                        ))),
-                    }
+                    tree_navigation_fork = Some((choice, target_id));
                 }
             } else {
                 root.transcript.push(TranscriptItem::system(
                     "No active Rust-native session for tree navigation".to_string(),
                 ));
             }
+        }
+    }
+    if let Some((source_leaf_id, target_leaf_id)) = tree_navigation_summary {
+        if running.is_some() {
+            let root = root_mut(tui, root_id)?;
+            root.transcript.push(TranscriptItem::system(
+                "Wait for the current run to finish before navigating the session tree.",
+            ));
+            return Ok(LoopControl::Continue(RenderRequest::FORCE));
+        }
+        *running = Some(start_branch_summary_navigation_task(
+            tui,
+            root_id,
+            source_leaf_id,
+            target_leaf_id,
+            prompt_context,
+            coding_session,
+        )?);
+        return Ok(LoopControl::Continue(RenderRequest::FORCE));
+    }
+    if let Some((choice, target_id)) = tree_navigation_fork {
+        let root = root_mut(tui, root_id)?;
+        match fork_rust_native_choice(&choice, Some(&target_id)) {
+            Ok(hydrated) => {
+                root.apply_hydrated_session(
+                    hydrated,
+                    Some("Navigated to selected point".to_string()),
+                );
+                if let Some(active) = root.active_session.as_ref() {
+                    prompt_context.session_target =
+                        Some(ResolvedSessionTarget::OpenTarget(active.id.clone()));
+                }
+            }
+            Err(error) => root.transcript.push(TranscriptItem::system(format!(
+                "Failed to navigate tree: {error}"
+            ))),
         }
     }
 
@@ -961,6 +992,52 @@ fn start_compact_task<T: Terminal>(
     Ok(task)
 }
 
+fn start_branch_summary_navigation_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    source_leaf_id: String,
+    target_leaf_id: String,
+    prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<PromptTask, CliError> {
+    {
+        let root = root_mut(tui, root_id)?;
+        root.transcript.push(TranscriptItem::system(
+            "Summarizing branch before navigation...",
+        ));
+        root.set_status(InteractiveStatus::Running);
+    }
+
+    let options = PromptRunOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(String::new()),
+    };
+
+    let task = PromptTask::spawn_branch_summary_navigation(
+        options,
+        coding_session.take(),
+        source_leaf_id,
+        target_leaf_id,
+    )?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
+}
+
 fn start_branch_summary_task<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
@@ -1046,7 +1123,30 @@ fn finish_prompt<T: Terminal>(
     let root = root_mut(tui, root_id)?;
     match result {
         Ok(PromptTaskResult::Coding(result)) => {
-            finish_coding_prompt(root, &result.session, result.outcome, result.update_usage);
+            let completion_notice = result.completion_notice.clone();
+            if result.hydrate_transcript {
+                if let Ok(Some(hydration)) = result.session.hydrate_current() {
+                    root.apply_hydrated_session(
+                        hydrated_session_from_rust_native(hydration),
+                        completion_notice,
+                    );
+                } else {
+                    finish_coding_prompt(
+                        root,
+                        &result.session,
+                        result.outcome,
+                        result.update_usage,
+                    );
+                    if let Some(notice) = completion_notice {
+                        root.transcript.push(TranscriptItem::system(notice));
+                    }
+                }
+            } else {
+                finish_coding_prompt(root, &result.session, result.outcome, result.update_usage);
+                if let Some(notice) = completion_notice {
+                    root.transcript.push(TranscriptItem::system(notice));
+                }
+            }
             *coding_session = Some(result.session);
         }
         Err(error) => {

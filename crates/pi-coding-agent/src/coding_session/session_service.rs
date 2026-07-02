@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use pi_agent_core::session::{SessionEntry, SessionTreeNode, StoredAgentMessage};
@@ -442,8 +442,17 @@ impl SessionService {
         );
         target.store.append_events(&target.handle, &[provenance])?;
 
+        let branch_summary_operations =
+            branch_summary_operation_ids_for_target(&source_events[cutoff + 1..], &target_leaf_id);
         let copied_events = source_events[..=cutoff]
             .iter()
+            .chain(source_events[cutoff + 1..].iter().filter(|event| {
+                should_copy_branch_summary_operation(
+                    event,
+                    &target_leaf_id,
+                    &branch_summary_operations,
+                )
+            }))
             .filter(|event| should_copy_source_event(event))
             .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
             .collect::<Vec<_>>();
@@ -553,7 +562,45 @@ fn committed_leaf_cutoff(events: &[SessionEventEnvelope], target_leaf_id: &str) 
     })
 }
 
-fn should_copy_source_event(event: &&SessionEventEnvelope) -> bool {
+fn branch_summary_operation_ids_for_target(
+    events: &[SessionEventEnvelope],
+    target_leaf_id: &str,
+) -> HashSet<String> {
+    events
+        .iter()
+        .filter_map(|event| match &event.data {
+            SessionEventData::BranchSummaryCreated {
+                target_leaf_id: summary_target_leaf_id,
+                ..
+            } if summary_target_leaf_id == target_leaf_id => event.operation_id.clone(),
+            _ => None,
+        })
+        .collect()
+}
+
+fn should_copy_branch_summary_operation(
+    event: &SessionEventEnvelope,
+    target_leaf_id: &str,
+    operation_ids: &HashSet<String>,
+) -> bool {
+    if event
+        .operation_id
+        .as_ref()
+        .is_some_and(|operation_id| operation_ids.contains(operation_id))
+    {
+        return true;
+    }
+
+    matches!(
+        &event.data,
+        SessionEventData::BranchSummaryCreated {
+            target_leaf_id: summary_target_leaf_id,
+            ..
+        } if event.operation_id.is_none() && summary_target_leaf_id == target_leaf_id
+    )
+}
+
+fn should_copy_source_event(event: &SessionEventEnvelope) -> bool {
     !matches!(
         event.data,
         SessionEventData::SessionCreated { .. }
@@ -1177,6 +1224,56 @@ mod tests {
         let event_log_text =
             std::fs::read_to_string(forked.handle.event_log_path().unwrap()).unwrap();
         assert!(event_log_text.contains("keep prompt"), "{event_log_text}");
+        assert!(!event_log_text.contains("drop prompt"), "{event_log_text}");
+    }
+
+    #[test]
+    fn fork_current_copies_branch_summary_for_requested_leaf() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_branch_summary")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        let abandoned_leaf = record_prompt(&mut service, "drop prompt");
+        let mut transaction = service.begin_branch_summary_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+        transaction
+            .record_branch_summary_created(
+                "model branch summary",
+                abandoned_leaf.clone(),
+                target_leaf.clone(),
+            )
+            .unwrap();
+        service
+            .commit_branch_summary_transaction(Some(transaction), operation_id)
+            .unwrap();
+
+        let forked = service.fork_current(Some(&target_leaf)).unwrap();
+
+        let event_log_text =
+            std::fs::read_to_string(forked.handle.event_log_path().unwrap()).unwrap();
+        let hydrated = forked.hydrated_view().unwrap();
+        assert_eq!(
+            hydrated.transcript,
+            vec![
+                CodingAgentSessionTranscriptItem::User {
+                    text: "keep prompt".into()
+                },
+                CodingAgentSessionTranscriptItem::BranchSummary {
+                    summary: "model branch summary".into()
+                },
+            ],
+            "{event_log_text}"
+        );
+        assert!(
+            event_log_text.contains(r#""kind":"branch.summary.created""#),
+            "{event_log_text}"
+        );
+        assert!(
+            event_log_text.contains("model branch summary"),
+            "{event_log_text}"
+        );
         assert!(!event_log_text.contains("drop prompt"), "{event_log_text}");
     }
 
