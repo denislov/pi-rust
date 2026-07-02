@@ -659,6 +659,7 @@ mod tests {
                     "session.compaction.completed"
                 }
                 SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
+                SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
             })
             .collect()
     }

@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::event::{
-    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedRole, PersistedToolResult,
-    SessionEventData, SessionEventEnvelope,
+    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedPluginDiagnostic,
+    PersistedRole, PersistedToolResult, SessionEventData, SessionEventEnvelope,
 };
 use super::id::{Clock, IdGenerator};
 use super::store::{ManifestPatch, SessionHandle, SessionLogStore};
@@ -279,6 +279,21 @@ where
         Ok(())
     }
 
+    pub(crate) fn record_plugin_load_completed(
+        &mut self,
+        loaded_plugin_ids: Vec<String>,
+        diagnostics: Vec<PersistedPluginDiagnostic>,
+        capability_changed: bool,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::PluginLoadCompleted {
+            loaded_plugin_ids,
+            diagnostics,
+            capability_changed,
+        });
+        Ok(())
+    }
+
     pub(crate) fn commit(&mut self, new_leaf_id: Option<String>) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
         self.push_event(SessionEventData::OperationCommitted {
@@ -449,6 +464,7 @@ mod tests {
                 SessionEventData::DiagnosticEmitted { .. } => "diagnostic.emitted",
                 SessionEventData::MetadataUpdated { .. } => "metadata.updated",
                 SessionEventData::ActiveLeafChanged { .. } => "active_leaf.changed",
+                SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
                 SessionEventData::SessionCreated { .. } => "session.created",
                 SessionEventData::SessionCloned { .. } => "session.cloned",
                 SessionEventData::SessionForked { .. } => "session.forked",
@@ -554,6 +570,50 @@ mod tests {
             }) if summary == "summary of abandoned work"
                 && source_leaf_id == "leaf_old"
                 && target_leaf_id == "leaf_target"
+        ));
+    }
+
+    #[test]
+    fn plugin_load_completed_is_recorded_before_commit() {
+        let (_temp, store, handle) = setup();
+        let mut tx = TurnTransaction::begin(
+            &store,
+            handle.clone(),
+            DeterministicIdGenerator::new(),
+            FixedClock::new("2026-06-29T00:00:01Z"),
+            OperationKind::PluginLoad,
+        );
+
+        tx.record_plugin_load_completed(
+            vec!["plugin-a".into()],
+            vec![PersistedPluginDiagnostic {
+                plugin_id: Some("plugin-b".into()),
+                message: "plugin warning".into(),
+            }],
+            true,
+        )
+        .unwrap();
+        tx.commit(None).unwrap();
+
+        let events = store.read_events(&handle).unwrap();
+        assert_eq!(
+            event_kinds(&events),
+            vec![
+                "operation.started",
+                "turn.started",
+                "plugin.load.completed",
+                "operation.committed",
+            ]
+        );
+        assert!(matches!(
+            events.iter().rev().nth(1).map(|event| &event.data),
+            Some(SessionEventData::PluginLoadCompleted {
+                loaded_plugin_ids,
+                diagnostics,
+                capability_changed: true,
+            }) if loaded_plugin_ids == &["plugin-a".to_owned()]
+                && diagnostics[0].plugin_id.as_deref() == Some("plugin-b")
+                && diagnostics[0].message == "plugin warning"
         ));
     }
 

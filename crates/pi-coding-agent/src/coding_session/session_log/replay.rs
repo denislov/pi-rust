@@ -201,6 +201,18 @@ impl ReplayBuilder {
                     target_leaf_id: target_leaf_id.clone(),
                 });
             }
+            SessionEventData::PluginLoadCompleted { diagnostics, .. } => {
+                for diagnostic in diagnostics {
+                    let message = match diagnostic.plugin_id.as_deref() {
+                        Some(plugin_id) => format!("{plugin_id}: {}", diagnostic.message),
+                        None => diagnostic.message.clone(),
+                    };
+                    self.diagnostics.push(ReplayDiagnostic {
+                        level: DiagnosticLevel::Warn,
+                        message,
+                    });
+                }
+            }
             SessionEventData::OperationCommitted { new_leaf_id } => {
                 if let Some(new_leaf_id) = new_leaf_id {
                     self.record_prompt_leaf(event, new_leaf_id);

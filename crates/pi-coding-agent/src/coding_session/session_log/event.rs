@@ -104,6 +104,12 @@ pub(crate) enum SessionEventData {
         source_leaf_id: String,
         target_leaf_id: String,
     },
+    #[serde(rename = "plugin.load.completed")]
+    PluginLoadCompleted {
+        loaded_plugin_ids: Vec<String>,
+        diagnostics: Vec<PersistedPluginDiagnostic>,
+        capability_changed: bool,
+    },
     #[serde(rename = "operation.started")]
     OperationStarted { operation: OperationKind },
     #[serde(rename = "operation.committed")]
@@ -214,6 +220,13 @@ pub(crate) enum PersistedToolResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PersistedPluginDiagnostic {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) plugin_id: Option<String>,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DiagnosticLevel {
     Debug,
@@ -302,6 +315,17 @@ mod tests {
                     target_leaf_id: "leaf_target".into(),
                 },
                 "branch.summary.created",
+            ),
+            (
+                SessionEventData::PluginLoadCompleted {
+                    loaded_plugin_ids: vec!["plugin".into()],
+                    diagnostics: vec![PersistedPluginDiagnostic {
+                        plugin_id: Some("plugin".into()),
+                        message: "warning".into(),
+                    }],
+                    capability_changed: true,
+                },
+                "plugin.load.completed",
             ),
             (
                 SessionEventData::OperationStarted {

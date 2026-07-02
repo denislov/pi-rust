@@ -7,7 +7,8 @@ use pi_ai::types::ContentBlock;
 use super::export::{CodingAgentSessionExport, export_from_replay, write_export_html};
 use super::prompt::PromptTurnTransaction;
 use super::session_log::event::{
-    OperationKind, PersistedContentBlock, SessionEventData, SessionEventEnvelope,
+    OperationKind, PersistedContentBlock, PersistedPluginDiagnostic, SessionEventData,
+    SessionEventEnvelope,
 };
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
@@ -253,6 +254,16 @@ impl SessionService {
         )
     }
 
+    pub(crate) fn begin_plugin_load_transaction(&self) -> PromptTurnTransaction {
+        TurnTransaction::begin(
+            &self.store,
+            self.handle.clone(),
+            SystemIdGenerator,
+            SystemClock,
+            OperationKind::PluginLoad,
+        )
+    }
+
     pub(crate) fn commit_prompt_transaction(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -341,6 +352,34 @@ impl SessionService {
         )
     }
 
+    pub(crate) fn commit_plugin_load_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        self.commit_non_leaf_transaction(
+            transaction,
+            operation_id,
+            "no active plugin load transaction",
+        )
+    }
+
+    pub(crate) fn fail_plugin_load_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        error_code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        self.fail_non_leaf_transaction(
+            transaction,
+            operation_id,
+            error_code,
+            message,
+            "no active plugin load transaction",
+        )
+    }
+
     fn commit_non_leaf_transaction(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -375,6 +414,53 @@ impl SessionService {
             session_id: Some(session_id),
             leaf_id: self.handle.manifest().active_leaf_id.clone(),
         })
+    }
+
+    fn fail_non_leaf_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        error_code: impl Into<String>,
+        message: impl Into<String>,
+        missing_transaction_reason: &'static str,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let fallback_operation_id = operation_id.into();
+        let Some(mut transaction) = transaction else {
+            return Ok(Self::skipped_write(
+                fallback_operation_id,
+                missing_transaction_reason,
+            ));
+        };
+
+        let operation_id = transaction.operation_id().to_owned();
+        let session_id = self.session_id().to_owned();
+        let mut events = vec![CodingAgentEvent::SessionWritePending {
+            operation_id: operation_id.clone(),
+        }];
+        transaction.fail(error_code, message)?;
+        self.store.update_manifest(
+            &self.handle,
+            ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
+        )?;
+        self.handle = self.store.open_session_id(&session_id)?;
+        events.push(CodingAgentEvent::SessionWriteCommitted {
+            operation_id,
+            session_id: session_id.clone(),
+        });
+        Ok(FinalizedSessionWrite {
+            events,
+            session_id: Some(session_id),
+            leaf_id: self.handle.manifest().active_leaf_id.clone(),
+        })
+    }
+
+    pub(crate) fn record_plugin_load_completed(
+        transaction: &mut PromptTurnTransaction,
+        loaded_plugin_ids: Vec<String>,
+        diagnostics: Vec<PersistedPluginDiagnostic>,
+        capability_changed: bool,
+    ) -> Result<(), CodingSessionError> {
+        transaction.record_plugin_load_completed(loaded_plugin_ids, diagnostics, capability_changed)
     }
 
     #[allow(dead_code)]

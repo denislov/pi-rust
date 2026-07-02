@@ -42,6 +42,7 @@ use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
+use session_log::event::PersistedPluginDiagnostic;
 use session_log::id::{IdGenerator, SystemIdGenerator};
 use session_log::replay::TranscriptItem;
 use session_service::{FinalizedSessionWrite, SessionService};
@@ -401,8 +402,49 @@ impl CodingAgentSession {
         &mut self,
         options: PluginLoadOptions,
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
+        let mut transaction = match &self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                Some(session_service.begin_plugin_load_transaction())
+            }
+            SessionPersistence::NonPersistent(_) => None,
+        };
+        let operation_id = transaction
+            .as_ref()
+            .map(|transaction| transaction.operation_id().to_owned())
+            .unwrap_or_else(|| "plugin_load".to_owned());
         let mut context = PluginLoadContext::new(options);
-        let outcome = self.flow_service.run_plugin_load(&mut context).await?;
+        let outcome = match self.flow_service.run_plugin_load(&mut context).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if let Some(transaction) = transaction.take()
+                    && let SessionPersistence::Persistent(session_service) = &mut self.persistence
+                {
+                    let finalized = session_service.fail_plugin_load_transaction(
+                        Some(transaction),
+                        operation_id,
+                        error.code(),
+                        error.to_string(),
+                    )?;
+                    self.emit_session_write_events(&finalized);
+                }
+                return Err(error);
+            }
+        };
+        if let Some(transaction) = transaction.as_mut() {
+            SessionService::record_plugin_load_completed(
+                transaction,
+                outcome.loaded_plugin_ids.clone(),
+                persisted_plugin_diagnostics(&outcome.diagnostics),
+                outcome.capability_changed,
+            )?;
+        }
+        if let Some(transaction) = transaction.take()
+            && let SessionPersistence::Persistent(session_service) = &mut self.persistence
+        {
+            let finalized =
+                session_service.commit_plugin_load_transaction(Some(transaction), operation_id)?;
+            self.emit_session_write_events(&finalized);
+        }
         if let Some(plugin_service) = context.take_loaded_plugin_service() {
             self.plugin_service = plugin_service;
         }
@@ -757,6 +799,18 @@ impl CodingAgentSession {
     }
 }
 
+fn persisted_plugin_diagnostics(
+    diagnostics: &[plugin_service::PluginDiagnostic],
+) -> Vec<PersistedPluginDiagnostic> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| PersistedPluginDiagnostic {
+            plugin_id: diagnostic.plugin_id.clone(),
+            message: diagnostic.message.clone(),
+        })
+        .collect()
+}
+
 fn branch_summary_text(outcome: BranchSummaryOutcome) -> String {
     match outcome {
         BranchSummaryOutcome::Created { summary, .. } => summary,
@@ -1063,6 +1117,68 @@ mod tests {
         let tools = contexts[0].tools.as_ref().unwrap();
         assert!(tools.iter().any(|tool| tool.name == "plugin_echo"));
         registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn load_plugins_records_persistent_plugin_load_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_plugin_load_events")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let mut registry = PluginRegistry::new();
+        registry.register_tool_provider(Arc::new(SessionPluginToolProvider));
+        let options = PluginLoadOptions::new()
+            .with_candidate(PluginLoadCandidate::new(
+                PluginLoadManifest::new(
+                    "session-plugin",
+                    "Session Plugin",
+                    "1.0.0",
+                    PluginSource::FirstParty,
+                ),
+                registry,
+            ))
+            .with_candidate(PluginLoadCandidate::new(
+                PluginLoadManifest::new("", "Invalid Plugin", "1.0.0", PluginSource::Project),
+                PluginRegistry::new(),
+            ));
+
+        session.load_plugins(options).await.unwrap();
+
+        let event_log = std::fs::read_to_string(
+            temp.path()
+                .join("sess_plugin_load_events")
+                .join("events.jsonl"),
+        )
+        .unwrap();
+        let events = event_log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let kinds = events
+            .iter()
+            .map(|event| event["kind"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(kinds.contains(&"plugin.load.completed"), "{event_log}");
+        assert!(kinds.contains(&"operation.committed"), "{event_log}");
+        let plugin_event = events
+            .iter()
+            .find(|event| event["kind"] == "plugin.load.completed")
+            .unwrap();
+        assert_eq!(
+            plugin_event["data"]["loaded_plugin_ids"],
+            serde_json::json!(["session-plugin"])
+        );
+        assert_eq!(plugin_event["data"]["diagnostics"][0]["plugin_id"], "");
+        assert!(
+            plugin_event["data"]["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("plugin id must not be empty")
+        );
     }
 
     #[tokio::test]
