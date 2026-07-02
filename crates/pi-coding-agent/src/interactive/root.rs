@@ -260,6 +260,51 @@ fn plugin_dialog_field_is_bool(field: &PluginUiDialogField) -> bool {
     )
 }
 
+fn plugin_dialog_filtered_insert(field: &PluginUiDialogField, current: &str, text: &str) -> String {
+    match normalized_dialog_field_kind(&field.kind).as_str() {
+        "integer" => plugin_dialog_numeric_filtered_insert(current, text, false),
+        "number" => plugin_dialog_numeric_filtered_insert(current, text, true),
+        _ => text.to_string(),
+    }
+}
+
+fn plugin_dialog_numeric_filtered_insert(current: &str, text: &str, allow_float: bool) -> String {
+    let mut candidate = current.to_string();
+    let mut accepted = String::new();
+    for ch in text.chars() {
+        if plugin_dialog_numeric_char_allowed(&candidate, ch, allow_float) {
+            candidate.push(ch);
+            accepted.push(ch);
+        }
+    }
+    accepted
+}
+
+fn plugin_dialog_numeric_char_allowed(current: &str, ch: char, allow_float: bool) -> bool {
+    if ch.is_ascii_digit() {
+        return true;
+    }
+    match ch {
+        '+' | '-' => {
+            current.is_empty()
+                || (allow_float && (current.ends_with('e') || current.ends_with('E')))
+        }
+        '.' => {
+            allow_float
+                && !current.contains('.')
+                && !current.contains('e')
+                && !current.contains('E')
+        }
+        'e' | 'E' => {
+            allow_float
+                && !current.contains('e')
+                && !current.contains('E')
+                && current.chars().any(|existing| existing.is_ascii_digit())
+        }
+        _ => false,
+    }
+}
+
 fn plugin_dialog_bool_value(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Some(true),
@@ -794,6 +839,7 @@ impl InteractiveRoot {
                     .modifiers
                     .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
             {
+                let mut field_changed = false;
                 if let Some((field, value)) = active_dialog.selected_field_mut() {
                     if plugin_dialog_field_is_bool(field) {
                         *value = if value.trim().eq_ignore_ascii_case("true") {
@@ -801,9 +847,16 @@ impl InteractiveRoot {
                         } else {
                             "true".to_string()
                         };
+                        field_changed = true;
                     } else {
-                        value.push(' ');
+                        let inserted = plugin_dialog_filtered_insert(field, value, " ");
+                        if !inserted.is_empty() {
+                            value.push_str(&inserted);
+                            field_changed = true;
+                        }
                     }
+                }
+                if field_changed {
                     active_dialog.clear_validation_error_for_selected_field();
                 }
             }
@@ -812,8 +865,15 @@ impl InteractiveRoot {
                     .modifiers
                     .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
             {
-                if let Some((_, value)) = active_dialog.selected_field_mut() {
-                    value.push_str(text);
+                let mut field_changed = false;
+                if let Some((field, value)) = active_dialog.selected_field_mut() {
+                    let inserted = plugin_dialog_filtered_insert(field, value, text);
+                    if !inserted.is_empty() {
+                        value.push_str(&inserted);
+                        field_changed = true;
+                    }
+                }
+                if field_changed {
                     active_dialog.clear_validation_error_for_selected_field();
                 }
             }

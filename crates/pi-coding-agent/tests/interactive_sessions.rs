@@ -593,6 +593,86 @@ end
 }
 
 #[tokio::test]
+async fn interactive_plugin_dialog_form_integer_filters_invalid_chars_and_submits_number() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_plugin = temp
+        .path()
+        .join(".pi-rust/plugins/lua-dialog-integer-filter");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "lua-dialog-integer-filter"
+name = "Lua Dialog Integer Filter"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.lua"),
+        r#"
+function register(host)
+  host:command({
+    id = "lua.submit_panel",
+    description = "submits the Lua panel",
+    run = function(input)
+      return { content = "count " .. tostring(input.count + 1) }
+    end
+  })
+  host:ui_action({
+    id = "ui.open_panel",
+    label = "Open panel",
+    description = "opens a Lua panel",
+    action_id = "dialog.open_panel"
+  })
+  host:dialog({
+    id = "dialog.open_panel",
+    title = "Lua panel",
+    description = "Panel registered by Lua",
+    action_id = "lua.submit_panel",
+    fields = {
+      {
+        id = "count",
+        label = "Count",
+        description = "Count value",
+        type = "integer",
+        required = true
+      }
+    }
+  })
+  host:keybind({
+    id = "keybind.open_panel",
+    key = "ctrl+g",
+    description = "opens the Lua panel",
+    action_id = "dialog.open_panel"
+  })
+end
+"#,
+    )
+    .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("/reload\r", "plugin.load.completed"),
+            ("\u{7}", "plugin.load.completed"),
+            ("12x3\r", "plugin.load.completed"),
+        ],
+    )
+    .await
+    .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("Plugin command lua.submit_panel"), "{frame}");
+    assert!(frame.contains("count 124"), "{frame}");
+    assert!(!frame.contains("must be integer"), "{frame}");
+}
+
+#[tokio::test]
 async fn interactive_plugin_dialog_form_validation_focuses_required_error_field() {
     let temp = tempfile::tempdir().unwrap();
     let project_plugin = temp.path().join(".pi-rust/plugins/lua-dialog-focus-error");
