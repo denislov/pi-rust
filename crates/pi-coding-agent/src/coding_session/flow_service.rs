@@ -111,7 +111,7 @@ impl FlowService {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{fs, sync::Arc};
 
     use pi_agent_core::{AgentResources, AgentTool};
     use pi_ai::providers::faux::FauxProvider;
@@ -317,6 +317,55 @@ mod tests {
                 .collect_tools()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn plugin_load_flow_discovers_project_and_user_manifest_files() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let project_plugins = temp.path().join("project/.pi-rust/plugins");
+        let user_plugins = temp.path().join("user/plugins");
+        fs::create_dir_all(project_plugins.join("project-lua")).unwrap();
+        fs::create_dir_all(user_plugins.join("bad-plugin")).unwrap();
+        fs::write(
+            project_plugins.join("project-lua/plugin.toml"),
+            r#"
+id = "project-lua"
+name = "Project Lua"
+version = "0.1.0"
+runtime = "lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            user_plugins.join("bad-plugin/plugin.toml"),
+            r#"
+id = ""
+name = "Broken Plugin"
+version = "0.1.0"
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new()
+            .with_discovery_root(&project_plugins, PluginSource::Project)
+            .with_discovery_root(&user_plugins, PluginSource::User);
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert!(outcome.loaded_plugin_ids.is_empty());
+        assert_eq!(outcome.capabilities.tool_providers, 0);
+        assert_eq!(outcome.diagnostics.len(), 2);
+        assert!(outcome.diagnostics.iter().any(|diagnostic| {
+            diagnostic.plugin_id.as_deref() == Some("project-lua")
+                && diagnostic
+                    .message
+                    .contains("Lua plugin loading is not implemented yet")
+        }));
+        assert!(outcome.diagnostics.iter().any(|diagnostic| {
+            diagnostic.plugin_id.as_deref() == Some("")
+                && diagnostic.message.contains("plugin id must not be empty")
+        }));
     }
 
     struct PluginLoadToolProvider;

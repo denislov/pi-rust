@@ -1,15 +1,19 @@
 #![allow(dead_code)]
 
+use std::fs;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use serde::Deserialize;
 
 use super::CodingSessionError;
 use super::plugin_service::{PluginDiagnostic, PluginService};
 use crate::plugins::{PluginCapabilities, PluginRegistry, PluginSource};
 
 const DEFAULT_ACTION: &str = "default";
+const PLUGIN_MANIFEST_FILE: &str = "plugin.toml";
 
 pub(crate) const PLUGIN_LOAD_NODE_IDS: &[&str] = &[
     "start_plugin_load",
@@ -138,9 +142,25 @@ impl PluginLoadCandidate {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PluginDiscoveryRoot {
+    path: PathBuf,
+    source: PluginSource,
+}
+
+impl PluginDiscoveryRoot {
+    pub(crate) fn new(path: impl Into<PathBuf>, source: PluginSource) -> Self {
+        Self {
+            path: path.into(),
+            source,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PluginLoadOptions {
     candidates: Vec<PluginLoadCandidate>,
+    discovery_roots: Vec<PluginDiscoveryRoot>,
 }
 
 impl PluginLoadOptions {
@@ -150,6 +170,16 @@ impl PluginLoadOptions {
 
     pub(crate) fn with_candidate(mut self, candidate: PluginLoadCandidate) -> Self {
         self.candidates.push(candidate);
+        self
+    }
+
+    pub(crate) fn with_discovery_root(
+        mut self,
+        path: impl Into<PathBuf>,
+        source: PluginSource,
+    ) -> Self {
+        self.discovery_roots
+            .push(PluginDiscoveryRoot::new(path, source));
         self
     }
 }
@@ -171,6 +201,8 @@ pub(crate) struct PluginLoadContext {
     loaded_plugin_service: Option<PluginService>,
     outcome: Option<PluginLoadOutcome>,
     failure_error: Option<CodingSessionError>,
+    discovery_complete: bool,
+    validation_complete: bool,
 }
 
 impl PluginLoadContext {
@@ -184,6 +216,8 @@ impl PluginLoadContext {
             loaded_plugin_service: None,
             outcome: None,
             failure_error: None,
+            discovery_complete: false,
+            validation_complete: false,
         }
     }
 
@@ -227,18 +261,54 @@ impl PluginLoadContext {
     }
 
     fn discover_plugins(&mut self) -> Result<(), CodingSessionError> {
-        if !self.discovered.is_empty() {
+        if self.discovery_complete {
             return Ok(());
         }
-        self.discovered = std::mem::take(&mut self.options.candidates);
+        self.discovered
+            .extend(std::mem::take(&mut self.options.candidates));
+        for root in std::mem::take(&mut self.options.discovery_roots) {
+            self.discover_plugin_root(root)?;
+        }
+        self.discovery_complete = true;
+        Ok(())
+    }
+
+    fn discover_plugin_root(
+        &mut self,
+        root: PluginDiscoveryRoot,
+    ) -> Result<(), CodingSessionError> {
+        let manifest_paths = match discover_manifest_paths(&root.path) {
+            Ok(paths) => paths,
+            Err(message) => {
+                self.diagnostics.push(PluginDiagnostic {
+                    plugin_id: None,
+                    message,
+                });
+                return Ok(());
+            }
+        };
+        for manifest_path in manifest_paths {
+            match read_manifest_candidate(&manifest_path, &root.source) {
+                Ok(candidate) => self.discovered.push(candidate),
+                Err(diagnostic) => self.diagnostics.push(diagnostic),
+            }
+        }
         Ok(())
     }
 
     fn validate_manifests(&mut self) -> Result<(), CodingSessionError> {
-        if !self.validated.is_empty() || self.discovered.is_empty() {
+        if self.validation_complete {
             return Ok(());
         }
         for candidate in self.discovered.iter().cloned() {
+            let errors = candidate.manifest.validate();
+            if !errors.is_empty() {
+                self.diagnostics.push(PluginDiagnostic {
+                    plugin_id: Some(candidate.manifest.id().to_owned()),
+                    message: errors.join("; "),
+                });
+                continue;
+            }
             if candidate.manifest.source == PluginSource::Lua {
                 self.diagnostics.push(PluginDiagnostic {
                     plugin_id: Some(candidate.manifest.id().to_owned()),
@@ -246,16 +316,9 @@ impl PluginLoadContext {
                 });
                 continue;
             }
-            let errors = candidate.manifest.validate();
-            if errors.is_empty() {
-                self.validated.push(candidate);
-            } else {
-                self.diagnostics.push(PluginDiagnostic {
-                    plugin_id: Some(candidate.manifest.id().to_owned()),
-                    message: errors.join("; "),
-                });
-            }
+            self.validated.push(candidate);
         }
+        self.validation_complete = true;
         Ok(())
     }
 
@@ -385,6 +448,123 @@ impl FlowNode<PluginLoadContext> for PluginLoadNode {
             }
         })
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginManifestFile {
+    id: Option<String>,
+    name: Option<String>,
+    version: Option<String>,
+    runtime: Option<String>,
+    source: Option<String>,
+}
+
+impl PluginManifestFile {
+    fn into_manifest(self, root_source: &PluginSource) -> Result<PluginLoadManifest, String> {
+        let source = self.plugin_source(root_source)?;
+        Ok(PluginLoadManifest::new(
+            self.id.unwrap_or_default(),
+            self.name.unwrap_or_default(),
+            self.version.unwrap_or_default(),
+            source,
+        ))
+    }
+
+    fn plugin_source(&self, root_source: &PluginSource) -> Result<PluginSource, String> {
+        let declared = self
+            .runtime
+            .as_deref()
+            .or(self.source.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(declared) = declared else {
+            return Ok(root_source.clone());
+        };
+        match declared {
+            "first-party" | "first_party" => Ok(PluginSource::FirstParty),
+            "project" => Ok(PluginSource::Project),
+            "user" => Ok(PluginSource::User),
+            "lua" => Ok(PluginSource::Lua),
+            other => Err(format!("unsupported plugin runtime/source: {other}")),
+        }
+    }
+}
+
+fn discover_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let metadata = fs::metadata(root).map_err(|error| {
+        format!(
+            "failed to inspect plugin directory {}: {error}",
+            root.display()
+        )
+    })?;
+    if metadata.is_file() {
+        return Ok(
+            if root.file_name().and_then(|name| name.to_str()) == Some(PLUGIN_MANIFEST_FILE) {
+                vec![root.to_path_buf()]
+            } else {
+                Vec::new()
+            },
+        );
+    }
+
+    let mut paths = Vec::new();
+    let root_manifest = root.join(PLUGIN_MANIFEST_FILE);
+    if root_manifest.is_file() {
+        paths.push(root_manifest);
+    }
+    let entries = fs::read_dir(root).map_err(|error| {
+        format!(
+            "failed to read plugin directory {}: {error}",
+            root.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to read plugin directory entry under {}: {error}",
+                root.display()
+            )
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            let manifest = path.join(PLUGIN_MANIFEST_FILE);
+            if manifest.is_file() {
+                paths.push(manifest);
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn read_manifest_candidate(
+    manifest_path: &Path,
+    root_source: &PluginSource,
+) -> Result<PluginLoadCandidate, PluginDiagnostic> {
+    let content = fs::read_to_string(manifest_path).map_err(|error| PluginDiagnostic {
+        plugin_id: None,
+        message: format!(
+            "failed to read plugin manifest {}: {error}",
+            manifest_path.display()
+        ),
+    })?;
+    let manifest_file =
+        toml::from_str::<PluginManifestFile>(&content).map_err(|error| PluginDiagnostic {
+            plugin_id: None,
+            message: format!(
+                "failed to parse plugin manifest {}: {error}",
+                manifest_path.display()
+            ),
+        })?;
+    let plugin_id = manifest_file.id.clone();
+    let manifest = manifest_file
+        .into_manifest(root_source)
+        .map_err(|message| PluginDiagnostic { plugin_id, message })?;
+    Ok(PluginLoadCandidate::new(manifest, PluginRegistry::new()))
 }
 
 fn default_action() -> Result<Action, String> {
