@@ -235,10 +235,7 @@ runtime = "lua"
     let frame = result.rendered_lines.join("\n");
 
     assert!(frame.contains("project-lua"), "{frame}");
-    assert!(
-        frame.contains("Lua plugin loading is not implemented yet"),
-        "{frame}"
-    );
+    assert!(frame.contains("Lua plugin entry is required"), "{frame}");
 }
 
 #[tokio::test]

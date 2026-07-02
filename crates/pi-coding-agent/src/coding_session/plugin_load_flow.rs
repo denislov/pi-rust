@@ -2,15 +2,21 @@
 
 use std::fs;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
+use mlua::{Function, Lua, LuaSerdeExt, Table, Value, Variadic};
+use pi_agent_core::AgentTool;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use serde::Deserialize;
 
 use super::CodingSessionError;
 use super::plugin_service::{PluginDiagnostic, PluginService};
-use crate::plugins::{PluginCapabilities, PluginRegistry, PluginSource};
+use crate::plugins::{
+    PluginCapabilities, PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource,
+    ToolProvider, ToolRegistrationHost,
+};
 
 const DEFAULT_ACTION: &str = "default";
 const PLUGIN_MANIFEST_FILE: &str = "plugin.toml";
@@ -94,6 +100,7 @@ pub(crate) struct PluginLoadManifest {
     name: String,
     version: String,
     source: PluginSource,
+    entry_path: Option<PathBuf>,
 }
 
 impl PluginLoadManifest {
@@ -108,11 +115,17 @@ impl PluginLoadManifest {
             name: name.into(),
             version: version.into(),
             source,
+            entry_path: None,
         }
     }
 
     pub(crate) fn id(&self) -> &str {
         &self.id
+    }
+
+    fn with_entry_path(mut self, entry_path: PathBuf) -> Self {
+        self.entry_path = Some(entry_path);
+        self
     }
 
     fn validate(&self) -> Vec<String> {
@@ -309,10 +322,12 @@ impl PluginLoadContext {
                 });
                 continue;
             }
-            if candidate.manifest.source == PluginSource::Lua {
+            if candidate.manifest.source == PluginSource::Lua
+                && candidate.manifest.entry_path.is_none()
+            {
                 self.diagnostics.push(PluginDiagnostic {
                     plugin_id: Some(candidate.manifest.id().to_owned()),
-                    message: "Lua plugin loading is not implemented yet".to_owned(),
+                    message: "Lua plugin entry is required".to_owned(),
                 });
                 continue;
             }
@@ -327,6 +342,21 @@ impl PluginLoadContext {
     }
 
     fn load_lua_plugins_later(&mut self) -> Result<(), CodingSessionError> {
+        let mut loaded = Vec::new();
+        for mut candidate in std::mem::take(&mut self.validated) {
+            if candidate.manifest.source == PluginSource::Lua {
+                match load_lua_plugin_registry(&candidate.manifest) {
+                    Ok(registry) => {
+                        candidate.registry = registry;
+                        loaded.push(candidate);
+                    }
+                    Err(diagnostic) => self.diagnostics.push(diagnostic),
+                }
+            } else {
+                loaded.push(candidate);
+            }
+        }
+        self.validated = loaded;
         Ok(())
     }
 
@@ -457,17 +487,32 @@ struct PluginManifestFile {
     version: Option<String>,
     runtime: Option<String>,
     source: Option<String>,
+    entry: Option<String>,
 }
 
 impl PluginManifestFile {
-    fn into_manifest(self, root_source: &PluginSource) -> Result<PluginLoadManifest, String> {
+    fn into_manifest(
+        self,
+        root_source: &PluginSource,
+        manifest_dir: &Path,
+    ) -> Result<PluginLoadManifest, String> {
         let source = self.plugin_source(root_source)?;
-        Ok(PluginLoadManifest::new(
+        let mut manifest = PluginLoadManifest::new(
             self.id.unwrap_or_default(),
             self.name.unwrap_or_default(),
             self.version.unwrap_or_default(),
             source,
-        ))
+        );
+        if let Some(entry) = self
+            .entry
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let entry_path = validate_plugin_entry_path(entry)?;
+            manifest = manifest.with_entry_path(manifest_dir.join(entry_path));
+        }
+        Ok(manifest)
     }
 
     fn plugin_source(&self, root_source: &PluginSource) -> Result<PluginSource, String> {
@@ -561,10 +606,285 @@ fn read_manifest_candidate(
             ),
         })?;
     let plugin_id = manifest_file.id.clone();
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let manifest = manifest_file
-        .into_manifest(root_source)
+        .into_manifest(root_source, manifest_dir)
         .map_err(|message| PluginDiagnostic { plugin_id, message })?;
     Ok(PluginLoadCandidate::new(manifest, PluginRegistry::new()))
+}
+
+fn validate_plugin_entry_path(entry: &str) -> Result<PathBuf, String> {
+    let path = Path::new(entry);
+    if path.is_absolute() {
+        return Err("plugin entry must be a relative path".to_owned());
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("plugin entry must stay inside the plugin directory".to_owned());
+    }
+    Ok(path.to_path_buf())
+}
+
+#[derive(Debug, Clone)]
+struct LuaToolSpec {
+    name: String,
+    description: String,
+    input_schema: serde_json::Value,
+}
+
+struct LuaToolProvider {
+    metadata: PluginMetadata,
+    entry_path: PathBuf,
+    source: Arc<str>,
+    tools: Vec<LuaToolSpec>,
+}
+
+impl ToolProvider for LuaToolProvider {
+    fn metadata(&self) -> PluginMetadata {
+        self.metadata.clone()
+    }
+
+    fn tools(&self, _host: &ToolRegistrationHost) -> Result<Vec<AgentTool>, PluginError> {
+        let mut tools = Vec::new();
+        for spec in self.tools.iter().cloned() {
+            let plugin_id = self.metadata.id.as_str().to_owned();
+            let entry_path = self.entry_path.clone();
+            let source = self.source.clone();
+            let tool_name = spec.name.clone();
+            let tool = AgentTool::new_text(
+                spec.name,
+                spec.description,
+                spec.input_schema,
+                move |args| {
+                    let plugin_id = plugin_id.clone();
+                    let entry_path = entry_path.clone();
+                    let source = source.clone();
+                    let tool_name = tool_name.clone();
+                    async move { run_lua_tool(&plugin_id, &entry_path, &source, &tool_name, args) }
+                },
+            );
+            tool.validate().map_err(|error| PluginError::Registration {
+                plugin_id: self.metadata.id.as_str().to_owned(),
+                message: error.to_string(),
+            })?;
+            tools.push(tool);
+        }
+        Ok(tools)
+    }
+}
+
+fn load_lua_plugin_registry(
+    manifest: &PluginLoadManifest,
+) -> Result<PluginRegistry, PluginDiagnostic> {
+    let plugin_id = Some(manifest.id().to_owned());
+    let entry_path = manifest
+        .entry_path
+        .as_ref()
+        .ok_or_else(|| PluginDiagnostic {
+            plugin_id: plugin_id.clone(),
+            message: "Lua plugin entry is required".to_owned(),
+        })?;
+    let source = fs::read_to_string(entry_path).map_err(|error| PluginDiagnostic {
+        plugin_id: plugin_id.clone(),
+        message: format!(
+            "failed to read Lua plugin entry {}: {error}",
+            entry_path.display()
+        ),
+    })?;
+    let tools =
+        collect_lua_tool_specs(entry_path, &source).map_err(|message| PluginDiagnostic {
+            plugin_id: plugin_id.clone(),
+            message,
+        })?;
+    let mut registry = PluginRegistry::new();
+    registry.register_tool_provider(Arc::new(LuaToolProvider {
+        metadata: PluginMetadata::new(
+            PluginId::new(manifest.id.clone()),
+            manifest.name.clone(),
+            manifest.version.clone(),
+            PluginSource::Lua,
+        ),
+        entry_path: entry_path.clone(),
+        source: Arc::from(source),
+        tools,
+    }));
+    Ok(registry)
+}
+
+fn collect_lua_tool_specs(entry_path: &Path, source: &str) -> Result<Vec<LuaToolSpec>, String> {
+    let lua = create_lua().map_err(|error| format!("failed to create Lua runtime: {error}"))?;
+    let tools = Arc::new(Mutex::new(Vec::new()));
+    let host = lua
+        .create_table()
+        .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    let tools_for_host = Arc::clone(&tools);
+    let tool_fn = lua
+        .create_function(move |lua, args: Variadic<Value>| {
+            let table = lua_tool_definition_table(args)?;
+            let spec = lua_tool_spec_from_table(lua, table)?;
+            tools_for_host
+                .lock()
+                .map_err(|_| mlua::Error::external("Lua tool registry lock poisoned"))?
+                .push(spec);
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
+    host.set("tool", tool_fn)
+        .map_err(|error| format!("failed to install Lua tool host: {error}"))?;
+    lua.load(source)
+        .set_name(entry_path.display().to_string())
+        .exec()
+        .map_err(|error| {
+            format!(
+                "failed to execute Lua plugin entry {}: {error}",
+                entry_path.display()
+            )
+        })?;
+    let register: Function = lua
+        .globals()
+        .get("register")
+        .map_err(|error| format!("Lua plugin entry must define register(host): {error}"))?;
+    register
+        .call::<()>(host)
+        .map_err(|error| format!("Lua plugin register(host) failed: {error}"))?;
+    let collected = tools
+        .lock()
+        .map_err(|_| "Lua tool registry lock poisoned".to_owned())?
+        .clone();
+    Ok(collected)
+}
+
+fn run_lua_tool(
+    plugin_id: &str,
+    entry_path: &Path,
+    source: &str,
+    tool_name: &str,
+    args: serde_json::Value,
+) -> Result<String, String> {
+    let lua = create_lua().map_err(|error| format!("failed to create Lua runtime: {error}"))?;
+    let run_key = Arc::new(Mutex::new(None));
+    let host = lua
+        .create_table()
+        .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    let target_name = tool_name.to_owned();
+    let run_key_for_host = Arc::clone(&run_key);
+    let tool_fn = lua
+        .create_function(move |lua, args: Variadic<Value>| {
+            let table = lua_tool_definition_table(args)?;
+            let name = required_lua_string(&table, "name")?;
+            if name == target_name {
+                let run: Function = table.get("run")?;
+                let key = lua.create_registry_value(run)?;
+                *run_key_for_host
+                    .lock()
+                    .map_err(|_| mlua::Error::external("Lua tool registry lock poisoned"))? =
+                    Some(key);
+            }
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
+    host.set("tool", tool_fn)
+        .map_err(|error| format!("failed to install Lua tool host: {error}"))?;
+    lua.load(source)
+        .set_name(entry_path.display().to_string())
+        .exec()
+        .map_err(|error| {
+            format!(
+                "failed to execute Lua plugin entry {}: {error}",
+                entry_path.display()
+            )
+        })?;
+    let register: Function = lua
+        .globals()
+        .get("register")
+        .map_err(|error| format!("Lua plugin entry must define register(host): {error}"))?;
+    register
+        .call::<()>(host)
+        .map_err(|error| format!("Lua plugin register(host) failed: {error}"))?;
+    let key = run_key
+        .lock()
+        .map_err(|_| "Lua tool registry lock poisoned".to_owned())?
+        .take()
+        .ok_or_else(|| format!("Lua plugin {plugin_id} did not register tool {tool_name}"))?;
+    let run: Function = lua
+        .registry_value(&key)
+        .map_err(|error| format!("failed to resolve Lua tool {tool_name}: {error}"))?;
+    let lua_args = lua.to_value(&args).map_err(|error| {
+        format!("failed to convert tool input for Lua tool {tool_name}: {error}")
+    })?;
+    let output: Value = run
+        .call(lua_args)
+        .map_err(|error| format!("Lua tool {tool_name} failed: {error}"))?;
+    let text = lua_tool_output_text(output)
+        .map_err(|error| format!("Lua tool {tool_name} returned invalid output: {error}"))?;
+    lua.remove_registry_value(key)
+        .map_err(|error| format!("failed to release Lua tool {tool_name}: {error}"))?;
+    Ok(text)
+}
+
+fn create_lua() -> Result<Lua, mlua::Error> {
+    Lua::new_with(
+        mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH | mlua::StdLib::UTF8,
+        mlua::LuaOptions::default(),
+    )
+}
+
+fn lua_tool_definition_table(args: Variadic<Value>) -> mlua::Result<Table> {
+    args.into_iter()
+        .rev()
+        .find_map(|value| match value {
+            Value::Table(table) => Some(table),
+            _ => None,
+        })
+        .ok_or_else(|| mlua::Error::external("host.tool requires a tool definition table"))
+}
+
+fn lua_tool_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<LuaToolSpec> {
+    let name = required_lua_string(&table, "name")?;
+    let description = required_lua_string(&table, "description")?;
+    let schema_value: Value = table
+        .get("input_schema")
+        .or_else(|_| table.get("parameters"))?;
+    let input_schema: serde_json::Value = lua.from_value(schema_value)?;
+    if !input_schema.is_object() {
+        return Err(mlua::Error::external(
+            "Lua tool input_schema must be a JSON object",
+        ));
+    }
+    let _: Function = table.get("run")?;
+    Ok(LuaToolSpec {
+        name,
+        description,
+        input_schema,
+    })
+}
+
+fn required_lua_string(table: &Table, field: &str) -> mlua::Result<String> {
+    let value: String = table.get(field)?;
+    if value.trim().is_empty() {
+        return Err(mlua::Error::external(format!(
+            "Lua tool {field} must not be empty"
+        )));
+    }
+    Ok(value)
+}
+
+fn lua_tool_output_text(value: Value) -> mlua::Result<String> {
+    match value {
+        Value::String(text) => Ok(text.to_str()?.to_owned()),
+        Value::Table(table) => {
+            let content: String = table.get("content")?;
+            Ok(content)
+        }
+        other => Err(mlua::Error::external(format!(
+            "expected string or table output, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 fn default_action() -> Result<Action, String> {

@@ -422,7 +422,7 @@ runtime = "lua"
     let diagnostics = lines[0]["data"]["diagnostics"].as_array().unwrap();
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic["pluginId"] == "project-lua"
-            && diagnostic["message"] == "Lua plugin loading is not implemented yet"
+            && diagnostic["message"] == "Lua plugin entry is required"
     }));
     registry::unregister(api);
 }

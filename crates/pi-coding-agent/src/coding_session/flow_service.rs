@@ -116,7 +116,7 @@ mod tests {
     use pi_agent_core::{AgentResources, AgentTool};
     use pi_ai::providers::faux::FauxProvider;
     use pi_ai::registry;
-    use pi_ai::types::{Model, ModelCost, ModelInput};
+    use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
 
     use super::*;
     use crate::coding_session::plugin_load_flow::{
@@ -308,7 +308,7 @@ mod tests {
         assert!(
             outcome.diagnostics[0]
                 .message
-                .contains("Lua plugin loading is not implemented yet")
+                .contains("Lua plugin entry is required")
         );
         assert!(
             context
@@ -316,6 +316,81 @@ mod tests {
                 .unwrap()
                 .collect_tools()
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn plugin_load_flow_loads_lua_manifest_tool_provider() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-hello");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-hello"
+name = "Lua Hello"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:tool({
+    name = "lua_hello",
+    description = "greets from lua",
+    input_schema = {
+      type = "object",
+      properties = {
+        name = { type = "string" }
+      }
+    },
+    run = function(input)
+      return { content = "hello " .. input.name }
+    end
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(outcome.loaded_plugin_ids, vec!["lua-hello"]);
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.tool_providers, 1);
+        let tools = context.loaded_plugin_service().unwrap().collect_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "lua_hello");
+        assert_eq!(tools[0].description, "greets from lua");
+        assert_eq!(
+            tools[0].parameters,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                }
+            })
+        );
+
+        let output = (tools[0].execute)(serde_json::json!({"name": "pi"}), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            output.content,
+            vec![ContentBlock::Text {
+                text: "hello pi".to_owned(),
+                text_signature: None,
+            }]
         );
     }
 
@@ -358,9 +433,7 @@ version = "0.1.0"
         assert_eq!(outcome.diagnostics.len(), 2);
         assert!(outcome.diagnostics.iter().any(|diagnostic| {
             diagnostic.plugin_id.as_deref() == Some("project-lua")
-                && diagnostic
-                    .message
-                    .contains("Lua plugin loading is not implemented yet")
+                && diagnostic.message.contains("Lua plugin entry is required")
         }));
         assert!(outcome.diagnostics.iter().any(|diagnostic| {
             diagnostic.plugin_id.as_deref() == Some("")
