@@ -225,15 +225,15 @@ Files:
 
 Tasks:
 
-- [ ] Add built-in slash command definitions for `agents`, `agent`, `teams`, and `team`.
-- [ ] Implement `/agents` and `/teams` list output from the session-owned profile registry.
-- [ ] Implement `/agent use <agent-id>` as a session default profile switch.
+- [x] Add built-in slash command definitions for `agents`, `agent`, `teams`, and `team`.
+- [x] Implement `/agents` and `/teams` list output from the session-owned profile registry.
+- [x] Implement `/agent use <agent-id>` as a session default profile switch.
 - [ ] Implement `/agent <agent-id> <task>` as a one-off agent invocation operation.
 - [ ] Implement `/team <team-id> <task>` as a one-off team invocation operation.
-- [ ] Reject missing ids/tasks with usage text.
+- [~] Reject missing ids/tasks with usage text. Stage 4a covers `/agent use` plus pending one-off `/agent` and `/team` parser validation; full one-off flow tests remain later.
 - [ ] Reject `@agent` and `@team` as normal prompt text; do not add mention parsing.
 - [ ] Keep plugin command slash aliases working and avoid id conflicts with built-in slash command names.
-- [ ] Add completion/suggestion tests for the new slash commands.
+- [x] Add completion/suggestion tests for the new slash commands.
 
 Acceptance:
 
@@ -402,9 +402,9 @@ source ~/.cargo/env && git diff --check
 ## Acceptance Checklist
 
 - [ ] Explicit user invocation uses `/agent` and `/team`, not `@agent` or `@team`.
-- [ ] `default_agent_profile_id` is durable session configuration and resumes correctly.
+- [x] `default_agent_profile_id` is durable session configuration and resumes correctly.
 - [x] Ordinary prompts use the current default `AgentProfile`.
-- [ ] `/agent use <id>` switches the default profile without running a task.
+- [x] `/agent use <id>` switches the default profile without running a task.
 - [ ] `/agent <id> <task>` runs a one-off agent operation without changing the default profile.
 - [ ] `/team <id> <task>` runs a supervised team operation without changing the default profile.
 - [ ] Single-agent sessions do not require a separate LLM supervisor.

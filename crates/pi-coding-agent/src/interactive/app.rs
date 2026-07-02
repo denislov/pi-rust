@@ -13,6 +13,7 @@ use pi_ai::types::Model;
 use pi_tui::{Component, InputEvent, Terminal, visible_width};
 use pi_tui::{KeybindingsManager, ProcessTerminal, TuiTheme, dark_theme, light_theme};
 
+use crate::coding_session::{ProfileId, ProfileRegistry, ProfileRegistryOptions};
 #[cfg(test)]
 use crate::interactive::clipboard::ClipboardSink;
 use crate::interactive::input::InputPump;
@@ -99,6 +100,8 @@ pub(super) struct PromptContext {
     pub(super) thinking_level: Option<pi_agent_core::ThinkingLevel>,
     pub(super) tool_execution: Option<pi_agent_core::ToolExecutionMode>,
     pub(super) resources: AgentResources,
+    pub(super) profile_registry: ProfileRegistry,
+    pub(super) default_agent_profile_id: ProfileId,
     pub(super) context_files: Vec<crate::resources::ContextFile>,
     pub(super) settings: crate::config::Settings,
     pub(super) theme: TuiTheme,
@@ -156,6 +159,11 @@ pub(super) fn build_prompt_context(
         (_, target) => target,
     };
     let session_choices = collect_session_choices(&resolved.session);
+    let profile_registry = ProfileRegistry::load(
+        ProfileRegistryOptions::new()
+            .with_user_root(resolved.config_paths.global_dir.clone())
+            .with_project_root(resolved.config_paths.project_dir.clone()),
+    )?;
 
     Ok(PromptContext {
         model: resolved.model,
@@ -179,6 +187,8 @@ pub(super) fn build_prompt_context(
         }),
         tool_execution: parsed.tool_execution,
         resources: resolved.agent_resources,
+        profile_registry,
+        default_agent_profile_id: ProfileId::from("default"),
         context_files: crate::resources::discover_context_files(
             &resolved.cwd,
             &resolved.config_paths.global_dir,
@@ -1153,6 +1163,10 @@ mod tests {
                 "help",
                 "settings",
                 "model",
+                "agents",
+                "agent",
+                "teams",
+                "team",
                 "scoped-models",
                 "export",
                 "share",
@@ -1194,7 +1208,7 @@ mod tests {
         assert!(rendered.contains("/settings"), "{rendered}");
         assert!(rendered.contains("Open settings menu"), "{rendered}");
         assert!(rendered.contains("/model"), "{rendered}");
-        assert!(rendered.contains("(1/23)"), "{rendered}");
+        assert!(rendered.contains("(1/27)"), "{rendered}");
     }
 
     #[test]
@@ -1989,14 +2003,14 @@ mod tests {
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
-        assert!(moved.contains("(3/23)"), "{moved}");
+        assert!(moved.contains("(3/27)"), "{moved}");
 
         root.handle_input(&key_event("\t"));
 
         assert_eq!(root.editor.text(), "/model ");
         assert_eq!(root.take_action(), InteractiveAction::None);
         let rendered = root.render(80).join("\n");
-        assert!(!rendered.contains("(2/23)"), "{rendered}");
+        assert!(!rendered.contains("(2/27)"), "{rendered}");
     }
 
     #[test]
@@ -2906,6 +2920,122 @@ mod tests {
         assert!(text.contains("/reload"), "{text}");
     }
 
+    #[test]
+    fn agent_profile_slash_commands_are_builtin_suggestions() {
+        let commands = builtin_slash_commands();
+
+        assert!(commands.iter().any(|command| command.name == "agents"));
+        assert!(commands.iter().any(|command| command.name == "agent"));
+        assert!(commands.iter().any(|command| command.name == "teams"));
+        assert!(commands.iter().any(|command| command.name == "team"));
+    }
+
+    #[test]
+    fn agents_command_lists_resolved_profiles_and_current_default() {
+        let _guard = crate::test_support::env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+description = "Implementation profile"
+"#,
+        );
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", &global);
+        }
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agents".to_string(),
+            args: String::new(),
+            original: "/agents".to_string(),
+        });
+
+        let text = last_system_text(&root);
+        assert!(text.contains("Agent profiles:"), "{text}");
+        assert!(text.contains("default"), "{text}");
+        assert!(text.contains("current"), "{text}");
+        assert!(text.contains("coder"), "{text}");
+        assert!(text.contains("Implementation profile"), "{text}");
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
+    }
+
+    #[test]
+    fn agent_use_command_selects_default_profile_for_next_prompt() {
+        let _guard = crate::test_support::env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", &global);
+        }
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent".to_string(),
+            args: "use coder".to_string(),
+            original: "/agent use coder".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::AgentProfileUse);
+        let selected = root
+            .take_selected_agent_profile_id()
+            .expect("agent profile switch should be queued");
+        assert_eq!(selected.as_str(), "coder");
+        let text = last_system_text(&root);
+        assert!(text.contains("Default agent profile: coder"), "{text}");
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
+    }
+
+    #[test]
+    fn agent_use_command_rejects_missing_or_unknown_profiles() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent".to_string(),
+            args: "use".to_string(),
+            original: "/agent use".to_string(),
+        });
+        assert!(last_system_text(&root).contains("Usage: /agent use <agent-id>"));
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent".to_string(),
+            args: "use missing".to_string(),
+            original: "/agent use missing".to_string(),
+        });
+        assert!(
+            last_system_text(&root).contains("Unknown agent profile: missing"),
+            "{}",
+            last_system_text(&root)
+        );
+        assert_ne!(root.action, InteractiveAction::AgentProfileUse);
+    }
+
     // ── all_slash_commands ────────────────────────────────────────────
 
     #[test]
@@ -3425,6 +3555,12 @@ mod tests {
             panic!("interactive loop should complete: {error}");
         }
         assert_eq!(&*events.lock().unwrap(), &["start", "input"]);
+    }
+
+    fn write_profile_file(path: impl AsRef<Path>, content: &str) {
+        let path = path.as_ref();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
     }
 
     fn last_system_text(root: &InteractiveRoot) -> String {

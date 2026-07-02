@@ -243,6 +243,8 @@ fn initialize_started_tui<T: Terminal>(
         root.session_choices = prompt_context.session_choices.clone();
         root.model = Some(prompt_context.model.clone());
         root.thinking_level = prompt_context.thinking_level.unwrap_or_default();
+        root.profile_registry = prompt_context.profile_registry.clone();
+        root.default_agent_profile_id = prompt_context.default_agent_profile_id.clone();
         if let Some(hydrated) = hydrate_existing_session_target(
             &prompt_context.session,
             prompt_context.session_target.as_ref(),
@@ -581,6 +583,7 @@ fn handle_input_event<T: Terminal>(
         prompt,
         selected_model,
         selected_thinking_level,
+        selected_agent_profile_id,
         selected_session,
         selected_session_hydrate,
         settings_update,
@@ -606,6 +609,7 @@ fn handle_input_event<T: Terminal>(
         };
         let selected_model = root.take_selected_model();
         let selected_thinking_level = root.take_selected_thinking_level();
+        let selected_agent_profile_id = root.take_selected_agent_profile_id();
         let selected_session = root.take_selected_session();
         let selected_session_hydrate = root.take_selected_session_hydrate();
         let settings_update = root.take_settings_update();
@@ -641,6 +645,7 @@ fn handle_input_event<T: Terminal>(
             prompt,
             selected_model,
             selected_thinking_level,
+            selected_agent_profile_id,
             selected_session,
             selected_session_hydrate,
             settings_update,
@@ -669,6 +674,14 @@ fn handle_input_event<T: Terminal>(
     }
     if let Some(thinking_level) = selected_thinking_level {
         prompt_context.thinking_level = Some(thinking_level);
+    }
+    if let Some(profile_id) = selected_agent_profile_id {
+        prompt_context.default_agent_profile_id = profile_id.clone();
+        if let Some(session) = coding_session.as_mut() {
+            session
+                .set_default_agent_profile_id(profile_id)
+                .map_err(CliError::from)?;
+        }
     }
     if let Some(session) = selected_session {
         *coding_session = None;
@@ -839,7 +852,9 @@ fn handle_input_event<T: Terminal>(
                 return Ok(LoopControl::Continue(RenderRequest::FORCE));
             }
             match build_prompt_context(parsed, options.clone()) {
-                Ok(reloaded) => {
+                Ok(mut reloaded) => {
+                    reloaded.default_agent_profile_id =
+                        prompt_context.default_agent_profile_id.clone();
                     *prompt_context = reloaded;
                     let root = root_mut(tui, root_id)?;
                     root.apply_prompt_context(prompt_context);
@@ -861,6 +876,7 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::AgentProfileUse => Ok(LoopControl::Continue(RenderRequest::FORCE)),
         InteractiveAction::Submit => {
             let Some(prompt) = prompt else {
                 return Ok(LoopControl::Continue(render_request));
@@ -1064,7 +1080,11 @@ fn start_prompt_task<T: Terminal>(
     };
 
     let existing_session = coding_session.take();
-    let task = PromptTask::spawn_prompt(options, existing_session)?;
+    let task = PromptTask::spawn_prompt(
+        options,
+        existing_session,
+        prompt_context.default_agent_profile_id.clone(),
+    )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
@@ -1118,7 +1138,11 @@ fn start_plugin_reload_task<T: Terminal>(
         invocation: PromptInvocation::Text(String::new()),
     };
 
-    let task = PromptTask::spawn_plugin_reload(options, coding_session.take())?;
+    let task = PromptTask::spawn_plugin_reload(
+        options,
+        coding_session.take(),
+        prompt_context.default_agent_profile_id.clone(),
+    )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
@@ -1164,6 +1188,7 @@ fn start_plugin_command_task<T: Terminal>(
         coding_session.take(),
         request.command_id,
         request.args,
+        prompt_context.default_agent_profile_id.clone(),
     )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
@@ -1218,7 +1243,11 @@ fn start_compact_task<T: Terminal>(
             "manual compaction requires an active Rust-native session".into(),
         ));
     }
-    let task = PromptTask::spawn_compact(options, coding_session.take())?;
+    let task = PromptTask::spawn_compact(
+        options,
+        coding_session.take(),
+        prompt_context.default_agent_profile_id.clone(),
+    )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
@@ -1264,6 +1293,7 @@ fn start_branch_summary_navigation_task<T: Terminal>(
         coding_session.take(),
         source_leaf_id,
         target_leaf_id,
+        prompt_context.default_agent_profile_id.clone(),
     )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
@@ -1322,6 +1352,7 @@ fn start_branch_summary_task<T: Terminal>(
         request.source_leaf_id,
         request.target_leaf_id,
         request.custom_instructions,
+        prompt_context.default_agent_profile_id.clone(),
     )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
@@ -1439,6 +1470,7 @@ fn finish_coding_prompt(
     outcome: PromptTurnOutcome,
     update_usage: bool,
 ) {
+    root.set_default_agent_profile_id(session.view().default_agent_profile_id.clone());
     root.clear_active_session();
     match outcome {
         PromptTurnOutcome::Success {

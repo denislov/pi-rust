@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,7 @@ use pi_tui::{
     matches_key, paint_with, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
 };
 
+use crate::coding_session::{ProfileId, ProfileRegistry, ProfileRegistryOptions};
 use crate::config::{AuthStore, Settings};
 use crate::interactive::app::{PromptContext, welcome_line};
 use crate::interactive::clipboard::{ClipboardSink, SystemClipboard};
@@ -40,6 +41,19 @@ const HTTP_IDLE_TIMEOUT_CHOICES: [(&str, u64); 5] = [
     ("5 min", 300_000),
     ("disabled", 0),
 ];
+
+fn profile_registry_for_cwd(cwd: &Path) -> ProfileRegistry {
+    let paths = crate::config::resolve_paths(cwd);
+    ProfileRegistry::load(
+        ProfileRegistryOptions::new()
+            .with_user_root(paths.global_dir)
+            .with_project_root(paths.project_dir),
+    )
+    .unwrap_or_else(|_| {
+        ProfileRegistry::load(ProfileRegistryOptions::new())
+            .expect("built-in default profile registry should load")
+    })
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum InteractiveAction {
     None,
@@ -50,6 +64,7 @@ pub(super) enum InteractiveAction {
     PluginCommand,
     PluginUiAction,
     PluginUiDialog,
+    AgentProfileUse,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -493,6 +508,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
+    pub(super) selected_agent_profile_id: Option<ProfileId>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -537,6 +553,8 @@ pub(super) struct InteractiveRoot {
     pub(super) resolved_theme: Option<ResolvedTheme>,
     pub(super) prompt_templates: Vec<pi_agent_core::PromptTemplate>,
     pub(super) skills: Vec<pi_agent_core::Skill>,
+    pub(super) profile_registry: ProfileRegistry,
+    pub(super) default_agent_profile_id: ProfileId,
     plugin_commands: Vec<PluginSlashCommand>,
     plugin_ui_actions: Vec<PluginUiAction>,
     plugin_ui_dialogs: Vec<PluginUiDialog>,
@@ -635,6 +653,7 @@ impl InteractiveRoot {
         let mut transcript = Transcript::new();
         transcript.push(TranscriptItem::system(welcome_line(&keybindings)));
         let settings_list = build_settings_list(settings.clone(), &theme, keybindings.clone());
+        let profile_registry = profile_registry_for_cwd(&cwd);
 
         Self {
             selecting_tree: false,
@@ -654,6 +673,7 @@ impl InteractiveRoot {
             pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
             active_plugin_ui_dialog: None,
+            selected_agent_profile_id: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,
@@ -695,6 +715,8 @@ impl InteractiveRoot {
             resolved_theme: None,
             prompt_templates: Vec::new(),
             skills: Vec::new(),
+            profile_registry,
+            default_agent_profile_id: ProfileId::from("default"),
             plugin_commands: Vec::new(),
             plugin_ui_actions: Vec::new(),
             plugin_ui_dialogs: Vec::new(),
@@ -730,6 +752,16 @@ impl InteractiveRoot {
 
     pub(super) fn take_selected_thinking_level(&mut self) -> Option<pi_agent_core::ThinkingLevel> {
         self.selected_thinking_level.take()
+    }
+
+    pub(super) fn take_selected_agent_profile_id(&mut self) -> Option<ProfileId> {
+        self.selected_agent_profile_id.take()
+    }
+
+    pub(super) fn set_default_agent_profile_id(&mut self, profile_id: ProfileId) {
+        self.default_agent_profile_id = profile_id;
+        self.slash_suggestion_selected = 0;
+        self.slash_suggestions_dismissed_for = None;
     }
 
     pub(super) fn take_selected_session(&mut self) -> Option<SessionChoice> {
@@ -1001,6 +1033,8 @@ impl InteractiveRoot {
         self.git_branch.set_cwd(&self.cwd);
         self.prompt_templates = prompt_context.resources.prompt_templates.clone();
         self.skills = prompt_context.resources.skills.clone();
+        self.profile_registry = prompt_context.profile_registry.clone();
+        self.default_agent_profile_id = prompt_context.default_agent_profile_id.clone();
     }
 
     pub(super) fn expand_prompt_text(&self, text: &str) -> String {

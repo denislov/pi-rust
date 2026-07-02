@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::CliError;
 use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
+    PluginLoadOutcome, ProfileId, PromptTurnOptions, PromptTurnOutcome,
 };
 use crate::interactive::root::{
     PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
@@ -74,22 +74,37 @@ impl PromptTask {
     pub(super) fn spawn_prompt(
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
+        default_agent_profile_id: ProfileId,
     ) -> Result<Self, CliError> {
-        Ok(Self::spawn_coding(options, existing_session))
+        Ok(Self::spawn_coding(
+            options,
+            existing_session,
+            default_agent_profile_id,
+        ))
     }
 
     pub(super) fn spawn_compact(
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
+        default_agent_profile_id: ProfileId,
     ) -> Result<Self, CliError> {
-        Ok(Self::spawn_coding_compact(options, existing_session))
+        Ok(Self::spawn_coding_compact(
+            options,
+            existing_session,
+            default_agent_profile_id,
+        ))
     }
 
     pub(super) fn spawn_plugin_reload(
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
+        default_agent_profile_id: ProfileId,
     ) -> Result<Self, CliError> {
-        Ok(Self::spawn_coding_plugin_reload(options, existing_session))
+        Ok(Self::spawn_coding_plugin_reload(
+            options,
+            existing_session,
+            default_agent_profile_id,
+        ))
     }
 
     pub(super) fn spawn_plugin_command(
@@ -97,12 +112,14 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
         command_id: String,
         args: serde_json::Value,
+        default_agent_profile_id: ProfileId,
     ) -> Result<Self, CliError> {
         Ok(Self::spawn_coding_plugin_command(
             options,
             existing_session,
             command_id,
             args,
+            default_agent_profile_id,
         ))
     }
 
@@ -112,6 +129,7 @@ impl PromptTask {
         source_leaf_id: String,
         target_leaf_id: String,
         custom_instructions: Option<String>,
+        default_agent_profile_id: ProfileId,
     ) -> Result<Self, CliError> {
         Ok(Self::spawn_coding_branch_summary(
             options,
@@ -119,6 +137,7 @@ impl PromptTask {
             source_leaf_id,
             target_leaf_id,
             custom_instructions,
+            default_agent_profile_id,
         ))
     }
 
@@ -127,12 +146,14 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
         source_leaf_id: String,
         target_leaf_id: String,
+        default_agent_profile_id: ProfileId,
     ) -> Result<Self, CliError> {
         Ok(Self::spawn_coding_branch_summary_navigation(
             options,
             existing_session,
             source_leaf_id,
             target_leaf_id,
+            default_agent_profile_id,
         ))
     }
 
@@ -174,14 +195,21 @@ impl PromptTask {
     fn spawn_coding(
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
+        default_agent_profile_id: ProfileId,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (control_tx, control_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
-            let result =
-                run_coding_prompt_task(options, existing_session, event_tx, control_rx).await;
+            let result = run_coding_prompt_task(
+                options,
+                existing_session,
+                default_agent_profile_id,
+                event_tx,
+                control_rx,
+            )
+            .await;
             let _ = done_tx.send(result.map(PromptTaskResult::Coding));
         });
 
@@ -197,14 +225,21 @@ impl PromptTask {
     fn spawn_coding_compact(
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
+        default_agent_profile_id: ProfileId,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let result =
-                run_coding_compact_task(options, existing_session, event_tx, abort_rx).await;
+            let result = run_coding_compact_task(
+                options,
+                existing_session,
+                default_agent_profile_id,
+                event_tx,
+                abort_rx,
+            )
+            .await;
             let _ = done_tx.send(result.map(PromptTaskResult::Coding));
         });
 
@@ -220,14 +255,21 @@ impl PromptTask {
     fn spawn_coding_plugin_reload(
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
+        default_agent_profile_id: ProfileId,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let result =
-                run_coding_plugin_reload_task(options, existing_session, event_tx, abort_rx).await;
+            let result = run_coding_plugin_reload_task(
+                options,
+                existing_session,
+                default_agent_profile_id,
+                event_tx,
+                abort_rx,
+            )
+            .await;
             let _ = done_tx.send(result.map(PromptTaskResult::PluginReload));
         });
 
@@ -245,6 +287,7 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
         command_id: String,
         args: serde_json::Value,
+        default_agent_profile_id: ProfileId,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
@@ -256,6 +299,7 @@ impl PromptTask {
                 existing_session,
                 command_id,
                 args,
+                default_agent_profile_id,
                 event_tx,
                 abort_rx,
             )
@@ -278,6 +322,7 @@ impl PromptTask {
         source_leaf_id: String,
         target_leaf_id: String,
         custom_instructions: Option<String>,
+        default_agent_profile_id: ProfileId,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
@@ -290,6 +335,7 @@ impl PromptTask {
                 source_leaf_id,
                 target_leaf_id,
                 custom_instructions,
+                default_agent_profile_id,
                 event_tx,
                 abort_rx,
             )
@@ -311,6 +357,7 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
         source_leaf_id: String,
         target_leaf_id: String,
+        default_agent_profile_id: ProfileId,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
@@ -322,6 +369,7 @@ impl PromptTask {
                 existing_session,
                 source_leaf_id,
                 target_leaf_id,
+                default_agent_profile_id,
                 event_tx,
                 abort_rx,
             )
@@ -342,6 +390,7 @@ impl PromptTask {
 async fn run_coding_prompt_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
+    default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
 ) -> Result<CodingPromptTaskResult, CliError> {
@@ -351,6 +400,7 @@ async fn run_coding_prompt_task(
             open_interactive_coding_session(
                 options.session.as_ref(),
                 options.session_target.as_ref(),
+                default_agent_profile_id,
             )
             .await?
         }
@@ -411,6 +461,7 @@ async fn run_coding_prompt_task(
 async fn run_coding_compact_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
+    default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> Result<CodingPromptTaskResult, CliError> {
@@ -420,6 +471,7 @@ async fn run_coding_compact_task(
             open_interactive_coding_session(
                 options.session.as_ref(),
                 options.session_target.as_ref(),
+                default_agent_profile_id,
             )
             .await?
         }
@@ -464,6 +516,7 @@ async fn run_coding_compact_task(
 async fn run_coding_plugin_reload_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
+    default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> Result<PluginReloadTaskResult, CliError> {
@@ -473,6 +526,7 @@ async fn run_coding_plugin_reload_task(
             open_interactive_coding_session(
                 options.session.as_ref(),
                 options.session_target.as_ref(),
+                default_agent_profile_id,
             )
             .await?
         }
@@ -523,6 +577,7 @@ async fn run_coding_plugin_command_task(
     existing_session: Option<CodingAgentSession>,
     command_id: String,
     args: serde_json::Value,
+    default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> Result<PluginCommandTaskResult, CliError> {
@@ -533,6 +588,7 @@ async fn run_coding_plugin_command_task(
             open_interactive_coding_session(
                 options.session.as_ref(),
                 options.session_target.as_ref(),
+                default_agent_profile_id,
             )
             .await?
         }
@@ -663,6 +719,7 @@ async fn run_coding_branch_summary_task(
     source_leaf_id: String,
     target_leaf_id: String,
     custom_instructions: Option<String>,
+    default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> Result<CodingPromptTaskResult, CliError> {
@@ -672,6 +729,7 @@ async fn run_coding_branch_summary_task(
             open_interactive_coding_session(
                 options.session.as_ref(),
                 options.session_target.as_ref(),
+                default_agent_profile_id,
             )
             .await?
         }
@@ -723,6 +781,7 @@ async fn run_coding_branch_summary_navigation_task(
     existing_session: Option<CodingAgentSession>,
     source_leaf_id: String,
     target_leaf_id: String,
+    default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> Result<CodingPromptTaskResult, CliError> {
@@ -732,6 +791,7 @@ async fn run_coding_branch_summary_navigation_task(
             open_interactive_coding_session(
                 options.session.as_ref(),
                 options.session_target.as_ref(),
+                default_agent_profile_id,
             )
             .await?
         }
@@ -796,13 +856,20 @@ fn interactive_coding_session_root(
 async fn open_interactive_coding_session(
     session_options: Option<&crate::runtime::SessionRunOptions>,
     target: Option<&ResolvedSessionTarget>,
+    default_agent_profile_id: ProfileId,
 ) -> Result<CodingAgentSession, CliError> {
     let Some(session_options) = session_options else {
-        return Ok(CodingAgentSession::non_persistent(CodingAgentSessionOptions::new()).await?);
+        return Ok(CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new()
+                .with_default_agent_profile_id(default_agent_profile_id),
+        )
+        .await?);
     };
     if !matches!(session_options.mode, SessionMode::Enabled) {
         return Ok(CodingAgentSession::non_persistent(
-            CodingAgentSessionOptions::new().with_cwd(session_options.cwd.clone()),
+            CodingAgentSessionOptions::new()
+                .with_cwd(session_options.cwd.clone())
+                .with_default_agent_profile_id(default_agent_profile_id.clone()),
         )
         .await?);
     }
@@ -816,7 +883,8 @@ async fn open_interactive_coding_session(
 
     let options = CodingAgentSessionOptions::new()
         .with_cwd(session_options.cwd.clone())
-        .with_session_log_root(session_root);
+        .with_session_log_root(session_root)
+        .with_default_agent_profile_id(default_agent_profile_id);
     match target.unwrap_or(&ResolvedSessionTarget::New) {
         ResolvedSessionTarget::New => Ok(CodingAgentSession::create(options).await?),
         ResolvedSessionTarget::OpenOrCreateId(session_id) => Ok(

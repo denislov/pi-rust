@@ -91,6 +91,10 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
             root.transcript.push(TranscriptItem::system(help_text()));
         }
         "model" => handle_model_command(root, &command.args),
+        "agents" => handle_agents_command(root),
+        "agent" => handle_agent_command(root, &command.args),
+        "teams" => handle_teams_command(root),
+        "team" => handle_team_command(root, &command.args),
         "resume" => handle_resume_command(root, &command.args),
         "export" => handle_export_command(root, &command.args),
         "import" => handle_import_command(root, &command.args),
@@ -128,6 +132,125 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
             }
         }
     }
+}
+
+fn handle_agents_command(root: &mut InteractiveRoot) {
+    let mut lines = vec!["Agent profiles:".to_string()];
+    for profile in root.profile_registry.agents() {
+        let current = if profile.id == root.default_agent_profile_id {
+            " (current)"
+        } else {
+            ""
+        };
+        let description = profile
+            .description
+            .as_deref()
+            .unwrap_or(profile.display_name.as_str());
+        lines.push(format!("  {}{current} - {description}", profile.id));
+    }
+    if root.profile_registry.agents().next().is_none() {
+        lines.push("  (none)".into());
+    }
+    root.transcript
+        .push(TranscriptItem::system(lines.join("\n")));
+}
+
+fn handle_teams_command(root: &mut InteractiveRoot) {
+    let mut lines = vec!["Team profiles:".to_string()];
+    for profile in root.profile_registry.teams() {
+        lines.push(format!(
+            "  {} - {} ({:?})",
+            profile.id, profile.display_name, profile.supervisor
+        ));
+    }
+    if root.profile_registry.teams().next().is_none() {
+        lines.push("  (none)".into());
+    }
+    root.transcript
+        .push(TranscriptItem::system(lines.join("\n")));
+}
+
+fn handle_agent_command(root: &mut InteractiveRoot, args: &str) {
+    let args = args.trim();
+    if args.is_empty() {
+        root.transcript.push(TranscriptItem::system(
+            "Usage: /agent use <agent-id> or /agent <agent-id> <task>",
+        ));
+        return;
+    }
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let first = parts.next().unwrap_or_default();
+    let rest = parts.next().unwrap_or_default().trim();
+    if first == "use" {
+        if rest.is_empty() {
+            root.transcript
+                .push(TranscriptItem::system("Usage: /agent use <agent-id>"));
+            return;
+        }
+        let mut rest_parts = rest.split_whitespace();
+        let profile_id = rest_parts.next().unwrap_or_default();
+        if rest_parts.next().is_some() {
+            root.transcript
+                .push(TranscriptItem::system("Usage: /agent use <agent-id>"));
+            return;
+        }
+        let Some(profile) = root.profile_registry.agent(profile_id) else {
+            root.transcript.push(TranscriptItem::system(format!(
+                "Unknown agent profile: {profile_id}"
+            )));
+            return;
+        };
+        let selected = profile.id.clone();
+        root.set_default_agent_profile_id(selected.clone());
+        root.selected_agent_profile_id = Some(selected.clone());
+        root.action = InteractiveAction::AgentProfileUse;
+        root.transcript.push(TranscriptItem::system(format!(
+            "Default agent profile: {selected}"
+        )));
+        return;
+    }
+
+    let profile_id = first;
+    if root.profile_registry.agent(profile_id).is_none() {
+        root.transcript.push(TranscriptItem::system(format!(
+            "Unknown agent profile: {profile_id}"
+        )));
+        return;
+    }
+    if rest.is_empty() {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /agent <agent-id> <task>"));
+        return;
+    }
+    root.transcript.push(TranscriptItem::system(
+        "/agent <agent-id> <task> is recognized but requires AgentInvocationFlow.",
+    ));
+}
+
+fn handle_team_command(root: &mut InteractiveRoot, args: &str) {
+    let args = args.trim();
+    if args.is_empty() {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /team <team-id> <task>"));
+        return;
+    }
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let team_id = parts.next().unwrap_or_default();
+    let task = parts.next().unwrap_or_default().trim();
+    if root.profile_registry.team(team_id).is_none() {
+        root.transcript.push(TranscriptItem::system(format!(
+            "Unknown team profile: {team_id}"
+        )));
+        return;
+    }
+    if task.is_empty() {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /team <team-id> <task>"));
+        return;
+    }
+    root.transcript.push(TranscriptItem::system(
+        "/team <team-id> <task> is recognized but requires AgentTeamFlow.",
+    ));
 }
 
 fn handle_pending_slash_command(root: &mut InteractiveRoot, command: &ParsedSlashCommand) {

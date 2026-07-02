@@ -28,6 +28,22 @@ pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
             description: "Select model".into(),
         },
         BuiltinSlashCommand {
+            name: "agents".into(),
+            description: "List agent profiles".into(),
+        },
+        BuiltinSlashCommand {
+            name: "agent".into(),
+            description: "Use or run an agent profile".into(),
+        },
+        BuiltinSlashCommand {
+            name: "teams".into(),
+            description: "List team profiles".into(),
+        },
+        BuiltinSlashCommand {
+            name: "team".into(),
+            description: "Run a team profile".into(),
+        },
+        BuiltinSlashCommand {
             name: "scoped-models".into(),
             description: "Enable or disable models for cycling".into(),
         },
