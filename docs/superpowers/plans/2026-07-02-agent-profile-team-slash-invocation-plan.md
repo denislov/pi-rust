@@ -107,11 +107,11 @@ Discovery roots:
 
 Tasks:
 
-- [ ] Add this plan to `docs/TODO.md` source documents.
-- [ ] Update the Phase 6 subagent/supervisor item so it points at profile/team slash invocation as the user-facing entrypoint.
-- [ ] Record that explicit invocation uses `/agent` and `/team`, not `@agent` or `@team`.
-- [ ] Record that the default `AgentProfile` is session configuration, not a hidden live agent.
-- [ ] Record that model self-delegation must go through `CodingAgentSession` authorization.
+- [x] Add this plan to `docs/TODO.md` source documents.
+- [x] Update the Phase 6 subagent/supervisor item so it points at profile/team slash invocation as the user-facing entrypoint.
+- [x] Record that explicit invocation uses `/agent` and `/team`, not `@agent` or `@team`.
+- [x] Record that the default `AgentProfile` is session configuration, not a hidden live agent.
+- [x] Record that model self-delegation must go through `CodingAgentSession` authorization.
 
 Acceptance:
 
@@ -128,14 +128,14 @@ Files:
 
 Tasks:
 
-- [ ] Add typed `AgentProfile`, `TeamProfile`, `ProfileId`, `ProfileSource`, `ProfileDiagnostic`, and `ProfileRegistry` models.
-- [ ] Add `SupervisionPolicy` for single-agent profiles with at least `session` and `self_review` variants; reserve `llm_supervisor` behind explicit future implementation.
-- [ ] Add `TeamSupervisor` for team profiles with deterministic and profile-backed supervisor variants.
-- [ ] Add `DelegationPolicy` with maximum depth, confirmation mode, parallel child limits, and allowed target ids.
-- [ ] Add TOML parsing with schema version validation and fail-open diagnostics for invalid profile files.
-- [ ] Add built-in default `AgentProfile` construction.
-- [ ] Add deterministic merge precedence: built-in < user < project, with duplicate id diagnostics.
-- [ ] Add offline unit tests for valid profile load, invalid profile diagnostics, duplicate id precedence, and built-in default fallback.
+- [x] Add typed `AgentProfile`, `TeamProfile`, `ProfileId`, `ProfileSource`, `ProfileDiagnostic`, and `ProfileRegistry` models.
+- [x] Add `SupervisionPolicy` for single-agent profiles with at least `session` and `self_review` variants; reserve `llm_supervisor` behind explicit future implementation.
+- [x] Add `TeamSupervisor` for team profiles with deterministic and profile-backed supervisor variants.
+- [x] Add `DelegationPolicy` with maximum depth, confirmation mode, parallel child limits, and allowed target ids.
+- [x] Add TOML parsing with schema version validation and fail-open diagnostics for invalid profile files.
+- [x] Add built-in default `AgentProfile` construction.
+- [x] Add deterministic merge precedence: built-in < user < project, with duplicate id diagnostics.
+- [x] Add offline unit tests for valid profile load, invalid profile diagnostics, duplicate id precedence, and built-in default fallback.
 
 Acceptance:
 

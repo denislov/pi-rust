@@ -11,6 +11,7 @@ mod manual_compaction_flow;
 mod operation_control;
 mod plugin_load_flow;
 mod plugin_service;
+mod profiles;
 mod prompt;
 mod prompt_flow;
 mod runtime_service;
@@ -30,6 +31,11 @@ pub use event::CodingAgentEvent;
 pub use event_service::CodingAgentEventReceiver;
 pub use export::{CodingAgentSessionExport, CodingAgentSessionExportItem};
 pub(crate) use plugin_load_flow::PluginLoadOutcome;
+pub use profiles::{
+    AgentProfile, DelegationConfirmationMode, DelegationPolicy, ProfileDiagnostic, ProfileId,
+    ProfileKind, ProfileRegistry, ProfileRegistryOptions, ProfileSource, SupervisionPolicy,
+    TeamProfile, TeamStrategy, TeamSupervisor,
+};
 pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
