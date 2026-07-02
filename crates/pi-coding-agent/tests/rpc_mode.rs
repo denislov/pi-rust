@@ -5,7 +5,7 @@ use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
-use pi_coding_agent::{CliRunOptions, protocol::rpc::run_rpc_mode_for_io};
+use pi_coding_agent::{CliRunOptions, SessionRunOptions, protocol::rpc::run_rpc_mode_for_io};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -374,6 +374,56 @@ async fn rpc_unsupported_command_returns_error_response() {
         lines[0]["error"],
         "unsupported command in Rust M5: set_model"
     );
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_reload_reports_project_plugin_manifest_diagnostics() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let project_plugin = cwd.join(".pi-rust/plugins/project-lua");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "project-lua"
+name = "Project Lua"
+version = "0.1.0"
+runtime = "lua"
+"#,
+    )
+    .unwrap();
+    let mut session_options = SessionRunOptions::enabled(cwd);
+    session_options.session_dir = Some(sessions);
+
+    let api = "pi-coding-rpc-reload";
+    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let input = br#"{"id":"r1","type":"reload"}
+"#;
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "r1");
+    assert_eq!(lines[0]["command"], "reload");
+    assert_eq!(lines[0]["success"], true);
+    let diagnostics = lines[0]["data"]["diagnostics"].as_array().unwrap();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["pluginId"] == "project-lua"
+            && diagnostic["message"] == "Lua plugin loading is not implemented yet"
+    }));
     registry::unregister(api);
 }
 

@@ -136,6 +136,8 @@ pub enum RpcCommand {
     },
     #[serde(rename = "get_state")]
     GetState { id: Option<String> },
+    #[serde(rename = "reload")]
+    Reload { id: Option<String> },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {
         id: Option<String>,
