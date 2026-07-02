@@ -17,6 +17,7 @@ pub(super) enum PromptTaskEvent {
 pub(super) enum PromptTaskResult {
     Coding(CodingPromptTaskResult),
     PluginReload(PluginReloadTaskResult),
+    PluginCommand(PluginCommandTaskResult),
 }
 
 pub(super) struct CodingPromptTaskResult {
@@ -30,6 +31,12 @@ pub(super) struct CodingPromptTaskResult {
 pub(super) struct PluginReloadTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: PluginLoadOutcome,
+}
+
+pub(super) struct PluginCommandTaskResult {
+    pub(super) session: CodingAgentSession,
+    pub(super) command_id: String,
+    pub(super) output: String,
 }
 
 enum PromptTaskAbortHandle {
@@ -64,6 +71,20 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
     ) -> Result<Self, CliError> {
         Ok(Self::spawn_coding_plugin_reload(options, existing_session))
+    }
+
+    pub(super) fn spawn_plugin_command(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        command_id: String,
+        args: serde_json::Value,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_plugin_command(
+            options,
+            existing_session,
+            command_id,
+            args,
+        ))
     }
 
     pub(super) fn spawn_branch_summary(
@@ -165,6 +186,38 @@ impl PromptTask {
             let result =
                 run_coding_plugin_reload_task(options, existing_session, event_tx, abort_rx).await;
             let _ = done_tx.send(result.map(PromptTaskResult::PluginReload));
+        });
+
+        Self {
+            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_plugin_command(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        command_id: String,
+        args: serde_json::Value,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_plugin_command_task(
+                options,
+                existing_session,
+                command_id,
+                args,
+                event_tx,
+                abort_rx,
+            )
+            .await;
+            let _ = done_tx.send(result.map(PromptTaskResult::PluginCommand));
         });
 
         Self {
@@ -393,6 +446,68 @@ async fn run_coding_plugin_reload_task(
     }
 
     Ok(PluginReloadTaskResult { session, outcome })
+}
+
+async fn run_coding_plugin_command_task(
+    options: PromptRunOptions,
+    existing_session: Option<CodingAgentSession>,
+    command_id: String,
+    args: serde_json::Value,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<PluginCommandTaskResult, CliError> {
+    let should_load_plugins = existing_session.is_none();
+    let mut session = match existing_session {
+        Some(session) => session,
+        None => {
+            open_interactive_coding_session(
+                options.session.as_ref(),
+                options.session_target.as_ref(),
+            )
+            .await?
+        }
+    };
+    let mut receiver = session.subscribe();
+
+    if should_load_plugins {
+        let mut reload = Box::pin(session.reload_plugins());
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    return Err(CliError::UnsupportedMode(
+                        "interactive plugin command abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut reload => {
+                    outcome.map_err(CliError::from)?;
+                    break;
+                }
+            }
+        }
+    } else if abort_rx.try_recv().is_ok() {
+        return Err(CliError::UnsupportedMode(
+            "interactive plugin command abort is not implemented yet".into(),
+        ));
+    }
+
+    let output = session
+        .run_plugin_command(&command_id, args)
+        .map_err(CliError::from)?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(PluginCommandTaskResult {
+        session,
+        command_id,
+        output,
+    })
 }
 
 async fn run_coding_branch_summary_task(

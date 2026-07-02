@@ -10,6 +10,7 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
+    PendingPluginCommandRequest,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -107,6 +108,7 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "fork" => handle_fork_command(root, &command.args),
         "compact" => handle_compact_command(root, &command.args),
         "branch-summary" => handle_branch_summary_command(root, &command.args),
+        "plugin-command" => handle_plugin_command(root, &command.args),
         "tree" => handle_tree_command(root),
         "scoped-models" | "share" => handle_pending_slash_command(root, &command),
         _ => {
@@ -204,6 +206,44 @@ fn handle_branch_summary_command(root: &mut InteractiveRoot, args: &str) {
         custom_instructions,
     });
     root.action = InteractiveAction::BranchSummary;
+}
+
+fn handle_plugin_command(root: &mut InteractiveRoot, args: &str) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before running a plugin command.",
+        ));
+        return;
+    }
+
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let command_id = parts.next().unwrap_or_default().trim();
+    if command_id.is_empty() {
+        root.transcript.push(TranscriptItem::system(
+            "Usage: /plugin-command <command-id> [json-args]",
+        ));
+        return;
+    }
+    let raw_args = parts.next().unwrap_or_default().trim();
+    let parsed_args = if raw_args.is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_str(raw_args) {
+            Ok(args) => args,
+            Err(error) => {
+                root.transcript.push(TranscriptItem::system(format!(
+                    "Invalid plugin command args: {error}"
+                )));
+                return;
+            }
+        }
+    };
+
+    root.pending_plugin_command_request = Some(PendingPluginCommandRequest {
+        command_id: command_id.to_string(),
+        args: parsed_args,
+    });
+    root.action = InteractiveAction::PluginCommand;
 }
 
 fn handle_export_command(root: &mut InteractiveRoot, args: &str) {

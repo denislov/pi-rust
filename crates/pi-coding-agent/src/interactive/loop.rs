@@ -16,6 +16,7 @@ use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
+    PendingPluginCommandRequest,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
@@ -584,6 +585,7 @@ fn handle_input_event<T: Terminal>(
         auth_update,
         compact_instructions,
         branch_summary_request,
+        plugin_command_request,
         render_request,
     ) = {
         let root = root_mut(tui, root_id)?;
@@ -611,6 +613,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let plugin_command_request = if action == InteractiveAction::PluginCommand {
+            root.take_pending_plugin_command_request()
+        } else {
+            None
+        };
         let after = root.render_state();
         (
             action,
@@ -623,6 +630,7 @@ fn handle_input_event<T: Terminal>(
             auth_update,
             compact_instructions,
             branch_summary_request,
+            plugin_command_request,
             RenderRequest::changed(before != after),
         )
     };
@@ -882,6 +890,22 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::PluginCommand => {
+            if running.is_some() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            let Some(request) = plugin_command_request else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            *running = Some(start_plugin_command_task(
+                tui,
+                root_id,
+                request,
+                prompt_context,
+                coding_session,
+            )?);
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
     }
 }
 
@@ -984,6 +1008,52 @@ fn start_plugin_reload_task<T: Terminal>(
     };
 
     let task = PromptTask::spawn_plugin_reload(options, coding_session.take())?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
+}
+
+fn start_plugin_command_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    request: PendingPluginCommandRequest,
+    prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<PromptTask, CliError> {
+    {
+        let root = root_mut(tui, root_id)?;
+        root.transcript.push(TranscriptItem::system(format!(
+            "Running plugin command: {}",
+            request.command_id
+        )));
+        root.set_status(InteractiveStatus::Running);
+    }
+
+    let options = PromptRunOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(String::new()),
+    };
+
+    let task = PromptTask::spawn_plugin_command(
+        options,
+        coding_session.take(),
+        request.command_id,
+        request.args,
+    )?;
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
     }
@@ -1205,6 +1275,13 @@ fn finish_prompt<T: Terminal>(
             for notice in plugin_reload_notice_lines(&result.outcome) {
                 root.transcript.push(TranscriptItem::system(notice));
             }
+            *coding_session = Some(result.session);
+        }
+        Ok(PromptTaskResult::PluginCommand(result)) => {
+            root.transcript.push(TranscriptItem::system(format!(
+                "Plugin command {}: {}",
+                result.command_id, result.output
+            )));
             *coding_session = Some(result.session);
         }
         Err(error) => {

@@ -46,6 +46,7 @@ pub(super) enum InteractiveAction {
     Submit,
     CompactSession,
     BranchSummary,
+    PluginCommand,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -87,6 +88,12 @@ pub(super) struct PendingBranchSummaryRequest {
     pub(super) custom_instructions: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct PendingPluginCommandRequest {
+    pub(super) command_id: String,
+    pub(super) args: serde_json::Value,
+}
+
 pub(super) struct InteractiveRoot {
     pub(super) selecting_tree: bool,
     pub(super) tree_selector: Option<TreeSelectorState>,
@@ -101,6 +108,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_submit: Option<String>,
     pub(super) pending_compact_instructions: Option<String>,
     pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
+    pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -253,6 +261,7 @@ impl InteractiveRoot {
             pending_submit: None,
             pending_compact_instructions: None,
             pending_branch_summary_request: None,
+            pending_plugin_command_request: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,
@@ -371,6 +380,12 @@ impl InteractiveRoot {
         &mut self,
     ) -> Option<PendingBranchSummaryRequest> {
         self.pending_branch_summary_request.take()
+    }
+
+    pub(super) fn take_pending_plugin_command_request(
+        &mut self,
+    ) -> Option<PendingPluginCommandRequest> {
+        self.pending_plugin_command_request.take()
     }
 
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {

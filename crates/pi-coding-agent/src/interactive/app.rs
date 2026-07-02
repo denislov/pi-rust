@@ -1151,6 +1151,7 @@ mod tests {
                 "branch-summary",
                 "resume",
                 "reload",
+                "plugin-command",
                 "quit",
             ]
             .map(String::from)
@@ -1173,7 +1174,7 @@ mod tests {
         assert!(rendered.contains("/settings"), "{rendered}");
         assert!(rendered.contains("Open settings menu"), "{rendered}");
         assert!(rendered.contains("/model"), "{rendered}");
-        assert!(rendered.contains("(1/22)"), "{rendered}");
+        assert!(rendered.contains("(1/23)"), "{rendered}");
     }
 
     #[test]
@@ -1968,14 +1969,14 @@ mod tests {
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
-        assert!(moved.contains("(3/22)"), "{moved}");
+        assert!(moved.contains("(3/23)"), "{moved}");
 
         root.handle_input(&key_event("\t"));
 
         assert_eq!(root.editor.text(), "/model ");
         assert_eq!(root.take_action(), InteractiveAction::None);
         let rendered = root.render(80).join("\n");
-        assert!(!rendered.contains("(2/22)"), "{rendered}");
+        assert!(!rendered.contains("(2/23)"), "{rendered}");
     }
 
     #[test]

@@ -291,7 +291,7 @@ async fn scripted_interactive_slash_suggestions_render_after_slash() {
     assert!(frame.contains("Show help"), "{frame}");
     assert!(frame.contains("/settings"), "{frame}");
     assert!(frame.contains("Open settings menu"), "{frame}");
-    assert!(frame.contains("(1/22)"), "{frame}");
+    assert!(frame.contains("(1/23)"), "{frame}");
 }
 
 #[tokio::test]
