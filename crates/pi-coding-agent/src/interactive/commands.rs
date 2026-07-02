@@ -277,7 +277,7 @@ pub(super) fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str,
         if dialog.action_id == command_id {
             if let Err(error) = validate_plugin_dialog_args(&dialog, &parsed_args) {
                 if let Some(field_id) = error.field_id.as_deref() {
-                    root.focus_active_plugin_dialog_field(field_id);
+                    root.set_active_plugin_dialog_field_error(field_id, error.message.clone());
                 }
                 root.transcript.push(TranscriptItem::system(error.message));
                 return;

@@ -143,10 +143,17 @@ pub(super) struct PendingPluginUiDialog {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PluginDialogFormError {
+    pub(super) field_id: String,
+    pub(super) message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ActivePluginUiDialog {
     pub(super) dialog: PendingPluginUiDialog,
     pub(super) values: Vec<String>,
     pub(super) selected_field: usize,
+    pub(super) validation_error: Option<PluginDialogFormError>,
 }
 
 impl ActivePluginUiDialog {
@@ -160,6 +167,7 @@ impl ActivePluginUiDialog {
             dialog,
             values,
             selected_field: 0,
+            validation_error: None,
         }
     }
 
@@ -167,6 +175,26 @@ impl ActivePluginUiDialog {
         let field = self.dialog.fields.get(self.selected_field)?;
         let value = self.values.get_mut(self.selected_field)?;
         Some((field, value))
+    }
+
+    fn selected_field_id(&self) -> Option<String> {
+        self.dialog
+            .fields
+            .get(self.selected_field)
+            .map(|field| field.id.clone())
+    }
+
+    fn clear_validation_error_for_selected_field(&mut self) {
+        let Some(field_id) = self.selected_field_id() else {
+            return;
+        };
+        if self
+            .validation_error
+            .as_ref()
+            .is_some_and(|error| error.field_id == field_id)
+        {
+            self.validation_error = None;
+        }
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -694,6 +722,21 @@ impl InteractiveRoot {
         }
     }
 
+    pub(super) fn set_active_plugin_dialog_field_error(
+        &mut self,
+        field_id: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        let field_id = field_id.into();
+        self.focus_active_plugin_dialog_field(&field_id);
+        if let Some(active_dialog) = self.active_plugin_ui_dialog.as_mut() {
+            active_dialog.validation_error = Some(PluginDialogFormError {
+                field_id,
+                message: message.into(),
+            });
+        }
+    }
+
     pub(super) fn handle_plugin_dialog_form_input(&mut self, event: &InputEvent) -> bool {
         if self.active_plugin_ui_dialog.is_none() {
             return false;
@@ -737,11 +780,13 @@ impl InteractiveRoot {
             Key::Backspace => {
                 if let Some((_, value)) = active_dialog.selected_field_mut() {
                     value.pop();
+                    active_dialog.clear_validation_error_for_selected_field();
                 }
             }
             Key::Delete => {
                 if let Some((_, value)) = active_dialog.selected_field_mut() {
                     value.clear();
+                    active_dialog.clear_validation_error_for_selected_field();
                 }
             }
             Key::Space
@@ -759,6 +804,7 @@ impl InteractiveRoot {
                     } else {
                         value.push(' ');
                     }
+                    active_dialog.clear_validation_error_for_selected_field();
                 }
             }
             Key::Char(text)
@@ -768,6 +814,7 @@ impl InteractiveRoot {
             {
                 if let Some((_, value)) = active_dialog.selected_field_mut() {
                     value.push_str(text);
+                    active_dialog.clear_validation_error_for_selected_field();
                 }
             }
             _ => {}
@@ -815,6 +862,14 @@ impl InteractiveRoot {
                 ),
                 width,
             ));
+            if active_dialog
+                .validation_error
+                .as_ref()
+                .is_some_and(|error| error.field_id == field.id)
+                && let Some(error) = active_dialog.validation_error.as_ref()
+            {
+                lines.push(fit_line(&format!("  error: {}", error.message), width));
+            }
         }
         lines
     }

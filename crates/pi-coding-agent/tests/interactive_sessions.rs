@@ -677,6 +677,10 @@ end
         "{frame}"
     );
     assert!(frame.contains("> Name * [text]:"), "{frame}");
+    assert!(
+        frame.contains("  error: Plugin dialog field Name is required"),
+        "{frame}"
+    );
     assert!(frame.contains("  Note [text]: note"), "{frame}");
     assert!(
         !frame.contains("Plugin command lua.submit_panel"),
