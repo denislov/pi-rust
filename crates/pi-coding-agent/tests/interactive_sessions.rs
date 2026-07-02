@@ -291,6 +291,69 @@ end
 }
 
 #[tokio::test]
+async fn interactive_plugin_command_can_read_lua_host_api_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_plugin = temp.path().join(".pi-rust/plugins/lua-host-api");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "lua-host-api"
+name = "Lua Host API"
+version = "2.3.4"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.lua"),
+        r#"
+function register(host)
+  local api = host:api_version()
+  local plugin = host:plugin()
+  host:command({
+    id = "lua.host_info",
+    description = "reports host API metadata",
+    run = function(input)
+      return {
+        content = "api " .. api .. " plugin " .. plugin.id .. " " .. plugin.name .. " " .. plugin.version .. " " .. plugin.source
+      }
+    end
+  })
+end
+"#,
+    )
+    .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("/reload\r", "plugin.load.completed"),
+            (
+                "/plugin-command lua.host_info {}\r",
+                "plugin.load.completed",
+            ),
+        ],
+    )
+    .await
+    .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("Plugin command lua.host_info"), "{frame}");
+    assert!(
+        frame.contains("api 1 plugin lua-host-api Lua Host API 2.3.4 lua"),
+        "{frame}"
+    );
+    assert!(
+        !frame.contains("Lua plugin register(host) failed"),
+        "{frame}"
+    );
+}
+
+#[tokio::test]
 async fn interactive_plugin_command_slash_alias_runs_loaded_lua_plugin_command() {
     let temp = tempfile::tempdir().unwrap();
     let project_plugin = temp.path().join(".pi-rust/plugins/lua-command");

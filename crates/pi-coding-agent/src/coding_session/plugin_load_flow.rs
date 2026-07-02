@@ -23,6 +23,7 @@ use crate::plugins::{
 };
 
 const DEFAULT_ACTION: &str = "default";
+const LUA_PLUGIN_API_VERSION: &str = "1";
 const PLUGIN_MANIFEST_FILE: &str = "plugin.toml";
 
 pub(crate) const PLUGIN_LOAD_NODE_IDS: &[&str] = &[
@@ -714,7 +715,7 @@ impl ToolProvider for LuaToolProvider {
     fn tools(&self, _host: &ToolRegistrationHost) -> Result<Vec<AgentTool>, PluginError> {
         let mut tools = Vec::new();
         for spec in self.tools.iter().cloned() {
-            let plugin_id = self.metadata.id.as_str().to_owned();
+            let metadata = self.metadata.clone();
             let entry_path = self.entry_path.clone();
             let source = self.source.clone();
             let tool_name = spec.name.clone();
@@ -723,11 +724,11 @@ impl ToolProvider for LuaToolProvider {
                 spec.description,
                 spec.input_schema,
                 move |args| {
-                    let plugin_id = plugin_id.clone();
+                    let metadata = metadata.clone();
                     let entry_path = entry_path.clone();
                     let source = source.clone();
                     let tool_name = tool_name.clone();
-                    async move { run_lua_tool(&plugin_id, &entry_path, &source, &tool_name, args) }
+                    async move { run_lua_tool(&metadata, &entry_path, &source, &tool_name, args) }
                 },
             );
             tool.validate().map_err(|error| PluginError::Registration {
@@ -770,7 +771,7 @@ impl CommandProvider for LuaCommandProvider {
         args: serde_json::Value,
     ) -> Result<String, PluginError> {
         run_lua_command(
-            self.metadata.id.as_str(),
+            &self.metadata,
             &self.entry_path,
             &self.source,
             command_id,
@@ -804,7 +805,7 @@ impl HookProvider for LuaHookProvider {
 
     fn run_hook(&self, ctx: &PromptHookContext) -> Result<HookOutcome, PluginError> {
         run_lua_hook(
-            self.metadata.id.as_str(),
+            &self.metadata,
             &self.entry_path,
             &self.source,
             &self.hook,
@@ -911,17 +912,18 @@ fn load_lua_plugin_registry(
             entry_path.display()
         ),
     })?;
-    let specs =
-        collect_lua_plugin_specs(entry_path, &source).map_err(|message| PluginDiagnostic {
-            plugin_id: plugin_id.clone(),
-            message,
-        })?;
     let metadata = PluginMetadata::new(
         PluginId::new(manifest.id.clone()),
         manifest.name.clone(),
         manifest.version.clone(),
         PluginSource::Lua,
     );
+    let specs = collect_lua_plugin_specs(entry_path, &source, &metadata).map_err(|message| {
+        PluginDiagnostic {
+            plugin_id: plugin_id.clone(),
+            message,
+        }
+    })?;
     let source: Arc<str> = Arc::from(source);
     let mut registry = PluginRegistry::new();
     if !specs.tools.is_empty() {
@@ -964,7 +966,11 @@ fn load_lua_plugin_registry(
     Ok(registry)
 }
 
-fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPluginSpecs, String> {
+fn collect_lua_plugin_specs(
+    entry_path: &Path,
+    source: &str,
+    metadata: &PluginMetadata,
+) -> Result<LuaPluginSpecs, String> {
     let lua = create_lua().map_err(|error| format!("failed to create Lua runtime: {error}"))?;
     let tools = Arc::new(Mutex::new(Vec::new()));
     let commands = Arc::new(Mutex::new(Vec::new()));
@@ -975,6 +981,7 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
     let host = lua
         .create_table()
         .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    install_lua_host_api(&lua, &host, metadata)?;
     let tools_for_host = Arc::clone(&tools);
     let tool_fn = lua
         .create_function(move |lua, args: Variadic<Value>| {
@@ -1104,7 +1111,7 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
 }
 
 fn run_lua_tool(
-    plugin_id: &str,
+    metadata: &PluginMetadata,
     entry_path: &Path,
     source: &str,
     tool_name: &str,
@@ -1115,6 +1122,7 @@ fn run_lua_tool(
     let host = lua
         .create_table()
         .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    install_lua_host_api(&lua, &host, metadata)?;
     let target_name = tool_name.to_owned();
     let run_key_for_host = Arc::clone(&run_key);
     let tool_fn = lua
@@ -1167,7 +1175,12 @@ fn run_lua_tool(
         .lock()
         .map_err(|_| "Lua tool registry lock poisoned".to_owned())?
         .take()
-        .ok_or_else(|| format!("Lua plugin {plugin_id} did not register tool {tool_name}"))?;
+        .ok_or_else(|| {
+            format!(
+                "Lua plugin {} did not register tool {tool_name}",
+                metadata.id.as_str()
+            )
+        })?;
     let run: Function = lua
         .registry_value(&key)
         .map_err(|error| format!("failed to resolve Lua tool {tool_name}: {error}"))?;
@@ -1185,7 +1198,7 @@ fn run_lua_tool(
 }
 
 fn run_lua_command(
-    plugin_id: &str,
+    metadata: &PluginMetadata,
     entry_path: &Path,
     source: &str,
     command_id: &str,
@@ -1196,6 +1209,7 @@ fn run_lua_command(
     let host = lua
         .create_table()
         .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    install_lua_host_api(&lua, &host, metadata)?;
     let tool_fn = lua
         .create_function(|_, _args: Variadic<Value>| Ok(()))
         .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
@@ -1248,7 +1262,12 @@ fn run_lua_command(
         .lock()
         .map_err(|_| "Lua command registry lock poisoned".to_owned())?
         .take()
-        .ok_or_else(|| format!("Lua plugin {plugin_id} did not register command {command_id}"))?;
+        .ok_or_else(|| {
+            format!(
+                "Lua plugin {} did not register command {command_id}",
+                metadata.id.as_str()
+            )
+        })?;
     let run: Function = lua
         .registry_value(&key)
         .map_err(|error| format!("failed to resolve Lua command {command_id}: {error}"))?;
@@ -1266,7 +1285,7 @@ fn run_lua_command(
 }
 
 fn run_lua_hook(
-    plugin_id: &str,
+    metadata: &PluginMetadata,
     entry_path: &Path,
     source: &str,
     spec: &LuaHookSpec,
@@ -1278,6 +1297,7 @@ fn run_lua_hook(
     let host = lua
         .create_table()
         .map_err(|error| format!("failed to create Lua plugin host: {error}"))?;
+    install_lua_host_api(&lua, &host, metadata)?;
     let tool_fn = lua
         .create_function(|_, _args: Variadic<Value>| Ok(()))
         .map_err(|error| format!("failed to create Lua tool host: {error}"))?;
@@ -1347,7 +1367,8 @@ fn run_lua_hook(
         .take()
         .ok_or_else(|| {
             format!(
-                "Lua plugin {plugin_id} did not register hook {}",
+                "Lua plugin {} did not register hook {}",
+                metadata.id.as_str(),
                 prompt_hook_point_name(spec.point)
             )
         })?;
@@ -1391,6 +1412,37 @@ fn create_lua() -> Result<Lua, mlua::Error> {
         mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH | mlua::StdLib::UTF8,
         mlua::LuaOptions::default(),
     )
+}
+
+fn install_lua_host_api(lua: &Lua, host: &Table, metadata: &PluginMetadata) -> Result<(), String> {
+    let api_version_fn = lua
+        .create_function(|_, _args: Variadic<Value>| Ok(LUA_PLUGIN_API_VERSION))
+        .map_err(|error| format!("failed to create Lua api_version host: {error}"))?;
+    host.set("api_version", api_version_fn)
+        .map_err(|error| format!("failed to install Lua api_version host: {error}"))?;
+
+    let metadata = metadata.clone();
+    let plugin_fn = lua
+        .create_function(move |lua, _args: Variadic<Value>| {
+            let table = lua.create_table()?;
+            table.set("id", metadata.id.as_str())?;
+            table.set("name", metadata.name.as_str())?;
+            table.set("version", metadata.version.as_str())?;
+            table.set("source", plugin_source_name(&metadata.source))?;
+            Ok(table)
+        })
+        .map_err(|error| format!("failed to create Lua plugin metadata host: {error}"))?;
+    host.set("plugin", plugin_fn)
+        .map_err(|error| format!("failed to install Lua plugin metadata host: {error}"))
+}
+
+fn plugin_source_name(source: &PluginSource) -> &'static str {
+    match source {
+        PluginSource::FirstParty => "first_party",
+        PluginSource::Project => "project",
+        PluginSource::User => "user",
+        PluginSource::Lua => "lua",
+    }
 }
 
 fn install_lua_noop_host(lua: &Lua, host: &Table, capability: &str) -> Result<(), String> {
