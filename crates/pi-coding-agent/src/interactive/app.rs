@@ -881,6 +881,25 @@ mod tests {
     }
 
     #[test]
+    fn shift_enter_while_running_submits_follow_up() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Running);
+
+        root.editor.set_text("continue with tests");
+        root.handle_input(&key_event("\x1b[13;2u"));
+
+        assert_eq!(root.take_action(), InteractiveAction::FollowUp);
+        assert_eq!(
+            root.take_pending_submit().as_deref(),
+            Some("continue with tests")
+        );
+    }
+
+    #[test]
     fn footer_no_spinner_when_idle() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
@@ -3548,6 +3567,7 @@ mod tests {
 
 #[cfg(any(test, feature = "test-harness", debug_assertions))]
 pub mod test_harness {
+    use std::future::Future;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
@@ -3657,6 +3677,37 @@ pub mod test_harness {
         input_chunks: Vec<&str>,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         run_scripted_with_provider(provider, input_chunks, None).await
+    }
+
+    pub async fn run_scripted_interactive_with_provider_driver<F, Fut>(
+        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        driver: F,
+    ) -> Result<ScriptedInteractiveOutput, CliError>
+    where
+        F: FnOnce(tokio::sync::mpsc::UnboundedSender<String>) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let api = format!(
+            "interactive-harness-{}",
+            INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
+        );
+        registry::register(&api, provider);
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut input = InputPump::from_receiver(rx);
+        let parsed = CliArgs::default();
+        let options = CliRunOptions {
+            model_override: Some(faux_model(&api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: SessionRunOptions::disabled(PathBuf::from(".")),
+        };
+
+        let run = run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input);
+        let (result, ()) = tokio::join!(run, driver(tx));
+        registry::unregister(&api);
+
+        Ok(scripted_output(result?, None))
     }
 
     pub async fn run_scripted_idle_interactive(

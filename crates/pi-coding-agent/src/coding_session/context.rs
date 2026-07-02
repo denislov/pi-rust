@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use pi_agent_core::session::SessionTreeNode;
 
+use crate::coding_session::operation_control::OperationKind;
 use crate::plugins::PluginCapabilities;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -142,40 +143,39 @@ pub enum CapabilityStatus {
 }
 
 impl CodingAgentCapabilities {
-    pub(crate) fn phase_5(
-        active_operation: Option<&str>,
-        plugin_capabilities: &PluginCapabilities,
+    pub(crate) fn from_runtime_state(
+        active_operation: Option<OperationKind>,
+        _plugin_capabilities: &PluginCapabilities,
         persistent_session: bool,
     ) -> Self {
         let prompt = match active_operation {
             Some(operation) => CapabilityStatus::Busy {
-                operation: operation.into(),
+                operation: operation.as_str().into(),
             },
             None => CapabilityStatus::Available,
         };
 
-        let _ = plugin_capabilities;
         let persistent_session_capability = match (persistent_session, active_operation) {
             (false, _) => CapabilityStatus::Disabled {
                 reason: "requires persistent Rust-native session".into(),
             },
             (true, Some(operation)) => CapabilityStatus::Busy {
-                operation: operation.into(),
+                operation: operation.as_str().into(),
             },
             (true, None) => CapabilityStatus::Available,
+        };
+        let prompt_control_capability = match active_operation {
+            Some(OperationKind::Prompt) => CapabilityStatus::Available,
+            _ => CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            },
         };
 
         Self {
             prompt,
-            abort: CapabilityStatus::Unsupported {
-                reason: "operation abort is not exposed on CodingAgentSession yet".into(),
-            },
-            steer: CapabilityStatus::Unsupported {
-                reason: "agent turn steering awaits AgentTurnFlow".into(),
-            },
-            follow_up: CapabilityStatus::Unsupported {
-                reason: "follow-up controls await AgentTurnFlow".into(),
-            },
+            abort: prompt_control_capability.clone(),
+            steer: prompt_control_capability.clone(),
+            follow_up: prompt_control_capability,
             compact: persistent_session_capability.clone(),
             fork: persistent_session_capability.clone(),
             clone_session: persistent_session_capability.clone(),

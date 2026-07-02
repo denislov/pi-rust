@@ -1,4 +1,4 @@
-use super::CodingAgentCapabilities;
+use super::{CodingAgentCapabilities, OperationKind};
 use crate::plugins::PluginCapabilities;
 
 #[derive(Debug)]
@@ -11,11 +11,15 @@ impl CapabilityService {
 
     pub(crate) fn capabilities(
         &self,
-        active_operation: Option<&str>,
+        active_operation: Option<OperationKind>,
         plugin_capabilities: &PluginCapabilities,
         persistent_session: bool,
     ) -> CodingAgentCapabilities {
-        CodingAgentCapabilities::phase_5(active_operation, plugin_capabilities, persistent_session)
+        CodingAgentCapabilities::from_runtime_state(
+            active_operation,
+            plugin_capabilities,
+            persistent_session,
+        )
     }
 }
 
@@ -41,8 +45,11 @@ mod tests {
     #[test]
     fn capabilities_report_prompt_busy_for_active_operation() {
         let plugin_capabilities = PluginCapabilities::new();
-        let capabilities =
-            CapabilityService::new().capabilities(Some("prompt"), &plugin_capabilities, true);
+        let capabilities = CapabilityService::new().capabilities(
+            Some(OperationKind::Prompt),
+            &plugin_capabilities,
+            true,
+        );
 
         assert_eq!(
             capabilities.prompt,
@@ -53,10 +60,62 @@ mod tests {
     }
 
     #[test]
+    fn capabilities_disable_prompt_controls_when_no_prompt_is_running() {
+        let plugin_capabilities = PluginCapabilities::new();
+        let capabilities = CapabilityService::new().capabilities(None, &plugin_capabilities, true);
+
+        for capability in [
+            capabilities.abort,
+            capabilities.steer,
+            capabilities.follow_up,
+        ] {
+            assert_eq!(
+                capability,
+                CapabilityStatus::Disabled {
+                    reason: "no prompt is running".into(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn capabilities_enable_prompt_controls_only_for_running_prompt() {
+        let plugin_capabilities = PluginCapabilities::new();
+        let prompt_capabilities = CapabilityService::new().capabilities(
+            Some(OperationKind::Prompt),
+            &plugin_capabilities,
+            true,
+        );
+
+        assert_eq!(prompt_capabilities.abort, CapabilityStatus::Available);
+        assert_eq!(prompt_capabilities.steer, CapabilityStatus::Available);
+        assert_eq!(prompt_capabilities.follow_up, CapabilityStatus::Available);
+
+        let plugin_load_capabilities = CapabilityService::new().capabilities(
+            Some(OperationKind::PluginLoad),
+            &plugin_capabilities,
+            true,
+        );
+
+        for capability in [
+            plugin_load_capabilities.abort,
+            plugin_load_capabilities.steer,
+            plugin_load_capabilities.follow_up,
+        ] {
+            assert_eq!(
+                capability,
+                CapabilityStatus::Disabled {
+                    reason: "no prompt is running".into(),
+                }
+            );
+        }
+    }
+
+    #[test]
     fn capabilities_report_persistent_workflows_busy_for_active_operation() {
         let plugin_capabilities = PluginCapabilities::new();
         let capabilities = CapabilityService::new().capabilities(
-            Some("branch_summary"),
+            Some(OperationKind::BranchSummary),
             &plugin_capabilities,
             true,
         );

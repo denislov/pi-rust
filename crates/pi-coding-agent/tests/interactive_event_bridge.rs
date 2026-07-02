@@ -179,7 +179,7 @@ fn coding_event_bridge_maps_failure_abort_and_compaction() {
         }]
     );
 
-    let compacted = bridge.handle(&CodingAgentEvent::RuntimeCompactionCompleted {
+    let compacted = bridge.handle(&CodingAgentEvent::SessionCompactionCompleted {
         operation_id: "op_1".to_string(),
         turn_id: "turn_1".to_string(),
         summary: "kept recent context".to_string(),

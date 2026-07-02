@@ -99,6 +99,39 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         return;
     }
 
+    if root.status == InteractiveStatus::Running {
+        if matches_key(event, "shift+enter") {
+            let text = root.editor.expanded_text().trim().to_string();
+            root.editor.set_text("");
+            if !text.is_empty() {
+                root.editor.add_to_history(&text);
+                root.pending_submit = Some(text);
+                root.action = InteractiveAction::FollowUp;
+            }
+            return;
+        }
+
+        let before_text = root.editor.text().to_string();
+        root.editor.handle_input(event);
+        if root.editor.text() != before_text {
+            root.slash_suggestion_selected = 0;
+            root.slash_suggestions_dismissed_for = None;
+        }
+        if let Some(command) = root.take_scroll_command() {
+            let page_rows = root.viewport_height.saturating_sub(2).max(1);
+            match command {
+                TranscriptScrollCommand::PageUp => root.transcript.scroll_page_up(page_rows),
+                TranscriptScrollCommand::PageDown => root.transcript.scroll_page_down(page_rows),
+            }
+        }
+        if let Some(text) = root.take_submitted() {
+            root.editor.add_to_history(&text);
+            root.pending_submit = Some(text);
+            root.action = InteractiveAction::Submit;
+        }
+        return;
+    }
+
     if root.status == InteractiveStatus::Idle
         && !root.selecting_model
         && !root.selecting_session

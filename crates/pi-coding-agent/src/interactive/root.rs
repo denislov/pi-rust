@@ -44,6 +44,7 @@ const HTTP_IDLE_TIMEOUT_CHOICES: [(&str, u64); 5] = [
 pub(super) enum InteractiveAction {
     None,
     Submit,
+    FollowUp,
     CompactSession,
     BranchSummary,
     PluginCommand,

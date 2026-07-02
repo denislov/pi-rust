@@ -5,8 +5,10 @@ mod error;
 mod event;
 mod event_service;
 mod export;
+mod export_flow;
 mod flow_service;
 mod manual_compaction_flow;
+mod operation_control;
 mod plugin_load_flow;
 mod plugin_service;
 mod prompt;
@@ -36,8 +38,11 @@ pub use prompt::{
 use branch_summary_flow::{BranchSummaryContext, BranchSummaryOptions, BranchSummaryOutcome};
 use capability_service::CapabilityService;
 use event_service::EventService;
+use export_flow::ExportOptions;
 use flow_service::FlowService;
 use manual_compaction_flow::{ManualCompactionContext, ManualCompactionOptions};
+use operation_control::OperationControl;
+pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
@@ -61,7 +66,7 @@ pub struct CodingAgentSession {
     capability_service: CapabilityService,
     plugin_service: PluginService,
     default_plugin_load_options: PluginLoadOptions,
-    active_operation: Option<String>,
+    operation_control: OperationControl,
 }
 
 #[derive(Debug)]
@@ -172,34 +177,40 @@ impl CodingAgentSession {
         options: CodingAgentSessionOptions,
         path: impl AsRef<Path>,
     ) -> Result<PathBuf, CodingSessionError> {
-        SessionService::open(&options)?.export_html(path.as_ref())
+        let session_service = SessionService::open(&options)?;
+        let mut context = session_service.export_context(ExportOptions::html(path.as_ref()))?;
+        let outcome = FlowService::new().run_export(&mut context)?;
+        outcome.path.ok_or_else(|| CodingSessionError::Session {
+            message: "export completed without a written html path".into(),
+        })
     }
 
     pub fn export_current_html(
         &self,
         path: impl AsRef<Path>,
     ) -> Result<PathBuf, CodingSessionError> {
-        match &self.persistence {
-            SessionPersistence::Persistent(session_service) => {
-                session_service.export_html(path.as_ref())
-            }
-            SessionPersistence::NonPersistent(_) => {
-                Err(CodingSessionError::UnsupportedCapability {
-                    capability: "export requires a persistent Rust-native session".into(),
-                })
-            }
-        }
+        let _operation = self.operation_control.begin(OperationKind::Export)?;
+        let SessionPersistence::Persistent(session_service) = &self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "export requires a persistent Rust-native session".into(),
+            });
+        };
+        let mut context = session_service.export_context(ExportOptions::html(path.as_ref()))?;
+        let outcome = self.flow_service.run_export(&mut context)?;
+        outcome.path.ok_or_else(|| CodingSessionError::Session {
+            message: "export completed without a written html path".into(),
+        })
     }
 
     pub fn export_current(&self) -> Result<CodingAgentSessionExport, CodingSessionError> {
-        match &self.persistence {
-            SessionPersistence::Persistent(session_service) => session_service.export_view(),
-            SessionPersistence::NonPersistent(_) => {
-                Err(CodingSessionError::UnsupportedCapability {
-                    capability: "export requires a persistent Rust-native session".into(),
-                })
-            }
-        }
+        let _operation = self.operation_control.begin(OperationKind::Export)?;
+        let SessionPersistence::Persistent(session_service) = &self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "export requires a persistent Rust-native session".into(),
+            });
+        };
+        let mut context = session_service.export_context(ExportOptions::view())?;
+        Ok(self.flow_service.run_export(&mut context)?.export)
     }
 
     pub(crate) fn hydrate_current(
@@ -234,11 +245,17 @@ impl CodingAgentSession {
         self.event_service.subscribe()
     }
 
+    pub(crate) fn prompt_control_handle(
+        &mut self,
+    ) -> Result<PromptControlHandle, CodingSessionError> {
+        self.operation_control.prompt_control_handle()
+    }
+
     pub fn capabilities(&self) -> CodingAgentCapabilities {
         let plugin_capabilities = self.plugin_service.capabilities();
         let persistent = matches!(self.persistence, SessionPersistence::Persistent(_));
         self.capability_service.capabilities(
-            self.active_operation.as_deref(),
+            self.operation_control.active(),
             &plugin_capabilities,
             persistent,
         )
@@ -262,14 +279,9 @@ impl CodingAgentSession {
         &mut self,
         options: PromptTurnOptions,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        if self.active_operation.is_some() {
-            return Err(CodingSessionError::Busy {
-                operation: "prompt".into(),
-            });
-        }
-        self.active_operation = Some("prompt".into());
+        let _operation = self.operation_control.begin(OperationKind::Prompt)?;
         let result = self.prompt_inner(options).await;
-        self.active_operation = None;
+        self.operation_control.clear_prompt_control_receiver();
         result
     }
 
@@ -277,15 +289,8 @@ impl CodingAgentSession {
         &mut self,
         options: PromptTurnOptions,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        if self.active_operation.is_some() {
-            return Err(CodingSessionError::Busy {
-                operation: "compact".into(),
-            });
-        }
-        self.active_operation = Some("compact".into());
-        let result = self.compact_inner(options).await;
-        self.active_operation = None;
-        result
+        let _operation = self.operation_control.begin(OperationKind::Compact)?;
+        self.compact_inner(options).await
     }
 
     pub(crate) async fn reload_plugins(&mut self) -> Result<PluginLoadOutcome, CodingSessionError> {
@@ -314,30 +319,16 @@ impl CodingAgentSession {
         command_id: &str,
         args: serde_json::Value,
     ) -> Result<String, CodingSessionError> {
-        if self.active_operation.is_some() {
-            return Err(CodingSessionError::Busy {
-                operation: "plugin_command".into(),
-            });
-        }
-        self.active_operation = Some("plugin_command".into());
-        let result = self.plugin_service.run_command(command_id, args);
-        self.active_operation = None;
-        result
+        let _operation = self.operation_control.begin(OperationKind::PluginCommand)?;
+        self.plugin_service.run_command(command_id, args)
     }
 
     pub(crate) async fn load_plugins(
         &mut self,
         options: PluginLoadOptions,
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
-        if self.active_operation.is_some() {
-            return Err(CodingSessionError::Busy {
-                operation: "plugin_load".into(),
-            });
-        }
-        self.active_operation = Some("plugin_load".into());
-        let result = self.load_plugins_inner(options).await;
-        self.active_operation = None;
-        result
+        let _operation = self.operation_control.begin(OperationKind::PluginLoad)?;
+        self.load_plugins_inner(options).await
     }
 
     pub async fn summarize_branch(
@@ -347,22 +338,14 @@ impl CodingAgentSession {
         target_leaf_id: impl Into<String>,
         custom_instructions: Option<String>,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        if self.active_operation.is_some() {
-            return Err(CodingSessionError::Busy {
-                operation: "branch_summary".into(),
-            });
-        }
-        self.active_operation = Some("branch_summary".into());
-        let result = self
-            .summarize_branch_inner(
-                options,
-                source_leaf_id.into(),
-                target_leaf_id.into(),
-                custom_instructions,
-            )
-            .await;
-        self.active_operation = None;
-        result
+        let _operation = self.operation_control.begin(OperationKind::BranchSummary)?;
+        self.summarize_branch_inner(
+            options,
+            source_leaf_id.into(),
+            target_leaf_id.into(),
+            custom_instructions,
+        )
+        .await
     }
 
     pub(crate) async fn summarize_branch_for_navigation(
@@ -371,11 +354,7 @@ impl CodingAgentSession {
         source_leaf_id: impl Into<String>,
         target_leaf_id: impl Into<String>,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        if self.active_operation.is_some() {
-            return Err(CodingSessionError::Busy {
-                operation: "branch_summary".into(),
-            });
-        }
+        self.operation_control.ensure_idle()?;
         let source_leaf_id = source_leaf_id.into();
         let target_leaf_id = target_leaf_id.into();
         if let Some(outcome) = self.reused_branch_summary_outcome(
@@ -386,12 +365,9 @@ impl CodingAgentSession {
             return Ok(outcome);
         }
 
-        self.active_operation = Some("branch_summary".into());
-        let result = self
-            .summarize_branch_inner(options, source_leaf_id, target_leaf_id, None)
-            .await;
-        self.active_operation = None;
-        result
+        let _operation = self.operation_control.begin(OperationKind::BranchSummary)?;
+        self.summarize_branch_inner(options, source_leaf_id, target_leaf_id, None)
+            .await
     }
 
     fn from_services(
@@ -411,7 +387,7 @@ impl CodingAgentSession {
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
             default_plugin_load_options,
-            active_operation: None,
+            operation_control: OperationControl::new(),
         })
     }
 
@@ -427,7 +403,7 @@ impl CodingAgentSession {
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
             default_plugin_load_options,
-            active_operation: None,
+            operation_control: OperationControl::new(),
         })
     }
 
@@ -513,7 +489,12 @@ impl CodingAgentSession {
         });
         let mut outcome = match self.flow_service.run_prompt_turn(&mut context).await {
             Ok(outcome) => outcome,
-            Err(error) => context.finish_failure(error),
+            Err(error) => match context.abort_reason() {
+                Some(reason) => {
+                    context.finish_abort(reason.to_owned(), context.session_id().map(str::to_owned))
+                }
+                None => context.finish_failure(error),
+            },
         };
         let finalized = match self.finalize_prompt_transaction(&mut context, &outcome) {
             Ok(finalized) => finalized,
@@ -571,7 +552,7 @@ impl CodingAgentSession {
 
                 emit_session_write_pending(&self.event_service, &finalized);
                 self.event_service
-                    .emit(CodingAgentEvent::RuntimeCompactionCompleted {
+                    .emit(CodingAgentEvent::SessionCompactionCompleted {
                         operation_id,
                         turn_id,
                         summary: compaction.summary,
@@ -713,6 +694,7 @@ impl CodingAgentSession {
         options: PromptTurnOptions,
     ) -> Result<PromptTurnContext, CodingSessionError> {
         let event_service = self.event_service.clone();
+        let prompt_control_receiver = self.operation_control.take_prompt_control_receiver();
         match &mut self.persistence {
             SessionPersistence::Persistent(session_service) => {
                 let replay = session_service.replay()?;
@@ -725,6 +707,9 @@ impl CodingAgentSession {
                 context.set_session_id(session_service.session_id().to_owned());
                 context.set_replay(replay);
                 context.set_transaction(transaction);
+                if let Some(receiver) = prompt_control_receiver {
+                    context.set_prompt_control_receiver(receiver);
+                }
                 context.enable_live_events(event_service);
                 Ok(context)
             }
@@ -737,6 +722,9 @@ impl CodingAgentSession {
                 context.set_plugin_service(self.plugin_service.clone());
                 context
                     .set_non_persistent_session(state.runtime_id.clone(), state.transcript.clone());
+                if let Some(receiver) = prompt_control_receiver {
+                    context.set_prompt_control_receiver(receiver);
+                }
                 context.enable_live_events(event_service);
                 Ok(context)
             }
@@ -929,6 +917,7 @@ mod tests {
         AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
         ModelInput, StopReason, StreamOptions,
     };
+    use tokio::sync::oneshot;
 
     use super::plugin_load_flow::{PluginLoadCandidate, PluginLoadManifest, PluginLoadOptions};
     use super::*;
@@ -1083,6 +1072,95 @@ mod tests {
                 });
                 yield AssistantMessageEvent::Done {
                     reason: StopReason::Stop,
+                    message,
+                };
+            })
+        }
+    }
+
+    struct BlockingTwoTurnProvider {
+        contexts: Arc<Mutex<Vec<Context>>>,
+        first_started: Mutex<Option<oneshot::Sender<()>>>,
+        release_first: Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl BlockingTwoTurnProvider {
+        fn new(
+            contexts: Arc<Mutex<Vec<Context>>>,
+            first_started: oneshot::Sender<()>,
+            release_first: oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                contexts,
+                first_started: Mutex::new(Some(first_started)),
+                release_first: Mutex::new(Some(release_first)),
+            }
+        }
+    }
+
+    impl ApiProvider for BlockingTwoTurnProvider {
+        fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+            let call_index = {
+                let mut contexts = self.contexts.lock().unwrap();
+                contexts.push(ctx);
+                contexts.len()
+            };
+            let first_release = if call_index == 1 {
+                if let Some(started) = self.first_started.lock().unwrap().take() {
+                    let _ = started.send(());
+                }
+                self.release_first.lock().unwrap().take()
+            } else {
+                None
+            };
+            let model_id = model.id.clone();
+            Box::pin(stream! {
+                if let Some(release) = first_release {
+                    let _ = release.await;
+                }
+                let text = if call_index == 1 { "first" } else { "second" };
+                let mut message = AssistantMessage::empty("blocking", &model_id);
+                message.provider = Some("blocking".into());
+                message.content.push(ContentBlock::Text {
+                    text: text.into(),
+                    text_signature: None,
+                });
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message,
+                };
+            })
+        }
+    }
+
+    struct AbortableProvider {
+        started: Mutex<Option<oneshot::Sender<()>>>,
+    }
+
+    impl AbortableProvider {
+        fn new(started: oneshot::Sender<()>) -> Self {
+            Self {
+                started: Mutex::new(Some(started)),
+            }
+        }
+    }
+
+    impl ApiProvider for AbortableProvider {
+        fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+            if let Some(started) = self.started.lock().unwrap().take() {
+                let _ = started.send(());
+            }
+            let model_id = model.id.clone();
+            let cancel = opts.and_then(|opts| opts.cancel);
+            Box::pin(stream! {
+                if let Some(cancel) = cancel {
+                    cancel.cancelled().await;
+                }
+                let mut message = AssistantMessage::empty("abortable", &model_id);
+                message.provider = Some("abortable".into());
+                message.stop_reason = StopReason::Aborted;
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::Aborted,
                     message,
                 };
             })
@@ -1294,6 +1372,102 @@ runtime = "lua"
                 None => std::env::remove_var("PI_RUST_DIR"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn prompt_abort_control_returns_aborted_outcome_and_records_operation_abort() {
+        let api = "coding-session-abort-control";
+        let (started_tx, started_rx) = oneshot::channel();
+        registry::register(api, Arc::new(AbortableProvider::new(started_tx)));
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_prompt_abort_control")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let handle = session.prompt_control_handle().unwrap();
+
+        let mut prompt = Box::pin(session.prompt(prompt_options(api, "hello")));
+        tokio::select! {
+            started = started_rx => started.unwrap(),
+            result = &mut prompt => panic!("prompt finished before provider blocked: {result:?}"),
+        }
+        handle.abort("user cancelled").unwrap();
+
+        let outcome = prompt.await.unwrap();
+
+        assert!(
+            matches!(
+                outcome,
+                PromptTurnOutcome::Aborted {
+                    ref reason,
+                    session_id: Some(ref session_id),
+                    ..
+                } if reason == "user cancelled" && session_id == "sess_prompt_abort_control"
+            ),
+            "got {outcome:?}"
+        );
+        let event_log = std::fs::read_to_string(
+            temp.path()
+                .join("sess_prompt_abort_control")
+                .join("events.jsonl"),
+        )
+        .unwrap();
+        assert!(event_log.contains("\"kind\":\"operation.aborted\""));
+        assert!(event_log.contains("user cancelled"));
+        registry::unregister(api);
+    }
+
+    #[tokio::test]
+    async fn prompt_uses_owner_issued_follow_up_control_handle() {
+        let api = "coding-session-follow-up-control";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        registry::register(
+            api,
+            Arc::new(BlockingTwoTurnProvider::new(
+                contexts.clone(),
+                started_tx,
+                release_rx,
+            )),
+        );
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let handle = session.prompt_control_handle().unwrap();
+
+        let mut prompt = Box::pin(session.prompt(prompt_options(api, "hello")));
+        tokio::select! {
+            started = started_rx => started.unwrap(),
+            result = &mut prompt => panic!("prompt finished before provider blocked: {result:?}"),
+        }
+        handle.follow_up("continue from session owner").unwrap();
+        release_tx.send(()).unwrap();
+
+        let outcome = prompt.await.unwrap();
+
+        assert!(matches!(
+            outcome,
+            PromptTurnOutcome::Success { final_text, .. } if final_text == "second"
+        ));
+        let contexts = contexts.lock().unwrap();
+        assert_eq!(contexts.len(), 2);
+        assert!(
+            contexts[1].messages.iter().any(|message| matches!(
+                message,
+                Message::User { content }
+                    if content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::Text { text, .. } if text == "continue from session owner"
+                    ))
+            )),
+            "{:#?}",
+            contexts[1].messages
+        );
+        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1808,14 +1982,14 @@ runtime = "lua"
             &emitted_events,
             &[
                 "session_write_pending",
-                "runtime_compaction_completed",
+                "session_compaction_completed",
                 "session_write_committed",
                 "prompt_completed",
             ],
         );
         assert!(emitted_events.iter().any(|event| matches!(
             event,
-            CodingAgentEvent::RuntimeCompactionCompleted {
+            CodingAgentEvent::SessionCompactionCompleted {
                 summary,
                 tokens_before,
                 ..
@@ -2187,6 +2361,29 @@ runtime = "lua"
         assert!(!output.exists());
     }
 
+    #[tokio::test]
+    async fn export_current_html_uses_export_operation_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_export_busy")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let _operation = session
+            .operation_control
+            .begin(OperationKind::Prompt)
+            .unwrap();
+        let output = temp.path().join("session.html");
+
+        let error = session.export_current_html(&output).unwrap_err();
+
+        assert_eq!(error.code(), "busy");
+        assert_eq!(error.to_string(), "busy: prompt");
+        assert!(!output.exists());
+    }
+
     fn outcome_turn_id(outcome: &PromptTurnOutcome) -> &str {
         match outcome {
             PromptTurnOutcome::Success { turn_id, .. } => turn_id,
@@ -2227,6 +2424,7 @@ runtime = "lua"
             CodingAgentEvent::ToolCallCompleted { .. } => "tool_call_completed",
             CodingAgentEvent::ToolCallFailed { .. } => "tool_call_failed",
             CodingAgentEvent::RuntimeCompactionCompleted { .. } => "runtime_compaction_completed",
+            CodingAgentEvent::SessionCompactionCompleted { .. } => "session_compaction_completed",
             CodingAgentEvent::PromptCompleted { .. } => "prompt_completed",
             CodingAgentEvent::PromptFailed { .. } => "prompt_failed",
             CodingAgentEvent::PromptAborted { .. } => "prompt_aborted",

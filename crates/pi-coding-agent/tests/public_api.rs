@@ -117,14 +117,14 @@ async fn coding_session_public_api_symbols_are_importable() {
         capabilities,
         CodingAgentCapabilities {
             prompt: CapabilityStatus::Available,
-            abort: CapabilityStatus::Unsupported {
-                reason: "operation abort is not exposed on CodingAgentSession yet".into(),
+            abort: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
             },
-            steer: CapabilityStatus::Unsupported {
-                reason: "agent turn steering awaits AgentTurnFlow".into(),
+            steer: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
             },
-            follow_up: CapabilityStatus::Unsupported {
-                reason: "follow-up controls await AgentTurnFlow".into(),
+            follow_up: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
             },
             compact: CapabilityStatus::Available,
             fork: CapabilityStatus::Available,

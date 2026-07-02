@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use pi_agent_core::session::{SessionEntry, SessionTreeNode, StoredAgentMessage};
 use pi_ai::types::ContentBlock;
 
-use super::export::{CodingAgentSessionExport, export_from_replay, write_export_html};
+use super::export_flow::{ExportContext, ExportOptions};
 use super::prompt::PromptTurnTransaction;
 use super::session_log::event::{
     OperationKind, PersistedContentBlock, PersistedPluginDiagnostic, SessionEventData,
@@ -538,13 +538,11 @@ impl SessionService {
         })
     }
 
-    pub(crate) fn export_view(&self) -> Result<CodingAgentSessionExport, CodingSessionError> {
-        Ok(export_from_replay(self.summary(), self.replay()?))
-    }
-
-    pub(crate) fn export_html(&self, path: &Path) -> Result<PathBuf, CodingSessionError> {
-        let export = self.export_view()?;
-        write_export_html(&export, path)
+    pub(crate) fn export_context(
+        &self,
+        options: ExportOptions,
+    ) -> Result<ExportContext, CodingSessionError> {
+        Ok(ExportContext::new(options, self.summary(), self.replay()?))
     }
 
     fn summary(&self) -> CodingAgentSessionSummary {

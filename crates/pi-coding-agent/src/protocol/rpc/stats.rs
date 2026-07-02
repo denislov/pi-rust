@@ -1,4 +1,4 @@
-use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
+use crate::coding_session::{CodingAgentCapabilities, OperationKind};
 use crate::plugins::PluginCapabilities;
 use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
@@ -40,40 +40,15 @@ impl RpcState {
 
     pub(super) fn capabilities(&self) -> CodingAgentCapabilities {
         let plugin_capabilities = PluginCapabilities::new();
-        let mut capabilities = CodingAgentCapabilities::phase_5(
-            self.is_streaming().then_some("prompt"),
+        let active_operation = match &self.running {
+            Some(RunningPrompt::Coding(_)) => Some(OperationKind::Prompt),
+            None => None,
+        };
+        CodingAgentCapabilities::from_runtime_state(
+            active_operation,
             &plugin_capabilities,
             self.active_session_path.is_some(),
-        );
-        let coding_running = matches!(self.running, Some(RunningPrompt::Coding(_)));
-
-        capabilities.abort = if coding_running {
-            CapabilityStatus::Disabled {
-                reason: "operation abort awaits CodingAgentSession operation handles".into(),
-            }
-        } else {
-            CapabilityStatus::Disabled {
-                reason: "no prompt is running".into(),
-            }
-        };
-        capabilities.steer = if coding_running {
-            CapabilityStatus::Disabled {
-                reason: "agent turn steering awaits AgentTurnFlow".into(),
-            }
-        } else {
-            CapabilityStatus::Disabled {
-                reason: "no prompt is running".into(),
-            }
-        };
-        capabilities.follow_up = if coding_running {
-            CapabilityStatus::Disabled {
-                reason: "follow-up controls await AgentTurnFlow".into(),
-            }
-        } else {
-            CapabilityStatus::Available
-        };
-
-        capabilities
+        )
     }
 
     pub(super) fn session_stats(&self) -> Value {

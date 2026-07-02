@@ -1,19 +1,22 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures::stream;
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StopReason,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, StopReason,
     StreamOptions,
 };
 use pi_coding_agent::interactive::test_harness::{
     run_scripted_idle_interactive, run_scripted_idle_interactive_with_delays,
     run_scripted_idle_interactive_with_size, run_scripted_interactive,
+    run_scripted_interactive_with_provider_driver,
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
+use tokio::sync::Notify;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -27,6 +30,116 @@ fn text_response(text: &str) -> FauxResponse {
 
 fn six_line_markdown() -> &'static str {
     "- one\n- two\n- three\n- four\n- five\n- six"
+}
+
+struct PausingTwoTurnProvider {
+    contexts: Arc<Mutex<Vec<Context>>>,
+    first_started: Arc<Notify>,
+}
+
+impl ApiProvider for PausingTwoTurnProvider {
+    fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        let call_index = {
+            let mut contexts = self.contexts.lock().unwrap();
+            contexts.push(ctx);
+            contexts.len()
+        };
+        let first_started = Arc::clone(&self.first_started);
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            if call_index == 1 {
+                first_started.notify_waiters();
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let text = if call_index == 1 { "first" } else { "second" };
+            let mut message = AssistantMessage::empty("interactive-steer", &model_id);
+            message.provider = Some("interactive-steer".into());
+            message.content.push(ContentBlock::Text {
+                text: text.into(),
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
+#[tokio::test]
+async fn scripted_interactive_submit_while_running_sends_steer_control() {
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let first_started = Arc::new(Notify::new());
+    let provider = Arc::new(PausingTwoTurnProvider {
+        contexts: Arc::clone(&contexts),
+        first_started: Arc::clone(&first_started),
+    });
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(1),
+        run_scripted_interactive_with_provider_driver(provider, move |tx| async move {
+            tx.send("first prompt\r".to_string()).unwrap();
+            first_started.notified().await;
+            tx.send("steer now\r".to_string()).unwrap();
+            drop(tx);
+        }),
+    )
+    .await
+    .expect("interactive run should finish")
+    .unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2, "{}", output.rendered);
+    assert!(
+        contexts[1].messages.iter().any(|message| matches!(
+            message,
+            Message::User { content }
+                if content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Text { text, .. } if text == "steer now"
+                ))
+        )),
+        "{:#?}",
+        contexts[1].messages
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_shift_enter_while_running_sends_follow_up_control() {
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let first_started = Arc::new(Notify::new());
+    let provider = Arc::new(PausingTwoTurnProvider {
+        contexts: Arc::clone(&contexts),
+        first_started: Arc::clone(&first_started),
+    });
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(1),
+        run_scripted_interactive_with_provider_driver(provider, move |tx| async move {
+            tx.send("first prompt\r".to_string()).unwrap();
+            first_started.notified().await;
+            tx.send("follow up now\x1b[13;2u".to_string()).unwrap();
+            drop(tx);
+        }),
+    )
+    .await
+    .expect("interactive run should finish")
+    .unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2, "{}", output.rendered);
+    assert!(
+        contexts[1].messages.iter().any(|message| matches!(
+            message,
+            Message::User { content }
+                if content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Text { text, .. } if text == "follow up now"
+                ))
+        )),
+        "{:#?}",
+        contexts[1].messages
+    );
 }
 
 #[tokio::test]

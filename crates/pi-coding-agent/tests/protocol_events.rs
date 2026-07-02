@@ -2,7 +2,7 @@ use pi_agent_core::session::StoredAgentMessage;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
 use pi_coding_agent::api::CodingAgentEvent;
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
-use pi_coding_agent::protocol::types::ProtocolEvent;
+use pi_coding_agent::protocol::types::{CompactionReason, ProtocolEvent};
 
 #[test]
 fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
@@ -126,6 +126,41 @@ fn coding_event_adapter_maps_tool_events_to_protocol_events() {
             is_error: false,
             ..
         }
+    ));
+}
+
+#[test]
+fn coding_event_adapter_maps_session_compaction_as_manual_protocol_events() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let events = adapter.push(&CodingAgentEvent::SessionCompactionCompleted {
+        operation_id: "op_1".into(),
+        turn_id: "turn_1".into(),
+        summary: "manual summary".into(),
+        first_kept_message_id: "msg_2".into(),
+        tokens_before: 1200,
+    });
+
+    assert!(matches!(
+        events.as_slice(),
+        [
+            ProtocolEvent::CompactionStart {
+                reason: CompactionReason::Manual,
+            },
+            ProtocolEvent::CompactionEnd {
+                reason: CompactionReason::Manual,
+                result: Some(result),
+                aborted: false,
+                will_retry: false,
+                error_message: None,
+            },
+        ] if result.summary == "manual summary"
+            && result.first_kept_message_id == "msg_2"
+            && result.tokens_before == 1200
     ));
 }
 

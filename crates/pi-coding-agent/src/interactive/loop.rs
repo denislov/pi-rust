@@ -486,6 +486,7 @@ fn process_input_events<T: Terminal>(
     options: &CliRunOptions,
 ) -> Result<LoopControl, CliError> {
     for event in events {
+        let was_running = running.is_some();
         match handle_input_event(
             tui,
             root_id,
@@ -502,7 +503,7 @@ fn process_input_events<T: Terminal>(
             }
             LoopControl::Exit => return Ok(LoopControl::Exit),
         }
-        if running.is_some() {
+        if !was_running && running.is_some() {
             break;
         }
     }
@@ -595,7 +596,10 @@ fn handle_input_event<T: Terminal>(
         let before = root.render_state();
         root.handle_input(&event);
         let action = root.take_action();
-        let prompt = if action == InteractiveAction::Submit {
+        let prompt = if matches!(
+            action,
+            InteractiveAction::Submit | InteractiveAction::FollowUp
+        ) {
             root.take_pending_submit()
         } else {
             None
@@ -858,13 +862,16 @@ fn handle_input_event<T: Terminal>(
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
         InteractiveAction::Submit => {
-            if running.is_some() {
-                return Ok(LoopControl::Continue(render_request));
-            }
             let Some(prompt) = prompt else {
                 return Ok(LoopControl::Continue(render_request));
             };
             if prompt.trim().is_empty() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            if let Some(task) = running.as_ref() {
+                if task.steer(prompt) {
+                    return Ok(LoopControl::Continue(RenderRequest::FORCE));
+                }
                 return Ok(LoopControl::Continue(render_request));
             }
             *running = Some(start_prompt_task(
@@ -875,6 +882,20 @@ fn handle_input_event<T: Terminal>(
                 coding_session,
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
+        InteractiveAction::FollowUp => {
+            let Some(prompt) = prompt else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            if prompt.trim().is_empty() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            if let Some(task) = running.as_ref() {
+                if task.follow_up(prompt) {
+                    return Ok(LoopControl::Continue(RenderRequest::FORCE));
+                }
+            }
+            Ok(LoopControl::Continue(render_request))
         }
         InteractiveAction::CompactSession => {
             if running.is_some() {

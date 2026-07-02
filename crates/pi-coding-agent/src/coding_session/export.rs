@@ -61,8 +61,8 @@ pub(crate) fn export_from_replay(
     }
 }
 
-pub(crate) fn write_export_html(
-    export: &CodingAgentSessionExport,
+pub(crate) fn write_rendered_export_html(
+    html: &str,
     path: &Path,
 ) -> Result<PathBuf, CodingSessionError> {
     if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
@@ -76,7 +76,6 @@ pub(crate) fn write_export_html(
         })?;
     }
 
-    let html = render_export_html(export);
     std::fs::write(path, html).map_err(|error| CodingSessionError::Session {
         message: error.to_string(),
     })?;
@@ -124,7 +123,7 @@ fn export_item_from_replay(item: TranscriptItem) -> CodingAgentSessionExportItem
     }
 }
 
-fn render_export_html(export: &CodingAgentSessionExport) -> String {
+pub(crate) fn render_export_html(export: &CodingAgentSessionExport) -> String {
     let mut body = String::new();
     if let Some(cwd) = export.cwd.as_deref() {
         body.push_str(&format!(

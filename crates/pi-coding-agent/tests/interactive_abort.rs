@@ -62,7 +62,7 @@ async fn ctrl_c_exits_when_idle_with_empty_editor() {
 }
 
 #[tokio::test]
-async fn ctrl_c_reports_running_prompt_abort_unsupported_on_coding_session_path() {
+async fn ctrl_c_cancels_running_prompt_on_coding_session_path() {
     let cancelled = Arc::new(AtomicBool::new(false));
     let provider = Arc::new(AbortAwareProvider::new(Arc::clone(&cancelled)));
 
@@ -80,7 +80,7 @@ async fn ctrl_c_reports_running_prompt_abort_unsupported_on_coding_session_path(
     assert_eq!(output.exit_code, 0);
     assert!(output.terminal_restored);
     assert!(output.contains("please wait"));
-    assert!(output.contains("interactive prompt abort awaits AgentTurnFlow"));
+    assert!(output.contains("prompt aborted: user cancelled"));
     assert!(output.contains("status: idle"));
-    assert!(!cancelled.load(Ordering::SeqCst));
+    assert!(cancelled.load(Ordering::SeqCst));
 }

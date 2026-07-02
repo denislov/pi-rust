@@ -103,7 +103,8 @@ impl CodingEventBridge {
                 result: message.clone(),
                 is_error: true,
             }],
-            CodingAgentEvent::RuntimeCompactionCompleted { summary, .. } => vec![
+            CodingAgentEvent::RuntimeCompactionCompleted { summary, .. }
+            | CodingAgentEvent::SessionCompactionCompleted { summary, .. } => vec![
                 UiEvent::CompactionNotice {
                     summary: summary.clone(),
                 },

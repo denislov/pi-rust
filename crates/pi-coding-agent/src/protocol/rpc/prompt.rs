@@ -54,23 +54,46 @@ impl RpcState {
     async fn handle_streaming_prompt<W>(
         &mut self,
         id: Option<String>,
-        _message: String,
-        _streaming_behavior: Option<StreamingBehavior>,
+        message: String,
+        streaming_behavior: Option<StreamingBehavior>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
-        write_rpc_response(
-            writer,
-            RpcResponse::error(
-                id,
-                "prompt",
-                "agent is streaming; steer and follow-up await AgentTurnFlow",
-            ),
-        )
-        .await?;
-        Ok(())
+        let Some(RunningPrompt::Coding(running)) = self.running.as_ref() else {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(id, "prompt", "agent is not streaming"),
+            )
+            .await?;
+            return Ok(());
+        };
+
+        let result = match streaming_behavior {
+            Some(StreamingBehavior::Steer) => running.control.steer(message),
+            Some(StreamingBehavior::FollowUp) => running.control.follow_up(message),
+            None => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(
+                        id,
+                        "prompt",
+                        "agent is streaming; prompt requires streamingBehavior steer or followUp",
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+
+        match result {
+            Ok(()) => write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await,
+            Err(error) => {
+                write_rpc_response(writer, RpcResponse::error(id, "prompt", error.to_string()))
+                    .await
+            }
+        }
     }
 
     async fn start_coding_session_prompt<W>(
@@ -124,6 +147,7 @@ impl RpcState {
             invocation: PromptInvocation::Text(message),
         })
         .with_mode(PromptTurnMode::Rpc);
+        let control = session.prompt_control_handle()?;
         let mut receiver = session.subscribe();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
@@ -167,6 +191,7 @@ impl RpcState {
         self.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
             events: event_rx,
             done: done_rx,
+            control,
             adapter: RpcCodingEventAdapter::new_with_provider(
                 self.model.api.clone(),
                 self.model.provider.clone(),

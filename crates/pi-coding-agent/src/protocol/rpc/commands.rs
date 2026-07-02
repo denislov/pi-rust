@@ -44,16 +44,20 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
-                if matches!(self.running, Some(RunningPrompt::Coding(_))) {
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::error(
-                            id,
-                            "steer",
-                            "agent is streaming; steer awaits AgentTurnFlow",
-                        ),
-                    )
-                    .await?;
+                if let Some(RunningPrompt::Coding(running)) = self.running.as_ref() {
+                    match running.control.steer(message) {
+                        Ok(()) => {
+                            write_rpc_response(writer, RpcResponse::success(id, "steer", None))
+                                .await?
+                        }
+                        Err(error) => {
+                            write_rpc_response(
+                                writer,
+                                RpcResponse::error(id, "steer", error.to_string()),
+                            )
+                            .await?
+                        }
+                    }
                     return Ok(());
                 }
                 self.enqueue_steer(message);
@@ -77,16 +81,20 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
-                if matches!(self.running, Some(RunningPrompt::Coding(_))) {
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::error(
-                            id,
-                            "follow_up",
-                            "agent is streaming; follow-up awaits AgentTurnFlow",
-                        ),
-                    )
-                    .await?;
+                if let Some(RunningPrompt::Coding(running)) = self.running.as_ref() {
+                    match running.control.follow_up(message) {
+                        Ok(()) => {
+                            write_rpc_response(writer, RpcResponse::success(id, "follow_up", None))
+                                .await?
+                        }
+                        Err(error) => {
+                            write_rpc_response(
+                                writer,
+                                RpcResponse::error(id, "follow_up", error.to_string()),
+                            )
+                            .await?
+                        }
+                    }
                     return Ok(());
                 }
                 self.enqueue_follow_up(message);
@@ -94,12 +102,28 @@ impl RpcState {
                 self.emit_queue_update(writer).await
             }
             RpcCommand::Abort { id } => {
+                let cancelled = if let Some(RunningPrompt::Coding(running)) = self.running.as_ref()
+                {
+                    match running.control.abort("rpc abort requested") {
+                        Ok(()) => true,
+                        Err(error) => {
+                            write_rpc_response(
+                                writer,
+                                RpcResponse::error(id, "abort", error.to_string()),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    false
+                };
                 write_rpc_response(
                     writer,
                     RpcResponse::success(
                         id,
                         "abort",
-                        Some(serde_json::json!({ "cancelled": false })),
+                        Some(serde_json::json!({ "cancelled": cancelled })),
                     ),
                 )
                 .await

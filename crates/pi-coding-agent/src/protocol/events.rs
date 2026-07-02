@@ -146,23 +146,23 @@ impl CodingProtocolEventAdapter {
                 first_kept_message_id,
                 tokens_before,
                 ..
-            } => vec![
-                ProtocolEvent::CompactionStart {
-                    reason: CompactionReason::Threshold,
-                },
-                ProtocolEvent::CompactionEnd {
-                    reason: CompactionReason::Threshold,
-                    result: Some(CompactionProtocolResult {
-                        summary: summary.clone(),
-                        first_kept_message_id: first_kept_message_id.clone(),
-                        tokens_before: *tokens_before,
-                        details: None,
-                    }),
-                    aborted: false,
-                    will_retry: false,
-                    error_message: None,
-                },
-            ],
+            } => Self::compaction_events(
+                CompactionReason::Threshold,
+                summary,
+                first_kept_message_id,
+                *tokens_before,
+            ),
+            CodingAgentEvent::SessionCompactionCompleted {
+                summary,
+                first_kept_message_id,
+                tokens_before,
+                ..
+            } => Self::compaction_events(
+                CompactionReason::Manual,
+                summary,
+                first_kept_message_id,
+                *tokens_before,
+            ),
             CodingAgentEvent::PromptCompleted { .. } => {
                 let mut events = self.finish_current_turn();
                 events.push(ProtocolEvent::AgentEnd {
@@ -218,6 +218,29 @@ impl CodingProtocolEventAdapter {
             message.content = text_content(text);
         }
         message
+    }
+
+    fn compaction_events(
+        reason: CompactionReason,
+        summary: &str,
+        first_kept_message_id: &str,
+        tokens_before: u32,
+    ) -> Vec<ProtocolEvent> {
+        vec![
+            ProtocolEvent::CompactionStart { reason },
+            ProtocolEvent::CompactionEnd {
+                reason,
+                result: Some(CompactionProtocolResult {
+                    summary: summary.to_owned(),
+                    first_kept_message_id: first_kept_message_id.to_owned(),
+                    tokens_before,
+                    details: None,
+                }),
+                aborted: false,
+                will_retry: false,
+                error_message: None,
+            },
+        ]
     }
 
     fn push_tool_result(

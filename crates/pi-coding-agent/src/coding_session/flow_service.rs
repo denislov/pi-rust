@@ -4,6 +4,7 @@ use pi_agent_core::flow::FlowOutcome;
 
 use super::CodingSessionError;
 use super::branch_summary_flow::{BranchSummaryContext, BranchSummaryFlow, BranchSummaryOutcome};
+use super::export_flow::{ExportContext, ExportFlow, ExportOutcome};
 use super::manual_compaction_flow::{
     ManualCompactionContext, ManualCompactionFlow, ManualCompactionOutcome,
 };
@@ -35,6 +36,27 @@ impl FlowService {
 
     pub(crate) fn plugin_load_flow(&self) -> Result<PluginLoadFlow, CodingSessionError> {
         PluginLoadFlow::new()
+    }
+
+    pub(crate) fn export_flow(&self) -> Result<ExportFlow, CodingSessionError> {
+        ExportFlow::new()
+    }
+
+    pub(crate) fn run_export_graph(
+        &self,
+        ctx: &mut ExportContext,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        self.export_flow()?.run(ctx)
+    }
+
+    pub(crate) fn run_export(
+        &self,
+        ctx: &mut ExportContext,
+    ) -> Result<ExportOutcome, CodingSessionError> {
+        match self.run_export_graph(ctx) {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
     }
 
     pub(crate) async fn run_plugin_load_graph(
@@ -104,7 +126,12 @@ impl FlowService {
                 let session_id = ctx.session_id().map(str::to_owned);
                 ctx.finish_success(session_id, None)
             }
-            Err(error) => Ok(ctx.finish_failure(error)),
+            Err(error) => match ctx.abort_reason() {
+                Some(reason) => {
+                    Ok(ctx.finish_abort(reason.to_owned(), ctx.session_id().map(str::to_owned)))
+                }
+                None => Ok(ctx.finish_failure(error)),
+            },
         }
     }
 }
@@ -119,13 +146,15 @@ mod tests {
     use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
 
     use super::*;
+    use crate::coding_session::export_flow::{ExportContext, ExportOptions};
     use crate::coding_session::plugin_load_flow::{
         PluginLoadCandidate, PluginLoadContext, PluginLoadManifest, PluginLoadOptions,
         PluginLoadOutcome,
     };
     use crate::coding_session::prompt::{PromptTurnIds, PromptTurnOptions};
-    use crate::coding_session::session_log::replay::SessionReplay;
+    use crate::coding_session::session_log::replay::{SessionReplay, TranscriptItem};
     use crate::coding_session::session_log::store::{CreateSessionOptions, SessionLogStore};
+    use crate::coding_session::{CodingAgentSessionExportItem, CodingAgentSessionSummary};
     use crate::plugins::{
         CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy,
         PluginError, PluginRegistry, PluginSource, PromptHookContext, PromptHookPoint,
@@ -824,5 +853,65 @@ version = "0.1.0"
                 "emit_completion",
             ]
         );
+    }
+
+    #[test]
+    fn export_flow_node_ids_are_stable() {
+        let service = FlowService::new();
+
+        service.export_flow().unwrap();
+
+        assert_eq!(
+            crate::coding_session::export_flow::ExportFlow::node_ids(),
+            &[
+                "start_export",
+                "load_session_replay",
+                "select_export_view",
+                "render_export",
+                "write_export",
+                "emit_completion",
+            ]
+        );
+    }
+
+    #[test]
+    fn export_flow_writes_html_from_session_replay() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("exports/session.html");
+        let summary = CodingAgentSessionSummary {
+            session_id: "sess_export_flow".into(),
+            session_dir: temp.path().join("sess_export_flow"),
+            created_at: "2026-07-02T00:00:00Z".into(),
+            updated_at: "2026-07-02T00:00:00Z".into(),
+            active_leaf_id: Some("leaf_1".into()),
+        };
+        let replay = SessionReplay {
+            session_id: "sess_export_flow".into(),
+            cwd: Some("/workspace/pi-rust".into()),
+            active_leaf_id: Some("leaf_1".into()),
+            leaves: Vec::new(),
+            transcript: vec![TranscriptItem::UserInput {
+                turn_id: "turn_1".into(),
+                text: "hello <flow>".into(),
+            }],
+            diagnostics: Vec::new(),
+        };
+        let mut context = ExportContext::new(ExportOptions::html(output.clone()), summary, replay);
+
+        let outcome = service.run_export(&mut context).unwrap();
+
+        assert_eq!(outcome.path.as_deref(), Some(output.as_path()));
+        assert_eq!(outcome.export.summary.session_id, "sess_export_flow");
+        assert_eq!(
+            outcome.export.transcript,
+            vec![CodingAgentSessionExportItem::User {
+                text: "hello <flow>".into(),
+            }]
+        );
+        let html = fs::read_to_string(&output).unwrap();
+        assert!(html.contains("sess_export_flow"), "{html}");
+        assert!(html.contains("hello &lt;flow&gt;"), "{html}");
+        assert!(html.contains("/workspace/pi-rust"), "{html}");
     }
 }

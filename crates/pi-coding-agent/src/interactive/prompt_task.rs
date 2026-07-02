@@ -50,12 +50,20 @@ pub(super) struct PluginCommandTaskResult {
     pub(super) plugin_ui_dialogs: Vec<PluginUiDialog>,
 }
 
-enum PromptTaskAbortHandle {
-    Coding(Option<oneshot::Sender<()>>),
+enum PromptTaskControlHandle {
+    Prompt(mpsc::UnboundedSender<PromptTaskControl>),
+    AbortOnly(Option<oneshot::Sender<()>>),
+}
+
+#[derive(Debug)]
+enum PromptTaskControl {
+    Abort,
+    Steer(String),
+    FollowUp(String),
 }
 
 pub(super) struct PromptTask {
-    abort: PromptTaskAbortHandle,
+    control: PromptTaskControlHandle,
     pub(super) events: mpsc::UnboundedReceiver<PromptTaskEvent>,
     pub(super) done: oneshot::Receiver<Result<PromptTaskResult, CliError>>,
     abort_requested: bool,
@@ -132,11 +140,35 @@ impl PromptTask {
         if self.abort_requested {
             return;
         }
-        let PromptTaskAbortHandle::Coding(abort) = &mut self.abort;
-        if let Some(abort) = abort.take() {
-            let _ = abort.send(());
+        match &mut self.control {
+            PromptTaskControlHandle::Prompt(control) => {
+                let _ = control.send(PromptTaskControl::Abort);
+            }
+            PromptTaskControlHandle::AbortOnly(abort) => {
+                if let Some(abort) = abort.take() {
+                    let _ = abort.send(());
+                }
+            }
         }
         self.abort_requested = true;
+    }
+
+    pub(super) fn steer(&self, text: String) -> bool {
+        match &self.control {
+            PromptTaskControlHandle::Prompt(control) => {
+                control.send(PromptTaskControl::Steer(text)).is_ok()
+            }
+            PromptTaskControlHandle::AbortOnly(_) => false,
+        }
+    }
+
+    pub(super) fn follow_up(&self, text: String) -> bool {
+        match &self.control {
+            PromptTaskControlHandle::Prompt(control) => {
+                control.send(PromptTaskControl::FollowUp(text)).is_ok()
+            }
+            PromptTaskControlHandle::AbortOnly(_) => false,
+        }
     }
 
     fn spawn_coding(
@@ -145,16 +177,16 @@ impl PromptTask {
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (abort_tx, abort_rx) = oneshot::channel();
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
             let result =
-                run_coding_prompt_task(options, existing_session, event_tx, abort_rx).await;
+                run_coding_prompt_task(options, existing_session, event_tx, control_rx).await;
             let _ = done_tx.send(result.map(PromptTaskResult::Coding));
         });
 
         Self {
-            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            control: PromptTaskControlHandle::Prompt(control_tx),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -177,7 +209,7 @@ impl PromptTask {
         });
 
         Self {
-            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -200,7 +232,7 @@ impl PromptTask {
         });
 
         Self {
-            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -232,7 +264,7 @@ impl PromptTask {
         });
 
         Self {
-            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -266,7 +298,7 @@ impl PromptTask {
         });
 
         Self {
-            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -298,7 +330,7 @@ impl PromptTask {
         });
 
         Self {
-            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -311,7 +343,7 @@ async fn run_coding_prompt_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut abort_rx: oneshot::Receiver<()>,
+    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
 ) -> Result<CodingPromptTaskResult, CliError> {
     let mut session = match existing_session {
         Some(session) => session,
@@ -323,17 +355,33 @@ async fn run_coding_prompt_task(
             .await?
         }
     };
+    let prompt_control = session.prompt_control_handle()?;
     let mut receiver = session.subscribe();
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
         let mut prompt = Box::pin(session.prompt(prompt_options));
+        let mut abort_requested = false;
+        let mut controls_open = true;
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive prompt abort awaits AgentTurnFlow".into(),
-                    ));
+                control = control_rx.recv(), if controls_open => {
+                    match control {
+                        Some(PromptTaskControl::Abort) if !abort_requested => {
+                            abort_requested = true;
+                            prompt_control.abort("user cancelled")?;
+                        }
+                        Some(PromptTaskControl::Steer(text)) => {
+                            prompt_control.steer(text)?;
+                        }
+                        Some(PromptTaskControl::FollowUp(text)) => {
+                            prompt_control.follow_up(text)?;
+                        }
+                        Some(PromptTaskControl::Abort) => {}
+                        None => {
+                            controls_open = false;
+                        }
+                    }
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {

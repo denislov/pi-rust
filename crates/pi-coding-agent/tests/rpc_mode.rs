@@ -2,16 +2,16 @@ use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
-    StopReason, StreamOptions,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
+    ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::{CliRunOptions, SessionRunOptions, protocol::rpc::run_rpc_mode_for_io};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, oneshot};
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -125,6 +125,61 @@ impl pi_ai::registry::ApiProvider for AbortAwareProvider {
     }
 }
 
+struct BlockingTwoTurnProvider {
+    contexts: Arc<Mutex<Vec<Context>>>,
+    first_started: Mutex<Option<oneshot::Sender<()>>>,
+    release_first: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl BlockingTwoTurnProvider {
+    fn new(
+        contexts: Arc<Mutex<Vec<Context>>>,
+        first_started: oneshot::Sender<()>,
+        release_first: oneshot::Receiver<()>,
+    ) -> Self {
+        Self {
+            contexts,
+            first_started: Mutex::new(Some(first_started)),
+            release_first: Mutex::new(Some(release_first)),
+        }
+    }
+}
+
+impl pi_ai::registry::ApiProvider for BlockingTwoTurnProvider {
+    fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        let call_index = {
+            let mut contexts = self.contexts.lock().unwrap();
+            contexts.push(ctx);
+            contexts.len()
+        };
+        let first_release = if call_index == 1 {
+            if let Some(started) = self.first_started.lock().unwrap().take() {
+                let _ = started.send(());
+            }
+            self.release_first.lock().unwrap().take()
+        } else {
+            None
+        };
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            if let Some(release) = first_release {
+                let _ = release.await;
+            }
+            let text = if call_index == 1 { "first" } else { "second" };
+            let mut message = AssistantMessage::empty("blocking", &model_id);
+            message.provider = Some("blocking".into());
+            message.content.push(ContentBlock::Text {
+                text: text.into(),
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
 #[tokio::test]
 async fn rpc_processes_command_before_stdin_eof() {
     let api = "pi-coding-rpc-streaming";
@@ -192,8 +247,10 @@ async fn rpc_state_reports_capabilities_when_idle() {
     let lines = parse_lines(&output);
     let capabilities = &lines[0]["data"]["capabilities"];
     assert_eq!(capabilities["prompt"]["status"], "available");
-    assert_eq!(capabilities["abort"]["status"], "disabled");
-    assert_eq!(capabilities["followUp"]["status"], "available");
+    for capability in ["abort", "steer", "followUp"] {
+        assert_eq!(capabilities[capability]["status"], "disabled");
+        assert_eq!(capabilities[capability]["reason"], "no prompt is running");
+    }
     assert_eq!(capabilities["tools"]["status"], "available");
     for capability in [
         "compact",
@@ -283,8 +340,9 @@ async fn rpc_state_reports_prompt_busy_while_running() {
     let capabilities = &state["data"]["capabilities"];
     assert_eq!(capabilities["prompt"]["status"], "busy");
     assert_eq!(capabilities["prompt"]["operation"], "prompt");
-    assert_eq!(capabilities["abort"]["status"], "disabled");
-    assert_eq!(capabilities["steer"]["status"], "disabled");
+    assert_eq!(capabilities["abort"]["status"], "available");
+    assert_eq!(capabilities["steer"]["status"], "available");
+    assert_eq!(capabilities["followUp"]["status"], "available");
     registry::unregister(api);
 }
 
@@ -653,20 +711,24 @@ async fn rpc_abort_cancels_running_prompt() {
     })
     .await;
 
-    release.notify_one();
     drop(input_writer);
-    task.await.unwrap();
+    let task_result = tokio::time::timeout(Duration::from_millis(500), task).await;
+    if task_result.is_err() {
+        release.notify_one();
+        panic!("rpc task did not finish after abort");
+    }
+    task_result.unwrap().unwrap();
 
     let abort_response = abort_response.expect("abort response while prompt is running");
     assert_eq!(abort_response["id"], "a1");
     assert_eq!(abort_response["success"], true);
-    assert_eq!(abort_response["data"]["cancelled"], false);
-    assert!(!cancelled.load(Ordering::SeqCst));
+    assert_eq!(abort_response["data"]["cancelled"], true);
+    assert!(cancelled.load(Ordering::SeqCst));
     registry::unregister(api);
 }
 
 #[tokio::test]
-async fn rpc_steer_while_coding_prompt_running_returns_error() {
+async fn rpc_steer_while_coding_prompt_running_sends_control() {
     let api = "pi-coding-rpc-steer-live";
     let release = Arc::new(Notify::new());
     registry::register(
@@ -722,11 +784,7 @@ async fn rpc_steer_while_coding_prompt_running_returns_error() {
     .await;
 
     let response = response.expect("steer response while prompt is running");
-    assert_eq!(response["success"], false);
-    assert_eq!(
-        response["error"],
-        "agent is streaming; steer awaits AgentTurnFlow"
-    );
+    assert_eq!(response["success"], true);
     release.notify_one();
     drop(input_writer);
     tokio::time::timeout(Duration::from_millis(500), async {
@@ -747,15 +805,18 @@ async fn rpc_steer_while_coding_prompt_running_returns_error() {
 }
 
 #[tokio::test]
-async fn rpc_follow_up_prompt_while_coding_prompt_running_returns_error() {
+async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
     let api = "pi-coding-rpc-follow-up-live";
-    let release = Arc::new(Notify::new());
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
     registry::register(
         api,
-        Arc::new(PausingProvider {
-            release: Arc::clone(&release),
-            opened: Arc::new(AtomicBool::new(false)),
-        }),
+        Arc::new(BlockingTwoTurnProvider::new(
+            Arc::clone(&contexts),
+            started_tx,
+            release_rx,
+        )),
     );
 
     let (mut input_writer, input_reader) = tokio::io::duplex(512);
@@ -783,6 +844,10 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_returns_error() {
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
     let _ = lines.next_line().await.unwrap().unwrap();
     let _ = lines.next_line().await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_millis(250), started_rx)
+        .await
+        .expect("provider first turn started")
+        .unwrap();
 
     input_writer
         .write_all(
@@ -805,12 +870,8 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_returns_error() {
     .await;
 
     let response = response.expect("follow-up response while prompt is running");
-    assert_eq!(response["success"], false);
-    assert_eq!(
-        response["error"],
-        "agent is streaming; steer and follow-up await AgentTurnFlow"
-    );
-    release.notify_one();
+    assert_eq!(response["success"], true);
+    release_tx.send(()).unwrap();
     drop(input_writer);
     tokio::time::timeout(Duration::from_millis(500), async {
         loop {
@@ -826,6 +887,21 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_returns_error() {
     .await
     .expect("agent_end after releasing paused provider");
     task.await.unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2);
+    assert!(
+        contexts[1].messages.iter().any(|message| matches!(
+            message,
+            Message::User { content }
+                if content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Text { text, .. } if text == "next"
+                ))
+        )),
+        "{:#?}",
+        contexts[1].messages
+    );
     registry::unregister(api);
 }
 
@@ -893,7 +969,7 @@ async fn rpc_plain_prompt_while_running_returns_error() {
     assert_eq!(response["success"], false);
     assert_eq!(
         response["error"],
-        "agent is streaming; steer and follow-up await AgentTurnFlow"
+        "agent is streaming; prompt requires streamingBehavior steer or followUp"
     );
     registry::unregister(api);
 }

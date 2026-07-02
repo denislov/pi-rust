@@ -8,6 +8,7 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 use pi_agent_core::{AgentEvent, AgentMessage, AgentStream};
 
 use super::CodingSessionError;
+use super::operation_control::PromptControlCommand;
 use super::prompt::{CodingDiagnostic, PromptTurnContext};
 use super::runtime_service::RuntimeService;
 use crate::plugins::PromptHookPoint;
@@ -290,8 +291,38 @@ fn record_user_input(ctx: &mut PromptTurnContext) -> Result<Action, String> {
 async fn run_agent_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
     ctx.run_prompt_hook(PromptHookPoint::BeforeAgentTurn)
         .map_err(|error| error.to_string())?;
+    let agent = ctx.agent().cloned().ok_or_else(|| {
+        CodingSessionError::Session {
+            message: "prompt turn has no agent runtime".into(),
+        }
+        .to_string()
+    })?;
+    let mut controls = ctx.take_prompt_control_receiver();
     let mut stream = start_agent_turn(ctx).map_err(|error| error.to_string())?;
-    while let Some(event) = stream.next().await {
+    loop {
+        let next = if let Some(receiver) = controls.as_mut() {
+            tokio::select! {
+                biased;
+                command = receiver.recv() => AgentTurnInput::Control(command),
+                event = stream.next() => AgentTurnInput::Event(event),
+            }
+        } else {
+            AgentTurnInput::Event(stream.next().await)
+        };
+
+        let event = match next {
+            AgentTurnInput::Control(Some(command)) => {
+                apply_prompt_control_command(ctx, &agent, command);
+                continue;
+            }
+            AgentTurnInput::Control(None) => {
+                controls = None;
+                continue;
+            }
+            AgentTurnInput::Event(Some(event)) => event,
+            AgentTurnInput::Event(None) => break,
+        };
+
         match &event {
             AgentEvent::AgentDone { message } => {
                 ctx.record_final_message(message.clone());
@@ -319,6 +350,26 @@ async fn run_agent_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
     ctx.run_prompt_hook(PromptHookPoint::AfterAgentTurn)
         .map_err(|error| error.to_string())?;
     default_action()
+}
+
+enum AgentTurnInput {
+    Control(Option<PromptControlCommand>),
+    Event(Option<AgentEvent>),
+}
+
+fn apply_prompt_control_command(
+    ctx: &mut PromptTurnContext,
+    agent: &pi_agent_core::Agent,
+    command: PromptControlCommand,
+) {
+    match command {
+        PromptControlCommand::Abort { reason } => {
+            ctx.request_abort(reason);
+            agent.abort();
+        }
+        PromptControlCommand::Steer { text } => agent.steer(text),
+        PromptControlCommand::FollowUp { text } => agent.follow_up(text),
+    }
 }
 
 fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
@@ -436,9 +487,14 @@ mod tests {
     use pi_agent_core::flow::{FlowEvent, NodeId};
     use pi_agent_core::{Agent, AgentConfig, AgentResources, AgentTool, AgentToolOutput};
     use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
-    use pi_ai::registry;
-    use pi_ai::types::{AssistantMessage, ContentBlock, Model, ModelCost, ModelInput, StopReason};
+    use pi_ai::registry::{self, ApiProvider};
+    use pi_ai::stream::EventStream;
+    use pi_ai::types::{
+        AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
+        ModelInput, StopReason, StreamOptions,
+    };
     use serde_json::json;
+    use tokio::sync::oneshot;
 
     use super::*;
     use crate::coding_session::event::CodingAgentEvent;
@@ -492,6 +548,61 @@ mod tests {
         let mut context = context();
         context.set_agent(agent);
         context
+    }
+
+    struct BlockingTwoTurnProvider {
+        contexts: Arc<Mutex<Vec<Context>>>,
+        first_started: Mutex<Option<oneshot::Sender<()>>>,
+        release_first: Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl BlockingTwoTurnProvider {
+        fn new(
+            contexts: Arc<Mutex<Vec<Context>>>,
+            first_started: oneshot::Sender<()>,
+            release_first: oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                contexts,
+                first_started: Mutex::new(Some(first_started)),
+                release_first: Mutex::new(Some(release_first)),
+            }
+        }
+    }
+
+    impl ApiProvider for BlockingTwoTurnProvider {
+        fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+            let call_index = {
+                let mut contexts = self.contexts.lock().unwrap();
+                contexts.push(ctx);
+                contexts.len()
+            };
+            let first_release = if call_index == 1 {
+                if let Some(started) = self.first_started.lock().unwrap().take() {
+                    let _ = started.send(());
+                }
+                self.release_first.lock().unwrap().take()
+            } else {
+                None
+            };
+            let model_id = model.id.clone();
+            Box::pin(async_stream::stream! {
+                if let Some(release) = first_release {
+                    let _ = release.await;
+                }
+                let text = if call_index == 1 { "first" } else { "second" };
+                let mut message = AssistantMessage::empty("blocking", &model_id);
+                message.provider = Some("blocking".into());
+                message.content.push(ContentBlock::Text {
+                    text: text.into(),
+                    text_signature: None,
+                });
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message,
+                };
+            })
+        }
     }
 
     fn context_with_runtime(api: &str, response: &str) -> PromptTurnContext {
@@ -1127,6 +1238,58 @@ mod tests {
             vec!["operation.started", "turn.started"]
         );
         assert!(store.read_events(&handle).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_agent_turn_applies_follow_up_control_while_provider_stream_is_running() {
+        let api = "prompt-flow-follow-up-control";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        registry::register(
+            api,
+            Arc::new(BlockingTwoTurnProvider::new(
+                contexts.clone(),
+                started_tx,
+                release_rx,
+            )),
+        );
+        let agent = Agent::new(AgentConfig::new(model(api)));
+        let (handle, receiver) = crate::coding_session::operation_control::prompt_control_channel();
+        let flow = run_agent_turn_only_flow();
+        let mut context = context();
+        context.set_agent(agent);
+        context.set_prompt_control_receiver(receiver);
+
+        let mut run = Box::pin(flow.run(&mut context));
+        tokio::select! {
+            started = started_rx => started.unwrap(),
+            result = &mut run => panic!("flow finished before provider blocked: {result:?}"),
+        }
+        handle.follow_up("continue with tests").unwrap();
+        release_tx.send(()).unwrap();
+
+        run.await.unwrap();
+
+        assert_eq!(
+            context.final_message().map(assistant_text),
+            Some("second".to_string())
+        );
+        let contexts = contexts.lock().unwrap();
+        assert_eq!(contexts.len(), 2);
+        assert!(
+            contexts[1].messages.iter().any(|message| matches!(
+                message,
+                Message::User { content }
+                    if content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::Text { text, .. } if text == "continue with tests"
+                    ))
+            )),
+            "{:#?}",
+            contexts[1].messages
+        );
+        registry::unregister(api);
     }
 
     #[tokio::test]

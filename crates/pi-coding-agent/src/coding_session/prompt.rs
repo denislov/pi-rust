@@ -20,6 +20,7 @@ use crate::session::ResolvedSessionTarget;
 use super::CodingSessionError;
 use super::event::CodingAgentEvent;
 use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
+use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
 use super::session_log::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
@@ -386,9 +387,11 @@ pub(crate) struct PromptTurnContext {
     assistant_session_message_id: Option<String>,
     completed_assistant_session_message_id: Option<String>,
     live_event_service: Option<EventService>,
+    prompt_control_receiver: Option<PromptControlReceiver>,
     plugin_service: PluginService,
     tool_session_call_ids: HashMap<String, String>,
     diagnostics: Vec<CodingDiagnostic>,
+    requested_abort_reason: Option<String>,
 }
 
 impl PromptTurnContext {
@@ -411,9 +414,11 @@ impl PromptTurnContext {
             assistant_session_message_id: None,
             completed_assistant_session_message_id: None,
             live_event_service: None,
+            prompt_control_receiver: None,
             plugin_service: PluginService::new(),
             tool_session_call_ids: HashMap::new(),
             diagnostics: Vec::new(),
+            requested_abort_reason: None,
         }
     }
 
@@ -658,6 +663,14 @@ impl PromptTurnContext {
         self.live_event_service.is_some()
     }
 
+    pub(crate) fn set_prompt_control_receiver(&mut self, receiver: PromptControlReceiver) {
+        self.prompt_control_receiver = Some(receiver);
+    }
+
+    pub(crate) fn take_prompt_control_receiver(&mut self) -> Option<PromptControlReceiver> {
+        self.prompt_control_receiver.take()
+    }
+
     pub(crate) fn completed_transcript_items(&self) -> Vec<TranscriptItem> {
         let mut transcript = Vec::new();
 
@@ -703,6 +716,14 @@ impl PromptTurnContext {
 
     pub(crate) fn record_diagnostic(&mut self, diagnostic: CodingDiagnostic) {
         self.diagnostics.push(diagnostic);
+    }
+
+    pub(crate) fn request_abort(&mut self, reason: impl Into<String>) {
+        self.requested_abort_reason = Some(reason.into());
+    }
+
+    pub(crate) fn abort_reason(&self) -> Option<&str> {
+        self.requested_abort_reason.as_deref()
     }
 
     pub(crate) fn diagnostics(&self) -> &[CodingDiagnostic] {

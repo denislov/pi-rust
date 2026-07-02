@@ -89,6 +89,13 @@ pub enum CodingAgentEvent {
         first_kept_message_id: String,
         tokens_before: u32,
     },
+    SessionCompactionCompleted {
+        operation_id: String,
+        turn_id: String,
+        summary: String,
+        first_kept_message_id: String,
+        tokens_before: u32,
+    },
     PromptCompleted {
         operation_id: String,
         turn_id: String,
