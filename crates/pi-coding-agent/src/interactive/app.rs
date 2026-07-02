@@ -3004,6 +3004,44 @@ mod tests {
     }
 
     #[test]
+    fn plugin_keybinding_for_registered_command_queues_plugin_command_runner() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_plugin_commands(vec![PluginSlashCommand::new(
+            "lua.open_panel",
+            "opens a Lua panel",
+        )]);
+        root.set_plugin_ui_extensions(
+            vec![PluginUiAction::new(
+                "ui.open_panel",
+                "Open panel",
+                "opens a Lua panel",
+                "lua.open_panel",
+            )],
+            vec![PluginKeybinding::new(
+                "keybind.open_panel",
+                "ctrl+g",
+                "opens the Lua panel",
+                "lua.open_panel",
+            )],
+        );
+
+        root.handle_input(&key_event("\x07"));
+
+        assert_eq!(root.take_action(), InteractiveAction::PluginCommand);
+        let request = root
+            .take_pending_plugin_command_request()
+            .expect("plugin command runner should be queued");
+        assert_eq!(request.command_id, "lua.open_panel");
+        assert_eq!(request.args, serde_json::json!({}));
+        assert!(root.take_pending_plugin_ui_action().is_none());
+        assert_eq!(root.editor.text(), "");
+    }
+
+    #[test]
     fn all_slash_commands_excludes_skills_when_disabled() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),

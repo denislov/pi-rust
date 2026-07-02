@@ -561,6 +561,14 @@ impl InteractiveRoot {
             )));
             return true;
         };
+        if self.has_plugin_command(&action.action_id) {
+            self.pending_plugin_command_request = Some(PendingPluginCommandRequest {
+                command_id: action.action_id.clone(),
+                args: serde_json::json!({}),
+            });
+            self.action = InteractiveAction::PluginCommand;
+            return true;
+        }
         self.pending_plugin_ui_action = Some(PendingPluginUiAction {
             action_id: action.action_id.clone(),
             label: action.label.clone(),
