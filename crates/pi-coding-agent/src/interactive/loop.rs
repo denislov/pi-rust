@@ -965,6 +965,8 @@ fn dispatch_plugin_ui_dialog<T: Terminal>(
         "Plugin UI dialog {}: {}{}",
         dialog.dialog_id, dialog.title, description
     )));
+    root.editor
+        .set_text(format!("/plugin-command {} ", dialog.action_id));
     Ok(())
 }
 
