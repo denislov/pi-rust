@@ -124,6 +124,7 @@ impl CodingEventBridge {
                 error: format!("prompt aborted: {reason}"),
             }],
             CodingAgentEvent::SessionOpened { .. }
+            | CodingAgentEvent::DefaultAgentProfileChanged { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }

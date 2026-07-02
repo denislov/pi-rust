@@ -5,10 +5,10 @@ use std::path::{Component, Path, PathBuf};
 use super::event::SessionEventEnvelope;
 use super::manifest::{
     EVENT_SCHEMA, EVENT_VERSION, SESSION_EVENT_LOG_FILE, SESSION_MANIFEST_FILE, SESSION_SCHEMA,
-    SESSION_VERSION, SessionManifest,
+    SESSION_VERSION, SessionManifest, default_agent_profile_id,
 };
 use super::replay::{SessionReplay, fold_events};
-use crate::coding_session::CodingSessionError;
+use crate::coding_session::{CodingSessionError, ProfileId};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionLogStore {
@@ -57,7 +57,8 @@ impl SessionLogStore {
             ))
         })?;
 
-        let manifest = SessionManifest::new(session_id, options.created_at);
+        let manifest = SessionManifest::new(session_id, options.created_at)
+            .with_default_agent_profile_id(options.default_agent_profile_id);
         write_manifest(&session_dir, &manifest)?;
         create_empty_event_log(&session_dir)?;
 
@@ -280,6 +281,7 @@ impl SessionLogStore {
 pub(crate) struct CreateSessionOptions {
     pub(crate) session_id: String,
     pub(crate) created_at: String,
+    pub(crate) default_agent_profile_id: ProfileId,
 }
 
 impl CreateSessionOptions {
@@ -287,7 +289,13 @@ impl CreateSessionOptions {
         Self {
             session_id: session_id.into(),
             created_at: created_at.into(),
+            default_agent_profile_id: default_agent_profile_id(),
         }
+    }
+
+    pub(crate) fn default_agent_profile_id(mut self, profile_id: ProfileId) -> Self {
+        self.default_agent_profile_id = profile_id;
+        self
     }
 }
 
@@ -337,6 +345,7 @@ pub(crate) struct ManifestPatch {
     updated_at: Option<String>,
     active_branch_id: Option<Option<String>>,
     active_leaf_id: Option<Option<String>>,
+    default_agent_profile_id: Option<ProfileId>,
 }
 
 impl ManifestPatch {
@@ -359,6 +368,11 @@ impl ManifestPatch {
         self
     }
 
+    pub(crate) fn default_agent_profile_id(mut self, profile_id: ProfileId) -> Self {
+        self.default_agent_profile_id = Some(profile_id);
+        self
+    }
+
     fn apply(self, manifest: &mut SessionManifest) {
         if let Some(updated_at) = self.updated_at {
             manifest.updated_at = updated_at;
@@ -368,6 +382,9 @@ impl ManifestPatch {
         }
         if let Some(active_leaf_id) = self.active_leaf_id {
             manifest.active_leaf_id = active_leaf_id;
+        }
+        if let Some(default_agent_profile_id) = self.default_agent_profile_id {
+            manifest.default_agent_profile_id = default_agent_profile_id;
         }
     }
 }

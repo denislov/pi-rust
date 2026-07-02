@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::coding_session::profiles::ProfileId;
+
 pub(crate) const SESSION_SCHEMA: &str = "pi-rust.session";
 pub(crate) const SESSION_VERSION: u32 = 1;
 pub(crate) const EVENT_SCHEMA: &str = "pi-rust.session.event";
@@ -18,6 +20,8 @@ pub(crate) struct SessionManifest {
     pub active_branch_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_leaf_id: Option<String>,
+    #[serde(default = "default_agent_profile_id")]
+    pub default_agent_profile_id: ProfileId,
     pub event_log: String,
 }
 
@@ -32,8 +36,14 @@ impl SessionManifest {
             created_at,
             active_branch_id: None,
             active_leaf_id: None,
+            default_agent_profile_id: default_agent_profile_id(),
             event_log: SESSION_EVENT_LOG_FILE.into(),
         }
+    }
+
+    pub(crate) fn with_default_agent_profile_id(mut self, profile_id: ProfileId) -> Self {
+        self.default_agent_profile_id = profile_id;
+        self
     }
 
     pub(crate) fn with_active_leaf(mut self, leaf_id: impl Into<String>) -> Self {
@@ -45,6 +55,10 @@ impl SessionManifest {
         self.updated_at = updated_at.into();
         self
     }
+}
+
+pub(crate) fn default_agent_profile_id() -> ProfileId {
+    ProfileId::from("default")
 }
 
 #[cfg(test)]
@@ -64,6 +78,7 @@ mod tests {
         assert_eq!(value["created_at"], "2026-06-29T00:00:00Z");
         assert_eq!(value["updated_at"], "2026-06-29T00:00:01Z");
         assert_eq!(value["active_leaf_id"], "leaf_1");
+        assert_eq!(value["default_agent_profile_id"], "default");
         assert_eq!(value["event_log"], SESSION_EVENT_LOG_FILE);
         assert!(
             value["event_log"]

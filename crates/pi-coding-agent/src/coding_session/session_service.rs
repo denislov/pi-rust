@@ -19,7 +19,7 @@ use super::session_log::transaction::TurnTransaction;
 use super::{
     CodingAgentEvent, CodingAgentSessionDiagnostic, CodingAgentSessionHydration,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionTranscriptItem,
-    CodingAgentSessionTree, CodingAgentSessionView, CodingSessionError,
+    CodingAgentSessionTree, CodingAgentSessionView, CodingSessionError, ProfileId,
 };
 
 #[derive(Debug)]
@@ -58,6 +58,7 @@ impl SessionService {
             &mut ids,
             &clock,
             option_cwd_string(options),
+            option_default_agent_profile_id(options),
         )
     }
 
@@ -99,6 +100,7 @@ impl SessionService {
             &mut ids,
             &clock,
             option_cwd_string(options),
+            option_default_agent_profile_id(options),
         )
     }
 
@@ -159,6 +161,25 @@ impl SessionService {
 
     pub(crate) fn active_leaf_id(&self) -> Option<&str> {
         self.handle.manifest().active_leaf_id.as_deref()
+    }
+
+    pub(crate) fn default_agent_profile_id(&self) -> &ProfileId {
+        &self.handle.manifest().default_agent_profile_id
+    }
+
+    pub(crate) fn set_default_agent_profile_id(
+        &mut self,
+        profile_id: ProfileId,
+    ) -> Result<(), CodingSessionError> {
+        let session_id = self.session_id().to_owned();
+        self.store.update_manifest(
+            &self.handle,
+            ManifestPatch::new()
+                .updated_at(SystemClock.now_rfc3339())
+                .default_agent_profile_id(profile_id),
+        )?;
+        self.handle = self.store.open_session_id(&session_id)?;
+        Ok(())
     }
 
     pub(crate) fn branch_summary_for(
@@ -515,6 +536,7 @@ impl SessionService {
     pub(crate) fn view(&self) -> CodingAgentSessionView {
         CodingAgentSessionView {
             session_id: self.session_id().to_owned(),
+            default_agent_profile_id: self.default_agent_profile_id().clone(),
         }
     }
 
@@ -578,6 +600,7 @@ impl SessionService {
             &mut ids,
             &clock,
             replay.cwd,
+            self.default_agent_profile_id().clone(),
         )?;
 
         let provenance = SessionEventEnvelope::new(
@@ -621,10 +644,13 @@ impl SessionService {
         ids: &mut impl IdGenerator,
         clock: &impl Clock,
         cwd: Option<String>,
+        default_agent_profile_id: ProfileId,
     ) -> Result<Self, CodingSessionError> {
         let created_at = clock.now_rfc3339();
-        let handle =
-            store.create_session(CreateSessionOptions::new(session_id, created_at.clone()))?;
+        let handle = store.create_session(
+            CreateSessionOptions::new(session_id, created_at.clone())
+                .default_agent_profile_id(default_agent_profile_id),
+        )?;
         let created = SessionEventEnvelope::new(
             handle.manifest().session_id.clone(),
             ids.next_event_id(),
@@ -1013,6 +1039,13 @@ fn normalize_session_id(value: &str, label: &str) -> Result<String, CodingSessio
 
 fn option_cwd_string(options: &CodingAgentSessionOptions) -> Option<String> {
     options.cwd().map(normalized_path_string)
+}
+
+fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> ProfileId {
+    options
+        .default_agent_profile_id()
+        .cloned()
+        .unwrap_or_else(|| ProfileId::from("default"))
 }
 
 fn normalized_path_string(path: &Path) -> String {

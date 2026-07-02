@@ -177,6 +177,7 @@ impl CodingProtocolEventAdapter {
                 self.push_prompt_failed_message(reason)
             }
             CodingAgentEvent::SessionOpened { .. }
+            | CodingAgentEvent::DefaultAgentProfileChanged { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }

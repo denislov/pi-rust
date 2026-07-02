@@ -4,7 +4,7 @@ use pi_coding_agent::api::{
     CliRunOptions, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
     CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
-    CodingDiagnosticSeverity, CodingSessionError, PrintModeOptions, PromptInvocation,
+    CodingDiagnosticSeverity, CodingSessionError, PrintModeOptions, ProfileId, PromptInvocation,
     PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, SessionMode,
     ToolFilter, builtin_tools, filter_tools, help_text, parse_args, render_diagnostics,
 };
@@ -109,6 +109,7 @@ async fn coding_session_public_api_symbols_are_importable() {
         view,
         CodingAgentSessionView {
             session_id: "sess_public_api".into(),
+            default_agent_profile_id: ProfileId::from("default"),
         }
     );
 

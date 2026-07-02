@@ -1,9 +1,12 @@
-use super::CodingSessionError;
+use super::{CodingSessionError, ProfileId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodingAgentEvent {
     SessionOpened {
         session_id: String,
+    },
+    DefaultAgentProfileChanged {
+        profile_id: ProfileId,
     },
     SessionWritePending {
         operation_id: String,

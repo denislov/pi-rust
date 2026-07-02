@@ -85,14 +85,16 @@ enum SessionPersistence {
 struct TransientSessionState {
     runtime_id: String,
     transcript: Vec<TranscriptItem>,
+    default_agent_profile_id: ProfileId,
 }
 
 impl TransientSessionState {
-    fn new() -> Self {
+    fn new(default_agent_profile_id: ProfileId) -> Self {
         let mut ids = SystemIdGenerator;
         Self {
             runtime_id: format!("runtime_{}", ids.next_session_id()),
             transcript: Vec::new(),
+            default_agent_profile_id,
         }
     }
 }
@@ -106,6 +108,13 @@ fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoa
     PluginLoadOptions::new()
         .with_discovery_root(paths.project_dir.join("plugins"), PluginSource::Project)
         .with_discovery_root(paths.global_dir.join("plugins"), PluginSource::User)
+}
+
+fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> ProfileId {
+    options
+        .default_agent_profile_id()
+        .cloned()
+        .unwrap_or_else(|| ProfileId::from("default"))
 }
 
 fn default_cwd() -> PathBuf {
@@ -139,7 +148,7 @@ impl CodingAgentSession {
             });
         }
         Self::from_transient(
-            TransientSessionState::new(),
+            TransientSessionState::new(option_default_agent_profile_id(&options)),
             default_plugin_load_options(&options),
         )
     }
@@ -277,8 +286,27 @@ impl CodingAgentSession {
             SessionPersistence::Persistent(session_service) => session_service.view(),
             SessionPersistence::NonPersistent(state) => CodingAgentSessionView {
                 session_id: state.runtime_id.clone(),
+                default_agent_profile_id: state.default_agent_profile_id.clone(),
             },
         }
+    }
+
+    pub fn set_default_agent_profile_id(
+        &mut self,
+        profile_id: impl Into<ProfileId>,
+    ) -> Result<(), CodingSessionError> {
+        let profile_id = profile_id.into();
+        match &mut self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                session_service.set_default_agent_profile_id(profile_id.clone())?;
+            }
+            SessionPersistence::NonPersistent(state) => {
+                state.default_agent_profile_id = profile_id.clone();
+            }
+        }
+        self.event_service
+            .emit(CodingAgentEvent::DefaultAgentProfileChanged { profile_id });
+        Ok(())
     }
 
     pub async fn prompt(
@@ -2415,6 +2443,7 @@ runtime = "lua"
     fn event_kind(event: &CodingAgentEvent) -> &'static str {
         match event {
             CodingAgentEvent::SessionOpened { .. } => "session_opened",
+            CodingAgentEvent::DefaultAgentProfileChanged { .. } => "default_agent_profile_changed",
             CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
             CodingAgentEvent::SessionWriteCommitted { .. } => "session_write_committed",
             CodingAgentEvent::SessionWriteSkipped { .. } => "session_write_skipped",

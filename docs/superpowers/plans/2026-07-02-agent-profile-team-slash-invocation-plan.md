@@ -162,13 +162,13 @@ Files:
 
 Tasks:
 
-- [ ] Add default profile id/options to `CodingAgentSessionOptions`.
-- [ ] Persist the default profile id in the Rust-native session manifest or an explicit typed session event.
-- [ ] Restore the default profile id when opening or resuming a session.
-- [ ] Add an owner method for changing the default profile, for example `CodingAgentSession::set_default_agent_profile()`.
-- [ ] Emit a canonical product event when the default profile changes.
-- [ ] Keep ordinary prompts using the current default profile without creating a hidden live session agent.
-- [ ] Add tests for new-session default profile, explicit selected profile, resumed profile restoration, and profile switch persistence.
+- [x] Add default profile id/options to `CodingAgentSessionOptions`.
+- [x] Persist the default profile id in the Rust-native session manifest or an explicit typed session event.
+- [x] Restore the default profile id when opening or resuming a session.
+- [x] Add an owner method for changing the default profile, for example `CodingAgentSession::set_default_agent_profile()`.
+- [x] Emit a canonical product event when the default profile changes.
+- [x] Keep ordinary prompts using the current default profile without creating a hidden live session agent.
+- [x] Add tests for new-session default profile, explicit selected profile, resumed profile restoration, and profile switch persistence.
 
 Acceptance:
 

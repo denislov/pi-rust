@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use pi_agent_core::session::SessionTreeNode;
 
 use crate::coding_session::operation_control::OperationKind;
+use crate::coding_session::profiles::ProfileId;
 use crate::plugins::PluginCapabilities;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -11,6 +12,7 @@ pub struct CodingAgentSessionOptions {
     session_id: Option<String>,
     session_log_root: Option<PathBuf>,
     session_path: Option<PathBuf>,
+    default_agent_profile_id: Option<ProfileId>,
 }
 
 impl CodingAgentSessionOptions {
@@ -38,6 +40,11 @@ impl CodingAgentSessionOptions {
         self
     }
 
+    pub fn with_default_agent_profile_id(mut self, profile_id: impl Into<ProfileId>) -> Self {
+        self.default_agent_profile_id = Some(profile_id.into());
+        self
+    }
+
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
@@ -53,11 +60,16 @@ impl CodingAgentSessionOptions {
     pub fn session_path(&self) -> Option<&Path> {
         self.session_path.as_deref()
     }
+
+    pub fn default_agent_profile_id(&self) -> Option<&ProfileId> {
+        self.default_agent_profile_id.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingAgentSessionView {
     pub session_id: String,
+    pub default_agent_profile_id: ProfileId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
