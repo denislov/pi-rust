@@ -428,6 +428,73 @@ runtime = "lua"
 }
 
 #[tokio::test]
+async fn rpc_plugin_command_runs_loaded_lua_plugin_command() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let project_plugin = cwd.join(".pi-rust/plugins/lua-command");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "lua-command"
+name = "Lua Command"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.lua"),
+        r#"
+function register(host)
+  host:command({
+    id = "lua.say_hello",
+    description = "greets from lua command",
+    run = function(input)
+      return { content = "hello " .. input.name }
+    end
+  })
+end
+"#,
+    )
+    .unwrap();
+    let mut session_options = SessionRunOptions::enabled(cwd);
+    session_options.session_dir = Some(sessions);
+
+    let api = "pi-coding-rpc-plugin-command";
+    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let input = br#"{"id":"r1","type":"reload"}
+{"id":"c1","type":"plugin_command","commandId":"lua.say_hello","args":{"name":"rpc"}}
+"#;
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "r1");
+    assert_eq!(lines[0]["command"], "reload");
+    assert_eq!(lines[0]["success"], true);
+    assert_eq!(lines[1]["id"], "c1");
+    assert_eq!(lines[1]["command"], "plugin_command");
+    assert_eq!(lines[1]["success"], true);
+    assert_eq!(lines[1]["data"]["commandId"], "lua.say_hello");
+    assert_eq!(lines[1]["data"]["output"], "hello rpc");
+    registry::unregister(api);
+}
+
+#[tokio::test]
 async fn rpc_prompt_returns_response_then_agent_events() {
     let api = "pi-coding-rpc-prompt";
     registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));

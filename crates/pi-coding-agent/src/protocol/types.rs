@@ -138,6 +138,14 @@ pub enum RpcCommand {
     GetState { id: Option<String> },
     #[serde(rename = "reload")]
     Reload { id: Option<String> },
+    #[serde(rename = "plugin_command")]
+    PluginCommand {
+        id: Option<String>,
+        #[serde(rename = "commandId")]
+        command_id: String,
+        #[serde(default)]
+        args: Option<serde_json::Value>,
+    },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {
         id: Option<String>,

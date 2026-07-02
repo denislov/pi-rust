@@ -291,6 +291,22 @@ impl CodingAgentSession {
             .await
     }
 
+    pub(crate) fn run_plugin_command(
+        &mut self,
+        command_id: &str,
+        args: serde_json::Value,
+    ) -> Result<String, CodingSessionError> {
+        if self.active_operation.is_some() {
+            return Err(CodingSessionError::Busy {
+                operation: "plugin_command".into(),
+            });
+        }
+        self.active_operation = Some("plugin_command".into());
+        let result = self.plugin_service.run_command(command_id, args);
+        self.active_operation = None;
+        result
+    }
+
     pub(crate) async fn load_plugins(
         &mut self,
         options: PluginLoadOptions,

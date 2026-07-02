@@ -149,6 +149,19 @@ impl RpcState {
                 .await
             }
             RpcCommand::Reload { id } => self.handle_reload(id, writer).await,
+            RpcCommand::PluginCommand {
+                id,
+                command_id,
+                args,
+            } => {
+                self.handle_plugin_command(
+                    id,
+                    command_id,
+                    args.unwrap_or_else(|| serde_json::json!({})),
+                    writer,
+                )
+                .await
+            }
             RpcCommand::SetThinkingLevel { id, level } => {
                 self.thinking_level = level;
                 write_rpc_response(writer, RpcResponse::success(id, "set_thinking_level", None))
@@ -222,6 +235,81 @@ impl RpcState {
                         "get_messages",
                         Some(serde_json::json!({ "messages": self.messages })),
                     ),
+                )
+                .await
+            }
+        }
+    }
+
+    async fn handle_plugin_command<W>(
+        &mut self,
+        id: Option<String>,
+        command_id: String,
+        args: serde_json::Value,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "plugin_command",
+                    "cannot run plugin command while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let (mut session, should_load_plugins) = match self.coding_session.take() {
+            Some(session) => (session, false),
+            None => match self.open_reload_session().await {
+                Ok(session) => (session, true),
+                Err(error) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(id, "plugin_command", error.to_string()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            },
+        };
+
+        if should_load_plugins && let Err(error) = session.reload_plugins().await {
+            self.coding_session = Some(session);
+            write_rpc_response(
+                writer,
+                RpcResponse::error(id, "plugin_command", error.to_string()),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        match session.run_plugin_command(&command_id, args) {
+            Ok(output) => {
+                self.coding_session = Some(session);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "plugin_command",
+                        Some(serde_json::json!({
+                            "commandId": command_id,
+                            "output": output,
+                        })),
+                    ),
+                )
+                .await
+            }
+            Err(error) => {
+                self.coding_session = Some(session);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "plugin_command", error.to_string()),
                 )
                 .await
             }

@@ -53,6 +53,7 @@ pub(super) fn is_supported_m5_command(command: &str) -> bool {
             | "new_session"
             | "get_state"
             | "reload"
+            | "plugin_command"
             | "set_thinking_level"
             | "set_steering_mode"
             | "set_follow_up_mode"
