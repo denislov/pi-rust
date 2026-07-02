@@ -124,6 +124,7 @@ pub struct CodingAgentCapabilities {
     pub compact: CapabilityStatus,
     pub fork: CapabilityStatus,
     pub clone_session: CapabilityStatus,
+    pub branch_summary: CapabilityStatus,
     pub switch_session: CapabilityStatus,
     pub export: CapabilityStatus,
     pub tools: CapabilityStatus,
@@ -153,12 +154,14 @@ impl CodingAgentCapabilities {
         };
 
         let _ = plugin_capabilities;
-        let persistent_session_capability = if persistent_session {
-            CapabilityStatus::Available
-        } else {
-            CapabilityStatus::Disabled {
+        let persistent_session_capability = match (persistent_session, active_operation) {
+            (false, _) => CapabilityStatus::Disabled {
                 reason: "requires persistent Rust-native session".into(),
-            }
+            },
+            (true, Some(operation)) => CapabilityStatus::Busy {
+                operation: operation.into(),
+            },
+            (true, None) => CapabilityStatus::Available,
         };
 
         Self {
@@ -175,6 +178,7 @@ impl CodingAgentCapabilities {
             compact: persistent_session_capability.clone(),
             fork: persistent_session_capability.clone(),
             clone_session: persistent_session_capability.clone(),
+            branch_summary: persistent_session_capability.clone(),
             switch_session: CapabilityStatus::Unsupported {
                 reason: "session switching is not exposed on CodingAgentSession yet".into(),
             },

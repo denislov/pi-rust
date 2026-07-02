@@ -129,6 +129,7 @@ async fn coding_session_public_api_symbols_are_importable() {
             compact: CapabilityStatus::Available,
             fork: CapabilityStatus::Available,
             clone_session: CapabilityStatus::Available,
+            branch_summary: CapabilityStatus::Available,
             switch_session: CapabilityStatus::Unsupported {
                 reason: "session switching is not exposed on CodingAgentSession yet".into(),
             },

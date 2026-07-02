@@ -195,7 +195,7 @@ async fn rpc_state_reports_capabilities_when_idle() {
     assert_eq!(capabilities["abort"]["status"], "disabled");
     assert_eq!(capabilities["followUp"]["status"], "available");
     assert_eq!(capabilities["tools"]["status"], "available");
-    for capability in ["compact", "fork", "cloneSession", "export"] {
+    for capability in ["compact", "fork", "cloneSession", "branchSummary", "export"] {
         assert_eq!(capabilities[capability]["status"], "disabled");
         assert_eq!(
             capabilities[capability]["reason"],

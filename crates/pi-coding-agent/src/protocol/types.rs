@@ -219,6 +219,8 @@ pub struct RpcCapabilities {
     pub fork: RpcCapabilityStatus,
     #[serde(rename = "cloneSession")]
     pub clone_session: RpcCapabilityStatus,
+    #[serde(rename = "branchSummary")]
+    pub branch_summary: RpcCapabilityStatus,
     #[serde(rename = "switchSession")]
     pub switch_session: RpcCapabilityStatus,
     pub export: RpcCapabilityStatus,
@@ -246,6 +248,7 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             compact: capabilities.compact.into(),
             fork: capabilities.fork.into(),
             clone_session: capabilities.clone_session.into(),
+            branch_summary: capabilities.branch_summary.into(),
             switch_session: capabilities.switch_session.into(),
             export: capabilities.export.into(),
             tools: capabilities.tools.into(),
