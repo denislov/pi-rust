@@ -682,6 +682,18 @@ impl InteractiveRoot {
         self.active_plugin_ui_dialog.is_some()
     }
 
+    pub(super) fn focus_active_plugin_dialog_field(&mut self, field_id: &str) {
+        if let Some(active_dialog) = self.active_plugin_ui_dialog.as_mut()
+            && let Some(index) = active_dialog
+                .dialog
+                .fields
+                .iter()
+                .position(|field| field.id == field_id)
+        {
+            active_dialog.selected_field = index;
+        }
+    }
+
     pub(super) fn handle_plugin_dialog_form_input(&mut self, event: &InputEvent) -> bool {
         if self.active_plugin_ui_dialog.is_none() {
             return false;

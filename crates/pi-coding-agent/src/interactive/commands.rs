@@ -228,6 +228,28 @@ fn handle_plugin_slash_command(root: &mut InteractiveRoot, command_id: &str, arg
     queue_plugin_command(root, command_id, args.trim());
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PluginDialogValidationError {
+    message: String,
+    field_id: Option<String>,
+}
+
+impl PluginDialogValidationError {
+    fn dialog(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            field_id: None,
+        }
+    }
+
+    fn field(field: &PluginUiDialogField, message: String) -> Self {
+        Self {
+            message,
+            field_id: Some(field.id.clone()),
+        }
+    }
+}
+
 pub(super) fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str, raw_args: &str) {
     if root.status == InteractiveStatus::Running {
         root.transcript.push(TranscriptItem::system(
@@ -253,8 +275,11 @@ pub(super) fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str,
     if let Some(active_dialog) = root.active_plugin_ui_dialog.clone() {
         let dialog = active_dialog.dialog;
         if dialog.action_id == command_id {
-            if let Err(message) = validate_plugin_dialog_args(&dialog, &parsed_args) {
-                root.transcript.push(TranscriptItem::system(message));
+            if let Err(error) = validate_plugin_dialog_args(&dialog, &parsed_args) {
+                if let Some(field_id) = error.field_id.as_deref() {
+                    root.focus_active_plugin_dialog_field(field_id);
+                }
+                root.transcript.push(TranscriptItem::system(error.message));
                 return;
             }
             root.active_plugin_ui_dialog = None;
@@ -273,13 +298,16 @@ pub(super) fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str,
 fn validate_plugin_dialog_args(
     dialog: &PendingPluginUiDialog,
     args: &serde_json::Value,
-) -> Result<(), String> {
+) -> Result<(), PluginDialogValidationError> {
     let Some(object) = args.as_object() else {
-        return Err("Plugin dialog args must be a JSON object".to_string());
+        return Err(PluginDialogValidationError::dialog(
+            "Plugin dialog args must be a JSON object",
+        ));
     };
     for field in &dialog.fields {
         let value = object.get(&field.id).unwrap_or(&serde_json::Value::Null);
-        validate_plugin_dialog_field(field, value)?;
+        validate_plugin_dialog_field(field, value)
+            .map_err(|message| PluginDialogValidationError::field(field, message))?;
     }
     Ok(())
 }
