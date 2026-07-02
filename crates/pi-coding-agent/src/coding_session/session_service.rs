@@ -160,6 +160,42 @@ impl SessionService {
         self.handle.manifest().active_leaf_id.as_deref()
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn switch_active_leaf(
+        &mut self,
+        target_leaf_id: &str,
+    ) -> Result<(), CodingSessionError> {
+        let target_leaf_id = normalize_leaf_id(target_leaf_id)?;
+        let events = self.store.read_events(&self.handle)?;
+        if committed_leaf_cutoff(&events, &target_leaf_id).is_none() {
+            return Err(CodingSessionError::Session {
+                message: format!("leaf id not found in session: {target_leaf_id}"),
+            });
+        }
+
+        let session_id = self.session_id().to_owned();
+        let mut ids = SystemIdGenerator;
+        let clock = SystemClock;
+        let updated_at = clock.now_rfc3339();
+        let event = SessionEventEnvelope::new(
+            session_id.clone(),
+            ids.next_event_id(),
+            updated_at.clone(),
+            SessionEventData::ActiveLeafChanged {
+                leaf_id: target_leaf_id.clone(),
+            },
+        );
+        self.store.append_events(&self.handle, &[event])?;
+        self.store.update_manifest(
+            &self.handle,
+            ManifestPatch::new()
+                .updated_at(updated_at)
+                .active_leaf_id(Some(target_leaf_id)),
+        )?;
+        self.handle = self.store.open_session_id(&session_id)?;
+        Ok(())
+    }
+
     pub(crate) fn begin_prompt_transaction(&self) -> PromptTurnTransaction {
         TurnTransaction::begin(
             &self.store,
@@ -549,6 +585,16 @@ fn resolve_copy_target_leaf(
         .ok_or_else(|| CodingSessionError::Session {
             message: "session has no committed active leaf".into(),
         })
+}
+
+fn normalize_leaf_id(value: &str) -> Result<String, CodingSessionError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(CodingSessionError::Input {
+            message: "target leaf id must not be empty".into(),
+        });
+    }
+    Ok(trimmed.to_owned())
 }
 
 fn committed_leaf_cutoff(events: &[SessionEventEnvelope], target_leaf_id: &str) -> Option<usize> {
@@ -1292,6 +1338,74 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "session error: leaf id not found in source session: leaf_missing"
+        );
+    }
+
+    #[test]
+    fn switch_active_leaf_records_event_and_updates_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_switch_leaf")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let root_leaf = record_prompt(&mut service, "root prompt");
+        let branch_leaf = record_prompt(&mut service, "branch prompt");
+
+        service.switch_active_leaf(&root_leaf).unwrap();
+
+        assert_eq!(service.active_leaf_id(), Some(root_leaf.as_str()));
+        assert_eq!(
+            service.replay().unwrap().active_leaf_id.as_deref(),
+            Some(root_leaf.as_str())
+        );
+        let events = service.store.read_events(&service.handle).unwrap();
+        assert!(matches!(
+            events.last().map(|event| &event.data),
+            Some(SessionEventData::ActiveLeafChanged { leaf_id }) if leaf_id == &root_leaf
+        ));
+        assert!(events.last().unwrap().operation_id.is_none());
+
+        let alternate_leaf = record_prompt(&mut service, "alternate prompt");
+        let tree = SessionService::tree_view(&options).unwrap();
+
+        assert_eq!(
+            tree.active_leaf_id.as_deref(),
+            Some(alternate_leaf.as_str())
+        );
+        assert_eq!(tree.tree.len(), 1);
+        assert_eq!(tree.tree[0].entry.id, root_leaf);
+        let child_ids = tree.tree[0]
+            .children
+            .iter()
+            .map(|child| child.entry.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            child_ids,
+            vec![branch_leaf.as_str(), alternate_leaf.as_str()]
+        );
+    }
+
+    #[test]
+    fn switch_active_leaf_rejects_unknown_leaf_without_mutating_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_switch_unknown")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let known_leaf = record_prompt(&mut service, "known prompt");
+        let before_events = service.store.read_events(&service.handle).unwrap();
+
+        let error = service.switch_active_leaf("leaf_missing").unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert_eq!(
+            error.to_string(),
+            "session error: leaf id not found in session: leaf_missing"
+        );
+        assert_eq!(service.active_leaf_id(), Some(known_leaf.as_str()));
+        assert_eq!(
+            service.store.read_events(&service.handle).unwrap(),
+            before_events
         );
     }
 

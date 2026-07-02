@@ -111,7 +111,7 @@ Current stable event kinds:
 | `session.compaction.completed` | Persists compaction summary metadata |
 | `branch.summary.created` | Persists a summary of abandoned branch work for replay into later context |
 | `operation.started` | Starts a mutating operation such as prompt, manual compaction, branch summary, export, plugin load |
-| `operation.committed` | Commits an operation and may assign `new_leaf_id` |
+| `operation.committed` | Commits an operation; prompt commits may assign `new_leaf_id` to create a replay leaf |
 | `operation.aborted` | Records an aborted operation |
 | `operation.failed` | Records failed operation code and message |
 | `turn.started` | Marks a prompt turn boundary |
@@ -126,7 +126,7 @@ Current stable event kinds:
 | `tool.call.cancelled` | Persists tool cancellation reason |
 | `diagnostic.emitted` | Persists diagnostic level/message |
 | `metadata.updated` | Persists arbitrary metadata value |
-| `active_leaf.changed` | Explicit active-leaf marker when needed |
+| `active_leaf.changed` | Records a service-owned switch to an existing committed leaf |
 
 ## Content and Tool Data
 
@@ -155,9 +155,10 @@ Tool results use tagged JSON:
 Current product behavior depends on these invariants:
 
 - Completed assistant/user/tool content is restored from committed events, not from live UI deltas.
-- Successful persistent prompt operations commit a new active leaf through `operation.committed { new_leaf_id }` and update `session.json.active_leaf_id`.
+- Successful persistent prompt operations create new replay leaves through `operation.committed { new_leaf_id }` and update `session.json.active_leaf_id`.
 - Replay records each committed prompt leaf with its parent leaf plus transcript start/end range. The parent is the active leaf at commit time.
-- `active_leaf.changed` updates replay's active leaf and is used by tree view and branch-summary range selection to model same-session branch returns.
+- `active_leaf.changed` switches the active leaf to an existing committed leaf without creating a new leaf. `SessionService::switch_active_leaf()` validates the target leaf, appends the event, and updates `session.json.active_leaf_id`.
+- Tree view and branch-summary range selection use `active_leaf.changed` to model same-session branch returns.
 - Failed or aborted operations must not advance the active leaf.
 - Fork/clone/tree/compact/branch-summary actions use `SessionService` replay and leaf metadata instead of legacy JSONL assumptions; `/branch-summary <source-leaf-id> <target-leaf-id> [instructions]` persists a provider summary for the selected abandoned leaf range through the configured runtime model.
 - Fork/clone copies committed history through the selected leaf. If a later complete branch-summary operation targets that leaf, the copy includes the operation boundary plus `branch.summary.created` event so replay hydrates the summary without copying abandoned prompt history.
