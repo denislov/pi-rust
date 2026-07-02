@@ -134,6 +134,7 @@ async fn coding_session_public_api_symbols_are_importable() {
                 reason: "session switching is not exposed on CodingAgentSession yet".into(),
             },
             export: CapabilityStatus::Available,
+            plugin_reload: CapabilityStatus::Available,
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,

@@ -234,6 +234,8 @@ pub struct RpcCapabilities {
     #[serde(rename = "switchSession")]
     pub switch_session: RpcCapabilityStatus,
     pub export: RpcCapabilityStatus,
+    #[serde(rename = "pluginReload")]
+    pub plugin_reload: RpcCapabilityStatus,
     pub tools: RpcCapabilityStatus,
     pub shell: RpcCapabilityStatus,
     pub plugins: RpcCapabilityStatus,
@@ -261,6 +263,7 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             branch_summary: capabilities.branch_summary.into(),
             switch_session: capabilities.switch_session.into(),
             export: capabilities.export.into(),
+            plugin_reload: capabilities.plugin_reload.into(),
             tools: capabilities.tools.into(),
             shell: capabilities.shell.into(),
             plugins: capabilities.plugins.into(),

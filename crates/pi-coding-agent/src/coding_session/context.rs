@@ -127,6 +127,7 @@ pub struct CodingAgentCapabilities {
     pub branch_summary: CapabilityStatus,
     pub switch_session: CapabilityStatus,
     pub export: CapabilityStatus,
+    pub plugin_reload: CapabilityStatus,
     pub tools: CapabilityStatus,
     pub shell: CapabilityStatus,
     pub plugins: CapabilityStatus,
@@ -182,7 +183,8 @@ impl CodingAgentCapabilities {
             switch_session: CapabilityStatus::Unsupported {
                 reason: "session switching is not exposed on CodingAgentSession yet".into(),
             },
-            export: persistent_session_capability,
+            export: persistent_session_capability.clone(),
+            plugin_reload: persistent_session_capability,
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,

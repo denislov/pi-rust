@@ -32,6 +32,7 @@ mod tests {
 
         assert_eq!(capabilities.prompt, CapabilityStatus::Available);
         assert_eq!(capabilities.branch_summary, CapabilityStatus::Available);
+        assert_eq!(capabilities.plugin_reload, CapabilityStatus::Available);
         assert_eq!(capabilities.tools, CapabilityStatus::Available);
         assert_eq!(capabilities.shell, CapabilityStatus::Available);
         assert_eq!(capabilities.plugins, CapabilityStatus::Available);
@@ -66,6 +67,7 @@ mod tests {
             capabilities.clone_session,
             capabilities.export,
             capabilities.branch_summary,
+            capabilities.plugin_reload,
         ] {
             assert_eq!(
                 capability,
@@ -109,6 +111,12 @@ mod tests {
         );
         assert_eq!(
             capabilities.branch_summary,
+            CapabilityStatus::Disabled {
+                reason: "requires persistent Rust-native session".into(),
+            }
+        );
+        assert_eq!(
+            capabilities.plugin_reload,
             CapabilityStatus::Disabled {
                 reason: "requires persistent Rust-native session".into(),
             }
