@@ -27,7 +27,8 @@ use crate::interactive::render::{
 };
 #[cfg(test)]
 use crate::interactive::root::{
-    FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus, PluginSlashCommand,
+    FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus, PluginKeybinding,
+    PluginSlashCommand, PluginUiAction,
 };
 #[cfg(test)]
 use crate::interactive::session_actions::SessionChoiceKind;
@@ -2966,6 +2967,40 @@ mod tests {
             .expect("plugin command request should be queued");
         assert_eq!(request.command_id, "lua.say_hello");
         assert_eq!(request.args, serde_json::json!({"name": "tui"}));
+    }
+
+    #[test]
+    fn plugin_keybinding_sets_pending_plugin_ui_action() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_plugin_ui_extensions(
+            vec![PluginUiAction::new(
+                "ui.open_panel",
+                "Open panel",
+                "opens a Lua panel",
+                "lua.open_panel",
+            )],
+            vec![PluginKeybinding::new(
+                "keybind.open_panel",
+                "ctrl+g",
+                "opens the Lua panel",
+                "lua.open_panel",
+            )],
+        );
+
+        root.handle_input(&key_event("\x07"));
+
+        assert_eq!(root.take_action(), InteractiveAction::PluginUiAction);
+        let action = root
+            .take_pending_plugin_ui_action()
+            .expect("plugin UI action should be queued");
+        assert_eq!(action.action_id, "lua.open_panel");
+        assert_eq!(action.label, "Open panel");
+        assert_eq!(action.description, "opens a Lua panel");
+        assert_eq!(root.editor.text(), "");
     }
 
     #[test]

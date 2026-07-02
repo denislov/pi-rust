@@ -6,7 +6,7 @@ use pi_ai::types::Model;
 use pi_tui::{
     Component, ERROR, Editor, InputEvent, KeybindingsManager, MarkdownTheme, STATUS_IDLE,
     STATUS_RUNNING, SYSTEM, SettingItem, SettingsList, SettingsListOptions, Style, TUI_KEYBINDINGS,
-    TuiTheme, color_enabled, dark_theme, light_theme, paint_with, truncate_to_width,
+    TuiTheme, color_enabled, dark_theme, light_theme, matches_key, paint_with, truncate_to_width,
     truncate_to_width_with_ellipsis, visible_width,
 };
 
@@ -47,6 +47,7 @@ pub(super) enum InteractiveAction {
     CompactSession,
     BranchSummary,
     PluginCommand,
+    PluginUiAction,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -95,6 +96,61 @@ pub(super) struct PendingPluginCommandRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingPluginUiAction {
+    pub(super) action_id: String,
+    pub(super) label: String,
+    pub(super) description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PluginUiAction {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) description: String,
+    pub(super) action_id: String,
+}
+
+impl PluginUiAction {
+    pub(super) fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        description: impl Into<String>,
+        action_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            description: description.into(),
+            action_id: action_id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PluginKeybinding {
+    pub(super) id: String,
+    pub(super) key: String,
+    pub(super) description: String,
+    pub(super) action_id: String,
+}
+
+impl PluginKeybinding {
+    pub(super) fn new(
+        id: impl Into<String>,
+        key: impl Into<String>,
+        description: impl Into<String>,
+        action_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            key: key.into(),
+            description: description.into(),
+            action_id: action_id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PluginSlashCommand {
     pub(super) command_id: String,
     pub(super) description: String,
@@ -124,6 +180,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_compact_instructions: Option<String>,
     pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
+    pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -169,6 +226,8 @@ pub(super) struct InteractiveRoot {
     pub(super) prompt_templates: Vec<pi_agent_core::PromptTemplate>,
     pub(super) skills: Vec<pi_agent_core::Skill>,
     plugin_commands: Vec<PluginSlashCommand>,
+    plugin_ui_actions: Vec<PluginUiAction>,
+    plugin_keybindings: Vec<PluginKeybinding>,
     pub(super) clipboard: Arc<dyn ClipboardSink>,
 }
 
@@ -278,6 +337,7 @@ impl InteractiveRoot {
             pending_compact_instructions: None,
             pending_branch_summary_request: None,
             pending_plugin_command_request: None,
+            pending_plugin_ui_action: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,
@@ -320,6 +380,8 @@ impl InteractiveRoot {
             prompt_templates: Vec::new(),
             skills: Vec::new(),
             plugin_commands: Vec::new(),
+            plugin_ui_actions: Vec::new(),
+            plugin_keybindings: Vec::new(),
             clipboard: Arc::new(SystemClipboard),
         }
     }
@@ -405,6 +467,10 @@ impl InteractiveRoot {
         self.pending_plugin_command_request.take()
     }
 
+    pub(super) fn take_pending_plugin_ui_action(&mut self) -> Option<PendingPluginUiAction> {
+        self.pending_plugin_ui_action.take()
+    }
+
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
         self.scroll_command.lock().unwrap().take()
     }
@@ -453,6 +519,55 @@ impl InteractiveRoot {
         self.plugin_commands
             .iter()
             .any(|command| command.command_id == command_id)
+    }
+
+    pub(super) fn set_plugin_ui_extensions(
+        &mut self,
+        mut actions: Vec<PluginUiAction>,
+        mut keybindings: Vec<PluginKeybinding>,
+    ) {
+        actions.sort_by(|left, right| left.id.cmp(&right.id));
+        actions.dedup_by(|left, right| left.id == right.id);
+        keybindings.sort_by(|left, right| left.id.cmp(&right.id));
+        keybindings.dedup_by(|left, right| left.id == right.id);
+        self.plugin_ui_actions = actions;
+        self.plugin_keybindings = keybindings;
+    }
+
+    pub(super) fn handle_plugin_keybinding_input(&mut self, event: &InputEvent) -> bool {
+        if self.status != InteractiveStatus::Idle
+            || self.selecting_model
+            || self.selecting_session
+            || self.selecting_settings
+            || self.selecting_tree
+        {
+            return false;
+        }
+        let Some(keybinding) = self
+            .plugin_keybindings
+            .iter()
+            .find(|keybinding| matches_key(event, &keybinding.key))
+        else {
+            return false;
+        };
+        let Some(action) = self
+            .plugin_ui_actions
+            .iter()
+            .find(|action| action.action_id == keybinding.action_id)
+        else {
+            self.transcript.push(TranscriptItem::system(format!(
+                "Plugin keybinding {} has no registered UI action",
+                keybinding.id
+            )));
+            return true;
+        };
+        self.pending_plugin_ui_action = Some(PendingPluginUiAction {
+            action_id: action.action_id.clone(),
+            label: action.label.clone(),
+            description: action.description.clone(),
+        });
+        self.action = InteractiveAction::PluginUiAction;
+        true
     }
 
     pub(super) fn all_slash_commands(&self) -> Vec<slash::BuiltinSlashCommand> {

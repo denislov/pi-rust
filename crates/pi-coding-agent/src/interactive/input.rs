@@ -164,6 +164,9 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
             root.handle_settings_input(event);
             return;
         }
+        if root.handle_plugin_keybinding_input(event) {
+            return;
+        }
         root.editor.handle_input(event);
         if root.editor.text() != before_text {
             root.slash_suggestion_selected = 0;

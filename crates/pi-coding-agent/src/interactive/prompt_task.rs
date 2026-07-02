@@ -5,7 +5,7 @@ use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
 };
-use crate::interactive::root::PluginSlashCommand;
+use crate::interactive::root::{PluginKeybinding, PluginSlashCommand, PluginUiAction};
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::SessionMode;
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
@@ -33,6 +33,8 @@ pub(super) struct PluginReloadTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: PluginLoadOutcome,
     pub(super) plugin_commands: Vec<PluginSlashCommand>,
+    pub(super) plugin_ui_actions: Vec<PluginUiAction>,
+    pub(super) plugin_keybindings: Vec<PluginKeybinding>,
 }
 
 pub(super) struct PluginCommandTaskResult {
@@ -40,6 +42,8 @@ pub(super) struct PluginCommandTaskResult {
     pub(super) command_id: String,
     pub(super) output: String,
     pub(super) plugin_commands: Vec<PluginSlashCommand>,
+    pub(super) plugin_ui_actions: Vec<PluginUiAction>,
+    pub(super) plugin_keybindings: Vec<PluginKeybinding>,
 }
 
 enum PromptTaskAbortHandle {
@@ -449,10 +453,14 @@ async fn run_coding_plugin_reload_task(
     }
 
     let plugin_commands = plugin_slash_commands(&session);
+    let plugin_ui_actions = plugin_ui_actions(&session);
+    let plugin_keybindings = plugin_keybindings(&session);
     Ok(PluginReloadTaskResult {
         session,
         outcome,
         plugin_commands,
+        plugin_ui_actions,
+        plugin_keybindings,
     })
 }
 
@@ -512,11 +520,15 @@ async fn run_coding_plugin_command_task(
     }
 
     let plugin_commands = plugin_slash_commands(&session);
+    let plugin_ui_actions = plugin_ui_actions(&session);
+    let plugin_keybindings = plugin_keybindings(&session);
     Ok(PluginCommandTaskResult {
         session,
         command_id,
         output,
         plugin_commands,
+        plugin_ui_actions,
+        plugin_keybindings,
     })
 }
 
@@ -525,6 +537,36 @@ fn plugin_slash_commands(session: &CodingAgentSession) -> Vec<PluginSlashCommand
         .plugin_commands()
         .into_iter()
         .map(|command| PluginSlashCommand::new(command.id, command.description))
+        .collect()
+}
+
+fn plugin_ui_actions(session: &CodingAgentSession) -> Vec<PluginUiAction> {
+    session
+        .plugin_ui_actions()
+        .into_iter()
+        .map(|action| {
+            PluginUiAction::new(
+                action.id,
+                action.label,
+                action.description,
+                action.action_id,
+            )
+        })
+        .collect()
+}
+
+fn plugin_keybindings(session: &CodingAgentSession) -> Vec<PluginKeybinding> {
+    session
+        .plugin_keybindings()
+        .into_iter()
+        .map(|keybinding| {
+            PluginKeybinding::new(
+                keybinding.id,
+                keybinding.key,
+                keybinding.description,
+                keybinding.action_id,
+            )
+        })
         .collect()
 }
 

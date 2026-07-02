@@ -16,7 +16,7 @@ use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
-    PendingPluginCommandRequest,
+    PendingPluginCommandRequest, PendingPluginUiAction,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
@@ -586,6 +586,7 @@ fn handle_input_event<T: Terminal>(
         compact_instructions,
         branch_summary_request,
         plugin_command_request,
+        plugin_ui_action,
         render_request,
     ) = {
         let root = root_mut(tui, root_id)?;
@@ -618,6 +619,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let plugin_ui_action = if action == InteractiveAction::PluginUiAction {
+            root.take_pending_plugin_ui_action()
+        } else {
+            None
+        };
         let after = root.render_state();
         (
             action,
@@ -631,6 +637,7 @@ fn handle_input_event<T: Terminal>(
             compact_instructions,
             branch_summary_request,
             plugin_command_request,
+            plugin_ui_action,
             RenderRequest::changed(before != after),
         )
     };
@@ -906,7 +913,27 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::PluginUiAction => {
+            let Some(action) = plugin_ui_action else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            dispatch_plugin_ui_action(tui, root_id, action)?;
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
     }
+}
+
+fn dispatch_plugin_ui_action<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    action: PendingPluginUiAction,
+) -> Result<(), CliError> {
+    let root = root_mut(tui, root_id)?;
+    root.transcript.push(TranscriptItem::system(format!(
+        "Plugin UI action {}: {}",
+        action.action_id, action.label
+    )));
+    Ok(())
 }
 
 fn start_prompt_task<T: Terminal>(
@@ -1276,6 +1303,10 @@ fn finish_prompt<T: Terminal>(
                 root.transcript.push(TranscriptItem::system(notice));
             }
             root.set_plugin_commands(result.plugin_commands.clone());
+            root.set_plugin_ui_extensions(
+                result.plugin_ui_actions.clone(),
+                result.plugin_keybindings.clone(),
+            );
             *coding_session = Some(result.session);
         }
         Ok(PromptTaskResult::PluginCommand(result)) => {
@@ -1284,6 +1315,10 @@ fn finish_prompt<T: Terminal>(
                 result.command_id, result.output
             )));
             root.set_plugin_commands(result.plugin_commands.clone());
+            root.set_plugin_ui_extensions(
+                result.plugin_ui_actions.clone(),
+                result.plugin_keybindings.clone(),
+            );
             *coding_session = Some(result.session);
         }
         Err(error) => {
