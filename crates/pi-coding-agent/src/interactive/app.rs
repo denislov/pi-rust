@@ -27,7 +27,7 @@ use crate::interactive::render::{
 };
 #[cfg(test)]
 use crate::interactive::root::{
-    FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus,
+    FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus, PluginSlashCommand,
 };
 #[cfg(test)]
 use crate::interactive::session_actions::SessionChoiceKind;
@@ -2918,6 +2918,54 @@ mod tests {
         let commands = root.all_slash_commands();
         assert!(commands.iter().any(|c| c.name == "review"));
         assert!(commands.iter().any(|c| c.name == "skill:rust"));
+    }
+
+    #[test]
+    fn all_slash_commands_includes_loaded_plugin_commands() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_plugin_commands(vec![PluginSlashCommand::new(
+            "lua.say_hello",
+            "greets from lua command",
+        )]);
+
+        let commands = root.all_slash_commands();
+
+        assert!(commands.iter().any(|c| c.name == "lua.say_hello"));
+        assert!(
+            commands
+                .iter()
+                .any(|c| c.description == "greets from lua command")
+        );
+    }
+
+    #[test]
+    fn plugin_slash_command_sets_pending_plugin_command_request() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_plugin_commands(vec![PluginSlashCommand::new(
+            "lua.say_hello",
+            "greets from lua command",
+        )]);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "lua.say_hello".to_string(),
+            args: r#"{"name":"tui"}"#.to_string(),
+            original: r#"/lua.say_hello {"name":"tui"}"#.to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::PluginCommand);
+        let request = root
+            .take_pending_plugin_command_request()
+            .expect("plugin command request should be queued");
+        assert_eq!(request.command_id, "lua.say_hello");
+        assert_eq!(request.args, serde_json::json!({"name": "tui"}));
     }
 
     #[test]

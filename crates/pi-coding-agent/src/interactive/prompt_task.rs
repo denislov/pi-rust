@@ -5,6 +5,7 @@ use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
 };
+use crate::interactive::root::PluginSlashCommand;
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::SessionMode;
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
@@ -31,12 +32,14 @@ pub(super) struct CodingPromptTaskResult {
 pub(super) struct PluginReloadTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: PluginLoadOutcome,
+    pub(super) plugin_commands: Vec<PluginSlashCommand>,
 }
 
 pub(super) struct PluginCommandTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) command_id: String,
     pub(super) output: String,
+    pub(super) plugin_commands: Vec<PluginSlashCommand>,
 }
 
 enum PromptTaskAbortHandle {
@@ -445,7 +448,12 @@ async fn run_coding_plugin_reload_task(
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
     }
 
-    Ok(PluginReloadTaskResult { session, outcome })
+    let plugin_commands = plugin_slash_commands(&session);
+    Ok(PluginReloadTaskResult {
+        session,
+        outcome,
+        plugin_commands,
+    })
 }
 
 async fn run_coding_plugin_command_task(
@@ -503,11 +511,21 @@ async fn run_coding_plugin_command_task(
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
     }
 
+    let plugin_commands = plugin_slash_commands(&session);
     Ok(PluginCommandTaskResult {
         session,
         command_id,
         output,
+        plugin_commands,
     })
+}
+
+fn plugin_slash_commands(session: &CodingAgentSession) -> Vec<PluginSlashCommand> {
+    session
+        .plugin_commands()
+        .into_iter()
+        .map(|command| PluginSlashCommand::new(command.id, command.description))
+        .collect()
 }
 
 async fn run_coding_branch_summary_task(

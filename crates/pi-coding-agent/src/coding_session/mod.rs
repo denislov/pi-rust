@@ -48,7 +48,7 @@ use session_log::replay::TranscriptItem;
 use session_service::{FinalizedSessionWrite, SessionService};
 use std::path::{Path, PathBuf};
 
-use crate::plugins::PluginSource;
+use crate::plugins::{CommandDefinition, PluginSource};
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -289,6 +289,10 @@ impl CodingAgentSession {
     pub(crate) async fn reload_plugins(&mut self) -> Result<PluginLoadOutcome, CodingSessionError> {
         self.load_plugins(self.default_plugin_load_options.clone())
             .await
+    }
+
+    pub(crate) fn plugin_commands(&self) -> Vec<CommandDefinition> {
+        self.plugin_service.collect_commands()
     }
 
     pub(crate) fn run_plugin_command(

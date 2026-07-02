@@ -1275,6 +1275,7 @@ fn finish_prompt<T: Terminal>(
             for notice in plugin_reload_notice_lines(&result.outcome) {
                 root.transcript.push(TranscriptItem::system(notice));
             }
+            root.set_plugin_commands(result.plugin_commands.clone());
             *coding_session = Some(result.session);
         }
         Ok(PromptTaskResult::PluginCommand(result)) => {
@@ -1282,6 +1283,7 @@ fn finish_prompt<T: Terminal>(
                 "Plugin command {}: {}",
                 result.command_id, result.output
             )));
+            root.set_plugin_commands(result.plugin_commands.clone());
             *coding_session = Some(result.session);
         }
         Err(error) => {

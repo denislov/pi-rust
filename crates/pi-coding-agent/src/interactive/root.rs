@@ -94,6 +94,21 @@ pub(super) struct PendingPluginCommandRequest {
     pub(super) args: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PluginSlashCommand {
+    pub(super) command_id: String,
+    pub(super) description: String,
+}
+
+impl PluginSlashCommand {
+    pub(super) fn new(command_id: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            command_id: command_id.into(),
+            description: description.into(),
+        }
+    }
+}
+
 pub(super) struct InteractiveRoot {
     pub(super) selecting_tree: bool,
     pub(super) tree_selector: Option<TreeSelectorState>,
@@ -153,6 +168,7 @@ pub(super) struct InteractiveRoot {
     pub(super) resolved_theme: Option<ResolvedTheme>,
     pub(super) prompt_templates: Vec<pi_agent_core::PromptTemplate>,
     pub(super) skills: Vec<pi_agent_core::Skill>,
+    plugin_commands: Vec<PluginSlashCommand>,
     pub(super) clipboard: Arc<dyn ClipboardSink>,
 }
 
@@ -303,6 +319,7 @@ impl InteractiveRoot {
             resolved_theme: None,
             prompt_templates: Vec::new(),
             skills: Vec::new(),
+            plugin_commands: Vec::new(),
             clipboard: Arc::new(SystemClipboard),
         }
     }
@@ -424,6 +441,20 @@ impl InteractiveRoot {
         crate::interactive::commands::expand_prompt_template(&text, &self.prompt_templates)
     }
 
+    pub(super) fn set_plugin_commands(&mut self, mut commands: Vec<PluginSlashCommand>) {
+        commands.sort_by(|left, right| left.command_id.cmp(&right.command_id));
+        commands.dedup_by(|left, right| left.command_id == right.command_id);
+        self.plugin_commands = commands;
+        self.slash_suggestion_selected = 0;
+        self.slash_suggestions_dismissed_for = None;
+    }
+
+    pub(super) fn has_plugin_command(&self, command_id: &str) -> bool {
+        self.plugin_commands
+            .iter()
+            .any(|command| command.command_id == command_id)
+    }
+
     pub(super) fn all_slash_commands(&self) -> Vec<slash::BuiltinSlashCommand> {
         let mut commands = slash::builtin_slash_commands();
         for t in &self.prompt_templates {
@@ -439,6 +470,12 @@ impl InteractiveRoot {
                     description: s.description.clone(),
                 });
             }
+        }
+        for command in &self.plugin_commands {
+            commands.push(slash::BuiltinSlashCommand {
+                name: command.command_id.clone(),
+                description: command.description.clone(),
+            });
         }
         commands
     }

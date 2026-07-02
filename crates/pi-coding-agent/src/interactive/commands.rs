@@ -111,6 +111,9 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "plugin-command" => handle_plugin_command(root, &command.args),
         "tree" => handle_tree_command(root),
         "scoped-models" | "share" => handle_pending_slash_command(root, &command),
+        _ if root.has_plugin_command(&command.name) => {
+            handle_plugin_slash_command(root, &command.name, &command.args)
+        }
         _ => {
             let expanded = root.expand_prompt_text(&command.original);
             if expanded != command.original {
@@ -209,13 +212,6 @@ fn handle_branch_summary_command(root: &mut InteractiveRoot, args: &str) {
 }
 
 fn handle_plugin_command(root: &mut InteractiveRoot, args: &str) {
-    if root.status == InteractiveStatus::Running {
-        root.transcript.push(TranscriptItem::system(
-            "Wait for the current run to finish before running a plugin command.",
-        ));
-        return;
-    }
-
     let mut parts = args.splitn(2, char::is_whitespace);
     let command_id = parts.next().unwrap_or_default().trim();
     if command_id.is_empty() {
@@ -225,6 +221,21 @@ fn handle_plugin_command(root: &mut InteractiveRoot, args: &str) {
         return;
     }
     let raw_args = parts.next().unwrap_or_default().trim();
+    queue_plugin_command(root, command_id, raw_args);
+}
+
+fn handle_plugin_slash_command(root: &mut InteractiveRoot, command_id: &str, args: &str) {
+    queue_plugin_command(root, command_id, args.trim());
+}
+
+fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str, raw_args: &str) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before running a plugin command.",
+        ));
+        return;
+    }
+
     let parsed_args = if raw_args.is_empty() {
         serde_json::json!({})
     } else {

@@ -291,6 +291,59 @@ end
 }
 
 #[tokio::test]
+async fn interactive_plugin_command_slash_alias_runs_loaded_lua_plugin_command() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_plugin = temp.path().join(".pi-rust/plugins/lua-command");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "lua-command"
+name = "Lua Command"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.lua"),
+        r#"
+function register(host)
+  host:command({
+    id = "lua.say_hello",
+    description = "greets from lua command",
+    run = function(input)
+      return { content = "hello " .. input.name }
+    end
+  })
+end
+"#,
+    )
+    .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("/reload\r", "plugin.load.completed"),
+            (
+                "/lua.say_hello {\"name\":\"alias\"}\r",
+                "plugin.load.completed",
+            ),
+        ],
+    )
+    .await
+    .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("Plugin command lua.say_hello"), "{frame}");
+    assert!(frame.contains("hello alias"), "{frame}");
+    assert!(!frame.contains("unknown command"), "{frame}");
+}
+
+#[tokio::test]
 async fn interactive_resume_ignores_legacy_jsonl_sessions() {
     let temp = tempfile::tempdir().unwrap();
     let legacy = write_legacy_session(
