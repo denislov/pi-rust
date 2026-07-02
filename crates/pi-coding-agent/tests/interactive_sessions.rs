@@ -213,6 +213,35 @@ async fn interactive_mode_continues_same_session_across_prompts() {
 }
 
 #[tokio::test]
+async fn interactive_reload_reports_project_plugin_manifest_diagnostics() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_plugin = temp.path().join(".pi-rust/plugins/project-lua");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "project-lua"
+name = "Project Lua"
+version = "0.1.0"
+runtime = "lua"
+"#,
+    )
+    .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir(provider, temp.path(), "/reload\r")
+        .await
+        .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("project-lua"), "{frame}");
+    assert!(
+        frame.contains("Lua plugin loading is not implemented yet"),
+        "{frame}"
+    );
+}
+
+#[tokio::test]
 async fn interactive_resume_ignores_legacy_jsonl_sessions() {
     let temp = tempfile::tempdir().unwrap();
     let legacy = write_legacy_session(

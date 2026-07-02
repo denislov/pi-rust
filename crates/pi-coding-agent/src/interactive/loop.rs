@@ -7,7 +7,7 @@ use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };
 
-use crate::coding_session::{CodingAgentSession, PromptTurnOutcome};
+use crate::coding_session::{CodingAgentSession, PluginLoadOutcome, PromptTurnOutcome};
 use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
     PromptContext, build_prompt_context, resolve_prompt_api_key, session_label,
@@ -804,6 +804,13 @@ fn handle_input_event<T: Terminal>(
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
         InteractiveAction::ReloadResources => {
+            if running.is_some() {
+                let root = root_mut(tui, root_id)?;
+                root.transcript.push(TranscriptItem::system(
+                    "Wait for the current run to finish before reloading plugins.",
+                ));
+                return Ok(LoopControl::Continue(RenderRequest::FORCE));
+            }
             match build_prompt_context(parsed, options.clone()) {
                 Ok(reloaded) => {
                     *prompt_context = reloaded;
@@ -816,8 +823,15 @@ fn handle_input_event<T: Terminal>(
                     let root = root_mut(tui, root_id)?;
                     root.transcript
                         .push(TranscriptItem::system(format!("Reload failed: {error}")));
+                    return Ok(LoopControl::Continue(RenderRequest::FORCE));
                 }
             }
+            *running = Some(start_plugin_reload_task(
+                tui,
+                root_id,
+                prompt_context,
+                coding_session,
+            )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
         InteractiveAction::Submit => {
@@ -936,6 +950,44 @@ fn prompt_cwd(prompt_context: &PromptContext) -> PathBuf {
         .as_ref()
         .map(|session| session.cwd.clone())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn start_plugin_reload_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<PromptTask, CliError> {
+    {
+        let root = root_mut(tui, root_id)?;
+        root.transcript
+            .push(TranscriptItem::system("Reloading plugins..."));
+        root.set_status(InteractiveStatus::Running);
+    }
+
+    let options = PromptRunOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(String::new()),
+    };
+
+    let task = PromptTask::spawn_plugin_reload(options, coding_session.take())?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
 }
 
 fn start_compact_task<T: Terminal>(
@@ -1149,6 +1201,12 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
+        Ok(PromptTaskResult::PluginReload(result)) => {
+            for notice in plugin_reload_notice_lines(&result.outcome) {
+                root.transcript.push(TranscriptItem::system(notice));
+            }
+            *coding_session = Some(result.session);
+        }
         Err(error) => {
             root.apply_events(vec![UiEvent::AgentError {
                 error: error.to_string(),
@@ -1157,6 +1215,22 @@ fn finish_prompt<T: Terminal>(
     }
     root.set_status(InteractiveStatus::Idle);
     Ok(())
+}
+
+fn plugin_reload_notice_lines(outcome: &PluginLoadOutcome) -> Vec<String> {
+    let loaded = outcome.loaded_plugin_ids.len();
+    let diagnostics = outcome.diagnostics.len();
+    let mut lines = vec![format!(
+        "Reloaded plugins: {loaded} loaded, {diagnostics} diagnostics"
+    )];
+    for diagnostic in &outcome.diagnostics {
+        let message = match diagnostic.plugin_id.as_deref() {
+            Some(plugin_id) => format!("{plugin_id}: {}", diagnostic.message),
+            None => diagnostic.message.clone(),
+        };
+        lines.push(message);
+    }
+    lines
 }
 
 fn finish_coding_prompt(

@@ -27,6 +27,7 @@ pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
 pub use event_service::CodingAgentEventReceiver;
 pub use export::{CodingAgentSessionExport, CodingAgentSessionExportItem};
+pub(crate) use plugin_load_flow::PluginLoadOutcome;
 pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
@@ -37,7 +38,7 @@ use capability_service::CapabilityService;
 use event_service::EventService;
 use flow_service::FlowService;
 use manual_compaction_flow::{ManualCompactionContext, ManualCompactionOptions};
-use plugin_load_flow::{PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
+use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
@@ -284,13 +285,11 @@ impl CodingAgentSession {
         result
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn reload_plugins(&mut self) -> Result<PluginLoadOutcome, CodingSessionError> {
         self.load_plugins(self.default_plugin_load_options.clone())
             .await
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn load_plugins(
         &mut self,
         options: PluginLoadOptions,

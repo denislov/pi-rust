@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::CliError;
 use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    PromptTurnOptions, PromptTurnOutcome,
+    PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::SessionMode;
@@ -16,6 +16,7 @@ pub(super) enum PromptTaskEvent {
 
 pub(super) enum PromptTaskResult {
     Coding(CodingPromptTaskResult),
+    PluginReload(PluginReloadTaskResult),
 }
 
 pub(super) struct CodingPromptTaskResult {
@@ -24,6 +25,11 @@ pub(super) struct CodingPromptTaskResult {
     pub(super) update_usage: bool,
     pub(super) completion_notice: Option<String>,
     pub(super) hydrate_transcript: bool,
+}
+
+pub(super) struct PluginReloadTaskResult {
+    pub(super) session: CodingAgentSession,
+    pub(super) outcome: PluginLoadOutcome,
 }
 
 enum PromptTaskAbortHandle {
@@ -51,6 +57,13 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
     ) -> Result<Self, CliError> {
         Ok(Self::spawn_coding_compact(options, existing_session))
+    }
+
+    pub(super) fn spawn_plugin_reload(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_plugin_reload(options, existing_session))
     }
 
     pub(super) fn spawn_branch_summary(
@@ -129,6 +142,29 @@ impl PromptTask {
             let result =
                 run_coding_compact_task(options, existing_session, event_tx, abort_rx).await;
             let _ = done_tx.send(result.map(PromptTaskResult::Coding));
+        });
+
+        Self {
+            abort: PromptTaskAbortHandle::Coding(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_plugin_reload(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result =
+                run_coding_plugin_reload_task(options, existing_session, event_tx, abort_rx).await;
+            let _ = done_tx.send(result.map(PromptTaskResult::PluginReload));
         });
 
         Self {
@@ -311,6 +347,52 @@ async fn run_coding_compact_task(
         completion_notice: None,
         hydrate_transcript: false,
     })
+}
+
+async fn run_coding_plugin_reload_task(
+    options: PromptRunOptions,
+    existing_session: Option<CodingAgentSession>,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<PluginReloadTaskResult, CliError> {
+    let mut session = match existing_session {
+        Some(session) => session,
+        None => {
+            open_interactive_coding_session(
+                options.session.as_ref(),
+                options.session_target.as_ref(),
+            )
+            .await?
+        }
+    };
+    let mut receiver = session.subscribe();
+
+    let outcome = {
+        let mut reload = Box::pin(session.reload_plugins());
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive plugin reload abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut reload => {
+                    break outcome.map_err(CliError::from);
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(PluginReloadTaskResult { session, outcome })
 }
 
 async fn run_coding_branch_summary_task(
