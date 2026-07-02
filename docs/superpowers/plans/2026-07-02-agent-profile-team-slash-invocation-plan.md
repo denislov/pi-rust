@@ -194,11 +194,11 @@ Files:
 
 Tasks:
 
-- [ ] Extend runtime construction inputs so a resolved `AgentProfile` can influence model id, system prompt, tool policy, skill policy, and delegation tool availability.
-- [ ] Keep adapter parsing outside `PromptTurnFlow`; the flow should receive resolved or resolvable session-owned profile context.
-- [ ] Ensure profile application is deterministic and visible in tests using faux providers.
-- [ ] Emit diagnostics when a profile asks for unavailable tools/skills instead of passing silent partial state to the model.
-- [ ] Preserve existing prompt behavior under the built-in default profile.
+- [x] Extend runtime construction inputs so a resolved `AgentProfile` can influence model id, system prompt, tool policy, skill policy, and delegation tool availability.
+- [x] Keep adapter parsing outside `PromptTurnFlow`; the flow should receive resolved or resolvable session-owned profile context.
+- [x] Ensure profile application is deterministic and visible in tests using faux providers.
+- [x] Emit diagnostics when a profile asks for unavailable tools/skills instead of passing silent partial state to the model.
+- [x] Preserve existing prompt behavior under the built-in default profile.
 
 Acceptance:
 
@@ -403,7 +403,7 @@ source ~/.cargo/env && git diff --check
 
 - [ ] Explicit user invocation uses `/agent` and `/team`, not `@agent` or `@team`.
 - [ ] `default_agent_profile_id` is durable session configuration and resumes correctly.
-- [ ] Ordinary prompts use the current default `AgentProfile`.
+- [x] Ordinary prompts use the current default `AgentProfile`.
 - [ ] `/agent use <id>` switches the default profile without running a task.
 - [ ] `/agent <id> <task>` runs a one-off agent operation without changing the default profile.
 - [ ] `/team <id> <task>` runs a supervised team operation without changing the default profile.

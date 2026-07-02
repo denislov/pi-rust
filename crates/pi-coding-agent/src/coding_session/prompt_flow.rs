@@ -273,13 +273,16 @@ fn build_agent_runtime(ctx: &mut PromptTurnContext) -> Result<Action, String> {
         .to_string()
     })?;
     let service = RuntimeService::new();
-    let agent = service
-        .build_agent_runtime_with_plugins(&runtime, ctx.plugin_service())
+    let build = service
+        .build_agent_runtime_with_plugins_and_diagnostics(&runtime, ctx.plugin_service())
         .map_err(|error| error.to_string())?;
-    if let Some(replay) = ctx.replay() {
-        service.hydrate_agent_runtime(&agent, &runtime, replay);
+    for diagnostic in build.diagnostics {
+        ctx.record_diagnostic(diagnostic);
     }
-    ctx.set_agent(agent);
+    if let Some(replay) = ctx.replay() {
+        service.hydrate_agent_runtime(&build.agent, &runtime, replay);
+    }
+    ctx.set_agent(build.agent);
     default_action()
 }
 

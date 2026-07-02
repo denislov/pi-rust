@@ -22,6 +22,7 @@ use super::event::CodingAgentEvent;
 use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
 use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
+use super::profiles::AgentProfile;
 use super::session_log::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
     SessionEventEnvelope,
@@ -99,7 +100,7 @@ impl PromptTurnOptions {
         self.session_name.as_deref()
     }
 
-    pub(crate) fn from_prompt_run_options(options: PromptRunOptions) -> Self {
+    pub fn from_prompt_run_options(options: PromptRunOptions) -> Self {
         let invocation = options.invocation.clone();
         let session_target = options.session_target.clone();
         let session_name = options.session_name.clone();
@@ -115,6 +116,21 @@ impl PromptTurnOptions {
 
     pub(crate) fn runtime(&self) -> Option<&RuntimeSnapshot> {
         self.runtime.as_ref()
+    }
+
+    pub(crate) fn apply_agent_profile(
+        &mut self,
+        profile: &AgentProfile,
+        diagnostics: Vec<CodingDiagnostic>,
+    ) -> Result<(), CodingSessionError> {
+        let runtime = self
+            .runtime
+            .as_mut()
+            .ok_or_else(|| CodingSessionError::Config {
+                message: "prompt turn options do not include a runtime snapshot".into(),
+            })?;
+        runtime.apply_agent_profile(profile, diagnostics);
+        Ok(())
     }
 }
 
@@ -254,6 +270,9 @@ pub(crate) struct RuntimeSnapshot {
     thinking_level: Option<ThinkingLevel>,
     tool_execution: Option<ToolExecutionMode>,
     session_run_options: Option<SessionRunOptions>,
+    profile_tool_allowlist: Option<Vec<String>>,
+    profile_skill_allowlist: Option<Vec<String>>,
+    profile_diagnostics: Vec<CodingDiagnostic>,
 }
 
 impl std::fmt::Debug for RuntimeSnapshot {
@@ -270,6 +289,9 @@ impl std::fmt::Debug for RuntimeSnapshot {
             .field("thinking_level", &self.thinking_level)
             .field("tool_execution", &self.tool_execution)
             .field("session_run_options", &self.session_run_options)
+            .field("profile_tool_allowlist", &self.profile_tool_allowlist)
+            .field("profile_skill_allowlist", &self.profile_skill_allowlist)
+            .field("profile_diagnostics", &self.profile_diagnostics)
             .finish()
     }
 }
@@ -306,6 +328,49 @@ impl RuntimeSnapshot {
             thinking_level,
             tool_execution,
             session_run_options: session,
+            profile_tool_allowlist: None,
+            profile_skill_allowlist: None,
+            profile_diagnostics: Vec::new(),
+        }
+    }
+
+    pub(crate) fn apply_agent_profile(
+        &mut self,
+        profile: &AgentProfile,
+        mut diagnostics: Vec<CodingDiagnostic>,
+    ) {
+        self.profile_diagnostics.append(&mut diagnostics);
+        if let Some(model_id) = profile.model.as_deref() {
+            match pi_ai::lookup_model(model_id) {
+                Some(model) => self.model = model,
+                None => self
+                    .profile_diagnostics
+                    .push(CodingDiagnostic::warning(format!(
+                        "agent profile {} requested unavailable model: {model_id}",
+                        profile.id
+                    ))),
+            }
+        }
+        if let Some(system_prompt) = profile.system_prompt.as_ref() {
+            self.system_prompt = Some(system_prompt.clone());
+        }
+        if !profile.tools.is_empty() {
+            self.profile_tool_allowlist = Some(profile.tools.clone());
+        }
+        if !profile.skills.is_empty() {
+            self.profile_skill_allowlist = Some(profile.skills.clone());
+        }
+        if profile.delegation.allow_delegate_agent {
+            self.profile_diagnostics.push(CodingDiagnostic::warning(format!(
+                "agent profile {} enables agent delegation, but delegate_agent is not available yet",
+                profile.id
+            )));
+        }
+        if profile.delegation.allow_delegate_team {
+            self.profile_diagnostics.push(CodingDiagnostic::warning(format!(
+                "agent profile {} enables team delegation, but delegate_team is not available yet",
+                profile.id
+            )));
         }
     }
 
@@ -351,6 +416,18 @@ impl RuntimeSnapshot {
 
     pub(crate) fn session_run_options(&self) -> Option<&SessionRunOptions> {
         self.session_run_options.as_ref()
+    }
+
+    pub(crate) fn profile_tool_allowlist(&self) -> Option<&[String]> {
+        self.profile_tool_allowlist.as_deref()
+    }
+
+    pub(crate) fn profile_skill_allowlist(&self) -> Option<&[String]> {
+        self.profile_skill_allowlist.as_deref()
+    }
+
+    pub(crate) fn profile_diagnostics(&self) -> &[CodingDiagnostic] {
+        &self.profile_diagnostics
     }
 }
 

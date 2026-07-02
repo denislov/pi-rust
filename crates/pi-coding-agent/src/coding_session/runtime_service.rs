@@ -1,16 +1,23 @@
 #[derive(Debug, Default)]
 pub(crate) struct RuntimeService;
 
-use pi_agent_core::{Agent, AgentMessage};
+use std::collections::BTreeSet;
+
+use pi_agent_core::{Agent, AgentMessage, AgentResources, AgentTool};
 use pi_ai::types::{AssistantMessage, ContentBlock, StopReason};
 
 use crate::runtime::{SessionMode, build_agent_config};
 
 use super::CodingSessionError;
 use super::plugin_service::PluginService;
-use super::prompt::RuntimeSnapshot;
+use super::prompt::{CodingDiagnostic, RuntimeSnapshot};
 use super::session_log::event::PersistedContentBlock;
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
+
+pub(crate) struct AgentRuntimeBuild {
+    pub(crate) agent: Agent,
+    pub(crate) diagnostics: Vec<CodingDiagnostic>,
+}
 
 impl RuntimeService {
     pub(crate) fn new() -> Self {
@@ -29,9 +36,23 @@ impl RuntimeService {
         runtime: &RuntimeSnapshot,
         plugin_service: &PluginService,
     ) -> Result<Agent, CodingSessionError> {
+        Ok(self
+            .build_agent_runtime_with_plugins_and_diagnostics(runtime, plugin_service)?
+            .agent)
+    }
+
+    pub(crate) fn build_agent_runtime_with_plugins_and_diagnostics(
+        &self,
+        runtime: &RuntimeSnapshot,
+        plugin_service: &PluginService,
+    ) -> Result<AgentRuntimeBuild, CodingSessionError> {
         if runtime.register_builtins() {
             pi_ai::providers::register_builtins();
         }
+
+        let mut diagnostics = runtime.profile_diagnostics().to_vec();
+        let resources = apply_skill_policy(runtime, &mut diagnostics);
+        let tools = apply_tool_policy(runtime, plugin_service.collect_tools(), &mut diagnostics);
 
         let mut config = build_agent_config(
             runtime.model().clone(),
@@ -40,7 +61,7 @@ impl RuntimeService {
             runtime.api_key().map(str::to_owned),
             runtime.thinking_level(),
             runtime.tool_execution(),
-            runtime.resources().clone(),
+            resources,
             runtime.settings(),
         );
         if matches!(
@@ -54,13 +75,10 @@ impl RuntimeService {
         }
 
         let agent = Agent::new(config);
-        for tool in runtime.tools() {
-            agent.add_tool(tool.clone());
-        }
-        for tool in plugin_service.collect_tools() {
+        for tool in tools {
             agent.add_tool(tool);
         }
-        Ok(agent)
+        Ok(AgentRuntimeBuild { agent, diagnostics })
     }
 
     pub(crate) fn hydrate_agent_runtime(
@@ -173,6 +191,69 @@ impl RuntimeService {
 
         flush_replay_hydration_group(agent, &mut pending_assistant, &mut pending_tool_results);
     }
+}
+
+fn apply_tool_policy(
+    runtime: &RuntimeSnapshot,
+    plugin_tools: Vec<AgentTool>,
+    diagnostics: &mut Vec<CodingDiagnostic>,
+) -> Vec<AgentTool> {
+    let mut tools = runtime.tools().to_vec();
+    tools.extend(plugin_tools);
+    let Some(allowlist) = runtime.profile_tool_allowlist() else {
+        return tools;
+    };
+
+    let available = tools
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let allowed = allowlist
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    for requested in &allowed {
+        if !available.contains(requested) {
+            diagnostics.push(CodingDiagnostic::warning(format!(
+                "agent profile requested unavailable tool: {requested}"
+            )));
+        }
+    }
+    tools
+        .into_iter()
+        .filter(|tool| allowed.contains(tool.name.as_str()))
+        .collect()
+}
+
+fn apply_skill_policy(
+    runtime: &RuntimeSnapshot,
+    diagnostics: &mut Vec<CodingDiagnostic>,
+) -> AgentResources {
+    let mut resources = runtime.resources().clone();
+    let Some(allowlist) = runtime.profile_skill_allowlist() else {
+        return resources;
+    };
+
+    let available = resources
+        .skills
+        .iter()
+        .map(|skill| skill.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let allowed = allowlist
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    for requested in &allowed {
+        if !available.contains(requested) {
+            diagnostics.push(CodingDiagnostic::warning(format!(
+                "agent profile requested unavailable skill: {requested}"
+            )));
+        }
+    }
+    resources
+        .skills
+        .retain(|skill| allowed.contains(skill.name.as_str()));
+    resources
 }
 
 fn replay_assistant_message(runtime: &RuntimeSnapshot) -> AssistantMessage {

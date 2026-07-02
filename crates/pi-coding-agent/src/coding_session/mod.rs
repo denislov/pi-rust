@@ -71,6 +71,7 @@ pub struct CodingAgentSession {
     event_service: EventService,
     capability_service: CapabilityService,
     plugin_service: PluginService,
+    profile_registry: ProfileRegistry,
     default_plugin_load_options: PluginLoadOptions,
     operation_control: OperationControl,
 }
@@ -110,6 +111,30 @@ fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoa
         .with_discovery_root(paths.global_dir.join("plugins"), PluginSource::User)
 }
 
+fn profile_registry_for_options(
+    options: &CodingAgentSessionOptions,
+    session_service: Option<&SessionService>,
+) -> Result<ProfileRegistry, CodingSessionError> {
+    let cwd = options
+        .cwd()
+        .map(Path::to_path_buf)
+        .or_else(|| session_service.and_then(session_cwd))
+        .unwrap_or_else(default_cwd);
+    let paths = crate::config::resolve_paths(&cwd);
+    ProfileRegistry::load(
+        ProfileRegistryOptions::new()
+            .with_user_root(paths.global_dir)
+            .with_project_root(paths.project_dir),
+    )
+}
+
+fn session_cwd(session_service: &SessionService) -> Option<PathBuf> {
+    session_service
+        .replay()
+        .ok()
+        .and_then(|replay| replay.cwd.map(PathBuf::from))
+}
+
 fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> ProfileId {
     options
         .default_agent_profile_id()
@@ -124,19 +149,34 @@ fn default_cwd() -> PathBuf {
 impl CodingAgentSession {
     pub async fn create(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::create(&options)?;
-        Self::from_services(session_service, default_plugin_load_options(&options))
+        let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
+        Self::from_services(
+            session_service,
+            default_plugin_load_options(&options),
+            profile_registry,
+        )
     }
 
     pub async fn open(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::open(&options)?;
-        Self::from_services(session_service, default_plugin_load_options(&options))
+        let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
+        Self::from_services(
+            session_service,
+            default_plugin_load_options(&options),
+            profile_registry,
+        )
     }
 
     pub async fn open_or_create(
         options: CodingAgentSessionOptions,
     ) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::open_or_create(&options)?;
-        Self::from_services(session_service, default_plugin_load_options(&options))
+        let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
+        Self::from_services(
+            session_service,
+            default_plugin_load_options(&options),
+            profile_registry,
+        )
     }
 
     pub async fn non_persistent(
@@ -150,6 +190,7 @@ impl CodingAgentSession {
         Self::from_transient(
             TransientSessionState::new(option_default_agent_profile_id(&options)),
             default_plugin_load_options(&options),
+            profile_registry_for_options(&options, None)?,
         )
     }
 
@@ -247,6 +288,7 @@ impl CodingAgentSession {
             SessionPersistence::Persistent(session_service) => Self::from_services(
                 session_service.fork_current(target_leaf_id)?,
                 self.default_plugin_load_options.clone(),
+                self.profile_registry.clone(),
             ),
             SessionPersistence::NonPersistent(_) => {
                 Err(CodingSessionError::UnsupportedCapability {
@@ -407,6 +449,7 @@ impl CodingAgentSession {
     fn from_services(
         session_service: SessionService,
         default_plugin_load_options: PluginLoadOptions,
+        profile_registry: ProfileRegistry,
     ) -> Result<Self, CodingSessionError> {
         let event_service = EventService::new();
         event_service.emit(CodingAgentEvent::SessionOpened {
@@ -420,6 +463,7 @@ impl CodingAgentSession {
             event_service,
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
+            profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
         })
@@ -428,6 +472,7 @@ impl CodingAgentSession {
     fn from_transient(
         state: TransientSessionState,
         default_plugin_load_options: PluginLoadOptions,
+        profile_registry: ProfileRegistry,
     ) -> Result<Self, CodingSessionError> {
         Ok(Self {
             persistence: SessionPersistence::NonPersistent(state),
@@ -436,6 +481,7 @@ impl CodingAgentSession {
             event_service: EventService::new(),
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
+            profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
         })
@@ -513,6 +559,7 @@ impl CodingAgentSession {
                 message: "prompt turn options do not include a runtime snapshot".into(),
             });
         }
+        let options = self.apply_default_agent_profile(options)?;
         let mut context = self.prepare_prompt_context(options)?;
         let operation_id = context.operation_id().to_owned();
         let turn_id = context.turn_id().to_owned();
@@ -546,6 +593,7 @@ impl CodingAgentSession {
             self.emit_coding_events_before_prompt_outcome(context.coding_events());
         }
         self.emit_session_write_events(&finalized);
+        self.emit_prompt_diagnostics(&outcome);
         self.emit_prompt_outcome_event(&outcome);
         Ok(outcome)
     }
@@ -723,6 +771,39 @@ impl CodingAgentSession {
         }
     }
 
+    fn apply_default_agent_profile(
+        &self,
+        mut options: PromptTurnOptions,
+    ) -> Result<PromptTurnOptions, CodingSessionError> {
+        let profile_id = self.default_agent_profile_id();
+        let mut diagnostics = Vec::new();
+        let profile = match self.profile_registry.agent(profile_id.as_str()) {
+            Some(profile) => profile,
+            None => {
+                diagnostics.push(CodingDiagnostic::warning(format!(
+                    "default agent profile {} could not be resolved; using built-in default profile",
+                    profile_id
+                )));
+                self.profile_registry.agent("default").ok_or_else(|| {
+                    CodingSessionError::Config {
+                        message: "built-in default agent profile is not available".into(),
+                    }
+                })?
+            }
+        };
+        options.apply_agent_profile(profile, diagnostics)?;
+        Ok(options)
+    }
+
+    fn default_agent_profile_id(&self) -> ProfileId {
+        match &self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                session_service.default_agent_profile_id().clone()
+            }
+            SessionPersistence::NonPersistent(state) => state.default_agent_profile_id.clone(),
+        }
+    }
+
     fn prepare_prompt_context(
         &mut self,
         options: PromptTurnOptions,
@@ -812,6 +893,28 @@ impl CodingAgentSession {
     fn emit_session_write_events(&self, finalized: &FinalizedSessionWrite) {
         for event in &finalized.events {
             self.event_service.emit(event.clone());
+        }
+    }
+
+    fn emit_prompt_diagnostics(&self, outcome: &PromptTurnOutcome) {
+        let (operation_id, diagnostics) = match outcome {
+            PromptTurnOutcome::Success {
+                operation_id,
+                diagnostics,
+                ..
+            }
+            | PromptTurnOutcome::Failed {
+                operation_id,
+                diagnostics,
+                ..
+            } => (operation_id, diagnostics),
+            PromptTurnOutcome::Aborted { .. } => return,
+        };
+        for diagnostic in diagnostics {
+            self.event_service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: Some(operation_id.clone()),
+                message: diagnostic.message.clone(),
+            });
         }
     }
 
