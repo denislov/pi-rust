@@ -668,6 +668,7 @@ struct LuaDialogFieldSpec {
     description: String,
     kind: String,
     default_value: serde_json::Value,
+    required: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -856,6 +857,7 @@ impl UiProvider for LuaUiProvider {
                             field.description,
                             field.kind,
                             field.default_value,
+                            field.required,
                         )
                     })
                     .collect();
@@ -1515,12 +1517,14 @@ fn lua_dialog_field_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<Lua
     } else {
         lua.from_value(default_lua)?
     };
+    let required = table.get::<Option<bool>>("required")?.unwrap_or(false);
     Ok(LuaDialogFieldSpec {
         id,
         label,
         description,
         kind,
         default_value,
+        required,
     })
 }
 

@@ -961,6 +961,7 @@ fn dispatch_plugin_ui_dialog<T: Terminal>(
     } else {
         format!(" - {}", dialog.description)
     };
+    root.active_plugin_ui_dialog = Some(dialog.clone());
     root.transcript.push(TranscriptItem::system(format!(
         "Plugin UI dialog {}: {}{}",
         dialog.dialog_id, dialog.title, description

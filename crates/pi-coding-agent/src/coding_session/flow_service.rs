@@ -602,7 +602,8 @@ function register(host)
         label = "Name",
         description = "Target name",
         type = "text",
-        default = "pi"
+        default = "pi",
+        required = true
       },
       {
         id = "confirmed",
@@ -643,9 +644,11 @@ end
         assert_eq!(dialogs[0].fields[0].description, "Target name");
         assert_eq!(dialogs[0].fields[0].kind, "text");
         assert_eq!(dialogs[0].fields[0].default_value, serde_json::json!("pi"));
+        assert!(dialogs[0].fields[0].required);
         assert_eq!(dialogs[0].fields[1].id, "confirmed");
         assert_eq!(dialogs[0].fields[1].kind, "boolean");
         assert_eq!(dialogs[0].fields[1].default_value, serde_json::json!(true));
+        assert!(!dialogs[0].fields[1].required);
     }
 
     #[tokio::test]

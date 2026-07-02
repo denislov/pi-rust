@@ -35,6 +35,7 @@ pub(crate) struct UiDialogFieldDefinition {
     pub(crate) description: String,
     pub(crate) kind: String,
     pub(crate) default_value: serde_json::Value,
+    pub(crate) required: bool,
 }
 
 #[allow(dead_code)]
@@ -45,6 +46,7 @@ impl UiDialogFieldDefinition {
         description: impl Into<String>,
         kind: impl Into<String>,
         default_value: serde_json::Value,
+        required: bool,
     ) -> Self {
         Self {
             id: id.into(),
@@ -52,6 +54,7 @@ impl UiDialogFieldDefinition {
             description: description.into(),
             kind: kind.into(),
             default_value,
+            required,
         }
     }
 }

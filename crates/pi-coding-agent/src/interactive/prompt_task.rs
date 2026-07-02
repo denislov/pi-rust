@@ -593,6 +593,7 @@ fn plugin_ui_dialogs(session: &CodingAgentSession) -> Vec<PluginUiDialog> {
                         field.description,
                         field.kind,
                         field.default_value,
+                        field.required,
                     )
                 })
                 .collect();

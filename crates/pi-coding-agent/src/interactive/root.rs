@@ -110,6 +110,7 @@ pub(super) struct PluginUiDialogField {
     pub(super) description: String,
     pub(super) kind: String,
     pub(super) default_value: serde_json::Value,
+    pub(super) required: bool,
 }
 
 impl PluginUiDialogField {
@@ -119,6 +120,7 @@ impl PluginUiDialogField {
         description: impl Into<String>,
         kind: impl Into<String>,
         default_value: serde_json::Value,
+        required: bool,
     ) -> Self {
         Self {
             id: id.into(),
@@ -126,6 +128,7 @@ impl PluginUiDialogField {
             description: description.into(),
             kind: kind.into(),
             default_value,
+            required,
         }
     }
 }
@@ -250,6 +253,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
+    pub(super) active_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -409,6 +413,7 @@ impl InteractiveRoot {
             pending_plugin_command_request: None,
             pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
+            active_plugin_ui_dialog: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,

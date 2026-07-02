@@ -422,6 +422,174 @@ end
 }
 
 #[tokio::test]
+async fn interactive_plugin_dialog_submit_rejects_invalid_field_type() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_plugin = temp.path().join(".pi-rust/plugins/lua-dialog-type");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "lua-dialog-type"
+name = "Lua Dialog Type"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.lua"),
+        r#"
+function register(host)
+  host:command({
+    id = "lua.submit_panel",
+    description = "submits the Lua panel",
+    run = function(input)
+      return { content = "should not run" }
+    end
+  })
+  host:ui_action({
+    id = "ui.open_panel",
+    label = "Open panel",
+    description = "opens a Lua panel",
+    action_id = "dialog.open_panel"
+  })
+  host:dialog({
+    id = "dialog.open_panel",
+    title = "Lua panel",
+    description = "Panel registered by Lua",
+    action_id = "lua.submit_panel",
+    fields = {
+      {
+        id = "confirmed",
+        label = "Confirmed",
+        description = "Confirm submission",
+        type = "boolean",
+        default = "yes"
+      }
+    }
+  })
+  host:keybind({
+    id = "keybind.open_panel",
+    key = "ctrl+g",
+    description = "opens the Lua panel",
+    action_id = "dialog.open_panel"
+  })
+end
+"#,
+    )
+    .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("/reload\r", "plugin.load.completed"),
+            ("\u{7}", "plugin.load.completed"),
+            ("\r", "plugin.load.completed"),
+        ],
+    )
+    .await
+    .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(
+        frame.contains("Plugin dialog field Confirmed must be boolean"),
+        "{frame}"
+    );
+    assert!(
+        !frame.contains("Plugin command lua.submit_panel"),
+        "{frame}"
+    );
+    assert!(!frame.contains("should not run"), "{frame}");
+}
+
+#[tokio::test]
+async fn interactive_plugin_dialog_submit_rejects_missing_required_field() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_plugin = temp.path().join(".pi-rust/plugins/lua-dialog-required");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "lua-dialog-required"
+name = "Lua Dialog Required"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.lua"),
+        r#"
+function register(host)
+  host:command({
+    id = "lua.submit_panel",
+    description = "submits the Lua panel",
+    run = function(input)
+      return { content = "should not run" }
+    end
+  })
+  host:ui_action({
+    id = "ui.open_panel",
+    label = "Open panel",
+    description = "opens a Lua panel",
+    action_id = "dialog.open_panel"
+  })
+  host:dialog({
+    id = "dialog.open_panel",
+    title = "Lua panel",
+    description = "Panel registered by Lua",
+    action_id = "lua.submit_panel",
+    fields = {
+      {
+        id = "name",
+        label = "Name",
+        description = "Target name",
+        type = "text",
+        required = true
+      }
+    }
+  })
+  host:keybind({
+    id = "keybind.open_panel",
+    key = "ctrl+g",
+    description = "opens the Lua panel",
+    action_id = "dialog.open_panel"
+  })
+end
+"#,
+    )
+    .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("/reload\r", "plugin.load.completed"),
+            ("\u{7}", "plugin.load.completed"),
+            ("\r", "plugin.load.completed"),
+        ],
+    )
+    .await
+    .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(
+        frame.contains("Plugin dialog field Name is required"),
+        "{frame}"
+    );
+    assert!(
+        !frame.contains("Plugin command lua.submit_panel"),
+        "{frame}"
+    );
+    assert!(!frame.contains("should not run"), "{frame}");
+}
+
+#[tokio::test]
 async fn interactive_plugin_dialog_submit_uses_field_defaults_as_lua_args() {
     let temp = tempfile::tempdir().unwrap();
     let project_plugin = temp.path().join(".pi-rust/plugins/lua-dialog-fields");

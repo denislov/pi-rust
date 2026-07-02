@@ -10,7 +10,7 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
-    PendingPluginCommandRequest,
+    PendingPluginCommandRequest, PendingPluginUiDialog, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -250,11 +250,74 @@ fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str, raw_args: 
         }
     };
 
+    if let Some(dialog) = root.active_plugin_ui_dialog.clone() {
+        if dialog.action_id == command_id {
+            if let Err(message) = validate_plugin_dialog_args(&dialog, &parsed_args) {
+                root.transcript.push(TranscriptItem::system(message));
+                return;
+            }
+            root.active_plugin_ui_dialog = None;
+        } else {
+            root.active_plugin_ui_dialog = None;
+        }
+    }
+
     root.pending_plugin_command_request = Some(PendingPluginCommandRequest {
         command_id: command_id.to_string(),
         args: parsed_args,
     });
     root.action = InteractiveAction::PluginCommand;
+}
+
+fn validate_plugin_dialog_args(
+    dialog: &PendingPluginUiDialog,
+    args: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(object) = args.as_object() else {
+        return Err("Plugin dialog args must be a JSON object".to_string());
+    };
+    for field in &dialog.fields {
+        let value = object.get(&field.id).unwrap_or(&serde_json::Value::Null);
+        validate_plugin_dialog_field(field, value)?;
+    }
+    Ok(())
+}
+
+fn validate_plugin_dialog_field(
+    field: &PluginUiDialogField,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    if field.required && dialog_field_value_missing(value) {
+        return Err(format!("Plugin dialog field {} is required", field.label));
+    }
+    if value.is_null() || dialog_field_value_missing(value) {
+        return Ok(());
+    }
+    let kind = normalized_dialog_field_kind(&field.kind);
+    let valid_type = match kind.as_str() {
+        "text" | "string" => value.is_string(),
+        "boolean" | "bool" => value.is_boolean(),
+        "number" => value.is_number(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        _ => true,
+    };
+    if valid_type {
+        Ok(())
+    } else {
+        Err(format!(
+            "Plugin dialog field {} must be {}",
+            field.label, field.kind
+        ))
+    }
+}
+
+fn dialog_field_value_missing(value: &serde_json::Value) -> bool {
+    matches!(value, serde_json::Value::Null)
+        || value.as_str().is_some_and(|value| value.trim().is_empty())
+}
+
+fn normalized_dialog_field_kind(kind: &str) -> String {
+    kind.trim().replace('-', "_").to_ascii_lowercase()
 }
 
 fn handle_export_command(root: &mut InteractiveRoot, args: &str) {
