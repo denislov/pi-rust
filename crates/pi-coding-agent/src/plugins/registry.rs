@@ -101,6 +101,15 @@ impl PluginRegistry {
         self.flow_extensions.push(extension);
     }
 
+    pub(crate) fn extend(&mut self, other: PluginRegistry) {
+        self.tool_providers.extend(other.tool_providers);
+        self.command_providers.extend(other.command_providers);
+        self.hook_providers.extend(other.hook_providers);
+        self.ui_providers.extend(other.ui_providers);
+        self.keybind_providers.extend(other.keybind_providers);
+        self.flow_extensions.extend(other.flow_extensions);
+    }
+
     pub(crate) fn tool_providers(&self) -> &[Arc<dyn ToolProvider>] {
         &self.tool_providers
     }

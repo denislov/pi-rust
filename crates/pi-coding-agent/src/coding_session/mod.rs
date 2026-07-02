@@ -7,6 +7,7 @@ mod event_service;
 mod export;
 mod flow_service;
 mod manual_compaction_flow;
+mod plugin_load_flow;
 mod plugin_service;
 mod prompt;
 mod prompt_flow;
@@ -36,6 +37,7 @@ use capability_service::CapabilityService;
 use event_service::EventService;
 use flow_service::FlowService;
 use manual_compaction_flow::{ManualCompactionContext, ManualCompactionOptions};
+use plugin_load_flow::{PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
@@ -260,6 +262,22 @@ impl CodingAgentSession {
         result
     }
 
+    #[allow(dead_code)]
+    pub(crate) async fn load_plugins(
+        &mut self,
+        options: PluginLoadOptions,
+    ) -> Result<PluginLoadOutcome, CodingSessionError> {
+        if self.active_operation.is_some() {
+            return Err(CodingSessionError::Busy {
+                operation: "plugin_load".into(),
+            });
+        }
+        self.active_operation = Some("plugin_load".into());
+        let result = self.load_plugins_inner(options).await;
+        self.active_operation = None;
+        result
+    }
+
     pub async fn summarize_branch(
         &mut self,
         options: PromptTurnOptions,
@@ -341,6 +359,28 @@ impl CodingAgentSession {
             plugin_service: PluginService::new(),
             active_operation: None,
         })
+    }
+
+    #[allow(dead_code)]
+    async fn load_plugins_inner(
+        &mut self,
+        options: PluginLoadOptions,
+    ) -> Result<PluginLoadOutcome, CodingSessionError> {
+        let mut context = PluginLoadContext::new(options);
+        let outcome = self.flow_service.run_plugin_load(&mut context).await?;
+        if let Some(plugin_service) = context.take_loaded_plugin_service() {
+            self.plugin_service = plugin_service;
+        }
+        for diagnostic in &outcome.diagnostics {
+            self.event_service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: diagnostic.message.clone(),
+            });
+        }
+        if outcome.capability_changed {
+            self.event_service.emit(CodingAgentEvent::CapabilityChanged);
+        }
+        Ok(outcome)
     }
 
     async fn prompt_inner(
@@ -764,11 +804,16 @@ mod tests {
         ModelInput, StopReason, StreamOptions,
     };
 
+    use super::plugin_load_flow::{PluginLoadCandidate, PluginLoadManifest, PluginLoadOptions};
     use super::*;
     use crate::coding_session::session_log::event::{
         PersistedContentBlock, SessionEventData, SessionEventEnvelope,
     };
     use crate::coding_session::session_log::replay::{MessageStatus, TranscriptItem};
+    use crate::plugins::{
+        PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource, ToolProvider,
+        ToolRegistrationHost,
+    };
     use crate::prompt_options::PromptRunOptions;
     use crate::runtime::{PromptInvocation, SessionRunOptions};
 
@@ -862,6 +907,28 @@ mod tests {
         }
     }
 
+    struct SessionPluginToolProvider;
+
+    impl ToolProvider for SessionPluginToolProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("session-plugin-tool"),
+                "Session Plugin Tool",
+                "1.0.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn tools(&self, _host: &ToolRegistrationHost) -> Result<Vec<AgentTool>, PluginError> {
+            Ok(vec![AgentTool::new_text(
+                "plugin_echo",
+                "echoes plugin input",
+                serde_json::json!({"type": "object"}),
+                |_args| async { Ok("plugin echo".to_owned()) },
+            )])
+        }
+    }
+
     struct RecordingProvider {
         contexts: Arc<Mutex<Vec<Context>>>,
         response: String,
@@ -894,6 +961,70 @@ mod tests {
                 };
             })
         }
+    }
+
+    #[tokio::test]
+    async fn load_plugins_updates_session_runtime_and_emits_capability_events() {
+        let api = "coding-session-plugin-load-owner";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        registry::register(
+            api,
+            Arc::new(RecordingProvider::new(contexts.clone(), "plugin loaded")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_plugin_load_owner")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let mut registry = PluginRegistry::new();
+        registry.register_tool_provider(Arc::new(SessionPluginToolProvider));
+        let options = PluginLoadOptions::new()
+            .with_candidate(PluginLoadCandidate::new(
+                PluginLoadManifest::new(
+                    "session-plugin",
+                    "Session Plugin",
+                    "1.0.0",
+                    PluginSource::FirstParty,
+                ),
+                registry,
+            ))
+            .with_candidate(PluginLoadCandidate::new(
+                PluginLoadManifest::new("", "Invalid Plugin", "1.0.0", PluginSource::Project),
+                PluginRegistry::new(),
+            ));
+        let mut events = session.subscribe();
+
+        let outcome = session.load_plugins(options).await.unwrap();
+
+        assert_eq!(outcome.loaded_plugin_ids, vec!["session-plugin"]);
+        assert_eq!(outcome.diagnostics.len(), 1);
+        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert!(
+            emitted_events.iter().any(|event| matches!(
+                event,
+                CodingAgentEvent::Diagnostic { message, .. }
+                    if message.contains("plugin id must not be empty")
+            )),
+            "{emitted_events:#?}"
+        );
+        assert!(
+            emitted_events
+                .iter()
+                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged))
+        );
+
+        session
+            .prompt(prompt_options(api, "use plugin"))
+            .await
+            .unwrap();
+
+        let contexts = contexts.lock().unwrap();
+        let tools = contexts[0].tools.as_ref().unwrap();
+        assert!(tools.iter().any(|tool| tool.name == "plugin_echo"));
+        registry::unregister(api);
     }
 
     #[tokio::test]

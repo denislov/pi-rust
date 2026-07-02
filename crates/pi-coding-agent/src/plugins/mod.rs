@@ -18,9 +18,9 @@ pub(crate) use hook::{
     HookRegistrationHost, PromptHookContext, PromptHookPoint,
 };
 pub(crate) use keybind::{KeybindDefinition, KeybindProvider, KeybindRegistrationHost};
-pub(crate) use registry::PluginRegistry;
 #[cfg(test)]
-pub(crate) use registry::{PluginId, PluginMetadata, PluginSource};
+pub(crate) use registry::{PluginId, PluginMetadata};
+pub(crate) use registry::{PluginRegistry, PluginSource};
 pub(crate) use tool::{ToolProvider, ToolRegistrationHost};
 #[allow(unused_imports)]
 pub(crate) use ui::{UiActionDefinition, UiDialogDefinition, UiProvider, UiRegistrationHost};
