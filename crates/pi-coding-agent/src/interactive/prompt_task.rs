@@ -6,7 +6,7 @@ use crate::coding_session::{
     PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
 };
 use crate::interactive::root::{
-    PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog,
+    PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::SessionMode;
@@ -583,12 +583,26 @@ fn plugin_ui_dialogs(session: &CodingAgentSession) -> Vec<PluginUiDialog> {
         .plugin_ui_dialogs()
         .into_iter()
         .map(|dialog| {
+            let fields = dialog
+                .fields
+                .into_iter()
+                .map(|field| {
+                    PluginUiDialogField::new(
+                        field.id,
+                        field.label,
+                        field.description,
+                        field.kind,
+                        field.default_value,
+                    )
+                })
+                .collect();
             PluginUiDialog::new(
                 dialog.id,
                 dialog.title,
                 dialog.description,
                 dialog.action_id,
             )
+            .with_fields(fields)
         })
         .collect()
 }

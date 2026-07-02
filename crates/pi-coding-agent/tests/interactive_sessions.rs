@@ -373,7 +373,16 @@ function register(host)
     id = "dialog.open_panel",
     title = "Lua panel",
     description = "Panel registered by Lua",
-    action_id = "lua.submit_panel"
+    action_id = "lua.submit_panel",
+    fields = {
+      {
+        id = "name",
+        label = "Name",
+        description = "Target name",
+        type = "text",
+        default = "pi"
+      }
+    }
   })
   host:keybind({
     id = "keybind.open_panel",
@@ -405,8 +414,9 @@ end
     );
     assert!(frame.contains("Lua panel"), "{frame}");
     assert!(frame.contains("Panel registered by Lua"), "{frame}");
+    assert!(frame.contains("Name: Target name"), "{frame}");
     assert!(
-        frame.contains("/plugin-command lua.submit_panel"),
+        frame.contains("/plugin-command lua.submit_panel {\"name\":\"pi\"}"),
         "{frame}"
     );
 }

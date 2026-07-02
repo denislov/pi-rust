@@ -104,11 +104,39 @@ pub(super) struct PendingPluginUiAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PluginUiDialogField {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) description: String,
+    pub(super) kind: String,
+    pub(super) default_value: serde_json::Value,
+}
+
+impl PluginUiDialogField {
+    pub(super) fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        description: impl Into<String>,
+        kind: impl Into<String>,
+        default_value: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            description: description.into(),
+            kind: kind.into(),
+            default_value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PendingPluginUiDialog {
     pub(super) dialog_id: String,
     pub(super) title: String,
     pub(super) description: String,
     pub(super) action_id: String,
+    pub(super) fields: Vec<PluginUiDialogField>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +169,7 @@ pub(super) struct PluginUiDialog {
     pub(super) title: String,
     pub(super) description: String,
     pub(super) action_id: String,
+    pub(super) fields: Vec<PluginUiDialogField>,
 }
 
 impl PluginUiDialog {
@@ -155,7 +184,13 @@ impl PluginUiDialog {
             title: title.into(),
             description: description.into(),
             action_id: action_id.into(),
+            fields: Vec::new(),
         }
+    }
+
+    pub(super) fn with_fields(mut self, fields: Vec<PluginUiDialogField>) -> Self {
+        self.fields = fields;
+        self
     }
 }
 
@@ -624,6 +659,7 @@ impl InteractiveRoot {
                 title: dialog.title.clone(),
                 description: dialog.description.clone(),
                 action_id: dialog.action_id.clone(),
+                fields: dialog.fields.clone(),
             });
             self.action = InteractiveAction::PluginUiDialog;
             return true;

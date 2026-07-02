@@ -21,4 +21,6 @@ pub(crate) use keybind::{KeybindDefinition, KeybindProvider, KeybindRegistration
 pub(crate) use registry::{PluginId, PluginMetadata, PluginRegistry, PluginSource};
 pub(crate) use tool::{ToolProvider, ToolRegistrationHost};
 #[allow(unused_imports)]
-pub(crate) use ui::{UiActionDefinition, UiDialogDefinition, UiProvider, UiRegistrationHost};
+pub(crate) use ui::{
+    UiActionDefinition, UiDialogDefinition, UiDialogFieldDefinition, UiProvider, UiRegistrationHost,
+};

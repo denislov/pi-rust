@@ -595,7 +595,23 @@ function register(host)
     id = "dialog.open_panel",
     title = "Lua panel",
     description = "Panel registered by Lua",
-    action_id = "lua.submit_panel"
+    action_id = "lua.submit_panel",
+    fields = {
+      {
+        id = "name",
+        label = "Name",
+        description = "Target name",
+        type = "text",
+        default = "pi"
+      },
+      {
+        id = "confirmed",
+        label = "Confirmed",
+        description = "Confirm submission",
+        type = "boolean",
+        default = true
+      }
+    }
   })
 end
 "#,
@@ -621,6 +637,15 @@ end
         assert_eq!(dialogs[0].title, "Lua panel");
         assert_eq!(dialogs[0].description, "Panel registered by Lua");
         assert_eq!(dialogs[0].action_id, "lua.submit_panel");
+        assert_eq!(dialogs[0].fields.len(), 2);
+        assert_eq!(dialogs[0].fields[0].id, "name");
+        assert_eq!(dialogs[0].fields[0].label, "Name");
+        assert_eq!(dialogs[0].fields[0].description, "Target name");
+        assert_eq!(dialogs[0].fields[0].kind, "text");
+        assert_eq!(dialogs[0].fields[0].default_value, serde_json::json!("pi"));
+        assert_eq!(dialogs[0].fields[1].id, "confirmed");
+        assert_eq!(dialogs[0].fields[1].kind, "boolean");
+        assert_eq!(dialogs[0].fields[1].default_value, serde_json::json!(true));
     }
 
     #[tokio::test]

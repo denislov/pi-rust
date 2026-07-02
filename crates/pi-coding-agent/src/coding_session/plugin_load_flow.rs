@@ -18,7 +18,8 @@ use crate::plugins::{
     HookOutcome, HookProvider, HookRegistration, HookRegistrationHost, KeybindDefinition,
     KeybindProvider, KeybindRegistrationHost, PluginCapabilities, PluginError, PluginId,
     PluginMetadata, PluginRegistry, PluginSource, PromptHookContext, PromptHookPoint, ToolProvider,
-    ToolRegistrationHost, UiActionDefinition, UiDialogDefinition, UiProvider, UiRegistrationHost,
+    ToolRegistrationHost, UiActionDefinition, UiDialogDefinition, UiDialogFieldDefinition,
+    UiProvider, UiRegistrationHost,
 };
 
 const DEFAULT_ACTION: &str = "default";
@@ -661,11 +662,21 @@ struct LuaUiActionSpec {
 }
 
 #[derive(Debug, Clone)]
+struct LuaDialogFieldSpec {
+    id: String,
+    label: String,
+    description: String,
+    kind: String,
+    default_value: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
 struct LuaDialogSpec {
     id: String,
     title: String,
     description: String,
     action_id: String,
+    fields: Vec<LuaDialogFieldSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -835,7 +846,21 @@ impl UiProvider for LuaUiProvider {
             .iter()
             .cloned()
             .map(|spec| {
+                let fields = spec
+                    .fields
+                    .into_iter()
+                    .map(|field| {
+                        UiDialogFieldDefinition::new(
+                            field.id,
+                            field.label,
+                            field.description,
+                            field.kind,
+                            field.default_value,
+                        )
+                    })
+                    .collect();
                 UiDialogDefinition::new(spec.id, spec.title, spec.description, spec.action_id)
+                    .with_fields(fields)
             })
             .collect())
     }
@@ -1004,9 +1029,9 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
         .map_err(|error| format!("failed to install Lua ui_action host: {error}"))?;
     let dialogs_for_host = Arc::clone(&dialogs);
     let dialog_fn = lua
-        .create_function(move |_lua, args: Variadic<Value>| {
+        .create_function(move |lua, args: Variadic<Value>| {
             let table = lua_definition_table(args, "dialog")?;
-            let spec = lua_dialog_spec_from_table(table)?;
+            let spec = lua_dialog_spec_from_table(lua, table)?;
             dialogs_for_host
                 .lock()
                 .map_err(|_| mlua::Error::external("Lua dialog registry lock poisoned"))?
@@ -1445,17 +1470,75 @@ fn lua_ui_action_spec_from_table(table: Table) -> mlua::Result<LuaUiActionSpec> 
     })
 }
 
-fn lua_dialog_spec_from_table(table: Table) -> mlua::Result<LuaDialogSpec> {
+fn lua_dialog_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<LuaDialogSpec> {
     let id = required_lua_string(&table, "id", "Lua dialog")?;
     let title = required_lua_string(&table, "title", "Lua dialog")?;
     let description = required_lua_string(&table, "description", "Lua dialog")?;
     let action_id = lua_action_id_from_table(&table, "Lua dialog")?;
+    let fields = lua_dialog_fields_from_table(lua, &table)?;
     Ok(LuaDialogSpec {
         id,
         title,
         description,
         action_id,
+        fields,
     })
+}
+
+fn lua_dialog_fields_from_table(lua: &Lua, table: &Table) -> mlua::Result<Vec<LuaDialogFieldSpec>> {
+    let fields_value: Option<Value> = table.get("fields")?;
+    let Some(fields_value) = fields_value else {
+        return Ok(Vec::new());
+    };
+    let Value::Table(fields_table) = fields_value else {
+        return Err(mlua::Error::external(
+            "Lua dialog fields must be an array table",
+        ));
+    };
+    let mut fields = Vec::new();
+    for field in fields_table.sequence_values::<Table>() {
+        fields.push(lua_dialog_field_spec_from_table(lua, field?)?);
+    }
+    Ok(fields)
+}
+
+fn lua_dialog_field_spec_from_table(lua: &Lua, table: Table) -> mlua::Result<LuaDialogFieldSpec> {
+    let id = required_lua_string(&table, "id", "Lua dialog field")?;
+    let label = required_lua_string(&table, "label", "Lua dialog field")?;
+    let description = optional_lua_string(&table, "description")?.unwrap_or_default();
+    let kind = optional_lua_string(&table, "type")?
+        .or(optional_lua_string(&table, "kind")?)
+        .unwrap_or_else(|| "text".to_string());
+    let default_lua = lua_field_default_value(&table)?;
+    let default_value = if matches!(default_lua, Value::Nil) {
+        default_dialog_field_value(&kind)
+    } else {
+        lua.from_value(default_lua)?
+    };
+    Ok(LuaDialogFieldSpec {
+        id,
+        label,
+        description,
+        kind,
+        default_value,
+    })
+}
+
+fn lua_field_default_value(table: &Table) -> mlua::Result<Value> {
+    let default_value: Value = table.get("default")?;
+    if matches!(default_value, Value::Nil) {
+        table.get("default_value")
+    } else {
+        Ok(default_value)
+    }
+}
+
+fn default_dialog_field_value(kind: &str) -> serde_json::Value {
+    match normalize_lua_name(kind).as_str() {
+        "boolean" | "bool" => serde_json::Value::Bool(false),
+        "number" | "integer" => serde_json::json!(0),
+        _ => serde_json::Value::String(String::new()),
+    }
 }
 
 fn lua_keybind_spec_from_table(table: Table) -> mlua::Result<LuaKeybindSpec> {
@@ -1625,6 +1708,11 @@ fn required_lua_string(table: &Table, field: &str, kind: &str) -> mlua::Result<S
         )));
     }
     Ok(value)
+}
+
+fn optional_lua_string(table: &Table, field: &str) -> mlua::Result<Option<String>> {
+    let value: Option<String> = table.get(field)?;
+    Ok(value.filter(|value| !value.trim().is_empty()))
 }
 
 fn lua_text_output(value: Value) -> mlua::Result<String> {

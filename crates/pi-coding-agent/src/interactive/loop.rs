@@ -16,7 +16,7 @@ use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
-    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog,
+    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
@@ -965,9 +965,36 @@ fn dispatch_plugin_ui_dialog<T: Terminal>(
         "Plugin UI dialog {}: {}{}",
         dialog.dialog_id, dialog.title, description
     )));
-    root.editor
-        .set_text(format!("/plugin-command {} ", dialog.action_id));
+    for field in &dialog.fields {
+        root.transcript
+            .push(TranscriptItem::system(plugin_dialog_field_line(field)));
+    }
+    root.editor.set_text(plugin_dialog_command_text(
+        &dialog.action_id,
+        &dialog.fields,
+    ));
     Ok(())
+}
+
+fn plugin_dialog_field_line(field: &PluginUiDialogField) -> String {
+    if field.description.trim().is_empty() {
+        field.label.clone()
+    } else {
+        format!("{}: {}", field.label, field.description)
+    }
+}
+
+fn plugin_dialog_command_text(action_id: &str, fields: &[PluginUiDialogField]) -> String {
+    if fields.is_empty() {
+        return format!("/plugin-command {action_id} ");
+    }
+    let mut args = serde_json::Map::new();
+    for field in fields {
+        args.insert(field.id.clone(), field.default_value.clone());
+    }
+    let args =
+        serde_json::to_string(&serde_json::Value::Object(args)).unwrap_or_else(|_| "{}".into());
+    format!("/plugin-command {action_id} {args}")
 }
 
 fn start_prompt_task<T: Terminal>(
