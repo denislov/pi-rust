@@ -48,7 +48,9 @@ use session_log::replay::TranscriptItem;
 use session_service::{FinalizedSessionWrite, SessionService};
 use std::path::{Path, PathBuf};
 
-use crate::plugins::{CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition};
+use crate::plugins::{
+    CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
+};
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -297,6 +299,10 @@ impl CodingAgentSession {
 
     pub(crate) fn plugin_ui_actions(&self) -> Vec<UiActionDefinition> {
         self.plugin_service.collect_ui_actions()
+    }
+
+    pub(crate) fn plugin_ui_dialogs(&self) -> Vec<UiDialogDefinition> {
+        self.plugin_service.collect_ui_dialogs()
     }
 
     pub(crate) fn plugin_keybindings(&self) -> Vec<KeybindDefinition> {

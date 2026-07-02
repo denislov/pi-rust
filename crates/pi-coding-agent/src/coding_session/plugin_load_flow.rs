@@ -18,7 +18,7 @@ use crate::plugins::{
     HookOutcome, HookProvider, HookRegistration, HookRegistrationHost, KeybindDefinition,
     KeybindProvider, KeybindRegistrationHost, PluginCapabilities, PluginError, PluginId,
     PluginMetadata, PluginRegistry, PluginSource, PromptHookContext, PromptHookPoint, ToolProvider,
-    ToolRegistrationHost, UiActionDefinition, UiProvider, UiRegistrationHost,
+    ToolRegistrationHost, UiActionDefinition, UiDialogDefinition, UiProvider, UiRegistrationHost,
 };
 
 const DEFAULT_ACTION: &str = "default";
@@ -661,6 +661,14 @@ struct LuaUiActionSpec {
 }
 
 #[derive(Debug, Clone)]
+struct LuaDialogSpec {
+    id: String,
+    title: String,
+    description: String,
+    action_id: String,
+}
+
+#[derive(Debug, Clone)]
 struct LuaKeybindSpec {
     id: String,
     key: String,
@@ -674,6 +682,7 @@ struct LuaPluginSpecs {
     commands: Vec<LuaCommandSpec>,
     hooks: Vec<LuaHookSpec>,
     ui_actions: Vec<LuaUiActionSpec>,
+    dialogs: Vec<LuaDialogSpec>,
     keybindings: Vec<LuaKeybindSpec>,
 }
 
@@ -798,6 +807,7 @@ impl HookProvider for LuaHookProvider {
 struct LuaUiProvider {
     metadata: PluginMetadata,
     actions: Vec<LuaUiActionSpec>,
+    dialogs: Vec<LuaDialogSpec>,
 }
 
 impl UiProvider for LuaUiProvider {
@@ -815,6 +825,17 @@ impl UiProvider for LuaUiProvider {
             .cloned()
             .map(|spec| {
                 UiActionDefinition::new(spec.id, spec.label, spec.description, spec.action_id)
+            })
+            .collect())
+    }
+
+    fn dialogs(&self, _host: &UiRegistrationHost) -> Result<Vec<UiDialogDefinition>, PluginError> {
+        Ok(self
+            .dialogs
+            .iter()
+            .cloned()
+            .map(|spec| {
+                UiDialogDefinition::new(spec.id, spec.title, spec.description, spec.action_id)
             })
             .collect())
     }
@@ -890,10 +911,11 @@ fn load_lua_plugin_registry(
             commands: specs.commands,
         }));
     }
-    if !specs.ui_actions.is_empty() {
+    if !specs.ui_actions.is_empty() || !specs.dialogs.is_empty() {
         registry.register_ui_provider(Arc::new(LuaUiProvider {
             metadata: metadata.clone(),
             actions: specs.ui_actions,
+            dialogs: specs.dialogs,
         }));
     }
     if !specs.keybindings.is_empty() {
@@ -919,6 +941,7 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
     let commands = Arc::new(Mutex::new(Vec::new()));
     let hooks = Arc::new(Mutex::new(Vec::new()));
     let ui_actions = Arc::new(Mutex::new(Vec::new()));
+    let dialogs = Arc::new(Mutex::new(Vec::new()));
     let keybindings = Arc::new(Mutex::new(Vec::new()));
     let host = lua
         .create_table()
@@ -979,6 +1002,20 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
         .map_err(|error| format!("failed to create Lua ui_action host: {error}"))?;
     host.set("ui_action", ui_action_fn)
         .map_err(|error| format!("failed to install Lua ui_action host: {error}"))?;
+    let dialogs_for_host = Arc::clone(&dialogs);
+    let dialog_fn = lua
+        .create_function(move |_lua, args: Variadic<Value>| {
+            let table = lua_definition_table(args, "dialog")?;
+            let spec = lua_dialog_spec_from_table(table)?;
+            dialogs_for_host
+                .lock()
+                .map_err(|_| mlua::Error::external("Lua dialog registry lock poisoned"))?
+                .push(spec);
+            Ok(())
+        })
+        .map_err(|error| format!("failed to create Lua dialog host: {error}"))?;
+    host.set("dialog", dialog_fn)
+        .map_err(|error| format!("failed to install Lua dialog host: {error}"))?;
     let keybindings_for_host = Arc::clone(&keybindings);
     let keybind_fn = lua
         .create_function(move |_lua, args: Variadic<Value>| {
@@ -1025,6 +1062,10 @@ fn collect_lua_plugin_specs(entry_path: &Path, source: &str) -> Result<LuaPlugin
         ui_actions: ui_actions
             .lock()
             .map_err(|_| "Lua UI action registry lock poisoned".to_owned())?
+            .clone(),
+        dialogs: dialogs
+            .lock()
+            .map_err(|_| "Lua dialog registry lock poisoned".to_owned())?
             .clone(),
         keybindings: keybindings
             .lock()
@@ -1075,6 +1116,7 @@ fn run_lua_tool(
     host.set("hook", hook_fn)
         .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
     install_lua_noop_host(&lua, &host, "ui_action")?;
+    install_lua_noop_host(&lua, &host, "dialog")?;
     install_lua_noop_host(&lua, &host, "keybind")?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
@@ -1155,6 +1197,7 @@ fn run_lua_command(
     host.set("hook", hook_fn)
         .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
     install_lua_noop_host(&lua, &host, "ui_action")?;
+    install_lua_noop_host(&lua, &host, "dialog")?;
     install_lua_noop_host(&lua, &host, "keybind")?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
@@ -1251,6 +1294,7 @@ fn run_lua_hook(
     host.set("hook", hook_fn)
         .map_err(|error| format!("failed to install Lua hook host: {error}"))?;
     install_lua_noop_host(&lua, &host, "ui_action")?;
+    install_lua_noop_host(&lua, &host, "dialog")?;
     install_lua_noop_host(&lua, &host, "keybind")?;
     lua.load(source)
         .set_name(entry_path.display().to_string())
@@ -1396,6 +1440,19 @@ fn lua_ui_action_spec_from_table(table: Table) -> mlua::Result<LuaUiActionSpec> 
     Ok(LuaUiActionSpec {
         id,
         label,
+        description,
+        action_id,
+    })
+}
+
+fn lua_dialog_spec_from_table(table: Table) -> mlua::Result<LuaDialogSpec> {
+    let id = required_lua_string(&table, "id", "Lua dialog")?;
+    let title = required_lua_string(&table, "title", "Lua dialog")?;
+    let description = required_lua_string(&table, "description", "Lua dialog")?;
+    let action_id = lua_action_id_from_table(&table, "Lua dialog")?;
+    Ok(LuaDialogSpec {
+        id,
+        title,
         description,
         action_id,
     })

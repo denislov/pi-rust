@@ -28,7 +28,7 @@ use crate::interactive::render::{
 #[cfg(test)]
 use crate::interactive::root::{
     FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus, PluginKeybinding,
-    PluginSlashCommand, PluginUiAction,
+    PluginSlashCommand, PluginUiAction, PluginUiDialog,
 };
 #[cfg(test)]
 use crate::interactive::session_actions::SessionChoiceKind;
@@ -2989,6 +2989,7 @@ mod tests {
                 "opens the Lua panel",
                 "lua.open_panel",
             )],
+            Vec::new(),
         );
 
         root.handle_input(&key_event("\x07"));
@@ -3027,6 +3028,7 @@ mod tests {
                 "opens the Lua panel",
                 "lua.open_panel",
             )],
+            Vec::new(),
         );
 
         root.handle_input(&key_event("\x07"));
@@ -3037,6 +3039,48 @@ mod tests {
             .expect("plugin command runner should be queued");
         assert_eq!(request.command_id, "lua.open_panel");
         assert_eq!(request.args, serde_json::json!({}));
+        assert!(root.take_pending_plugin_ui_action().is_none());
+        assert_eq!(root.editor.text(), "");
+    }
+
+    #[test]
+    fn plugin_keybinding_for_registered_dialog_queues_plugin_dialog_runner() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_plugin_ui_extensions(
+            vec![PluginUiAction::new(
+                "ui.open_panel",
+                "Open panel",
+                "opens a Lua panel",
+                "dialog.open_panel",
+            )],
+            vec![PluginKeybinding::new(
+                "keybind.open_panel",
+                "ctrl+g",
+                "opens the Lua panel",
+                "dialog.open_panel",
+            )],
+            vec![PluginUiDialog::new(
+                "dialog.open_panel",
+                "Lua panel",
+                "Panel registered by Lua",
+                "lua.submit_panel",
+            )],
+        );
+
+        root.handle_input(&key_event("\x07"));
+
+        assert_eq!(root.take_action(), InteractiveAction::PluginUiDialog);
+        let dialog = root
+            .take_pending_plugin_ui_dialog()
+            .expect("plugin dialog runner should be queued");
+        assert_eq!(dialog.dialog_id, "dialog.open_panel");
+        assert_eq!(dialog.title, "Lua panel");
+        assert_eq!(dialog.description, "Panel registered by Lua");
+        assert_eq!(dialog.action_id, "lua.submit_panel");
         assert!(root.take_pending_plugin_ui_action().is_none());
         assert_eq!(root.editor.text(), "");
     }

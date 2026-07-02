@@ -48,6 +48,7 @@ pub(super) enum InteractiveAction {
     BranchSummary,
     PluginCommand,
     PluginUiAction,
+    PluginUiDialog,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -103,6 +104,14 @@ pub(super) struct PendingPluginUiAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingPluginUiDialog {
+    pub(super) dialog_id: String,
+    pub(super) title: String,
+    pub(super) description: String,
+    pub(super) action_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PluginUiAction {
     pub(super) id: String,
     pub(super) label: String,
@@ -120,6 +129,30 @@ impl PluginUiAction {
         Self {
             id: id.into(),
             label: label.into(),
+            description: description.into(),
+            action_id: action_id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PluginUiDialog {
+    pub(super) id: String,
+    pub(super) title: String,
+    pub(super) description: String,
+    pub(super) action_id: String,
+}
+
+impl PluginUiDialog {
+    pub(super) fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        action_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
             description: description.into(),
             action_id: action_id.into(),
         }
@@ -181,6 +214,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
+    pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
@@ -227,6 +261,7 @@ pub(super) struct InteractiveRoot {
     pub(super) skills: Vec<pi_agent_core::Skill>,
     plugin_commands: Vec<PluginSlashCommand>,
     plugin_ui_actions: Vec<PluginUiAction>,
+    plugin_ui_dialogs: Vec<PluginUiDialog>,
     plugin_keybindings: Vec<PluginKeybinding>,
     pub(super) clipboard: Arc<dyn ClipboardSink>,
 }
@@ -338,6 +373,7 @@ impl InteractiveRoot {
             pending_branch_summary_request: None,
             pending_plugin_command_request: None,
             pending_plugin_ui_action: None,
+            pending_plugin_ui_dialog: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,
@@ -381,6 +417,7 @@ impl InteractiveRoot {
             skills: Vec::new(),
             plugin_commands: Vec::new(),
             plugin_ui_actions: Vec::new(),
+            plugin_ui_dialogs: Vec::new(),
             plugin_keybindings: Vec::new(),
             clipboard: Arc::new(SystemClipboard),
         }
@@ -471,6 +508,10 @@ impl InteractiveRoot {
         self.pending_plugin_ui_action.take()
     }
 
+    pub(super) fn take_pending_plugin_ui_dialog(&mut self) -> Option<PendingPluginUiDialog> {
+        self.pending_plugin_ui_dialog.take()
+    }
+
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
         self.scroll_command.lock().unwrap().take()
     }
@@ -525,13 +566,17 @@ impl InteractiveRoot {
         &mut self,
         mut actions: Vec<PluginUiAction>,
         mut keybindings: Vec<PluginKeybinding>,
+        mut dialogs: Vec<PluginUiDialog>,
     ) {
         actions.sort_by(|left, right| left.id.cmp(&right.id));
         actions.dedup_by(|left, right| left.id == right.id);
         keybindings.sort_by(|left, right| left.id.cmp(&right.id));
         keybindings.dedup_by(|left, right| left.id == right.id);
+        dialogs.sort_by(|left, right| left.id.cmp(&right.id));
+        dialogs.dedup_by(|left, right| left.id == right.id);
         self.plugin_ui_actions = actions;
         self.plugin_keybindings = keybindings;
+        self.plugin_ui_dialogs = dialogs;
     }
 
     pub(super) fn handle_plugin_keybinding_input(&mut self, event: &InputEvent) -> bool {
@@ -567,6 +612,20 @@ impl InteractiveRoot {
                 args: serde_json::json!({}),
             });
             self.action = InteractiveAction::PluginCommand;
+            return true;
+        }
+        if let Some(dialog) = self
+            .plugin_ui_dialogs
+            .iter()
+            .find(|dialog| dialog.id == action.action_id)
+        {
+            self.pending_plugin_ui_dialog = Some(PendingPluginUiDialog {
+                dialog_id: dialog.id.clone(),
+                title: dialog.title.clone(),
+                description: dialog.description.clone(),
+                action_id: dialog.action_id.clone(),
+            });
+            self.action = InteractiveAction::PluginUiDialog;
             return true;
         }
         self.pending_plugin_ui_action = Some(PendingPluginUiAction {

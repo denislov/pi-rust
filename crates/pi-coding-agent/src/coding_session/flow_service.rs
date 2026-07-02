@@ -571,6 +571,59 @@ end
     }
 
     #[tokio::test]
+    async fn plugin_load_flow_loads_lua_manifest_dialog_provider() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-dialog");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-dialog"
+name = "Lua Dialog"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:dialog({
+    id = "dialog.open_panel",
+    title = "Lua panel",
+    description = "Panel registered by Lua",
+    action_id = "lua.submit_panel"
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(outcome.loaded_plugin_ids, vec!["lua-dialog"]);
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.ui_providers, 1);
+        let dialogs = context
+            .loaded_plugin_service()
+            .unwrap()
+            .collect_ui_dialogs();
+        assert_eq!(dialogs.len(), 1);
+        assert_eq!(dialogs[0].id, "dialog.open_panel");
+        assert_eq!(dialogs[0].title, "Lua panel");
+        assert_eq!(dialogs[0].description, "Panel registered by Lua");
+        assert_eq!(dialogs[0].action_id, "lua.submit_panel");
+    }
+
+    #[tokio::test]
     async fn plugin_load_flow_loads_lua_manifest_keybind_provider() {
         let service = FlowService::new();
         let temp = tempfile::tempdir().unwrap();

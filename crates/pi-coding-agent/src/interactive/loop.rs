@@ -16,7 +16,7 @@ use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
-    PendingPluginCommandRequest, PendingPluginUiAction,
+    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
@@ -587,6 +587,7 @@ fn handle_input_event<T: Terminal>(
         branch_summary_request,
         plugin_command_request,
         plugin_ui_action,
+        plugin_ui_dialog,
         render_request,
     ) = {
         let root = root_mut(tui, root_id)?;
@@ -624,6 +625,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let plugin_ui_dialog = if action == InteractiveAction::PluginUiDialog {
+            root.take_pending_plugin_ui_dialog()
+        } else {
+            None
+        };
         let after = root.render_state();
         (
             action,
@@ -638,6 +644,7 @@ fn handle_input_event<T: Terminal>(
             branch_summary_request,
             plugin_command_request,
             plugin_ui_action,
+            plugin_ui_dialog,
             RenderRequest::changed(before != after),
         )
     };
@@ -920,6 +927,13 @@ fn handle_input_event<T: Terminal>(
             dispatch_plugin_ui_action(tui, root_id, action)?;
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::PluginUiDialog => {
+            let Some(dialog) = plugin_ui_dialog else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            dispatch_plugin_ui_dialog(tui, root_id, dialog)?;
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
     }
 }
 
@@ -932,6 +946,24 @@ fn dispatch_plugin_ui_action<T: Terminal>(
     root.transcript.push(TranscriptItem::system(format!(
         "Plugin UI action {}: {}",
         action.action_id, action.label
+    )));
+    Ok(())
+}
+
+fn dispatch_plugin_ui_dialog<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    dialog: PendingPluginUiDialog,
+) -> Result<(), CliError> {
+    let root = root_mut(tui, root_id)?;
+    let description = if dialog.description.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" - {}", dialog.description)
+    };
+    root.transcript.push(TranscriptItem::system(format!(
+        "Plugin UI dialog {}: {}{}",
+        dialog.dialog_id, dialog.title, description
     )));
     Ok(())
 }
@@ -1306,6 +1338,7 @@ fn finish_prompt<T: Terminal>(
             root.set_plugin_ui_extensions(
                 result.plugin_ui_actions.clone(),
                 result.plugin_keybindings.clone(),
+                result.plugin_ui_dialogs.clone(),
             );
             *coding_session = Some(result.session);
         }
@@ -1318,6 +1351,7 @@ fn finish_prompt<T: Terminal>(
             root.set_plugin_ui_extensions(
                 result.plugin_ui_actions.clone(),
                 result.plugin_keybindings.clone(),
+                result.plugin_ui_dialogs.clone(),
             );
             *coding_session = Some(result.session);
         }

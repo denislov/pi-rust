@@ -12,7 +12,8 @@ use crate::plugins::{
     FlowExtensionRegistrationHost, HookFailurePolicy, HookOutcome, HookProvider, HookRegistration,
     HookRegistrationHost, KeybindDefinition, KeybindProvider, KeybindRegistrationHost,
     PluginCapabilities, PluginError, PluginRegistry, PromptHookContext, PromptHookPoint,
-    ToolProvider, ToolRegistrationHost, UiActionDefinition, UiProvider, UiRegistrationHost,
+    ToolProvider, ToolRegistrationHost, UiActionDefinition, UiDialogDefinition, UiProvider,
+    UiRegistrationHost,
 };
 
 #[derive(Clone)]
@@ -120,6 +121,19 @@ impl PluginService {
             }
         }
         actions
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn collect_ui_dialogs(&self) -> Vec<UiDialogDefinition> {
+        let host = UiRegistrationHost;
+        let mut dialogs = Vec::new();
+        for provider in self.registry.ui_providers() {
+            match collect_provider_ui_dialogs(provider.as_ref(), &host) {
+                Ok(mut provided) => dialogs.append(&mut provided),
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+        dialogs
     }
 
     #[allow(dead_code)]
@@ -304,6 +318,21 @@ fn collect_provider_ui_actions(
 ) -> Result<Vec<UiActionDefinition>, PluginError> {
     let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
     match catch_unwind(AssertUnwindSafe(|| provider.ui_actions(host))) {
+        Ok(result) => result,
+        Err(panic) => Err(PluginError::Panic {
+            plugin_id,
+            message: panic_message(panic),
+        }),
+    }
+}
+
+#[allow(dead_code)]
+fn collect_provider_ui_dialogs(
+    provider: &dyn UiProvider,
+    host: &UiRegistrationHost,
+) -> Result<Vec<UiDialogDefinition>, PluginError> {
+    let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+    match catch_unwind(AssertUnwindSafe(|| provider.dialogs(host))) {
         Ok(result) => result,
         Err(panic) => Err(PluginError::Panic {
             plugin_id,
@@ -581,6 +610,18 @@ mod tests {
                 "Open panel",
                 "Open the plugin panel",
                 "plugin.open_panel",
+            )])
+        }
+
+        fn dialogs(
+            &self,
+            _host: &UiRegistrationHost,
+        ) -> Result<Vec<UiDialogDefinition>, PluginError> {
+            Ok(vec![UiDialogDefinition::new(
+                "dialog.open_panel",
+                "Plugin panel",
+                "Panel registered by plugin",
+                "plugin.submit_panel",
             )])
         }
     }
@@ -882,6 +923,21 @@ mod tests {
         assert_eq!(actions[0].id, "ui.open_panel");
         assert_eq!(actions[0].label, "Open panel");
         assert_eq!(actions[0].action_id, "plugin.open_panel");
+        assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn collect_ui_dialogs_returns_registered_dialog_definitions() {
+        let mut registry = PluginRegistry::new();
+        registry.register_ui_provider(Arc::new(StaticUiProvider));
+        let service = PluginService::with_registry(registry);
+
+        let dialogs = service.collect_ui_dialogs();
+
+        assert_eq!(dialogs.len(), 1);
+        assert_eq!(dialogs[0].id, "dialog.open_panel");
+        assert_eq!(dialogs[0].title, "Plugin panel");
+        assert_eq!(dialogs[0].action_id, "plugin.submit_panel");
         assert!(service.diagnostics().is_empty());
     }
 

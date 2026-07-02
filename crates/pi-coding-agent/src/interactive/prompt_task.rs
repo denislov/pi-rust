@@ -5,7 +5,9 @@ use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
 };
-use crate::interactive::root::{PluginKeybinding, PluginSlashCommand, PluginUiAction};
+use crate::interactive::root::{
+    PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog,
+};
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::SessionMode;
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
@@ -35,6 +37,7 @@ pub(super) struct PluginReloadTaskResult {
     pub(super) plugin_commands: Vec<PluginSlashCommand>,
     pub(super) plugin_ui_actions: Vec<PluginUiAction>,
     pub(super) plugin_keybindings: Vec<PluginKeybinding>,
+    pub(super) plugin_ui_dialogs: Vec<PluginUiDialog>,
 }
 
 pub(super) struct PluginCommandTaskResult {
@@ -44,6 +47,7 @@ pub(super) struct PluginCommandTaskResult {
     pub(super) plugin_commands: Vec<PluginSlashCommand>,
     pub(super) plugin_ui_actions: Vec<PluginUiAction>,
     pub(super) plugin_keybindings: Vec<PluginKeybinding>,
+    pub(super) plugin_ui_dialogs: Vec<PluginUiDialog>,
 }
 
 enum PromptTaskAbortHandle {
@@ -455,12 +459,14 @@ async fn run_coding_plugin_reload_task(
     let plugin_commands = plugin_slash_commands(&session);
     let plugin_ui_actions = plugin_ui_actions(&session);
     let plugin_keybindings = plugin_keybindings(&session);
+    let plugin_ui_dialogs = plugin_ui_dialogs(&session);
     Ok(PluginReloadTaskResult {
         session,
         outcome,
         plugin_commands,
         plugin_ui_actions,
         plugin_keybindings,
+        plugin_ui_dialogs,
     })
 }
 
@@ -522,6 +528,7 @@ async fn run_coding_plugin_command_task(
     let plugin_commands = plugin_slash_commands(&session);
     let plugin_ui_actions = plugin_ui_actions(&session);
     let plugin_keybindings = plugin_keybindings(&session);
+    let plugin_ui_dialogs = plugin_ui_dialogs(&session);
     Ok(PluginCommandTaskResult {
         session,
         command_id,
@@ -529,6 +536,7 @@ async fn run_coding_plugin_command_task(
         plugin_commands,
         plugin_ui_actions,
         plugin_keybindings,
+        plugin_ui_dialogs,
     })
 }
 
@@ -565,6 +573,21 @@ fn plugin_keybindings(session: &CodingAgentSession) -> Vec<PluginKeybinding> {
                 keybinding.key,
                 keybinding.description,
                 keybinding.action_id,
+            )
+        })
+        .collect()
+}
+
+fn plugin_ui_dialogs(session: &CodingAgentSession) -> Vec<PluginUiDialog> {
+    session
+        .plugin_ui_dialogs()
+        .into_iter()
+        .map(|dialog| {
+            PluginUiDialog::new(
+                dialog.id,
+                dialog.title,
+                dialog.description,
+                dialog.action_id,
             )
         })
         .collect()
