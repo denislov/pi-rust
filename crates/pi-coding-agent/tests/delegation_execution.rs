@@ -343,6 +343,118 @@ system_prompt = "Coder child instructions."
     );
 }
 
+#[tokio::test]
+async fn prompt_emits_failed_lifecycle_for_approved_agent_delegation_failure() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["missing-coder"]
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "delegation-child-failure-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_agent",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "missing-coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        2,
+        "failed child profile resolution should not call the provider"
+    );
+    assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["plan feature"]);
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved { target_id, task, .. }
+                if target_id.as_str() == "missing-coder" && task == "implement parser"
+        )),
+        "expected delegation approved event, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationStarted { target_id, child_operation_id, .. }
+                if target_id.as_str() == "missing-coder" && !child_operation_id.is_empty()
+        )),
+        "expected delegation started event, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::AgentInvocationFailed { profile_id, error, .. }
+                if profile_id.as_str() == "missing-coder"
+                    && error.to_string().contains("Unknown agent profile: missing-coder")
+        )),
+        "expected child agent invocation failure event, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationFailed {
+                target_id,
+                task,
+                child_operation_id,
+                error,
+                ..
+            } if target_id.as_str() == "missing-coder"
+                && task == "implement parser"
+                && !child_operation_id.is_empty()
+                && error.to_string().contains("Unknown agent profile: missing-coder")
+        )),
+        "expected delegation failed event, got {events:#?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, CodingAgentEvent::DelegationCompleted { .. })),
+        "failed delegation must not emit completion: {events:#?}"
+    );
+}
+
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
     PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: prompt.into(),

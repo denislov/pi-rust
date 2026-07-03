@@ -1,6 +1,6 @@
 use pi_agent_core::session::StoredAgentMessage;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
-use pi_coding_agent::api::{CodingAgentEvent, ProfileKind};
+use pi_coding_agent::api::{CodingAgentEvent, CodingSessionError, ProfileKind};
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
 use pi_coding_agent::protocol::types::{CompactionReason, ProtocolEvent};
 use serde_json::json;
@@ -278,6 +278,19 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
             child_operation_id: "op_child".into(),
             final_text: "child result".into(),
         },
+        CodingAgentEvent::DelegationFailed {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate_failed".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "missing-coder".into(),
+            task: "implement parser".into(),
+            child_operation_id: "op_child_failed".into(),
+            error: CodingSessionError::Input {
+                message: "Unknown agent profile: missing-coder".into(),
+            },
+        },
     ]
     .into_iter()
     .flat_map(|event| adapter.push(&event))
@@ -355,6 +368,18 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "task": "implement parser",
                 "childOperationId": "op_child",
                 "finalText": "child result"
+            }),
+            json!({
+                "type": "delegation_failed",
+                "operationId": "op_parent",
+                "turnId": "turn_parent",
+                "toolCallId": "tool_delegate_failed",
+                "requestingProfileId": "planner",
+                "targetKind": "agent",
+                "targetId": "missing-coder",
+                "task": "implement parser",
+                "childOperationId": "op_child_failed",
+                "error": "invalid input: Unknown agent profile: missing-coder"
             })
         ]
     );

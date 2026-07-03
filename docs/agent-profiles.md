@@ -134,14 +134,14 @@ Current behavior:
 - Allowed target ids and zero-depth policy are enforced at the request boundary.
 - Accepted requests return structured envelopes and emit `DelegationRequested` product events.
 - Rejected requests return structured rejection envelopes and emit `DelegationRejected` product events.
-- Auto-approved requests run through session-owned child agent/team flows and emit `DelegationApproved`, `DelegationStarted`, and `DelegationCompleted` product events.
+- Auto-approved requests run through session-owned child agent/team flows and emit `DelegationApproved`, `DelegationStarted`, and either `DelegationCompleted` or `DelegationFailed` product events.
 - Requests that require confirmation emit `DelegationConfirmationRequired` and are not executed until a future confirmation UX approves them.
-- The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_confirmation_required`, `delegation_approved`, `delegation_started`, and `delegation_completed`.
+- The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_confirmation_required`, `delegation_approved`, `delegation_started`, `delegation_completed`, and `delegation_failed`.
 
 Still follow-up:
 
 - Confirmation prompts and RPC/interactive approval commands for write-capable, team, or high-cost delegation.
 - Recursive depth and child budget accounting beyond the current request boundary.
-- Child-failure lifecycle events and capability release policy.
+- Capability release policy for delegated child work.
 
 Profiles and delegation tools do not expose raw `CodingAgentSession`, session storage, runtime service, provider internals, filesystem handles, shell handles, or Flow graph mutation APIs.

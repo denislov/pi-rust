@@ -125,6 +125,17 @@ pub enum CodingAgentEvent {
         child_operation_id: String,
         final_text: String,
     },
+    DelegationFailed {
+        operation_id: String,
+        turn_id: String,
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        child_operation_id: String,
+        error: CodingSessionError,
+    },
     SessionWritePending {
         operation_id: String,
     },

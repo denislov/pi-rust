@@ -184,6 +184,25 @@ pub enum ProtocolEvent {
         #[serde(rename = "finalText")]
         final_text: String,
     },
+    #[serde(rename = "delegation_failed")]
+    DelegationFailed {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "requestingProfileId")]
+        requesting_profile_id: String,
+        #[serde(rename = "targetKind")]
+        target_kind: String,
+        #[serde(rename = "targetId")]
+        target_id: String,
+        task: String,
+        #[serde(rename = "childOperationId")]
+        child_operation_id: String,
+        error: String,
+    },
     #[serde(rename = "agent_invocation_start")]
     AgentInvocationStart {
         #[serde(rename = "operationId")]

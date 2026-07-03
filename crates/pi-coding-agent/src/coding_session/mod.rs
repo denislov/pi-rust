@@ -730,7 +730,13 @@ impl CodingAgentSession {
         );
         let child_operation_id = context.operation_id().to_owned();
         self.emit_delegation_started(request, child_operation_id.clone());
-        let outcome = self.flow_service.run_agent_invocation(&mut context).await?;
+        let outcome = match self.flow_service.run_agent_invocation(&mut context).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.emit_delegation_failed(request, child_operation_id, error.clone());
+                return Err(error);
+            }
+        };
         self.emit_delegation_completed(request, child_operation_id, outcome.final_text);
         Ok(())
     }
@@ -752,7 +758,13 @@ impl CodingAgentSession {
         );
         let child_operation_id = context.operation_id().to_owned();
         self.emit_delegation_started(request, child_operation_id.clone());
-        let outcome = self.flow_service.run_agent_team(&mut context).await?;
+        let outcome = match self.flow_service.run_agent_team(&mut context).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.emit_delegation_failed(request, child_operation_id, error.clone());
+                return Err(error);
+            }
+        };
         self.emit_delegation_completed(request, child_operation_id, outcome.final_text);
         Ok(())
     }
@@ -830,6 +842,25 @@ impl CodingAgentSession {
                 child_operation_id,
                 final_text,
             });
+    }
+
+    fn emit_delegation_failed(
+        &self,
+        request: &DelegationRequest,
+        child_operation_id: String,
+        error: CodingSessionError,
+    ) {
+        self.event_service.emit(CodingAgentEvent::DelegationFailed {
+            operation_id: request.operation_id.clone(),
+            turn_id: request.turn_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+            child_operation_id,
+            error,
+        });
     }
 
     async fn compact_inner(
@@ -2799,6 +2830,7 @@ runtime = "lua"
             }
             CodingAgentEvent::DelegationStarted { .. } => "delegation_started",
             CodingAgentEvent::DelegationCompleted { .. } => "delegation_completed",
+            CodingAgentEvent::DelegationFailed { .. } => "delegation_failed",
             CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
             CodingAgentEvent::SessionWriteCommitted { .. } => "session_write_committed",
             CodingAgentEvent::SessionWriteSkipped { .. } => "session_write_skipped",

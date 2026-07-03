@@ -141,6 +141,7 @@ impl CodingEventBridge {
             | CodingAgentEvent::DelegationConfirmationRequired { .. }
             | CodingAgentEvent::DelegationStarted { .. }
             | CodingAgentEvent::DelegationCompleted { .. }
+            | CodingAgentEvent::DelegationFailed { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }
