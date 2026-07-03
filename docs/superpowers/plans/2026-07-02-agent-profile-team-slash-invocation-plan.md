@@ -330,14 +330,14 @@ Tasks:
 - [~] Make delegation tools return requests into `CodingAgentSession`; do not let the model instantiate child agents directly. Current tools return structured request/rejection envelopes through session-owned runtime construction; converting accepted requests into owner-authorized child flow execution remains follow-up.
 - [~] Enforce delegation policy: allowed ids, maximum depth, maximum child count, confirmation mode, and write/tool permissions. Current request-tool boundary enforces allowed agent/team ids and zero-depth rejection; maximum child count, confirmation mode, write/tool permissions, and recursive budget accounting remain follow-up.
 - [ ] Add a confirmation boundary for write-capable, team, or high-cost delegation when policy requires it.
-- [ ] Record delegation requested/approved/rejected/started/completed events.
+- [~] Record delegation requested/approved/rejected/started/completed events. Current event mapping records `DelegationRequested` and `DelegationRejected` from delegation tool envelopes while preserving ordinary tool lifecycle events; approved/started/completed events remain tied to follow-up child execution.
 - [ ] Prevent recursive or unbounded delegation loops.
 - [~] Keep delegation tools capability-scoped and free of raw session/runtime/provider internals. Current request tools expose only target id/task schemas and structured envelopes; child execution must preserve the same boundary.
 
 Acceptance:
 
 - The model can ask for help, but `CodingAgentSession` decides whether and how to run child work.
-- Delegation behavior is auditable in the product event stream.
+- Delegation request/rejection behavior is auditable in the product event stream; approval/execution lifecycle auditing remains follow-up.
 - Denied delegation is a normal, deterministic runtime outcome.
 
 Focused checks:
@@ -411,5 +411,5 @@ source ~/.cargo/env && git diff --check
 - [x] Team profiles always declare supervisor semantics.
 - [~] Model-requested delegation goes through session-owned authorization and bounded execution. Request tools are now session-owned and policy-gated; bounded child execution remains follow-up.
 - [x] Child operations cannot direct-commit parent session state.
-- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events exist in `CodingAgentEvent`; capability and RPC/protocol surfaces remain Stage 8 follow-up.
+- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events and delegation requested/rejected events exist in `CodingAgentEvent`; capability and RPC/protocol surfaces remain Stage 8 follow-up.
 - [~] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools. Current delegation request tools preserve this; follow-up child execution must keep the same boundary.

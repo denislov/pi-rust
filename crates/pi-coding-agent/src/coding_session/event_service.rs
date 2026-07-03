@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 use pi_agent_core::AgentEvent;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock};
 
-use super::{CodingAgentEvent, CodingSessionError};
+use super::{CodingAgentEvent, CodingSessionError, ProfileId, ProfileKind};
 
 const EVENT_CHANNEL_CAPACITY: usize = 128;
 
@@ -121,13 +121,22 @@ pub(crate) fn map_agent_event(
             tool_call_id,
             tool_name,
             result,
-        } => vec![CodingAgentEvent::ToolCallCompleted {
-            operation_id: context.operation_id.clone(),
-            turn_id: context.turn_id.clone(),
-            tool_call_id: tool_call_id.clone(),
-            name: tool_name.clone(),
-            summary: content_blocks_text(&result.content),
-        }],
+        } => {
+            let summary = content_blocks_text(&result.content);
+            let mut events = vec![CodingAgentEvent::ToolCallCompleted {
+                operation_id: context.operation_id.clone(),
+                turn_id: context.turn_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                name: tool_name.clone(),
+                summary: summary.clone(),
+            }];
+            if let Some(event) =
+                map_delegation_tool_event(context, tool_call_id, tool_name, &summary)
+            {
+                events.push(event);
+            }
+            events
+        }
         AgentEvent::AgentDone { message } => {
             vec![CodingAgentEvent::AssistantMessageCompleted {
                 operation_id: context.operation_id.clone(),
@@ -227,6 +236,60 @@ fn assistant_text(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn map_delegation_tool_event(
+    context: &AgentEventMappingContext,
+    tool_call_id: &str,
+    tool_name: &str,
+    summary: &str,
+) -> Option<CodingAgentEvent> {
+    if !matches!(tool_name, "delegate_agent" | "delegate_team") {
+        return None;
+    }
+
+    let value: serde_json::Value = serde_json::from_str(summary).ok()?;
+    let status = value.get("status")?.as_str()?;
+    let target_kind = parse_delegation_target_kind(value.get("target_kind")?.as_str()?)?;
+    let target_id = ProfileId::new(value.get("target_id")?.as_str()?.to_owned()).ok()?;
+    let requesting_profile_id =
+        ProfileId::new(value.get("requesting_profile_id")?.as_str()?.to_owned()).ok()?;
+    let task = value.get("task")?.as_str()?.to_owned();
+
+    match status {
+        "requested" => Some(CodingAgentEvent::DelegationRequested {
+            operation_id: context.operation_id.clone(),
+            turn_id: context.turn_id.clone(),
+            tool_call_id: tool_call_id.to_owned(),
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        }),
+        "rejected" => Some(CodingAgentEvent::DelegationRejected {
+            operation_id: context.operation_id.clone(),
+            turn_id: context.turn_id.clone(),
+            tool_call_id: tool_call_id.to_owned(),
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            reason: value
+                .get("message")
+                .and_then(|message| message.as_str())
+                .unwrap_or("delegation rejected")
+                .to_owned(),
+        }),
+        _ => None,
+    }
+}
+
+fn parse_delegation_target_kind(kind: &str) -> Option<ProfileKind> {
+    match kind {
+        "agent" => Some(ProfileKind::Agent),
+        "team" => Some(ProfileKind::Team),
+        _ => None,
+    }
 }
 
 #[derive(Debug)]
@@ -497,6 +560,99 @@ mod tests {
                 message: "missing".into(),
             }]
         );
+    }
+
+    #[test]
+    fn maps_delegation_tool_result_events() {
+        let context = mapping_context();
+        let requested = map_agent_event(
+            &context,
+            &AgentEvent::ToolCallEnd {
+                tool_call_id: "tool_delegate_1".into(),
+                tool_name: "delegate_agent".into(),
+                result: AgentToolResult::ok(vec![ContentBlock::Text {
+                    text: serde_json::json!({
+                        "status": "requested",
+                        "target_kind": "agent",
+                        "target_id": "coder",
+                        "task": "implement it",
+                        "requesting_profile_id": "planner"
+                    })
+                    .to_string(),
+                    text_signature: None,
+                }]),
+            },
+        );
+        assert_eq!(
+            requested,
+            vec![
+                CodingAgentEvent::ToolCallCompleted {
+                    operation_id: "op_1".into(),
+                    turn_id: "turn_1".into(),
+                    tool_call_id: "tool_delegate_1".into(),
+                    name: "delegate_agent".into(),
+                    summary: serde_json::json!({
+                        "status": "requested",
+                        "target_kind": "agent",
+                        "target_id": "coder",
+                        "task": "implement it",
+                        "requesting_profile_id": "planner"
+                    })
+                    .to_string(),
+                },
+                CodingAgentEvent::DelegationRequested {
+                    operation_id: "op_1".into(),
+                    turn_id: "turn_1".into(),
+                    tool_call_id: "tool_delegate_1".into(),
+                    requesting_profile_id: ProfileId::from("planner"),
+                    target_kind: ProfileKind::Agent,
+                    target_id: ProfileId::from("coder"),
+                    task: "implement it".into(),
+                },
+            ]
+        );
+
+        let rejected = map_agent_event(
+            &context,
+            &AgentEvent::ToolCallEnd {
+                tool_call_id: "tool_delegate_2".into(),
+                tool_name: "delegate_team".into(),
+                result: AgentToolResult::ok(vec![ContentBlock::Text {
+                    text: serde_json::json!({
+                        "status": "rejected",
+                        "target_kind": "team",
+                        "target_id": "implementation",
+                        "task": "build it",
+                        "requesting_profile_id": "planner",
+                        "message": "delegation policy max_depth is 0"
+                    })
+                    .to_string(),
+                    text_signature: None,
+                }]),
+            },
+        );
+        assert!(matches!(
+            rejected.as_slice(),
+            [
+                CodingAgentEvent::ToolCallCompleted { .. },
+                CodingAgentEvent::DelegationRejected {
+                    operation_id,
+                    turn_id,
+                    tool_call_id,
+                    requesting_profile_id,
+                    target_kind: ProfileKind::Team,
+                    target_id,
+                    task,
+                    reason,
+                },
+            ] if operation_id == "op_1"
+                && turn_id == "turn_1"
+                && tool_call_id == "tool_delegate_2"
+                && requesting_profile_id == &ProfileId::from("planner")
+                && target_id == &ProfileId::from("implementation")
+                && task == "build it"
+                && reason.contains("max_depth")
+        ));
     }
 
     #[test]

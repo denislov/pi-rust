@@ -1,4 +1,4 @@
-use super::{CodingSessionError, ProfileId};
+use super::{CodingSessionError, ProfileId, ProfileKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodingAgentEvent {
@@ -64,6 +64,25 @@ pub enum CodingAgentEvent {
     AgentTeamAborted {
         operation_id: String,
         team_id: ProfileId,
+        reason: String,
+    },
+    DelegationRequested {
+        operation_id: String,
+        turn_id: String,
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+    },
+    DelegationRejected {
+        operation_id: String,
+        turn_id: String,
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
         reason: String,
     },
     SessionWritePending {

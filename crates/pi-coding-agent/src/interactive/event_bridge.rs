@@ -135,6 +135,8 @@ impl CodingEventBridge {
             | CodingAgentEvent::AgentTeamCompleted { .. }
             | CodingAgentEvent::AgentTeamFailed { .. }
             | CodingAgentEvent::AgentTeamAborted { .. }
+            | CodingAgentEvent::DelegationRequested { .. }
+            | CodingAgentEvent::DelegationRejected { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }
