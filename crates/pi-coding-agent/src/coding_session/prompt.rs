@@ -22,7 +22,7 @@ use super::event::CodingAgentEvent;
 use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
 use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
-use super::profiles::AgentProfile;
+use super::profiles::{AgentProfile, DelegationPolicy, ProfileId};
 use super::session_log::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
     SessionEventEnvelope,
@@ -274,6 +274,8 @@ pub(crate) struct RuntimeSnapshot {
     thinking_level: Option<ThinkingLevel>,
     tool_execution: Option<ToolExecutionMode>,
     session_run_options: Option<SessionRunOptions>,
+    profile_id: Option<ProfileId>,
+    profile_delegation_policy: Option<DelegationPolicy>,
     profile_tool_allowlist: Option<Vec<String>>,
     profile_skill_allowlist: Option<Vec<String>>,
     profile_diagnostics: Vec<CodingDiagnostic>,
@@ -293,6 +295,8 @@ impl std::fmt::Debug for RuntimeSnapshot {
             .field("thinking_level", &self.thinking_level)
             .field("tool_execution", &self.tool_execution)
             .field("session_run_options", &self.session_run_options)
+            .field("profile_id", &self.profile_id)
+            .field("profile_delegation_policy", &self.profile_delegation_policy)
             .field("profile_tool_allowlist", &self.profile_tool_allowlist)
             .field("profile_skill_allowlist", &self.profile_skill_allowlist)
             .field("profile_diagnostics", &self.profile_diagnostics)
@@ -332,6 +336,8 @@ impl RuntimeSnapshot {
             thinking_level,
             tool_execution,
             session_run_options: session,
+            profile_id: None,
+            profile_delegation_policy: None,
             profile_tool_allowlist: None,
             profile_skill_allowlist: None,
             profile_diagnostics: Vec::new(),
@@ -358,24 +364,10 @@ impl RuntimeSnapshot {
         if let Some(system_prompt) = profile.system_prompt.as_ref() {
             self.system_prompt = Some(system_prompt.clone());
         }
-        if !profile.tools.is_empty() {
-            self.profile_tool_allowlist = Some(profile.tools.clone());
-        }
-        if !profile.skills.is_empty() {
-            self.profile_skill_allowlist = Some(profile.skills.clone());
-        }
-        if profile.delegation.allow_delegate_agent {
-            self.profile_diagnostics.push(CodingDiagnostic::warning(format!(
-                "agent profile {} enables agent delegation, but delegate_agent is not available yet",
-                profile.id
-            )));
-        }
-        if profile.delegation.allow_delegate_team {
-            self.profile_diagnostics.push(CodingDiagnostic::warning(format!(
-                "agent profile {} enables team delegation, but delegate_team is not available yet",
-                profile.id
-            )));
-        }
+        self.profile_id = Some(profile.id.clone());
+        self.profile_delegation_policy = Some(profile.delegation.clone());
+        self.profile_tool_allowlist = (!profile.tools.is_empty()).then(|| profile.tools.clone());
+        self.profile_skill_allowlist = (!profile.skills.is_empty()).then(|| profile.skills.clone());
     }
 
     pub(crate) fn model(&self) -> &Model {
@@ -420,6 +412,14 @@ impl RuntimeSnapshot {
 
     pub(crate) fn session_run_options(&self) -> Option<&SessionRunOptions> {
         self.session_run_options.as_ref()
+    }
+
+    pub(crate) fn profile_id(&self) -> Option<&ProfileId> {
+        self.profile_id.as_ref()
+    }
+
+    pub(crate) fn profile_delegation_policy(&self) -> Option<&DelegationPolicy> {
+        self.profile_delegation_policy.as_ref()
     }
 
     pub(crate) fn profile_tool_allowlist(&self) -> Option<&[String]> {

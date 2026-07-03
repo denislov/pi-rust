@@ -96,6 +96,71 @@ skills = ["missing_skill"]
     );
 }
 
+#[tokio::test]
+async fn delegating_agent_profile_exposes_policy_request_tools() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+allow_delegate_team = true
+max_depth = 1
+allowed_agents = ["coder"]
+allowed_teams = ["implementation"]
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "profile-runtime-delegation-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(vec![api.into()], calls.clone());
+
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_session_id("sess_profile_delegation_runtime")
+            .with_session_log_root(temp.path().join("sessions"))
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "delegate work"))
+        .await
+        .unwrap();
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let tool_names = calls[0]
+        .context
+        .tools
+        .as_ref()
+        .expect("delegation tools should be exposed to provider context")
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(tool_names.contains(&"delegate_agent"));
+    assert!(tool_names.contains(&"delegate_team"));
+    let PromptTurnOutcome::Success { diagnostics, .. } = outcome else {
+        panic!("expected successful prompt outcome: {outcome:#?}");
+    };
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("is not available yet")),
+        "delegation availability warnings should be retired: {diagnostics:#?}"
+    );
+}
+
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
     PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: prompt.into(),

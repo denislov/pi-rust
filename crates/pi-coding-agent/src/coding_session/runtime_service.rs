@@ -9,6 +9,7 @@ use pi_ai::types::{AssistantMessage, ContentBlock, StopReason};
 use crate::runtime::{SessionMode, build_agent_config};
 
 use super::CodingSessionError;
+use super::delegation::delegation_tools;
 use super::plugin_service::PluginService;
 use super::prompt::{CodingDiagnostic, RuntimeSnapshot};
 use super::session_log::event::PersistedContentBlock;
@@ -52,7 +53,14 @@ impl RuntimeService {
 
         let mut diagnostics = runtime.profile_diagnostics().to_vec();
         let resources = apply_skill_policy(runtime, &mut diagnostics);
-        let tools = apply_tool_policy(runtime, plugin_service.collect_tools(), &mut diagnostics);
+        let policy_tools =
+            delegation_tools(runtime.profile_id(), runtime.profile_delegation_policy());
+        let tools = apply_tool_policy(
+            runtime,
+            plugin_service.collect_tools(),
+            &policy_tools,
+            &mut diagnostics,
+        );
 
         let mut config = build_agent_config(
             runtime.model().clone(),
@@ -75,7 +83,7 @@ impl RuntimeService {
         }
 
         let agent = Agent::new(config);
-        for tool in tools {
+        for tool in tools.into_iter().chain(policy_tools) {
             agent.add_tool(tool);
         }
         Ok(AgentRuntimeBuild { agent, diagnostics })
@@ -196,6 +204,7 @@ impl RuntimeService {
 fn apply_tool_policy(
     runtime: &RuntimeSnapshot,
     plugin_tools: Vec<AgentTool>,
+    policy_tools: &[AgentTool],
     diagnostics: &mut Vec<CodingDiagnostic>,
 ) -> Vec<AgentTool> {
     let mut tools = runtime.tools().to_vec();
@@ -206,6 +215,7 @@ fn apply_tool_policy(
 
     let available = tools
         .iter()
+        .chain(policy_tools.iter())
         .map(|tool| tool.name.as_str())
         .collect::<BTreeSet<_>>();
     let allowed = allowlist

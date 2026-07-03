@@ -326,13 +326,13 @@ Files:
 
 Tasks:
 
-- [ ] Add session-owned delegation request tools such as `delegate_agent` and `delegate_team` only when the active profile policy allows them.
-- [ ] Make delegation tools return requests into `CodingAgentSession`; do not let the model instantiate child agents directly.
-- [ ] Enforce delegation policy: allowed ids, maximum depth, maximum child count, confirmation mode, and write/tool permissions.
+- [x] Add session-owned delegation request tools such as `delegate_agent` and `delegate_team` only when the active profile policy allows them.
+- [~] Make delegation tools return requests into `CodingAgentSession`; do not let the model instantiate child agents directly. Current tools return structured request/rejection envelopes through session-owned runtime construction; converting accepted requests into owner-authorized child flow execution remains follow-up.
+- [~] Enforce delegation policy: allowed ids, maximum depth, maximum child count, confirmation mode, and write/tool permissions. Current request-tool boundary enforces allowed agent/team ids and zero-depth rejection; maximum child count, confirmation mode, write/tool permissions, and recursive budget accounting remain follow-up.
 - [ ] Add a confirmation boundary for write-capable, team, or high-cost delegation when policy requires it.
 - [ ] Record delegation requested/approved/rejected/started/completed events.
 - [ ] Prevent recursive or unbounded delegation loops.
-- [ ] Keep delegation tools capability-scoped and free of raw session/runtime/provider internals.
+- [~] Keep delegation tools capability-scoped and free of raw session/runtime/provider internals. Current request tools expose only target id/task schemas and structured envelopes; child execution must preserve the same boundary.
 
 Acceptance:
 
@@ -409,7 +409,7 @@ source ~/.cargo/env && git diff --check
 - [x] `/team <id> <task>` runs a supervised team operation without changing the default profile.
 - [x] Single-agent sessions do not require a separate LLM supervisor.
 - [x] Team profiles always declare supervisor semantics.
-- [ ] Model-requested delegation goes through session-owned authorization and bounded execution.
+- [~] Model-requested delegation goes through session-owned authorization and bounded execution. Request tools are now session-owned and policy-gated; bounded child execution remains follow-up.
 - [x] Child operations cannot direct-commit parent session state.
 - [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events exist in `CodingAgentEvent`; capability and RPC/protocol surfaces remain Stage 8 follow-up.
-- [ ] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools.
+- [~] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools. Current delegation request tools preserve this; follow-up child execution must keep the same boundary.
