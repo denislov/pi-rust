@@ -1,4 +1,5 @@
 mod agent_invocation_flow;
+mod agent_team_flow;
 mod branch_summary_flow;
 mod capability_service;
 mod context;
@@ -20,6 +21,7 @@ mod session_log;
 mod session_service;
 
 pub use agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
+pub use agent_team_flow::{AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome};
 pub use context::{
     CapabilityStatus, CodingAgentCapabilities, CodingAgentSessionOptions,
     CodingAgentSessionSummary, CodingAgentSessionView,
@@ -44,6 +46,7 @@ pub use prompt::{
 };
 
 use agent_invocation_flow::AgentInvocationContext;
+use agent_team_flow::AgentTeamContext;
 use branch_summary_flow::{BranchSummaryContext, BranchSummaryOptions, BranchSummaryOutcome};
 use capability_service::CapabilityService;
 use event_service::EventService;
@@ -382,6 +385,14 @@ impl CodingAgentSession {
         self.invoke_agent_inner(options).await
     }
 
+    pub async fn invoke_team(
+        &mut self,
+        options: AgentTeamOptions,
+    ) -> Result<AgentTeamOutcome, CodingSessionError> {
+        let _operation = self.operation_control.begin(OperationKind::AgentTeam)?;
+        self.invoke_team_inner(options).await
+    }
+
     pub(crate) async fn reload_plugins(&mut self) -> Result<PluginLoadOutcome, CodingSessionError> {
         self.load_plugins(self.default_plugin_load_options.clone())
             .await
@@ -622,6 +633,19 @@ impl CodingAgentSession {
             self.event_service.clone(),
         );
         self.flow_service.run_agent_invocation(&mut context).await
+    }
+
+    async fn invoke_team_inner(
+        &mut self,
+        options: AgentTeamOptions,
+    ) -> Result<AgentTeamOutcome, CodingSessionError> {
+        let mut context = AgentTeamContext::new(
+            options,
+            self.profile_registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        );
+        self.flow_service.run_agent_team(&mut context).await
     }
 
     async fn compact_inner(
@@ -2577,6 +2601,12 @@ runtime = "lua"
             CodingAgentEvent::AgentInvocationCompleted { .. } => "agent_invocation_completed",
             CodingAgentEvent::AgentInvocationFailed { .. } => "agent_invocation_failed",
             CodingAgentEvent::AgentInvocationAborted { .. } => "agent_invocation_aborted",
+            CodingAgentEvent::AgentTeamStarted { .. } => "agent_team_started",
+            CodingAgentEvent::AgentTeamMemberStarted { .. } => "agent_team_member_started",
+            CodingAgentEvent::AgentTeamMemberCompleted { .. } => "agent_team_member_completed",
+            CodingAgentEvent::AgentTeamCompleted { .. } => "agent_team_completed",
+            CodingAgentEvent::AgentTeamFailed { .. } => "agent_team_failed",
+            CodingAgentEvent::AgentTeamAborted { .. } => "agent_team_aborted",
             CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
             CodingAgentEvent::SessionWriteCommitted { .. } => "session_write_committed",
             CodingAgentEvent::SessionWriteSkipped { .. } => "session_write_skipped",

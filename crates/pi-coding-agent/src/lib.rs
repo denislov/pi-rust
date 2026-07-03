@@ -37,14 +37,14 @@ pub use tools::builtin_tools;
 pub mod api {
     pub use crate::args::{CliArgs, CliMode, help_text, parse_args};
     pub use crate::coding_session::{
-        AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, CapabilityStatus,
-        CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver, CodingAgentSession,
-        CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
-        CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
-        CodingDiagnosticSeverity, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
-        ProfileDiagnostic, ProfileId, ProfileKind, ProfileRegistry, ProfileRegistryOptions,
-        ProfileSource, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, SupervisionPolicy,
-        TeamProfile, TeamStrategy, TeamSupervisor,
+        AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, AgentTeamMemberOutcome,
+        AgentTeamOptions, AgentTeamOutcome, CapabilityStatus, CodingAgentCapabilities,
+        CodingAgentEvent, CodingAgentEventReceiver, CodingAgentSession, CodingAgentSessionExport,
+        CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionSummary,
+        CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
+        DelegationConfirmationMode, DelegationPolicy, ProfileDiagnostic, ProfileId, ProfileKind,
+        ProfileRegistry, ProfileRegistryOptions, ProfileSource, PromptTurnMode, PromptTurnOptions,
+        PromptTurnOutcome, SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
     };
     pub use crate::error::CliError;
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};

@@ -16,8 +16,8 @@ use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{
     ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
-    PendingAgentInvocationRequest, PendingBranchSummaryRequest, PendingPluginCommandRequest,
-    PendingPluginUiAction, PendingPluginUiDialog, PluginUiDialogField,
+    PendingAgentInvocationRequest, PendingAgentTeamRequest, PendingBranchSummaryRequest,
+    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
@@ -591,6 +591,7 @@ fn handle_input_event<T: Terminal>(
         compact_instructions,
         branch_summary_request,
         agent_invocation_request,
+        agent_team_request,
         plugin_command_request,
         plugin_ui_action,
         plugin_ui_dialog,
@@ -630,6 +631,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let agent_team_request = if action == InteractiveAction::AgentTeam {
+            root.take_pending_agent_team_request()
+        } else {
+            None
+        };
         let plugin_command_request = if action == InteractiveAction::PluginCommand {
             root.take_pending_plugin_command_request()
         } else {
@@ -659,6 +665,7 @@ fn handle_input_event<T: Terminal>(
             compact_instructions,
             branch_summary_request,
             agent_invocation_request,
+            agent_team_request,
             plugin_command_request,
             plugin_ui_action,
             plugin_ui_dialog,
@@ -892,6 +899,22 @@ fn handle_input_event<T: Terminal>(
                 return Ok(LoopControl::Continue(render_request));
             };
             *running = Some(start_agent_invocation_task(
+                tui,
+                root_id,
+                request,
+                prompt_context,
+                coding_session,
+            )?);
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
+        InteractiveAction::AgentTeam => {
+            if running.is_some() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            let Some(request) = agent_team_request else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            *running = Some(start_agent_team_task(
                 tui,
                 root_id,
                 request,
@@ -1166,6 +1189,51 @@ fn start_agent_invocation_task<T: Terminal>(
         options,
         coding_session.take(),
         request.profile_id,
+        request.task,
+        prompt_context.default_agent_profile_id.clone(),
+    )?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
+}
+
+fn start_agent_team_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    request: PendingAgentTeamRequest,
+    prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<PromptTask, CliError> {
+    {
+        let root = root_mut(tui, root_id)?;
+        root.push_user(format!("/team {} {}", request.team_id, request.task));
+        root.set_status(InteractiveStatus::Running);
+    }
+
+    let task_prompt = request.task.clone();
+    let options = PromptRunOptions {
+        prompt: task_prompt.clone(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(task_prompt),
+    };
+
+    let task = PromptTask::spawn_agent_team(
+        options,
+        coding_session.take(),
+        request.team_id,
         request.task,
         prompt_context.default_agent_profile_id.clone(),
     )?;
@@ -1486,6 +1554,21 @@ fn finish_prompt<T: Terminal>(
                 result.session.view().default_agent_profile_id.clone(),
             );
             apply_success_usage(root, &result.outcome.final_message.usage);
+            if let Ok(Some(hydration)) = result.session.hydrate_current() {
+                let hydrated = hydrated_session_from_rust_native(hydration);
+                let mut choice = hydrated.choice;
+                if choice.active_leaf_id.is_none() {
+                    choice.active_leaf_id = root.active_leaf_id.clone();
+                }
+                root.set_active_session_choice(choice);
+            }
+            *coding_session = Some(result.session);
+        }
+        Ok(PromptTaskResult::AgentTeam(result)) => {
+            let _final_text = &result.outcome.final_text;
+            root.set_default_agent_profile_id(
+                result.session.view().default_agent_profile_id.clone(),
+            );
             if let Ok(Some(hydration)) = result.session.hydrate_current() {
                 let hydrated = hydrated_session_from_rust_native(hydration);
                 let mut choice = hydrated.choice;

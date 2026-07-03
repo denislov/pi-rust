@@ -118,6 +118,10 @@ impl PromptTurnOptions {
         self.runtime.as_ref()
     }
 
+    pub(crate) fn set_invocation(&mut self, invocation: PromptInvocation) {
+        self.invocation = invocation;
+    }
+
     pub(crate) fn apply_agent_profile(
         &mut self,
         profile: &AgentProfile,

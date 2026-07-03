@@ -129,6 +129,12 @@ impl CodingEventBridge {
             | CodingAgentEvent::AgentInvocationCompleted { .. }
             | CodingAgentEvent::AgentInvocationFailed { .. }
             | CodingAgentEvent::AgentInvocationAborted { .. }
+            | CodingAgentEvent::AgentTeamStarted { .. }
+            | CodingAgentEvent::AgentTeamMemberStarted { .. }
+            | CodingAgentEvent::AgentTeamMemberCompleted { .. }
+            | CodingAgentEvent::AgentTeamCompleted { .. }
+            | CodingAgentEvent::AgentTeamFailed { .. }
+            | CodingAgentEvent::AgentTeamAborted { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }

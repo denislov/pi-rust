@@ -12,6 +12,7 @@ pub(crate) enum OperationKind {
     PluginLoad,
     BranchSummary,
     AgentInvocation,
+    AgentTeam,
     Export,
 }
 
@@ -24,6 +25,7 @@ impl OperationKind {
             Self::PluginLoad => "plugin_load",
             Self::BranchSummary => "branch_summary",
             Self::AgentInvocation => "agent_invocation",
+            Self::AgentTeam => "agent_team",
             Self::Export => "export",
         }
     }

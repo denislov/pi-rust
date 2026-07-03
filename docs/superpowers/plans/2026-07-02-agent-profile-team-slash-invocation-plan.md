@@ -229,8 +229,8 @@ Tasks:
 - [x] Implement `/agents` and `/teams` list output from the session-owned profile registry.
 - [x] Implement `/agent use <agent-id>` as a session default profile switch.
 - [x] Implement `/agent <agent-id> <task>` as a one-off agent invocation operation.
-- [ ] Implement `/team <team-id> <task>` as a one-off team invocation operation.
-- [~] Reject missing ids/tasks with usage text. `/agent use`, one-off `/agent`, and pending `/team` parser validation are covered; full one-off team flow tests remain later.
+- [x] Implement `/team <team-id> <task>` as a one-off team invocation operation.
+- [x] Reject missing ids/tasks with usage text. `/agent use`, one-off `/agent`, and `/team` parser validation are covered.
 - [ ] Reject `@agent` and `@team` as normal prompt text; do not add mention parsing.
 - [ ] Keep plugin command slash aliases working and avoid id conflicts with built-in slash command names.
 - [x] Add completion/suggestion tests for the new slash commands.
@@ -293,13 +293,13 @@ Files:
 
 Tasks:
 
-- [ ] Add `AgentTeamFlow` with stable nodes for `start_team`, `plan_subtasks`, `run_member_agent`, `collect_member_result`, `merge_or_reject_result`, and `finalize_team`.
-- [ ] Require every `TeamProfile` to declare supervisor semantics.
-- [ ] Support an initial conservative strategy such as `plan_execute_review` before adding parallel strategies.
-- [ ] Resolve member ids to `AgentProfile` values at the session boundary.
-- [ ] Enforce child operation isolation and parent-controlled commit policy.
-- [ ] Record team/member lineage in typed product events.
-- [ ] Add deterministic faux-provider tests for two-member success, member failure, supervisor rejection, and coherent operation lineage.
+- [x] Add `AgentTeamFlow` with stable nodes for `start_team`, `plan_subtasks`, `run_member_agent`, `collect_member_result`, `merge_or_reject_result`, and `finalize_team`.
+- [x] Require every `TeamProfile` to declare supervisor semantics.
+- [x] Support an initial conservative strategy such as `plan_execute_review` before adding parallel strategies.
+- [x] Resolve member ids to `AgentProfile` values at the session boundary.
+- [x] Enforce child operation isolation and parent-controlled commit policy.
+- [x] Record team/member lineage in typed product events.
+- [~] Add deterministic faux-provider tests for two-member success, member failure, supervisor rejection, and coherent operation lineage. Current coverage includes two-member success, unknown-member failure, profile-backed supervisor execution, parent transcript isolation, and child operation lineage; explicit supervisor rejection and child runtime failure tests remain follow-up.
 
 Acceptance:
 
@@ -401,15 +401,15 @@ source ~/.cargo/env && git diff --check
 
 ## Acceptance Checklist
 
-- [ ] Explicit user invocation uses `/agent` and `/team`, not `@agent` or `@team`.
+- [x] Explicit user invocation uses `/agent` and `/team`, not `@agent` or `@team`.
 - [x] `default_agent_profile_id` is durable session configuration and resumes correctly.
 - [x] Ordinary prompts use the current default `AgentProfile`.
 - [x] `/agent use <id>` switches the default profile without running a task.
 - [x] `/agent <id> <task>` runs a one-off agent operation without changing the default profile.
-- [ ] `/team <id> <task>` runs a supervised team operation without changing the default profile.
-- [ ] Single-agent sessions do not require a separate LLM supervisor.
-- [ ] Team profiles always declare supervisor semantics.
+- [x] `/team <id> <task>` runs a supervised team operation without changing the default profile.
+- [x] Single-agent sessions do not require a separate LLM supervisor.
+- [x] Team profiles always declare supervisor semantics.
 - [ ] Model-requested delegation goes through session-owned authorization and bounded execution.
 - [x] Child operations cannot direct-commit parent session state.
-- [ ] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`.
+- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events exist in `CodingAgentEvent`; capability and RPC/protocol surfaces remain Stage 8 follow-up.
 - [ ] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools.

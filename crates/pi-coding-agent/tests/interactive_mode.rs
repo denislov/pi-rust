@@ -193,6 +193,70 @@ display_name = "Coder"
 }
 
 #[tokio::test]
+async fn scripted_interactive_agent_team_renders_member_replies() {
+    let _guard = ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+    std::fs::create_dir_all(dir.path().join("teams")).unwrap();
+    std::fs::write(
+        dir.path().join("agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("agents/reviewer.toml"),
+        r#"
+schema_version = 1
+id = "reviewer"
+display_name = "Reviewer"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("teams/implementation.toml"),
+        r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+supervisor = "deterministic"
+strategy = "plan_execute_review"
+members = ["coder", "reviewer"]
+"#,
+    )
+    .unwrap();
+    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path());
+    }
+
+    let provider = FauxProvider::new(vec![
+        text_response("coder reply"),
+        text_response("reviewer reply"),
+    ]);
+    let output = run_scripted_interactive(provider, "/team implementation do work\r").await;
+
+    unsafe {
+        match prior_pi_rust_dir {
+            Some(value) => std::env::set_var("PI_RUST_DIR", value),
+            None => std::env::remove_var("PI_RUST_DIR"),
+        }
+    }
+    let output = output.unwrap();
+    assert!(
+        output.contains("/team implementation do work"),
+        "{output:?}"
+    );
+    assert!(output.contains("coder reply"), "{output:?}");
+    assert!(output.contains("reviewer reply"), "{output:?}");
+    assert!(output.contains("status: idle"), "{output:?}");
+    assert!(!output.contains("requires AgentTeamFlow"), "{output:?}");
+}
+
+#[tokio::test]
 async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
     let provider = FauxProvider::new(vec![text_response("progress done")]);
     let output = run_scripted_interactive(provider, "show progress\r")

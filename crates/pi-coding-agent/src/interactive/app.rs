@@ -3049,6 +3049,57 @@ display_name = "Coder"
     }
 
     #[test]
+    fn team_command_queues_one_off_team_invocation() {
+        let _guard = crate::test_support::env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        write_profile_file(
+            cwd.join(".pi-rust/teams/implementation.toml"),
+            r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+supervisor = "deterministic"
+strategy = "plan_execute_review"
+members = ["coder"]
+"#,
+        );
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", &global);
+        }
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "team".to_string(),
+            args: "implementation refactor module".to_string(),
+            original: "/team implementation refactor module".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::AgentTeam);
+        let request = root
+            .take_pending_agent_team_request()
+            .expect("agent team invocation should be queued");
+        assert_eq!(request.team_id.as_str(), "implementation");
+        assert_eq!(request.task, "refactor module");
+        assert_eq!(root.default_agent_profile_id.as_str(), "default");
+        assert!(!last_system_text(&root).contains("requires AgentTeamFlow"));
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
+    }
+
+    #[test]
     fn agent_use_command_rejects_missing_or_unknown_profiles() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),

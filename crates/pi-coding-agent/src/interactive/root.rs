@@ -66,6 +66,7 @@ pub(super) enum InteractiveAction {
     PluginUiDialog,
     AgentProfileUse,
     AgentInvocation,
+    AgentTeam,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -110,6 +111,12 @@ pub(super) struct PendingBranchSummaryRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PendingAgentInvocationRequest {
     pub(super) profile_id: ProfileId,
+    pub(super) task: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingAgentTeamRequest {
+    pub(super) team_id: ProfileId,
     pub(super) task: String,
 }
 
@@ -512,6 +519,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_compact_instructions: Option<String>,
     pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
     pub(super) pending_agent_invocation_request: Option<PendingAgentInvocationRequest>,
+    pub(super) pending_agent_team_request: Option<PendingAgentTeamRequest>,
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
@@ -678,6 +686,7 @@ impl InteractiveRoot {
             pending_compact_instructions: None,
             pending_branch_summary_request: None,
             pending_agent_invocation_request: None,
+            pending_agent_team_request: None,
             pending_plugin_command_request: None,
             pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
@@ -823,6 +832,10 @@ impl InteractiveRoot {
         &mut self,
     ) -> Option<PendingAgentInvocationRequest> {
         self.pending_agent_invocation_request.take()
+    }
+
+    pub(super) fn take_pending_agent_team_request(&mut self) -> Option<PendingAgentTeamRequest> {
+        self.pending_agent_team_request.take()
     }
 
     pub(super) fn take_pending_plugin_command_request(

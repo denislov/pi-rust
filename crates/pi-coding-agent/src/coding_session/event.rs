@@ -32,6 +32,40 @@ pub enum CodingAgentEvent {
         profile_id: ProfileId,
         reason: String,
     },
+    AgentTeamStarted {
+        operation_id: String,
+        team_id: ProfileId,
+        task: String,
+    },
+    AgentTeamMemberStarted {
+        operation_id: String,
+        child_operation_id: String,
+        team_id: ProfileId,
+        profile_id: ProfileId,
+        task: String,
+    },
+    AgentTeamMemberCompleted {
+        operation_id: String,
+        child_operation_id: String,
+        team_id: ProfileId,
+        profile_id: ProfileId,
+        final_text: String,
+    },
+    AgentTeamCompleted {
+        operation_id: String,
+        team_id: ProfileId,
+        final_text: String,
+    },
+    AgentTeamFailed {
+        operation_id: String,
+        team_id: ProfileId,
+        error: CodingSessionError,
+    },
+    AgentTeamAborted {
+        operation_id: String,
+        team_id: ProfileId,
+        reason: String,
+    },
     SessionWritePending {
         operation_id: String,
     },

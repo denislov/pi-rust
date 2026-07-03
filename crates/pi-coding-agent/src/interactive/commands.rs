@@ -10,8 +10,8 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
-    PendingBranchSummaryRequest, PendingPluginCommandRequest, PendingPluginUiDialog,
-    PluginUiDialogField,
+    PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingPluginCommandRequest,
+    PendingPluginUiDialog, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -251,9 +251,11 @@ fn handle_team_command(root: &mut InteractiveRoot, args: &str) {
             .push(TranscriptItem::system("Usage: /team <team-id> <task>"));
         return;
     }
-    root.transcript.push(TranscriptItem::system(
-        "/team <team-id> <task> is recognized but requires AgentTeamFlow.",
-    ));
+    root.pending_agent_team_request = Some(PendingAgentTeamRequest {
+        team_id: team_id.into(),
+        task: task.to_string(),
+    });
+    root.action = InteractiveAction::AgentTeam;
 }
 
 fn handle_pending_slash_command(root: &mut InteractiveRoot, command: &ParsedSlashCommand) {
