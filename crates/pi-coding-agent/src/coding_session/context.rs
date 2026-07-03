@@ -141,6 +141,9 @@ pub struct CodingAgentCapabilities {
     pub switch_session: CapabilityStatus,
     pub export: CapabilityStatus,
     pub plugin_reload: CapabilityStatus,
+    pub agent_profiles: CapabilityStatus,
+    pub team_profiles: CapabilityStatus,
+    pub delegation: CapabilityStatus,
     pub tools: CapabilityStatus,
     pub shell: CapabilityStatus,
     pub plugins: CapabilityStatus,
@@ -182,6 +185,12 @@ impl CodingAgentCapabilities {
                 reason: "no prompt is running".into(),
             },
         };
+        let profile_operation_capability = match active_operation {
+            Some(operation) => CapabilityStatus::Busy {
+                operation: operation.as_str().into(),
+            },
+            None => CapabilityStatus::Available,
+        };
 
         Self {
             prompt,
@@ -197,6 +206,11 @@ impl CodingAgentCapabilities {
             },
             export: persistent_session_capability.clone(),
             plugin_reload: persistent_session_capability,
+            agent_profiles: profile_operation_capability.clone(),
+            team_profiles: profile_operation_capability,
+            delegation: CapabilityStatus::Unsupported {
+                reason: "delegation child execution is not implemented yet".into(),
+            },
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,

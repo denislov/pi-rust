@@ -252,6 +252,13 @@ async fn rpc_state_reports_capabilities_when_idle() {
         assert_eq!(capabilities[capability]["reason"], "no prompt is running");
     }
     assert_eq!(capabilities["tools"]["status"], "available");
+    assert_eq!(capabilities["agentProfiles"]["status"], "available");
+    assert_eq!(capabilities["teamProfiles"]["status"], "available");
+    assert_eq!(capabilities["delegation"]["status"], "unsupported");
+    assert_eq!(
+        capabilities["delegation"]["reason"],
+        "delegation child execution is not implemented yet"
+    );
     for capability in [
         "compact",
         "fork",
@@ -343,6 +350,10 @@ async fn rpc_state_reports_prompt_busy_while_running() {
     assert_eq!(capabilities["abort"]["status"], "available");
     assert_eq!(capabilities["steer"]["status"], "available");
     assert_eq!(capabilities["followUp"]["status"], "available");
+    assert_eq!(capabilities["agentProfiles"]["status"], "busy");
+    assert_eq!(capabilities["agentProfiles"]["operation"], "prompt");
+    assert_eq!(capabilities["teamProfiles"]["status"], "busy");
+    assert_eq!(capabilities["teamProfiles"]["operation"], "prompt");
     registry::unregister(api);
 }
 

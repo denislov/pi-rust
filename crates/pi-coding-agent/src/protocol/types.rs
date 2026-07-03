@@ -236,6 +236,11 @@ pub struct RpcCapabilities {
     pub export: RpcCapabilityStatus,
     #[serde(rename = "pluginReload")]
     pub plugin_reload: RpcCapabilityStatus,
+    #[serde(rename = "agentProfiles")]
+    pub agent_profiles: RpcCapabilityStatus,
+    #[serde(rename = "teamProfiles")]
+    pub team_profiles: RpcCapabilityStatus,
+    pub delegation: RpcCapabilityStatus,
     pub tools: RpcCapabilityStatus,
     pub shell: RpcCapabilityStatus,
     pub plugins: RpcCapabilityStatus,
@@ -264,6 +269,9 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             switch_session: capabilities.switch_session.into(),
             export: capabilities.export.into(),
             plugin_reload: capabilities.plugin_reload.into(),
+            agent_profiles: capabilities.agent_profiles.into(),
+            team_profiles: capabilities.team_profiles.into(),
+            delegation: capabilities.delegation.into(),
             tools: capabilities.tools.into(),
             shell: capabilities.shell.into(),
             plugins: capabilities.plugins.into(),

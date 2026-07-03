@@ -136,6 +136,11 @@ async fn coding_session_public_api_symbols_are_importable() {
             },
             export: CapabilityStatus::Available,
             plugin_reload: CapabilityStatus::Available,
+            agent_profiles: CapabilityStatus::Available,
+            team_profiles: CapabilityStatus::Available,
+            delegation: CapabilityStatus::Unsupported {
+                reason: "delegation child execution is not implemented yet".into(),
+            },
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,
