@@ -115,9 +115,14 @@ RPC mode currently supports:
 {"id":"s1","type":"set_default_agent_profile","profileId":"coder"}
 {"id":"i1","type":"invoke_agent","profileId":"coder","task":"implement parser"}
 {"id":"g1","type":"invoke_team","teamId":"implementation","task":"ship feature"}
+{"id":"d1","type":"list_delegation_confirmations"}
+{"id":"d2","type":"approve_delegation","operationId":"op_...","toolCallId":"tool_..."}
+{"id":"d3","type":"reject_delegation","operationId":"op_...","toolCallId":"tool_...","reason":"not now"}
 ```
 
 `set_default_agent_profile` emits a `default_agent_profile_changed` protocol event after the command response. `invoke_agent` and `invoke_team` run through the same background operation path as prompts and stream semantic lifecycle protocol events such as `agent_invocation_start`, `agent_team_start`, `agent_team_member_start`, and matching end/error/abort events.
+
+`list_delegation_confirmations` returns confirmation-held delegation requests for the current session owner. `approve_delegation` removes the matching pending request and executes it through the same session-owned child agent/team flow used by auto-approved delegation. `reject_delegation` removes the pending request and emits a rejection event. Both commands identify a pending request by the `operationId` and `toolCallId` from the original `delegation_confirmation_required` event.
 
 RPC `get_state.capabilities` includes `agentProfiles`, `teamProfiles`, and `delegation`. Profile/team operations report `busy` while an agent or team invocation is running. Delegation reports `available` when the session owner can run bounded, policy-gated delegation and `busy` while another owner operation is active. Individual `delegate_agent` and `delegate_team` tools are still exposed only when the active `AgentProfile` policy allows them.
 
@@ -136,12 +141,15 @@ Current behavior:
 - Rejected requests return structured rejection envelopes and emit `DelegationRejected` product events.
 - Auto-approved requests run through session-owned child agent/team flows and emit `DelegationApproved`, `DelegationStarted`, and either `DelegationCompleted` or `DelegationFailed` product events.
 - Delegated child prompts authorize their own queued delegation requests at child depth. Exhausted nested requests emit `DelegationRejected` instead of being silently dropped.
-- Requests that require confirmation emit `DelegationConfirmationRequired` and are not executed until a future confirmation UX approves them.
+- Requests that require confirmation emit `DelegationConfirmationRequired`, are held in the current session owner's pending confirmation queue, and can be listed, approved, or rejected through RPC.
+- Pending-confirmation approval emits `DelegationApproved`, starts the child agent/team flow, and then emits `DelegationStarted` plus `DelegationCompleted` or `DelegationFailed`. Pending-confirmation rejection emits `DelegationRejected` and does not run child work.
 - The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_confirmation_required`, `delegation_approved`, `delegation_started`, `delegation_completed`, and `delegation_failed`.
+- The pending confirmation queue is currently in-memory owner state. It is not restored after process restart or session reopen.
 
 Still follow-up:
 
-- Confirmation prompts and RPC/interactive approval commands for write-capable, team, or high-cost delegation.
+- Interactive confirmation prompts/approval UI for write-capable, team, or high-cost delegation.
+- Durable pending-confirmation persistence, expiry, and stale-request policy.
 - Recursive child execution and inherited budget accounting beyond the current child-depth authorization boundary.
 - Capability release policy for delegated child work.
 

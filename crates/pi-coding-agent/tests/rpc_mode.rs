@@ -1,4 +1,4 @@
-use pi_ai::providers::faux::FauxProvider;
+use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::registry;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
@@ -33,11 +33,41 @@ fn faux_model(api: &str) -> Model {
     }
 }
 
+fn large_context_faux_model(api: &str) -> Model {
+    let mut model = faux_model(api);
+    model.context_window = 100_000;
+    model
+}
+
 fn parse_lines(bytes: &[u8]) -> Vec<serde_json::Value> {
     String::from_utf8_lossy(bytes)
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+fn text_response(text: &str) -> FauxResponse {
+    FauxResponse {
+        text_deltas: vec![text.to_string()],
+        thinking_deltas: Vec::new(),
+        tool_calls: Vec::new(),
+    }
+}
+
+fn delegate_agent_response(tool_call_id: &str, agent_id: &str, task: &str) -> FauxResponse {
+    FauxResponse {
+        text_deltas: Vec::new(),
+        thinking_deltas: Vec::new(),
+        tool_calls: vec![FauxToolCall {
+            id: tool_call_id.into(),
+            name: "delegate_agent".into(),
+            deltas: Vec::new(),
+            final_arguments: serde_json::json!({
+                "agent_id": agent_id,
+                "task": task,
+            }),
+        }],
+    }
 }
 
 fn write_file(path: impl AsRef<std::path::Path>, content: &str) {
@@ -509,6 +539,454 @@ async fn rpc_invoke_agent_rejects_unknown_profile() {
     assert_eq!(lines[0]["command"], "invoke_agent");
     assert_eq!(lines[0]["success"], false);
     assert_eq!(lines[0]["error"], "Unknown agent profile: missing");
+}
+
+#[tokio::test]
+async fn rpc_lists_and_approves_delegation_confirmation() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+"#,
+    );
+
+    let api = "pi-coding-rpc-delegation-approve";
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![delegate_agent_response(
+                    "tool_delegate_agent",
+                    "coder",
+                    "implement parser",
+                )],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxCall {
+                responses: vec![text_response("parent ready")],
+                stop_reason: StopReason::Stop,
+            },
+            FauxCall {
+                responses: vec![text_response("child result")],
+                stop_reason: StopReason::Stop,
+            },
+        ])),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(2048);
+    let (output_writer, output_reader) = tokio::io::duplex(8192);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(large_context_faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                session: SessionRunOptions::disabled(cwd),
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+    input_writer
+        .write_all(
+            b"{\"id\":\"p1\",\"type\":\"set_default_agent_profile\",\"profileId\":\"delegating-planner\"}\n",
+        )
+        .await
+        .unwrap();
+    let set_default_response = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before set_default_agent_profile response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "set_default_agent_profile" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("set_default_agent_profile response");
+    assert_eq!(set_default_response["success"], true);
+
+    input_writer
+        .write_all(b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
+        .await
+        .unwrap();
+    let confirmation = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut seen = Vec::new();
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before delegation confirmation event: {seen:?}");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let event_type = value["type"].as_str().unwrap_or("<missing-type>");
+            let summary = if event_type == "response" {
+                format!(
+                    "response command={} success={} error={}",
+                    value["command"].as_str().unwrap_or("<missing-command>"),
+                    value["success"].as_bool().unwrap_or(false),
+                    value["error"].as_str().unwrap_or("")
+                )
+            } else {
+                event_type.to_string()
+            };
+            seen.push(summary);
+            if value["type"] == "delegation_confirmation_required" {
+                break value;
+            }
+            if value["type"] == "agent_end" {
+                panic!("prompt ended before delegation confirmation event: {seen:?}");
+            }
+        }
+    })
+    .await
+    .expect("delegation confirmation event");
+    let operation_id = confirmation["operationId"].as_str().unwrap().to_string();
+    let tool_call_id = confirmation["toolCallId"].as_str().unwrap().to_string();
+    assert_eq!(confirmation["requestingProfileId"], "delegating-planner");
+    assert_eq!(confirmation["targetKind"], "agent");
+    assert_eq!(confirmation["targetId"], "coder");
+    assert_eq!(confirmation["task"], "implement parser");
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before prompt completion");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "agent_end" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("prompt completion");
+
+    input_writer
+        .write_all(b"{\"id\":\"l1\",\"type\":\"list_delegation_confirmations\"}\n")
+        .await
+        .unwrap();
+    let list_response = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before list_delegation_confirmations response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "list_delegation_confirmations" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("list_delegation_confirmations response");
+    assert_eq!(list_response["success"], true);
+    assert_eq!(
+        list_response["data"]["confirmations"][0]["operationId"],
+        operation_id
+    );
+    assert_eq!(
+        list_response["data"]["confirmations"][0]["toolCallId"],
+        tool_call_id
+    );
+
+    let approve_command = serde_json::json!({
+        "id": "a1",
+        "type": "approve_delegation",
+        "operationId": operation_id,
+        "toolCallId": tool_call_id,
+    })
+    .to_string()
+        + "\n";
+    input_writer
+        .write_all(approve_command.as_bytes())
+        .await
+        .unwrap();
+
+    let approve_response = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before approve_delegation response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "approve_delegation" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("approve_delegation response");
+    assert_eq!(approve_response["success"], true);
+    assert_eq!(approve_response["data"]["delegation"]["targetId"], "coder");
+
+    let mut saw_approved = false;
+    let mut saw_completed = false;
+    {
+        let mut seen = Vec::new();
+        loop {
+            let line = tokio::time::timeout(Duration::from_secs(2), lines.next_line())
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "timed out before delegation approval completion: saw_approved={saw_approved}, saw_completed={saw_completed}, seen={seen:?}"
+                    )
+                })
+                .unwrap();
+            let Some(line) = line else {
+                panic!("rpc output closed before delegation approval completion: {seen:?}");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            seen.push(if value["type"] == "delegation_completed" {
+                format!(
+                    "delegation_completed target={} finalText={}",
+                    value["targetId"].as_str().unwrap_or("<missing-target>"),
+                    value["finalText"].as_str().unwrap_or("<missing-finalText>")
+                )
+            } else {
+                value["type"]
+                    .as_str()
+                    .unwrap_or("<missing-type>")
+                    .to_string()
+            });
+            if value["type"] == "delegation_approved" {
+                saw_approved = true;
+            }
+            if value["type"] == "delegation_completed"
+                && value["targetId"] == "coder"
+                && value["finalText"] == "child result"
+            {
+                saw_completed = true;
+            }
+            if saw_approved && saw_completed {
+                break;
+            }
+        }
+    }
+
+    drop(input_writer);
+    task.await.unwrap();
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_rejects_delegation_confirmation() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    );
+
+    let api = "pi-coding-rpc-delegation-reject";
+    registry::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![delegate_agent_response(
+                    "tool_delegate_agent",
+                    "coder",
+                    "implement parser",
+                )],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxCall {
+                responses: vec![text_response("parent ready")],
+                stop_reason: StopReason::Stop,
+            },
+        ])),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(2048);
+    let (output_writer, output_reader) = tokio::io::duplex(8192);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(large_context_faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                session: SessionRunOptions::disabled(cwd),
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+    input_writer
+        .write_all(
+            b"{\"id\":\"p1\",\"type\":\"set_default_agent_profile\",\"profileId\":\"delegating-planner\"}\n",
+        )
+        .await
+        .unwrap();
+    let set_default_response = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before set_default_agent_profile response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "set_default_agent_profile" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("set_default_agent_profile response");
+    assert_eq!(set_default_response["success"], true);
+
+    input_writer
+        .write_all(b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
+        .await
+        .unwrap();
+    let confirmation = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before delegation confirmation event");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "delegation_confirmation_required" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("delegation confirmation event");
+    let operation_id = confirmation["operationId"].as_str().unwrap().to_string();
+    let tool_call_id = confirmation["toolCallId"].as_str().unwrap().to_string();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before prompt completion");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "agent_end" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("prompt completion");
+
+    let reject_command = serde_json::json!({
+        "id": "r1",
+        "type": "reject_delegation",
+        "operationId": operation_id,
+        "toolCallId": tool_call_id,
+        "reason": "not now",
+    })
+    .to_string()
+        + "\n";
+    input_writer
+        .write_all(reject_command.as_bytes())
+        .await
+        .unwrap();
+
+    let reject_response = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before reject_delegation response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "reject_delegation" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("reject_delegation response");
+    assert_eq!(reject_response["success"], true);
+    assert_eq!(reject_response["data"]["reason"], "not now");
+
+    let rejected_event = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before delegation_rejected event");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "delegation_rejected" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("delegation_rejected event");
+    assert_eq!(rejected_event["targetId"], "coder");
+    assert_eq!(rejected_event["reason"], "not now");
+
+    drop(input_writer);
+    task.await.unwrap();
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_approve_delegation_rejects_unknown_pending_request() {
+    let input = br#"{"id":"a1","type":"approve_delegation","operationId":"op_missing","toolCallId":"tool_missing"}
+"#;
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-delegation-missing")),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "a1");
+    assert_eq!(lines[0]["command"], "approve_delegation");
+    assert_eq!(lines[0]["success"], false);
+    assert_eq!(lines[0]["error"], "no active coding session");
 }
 
 #[tokio::test]

@@ -82,6 +82,41 @@ pub struct CodingAgentSession {
     profile_registry: ProfileRegistry,
     default_plugin_load_options: PluginLoadOptions,
     operation_control: OperationControl,
+    pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDelegationConfirmation {
+    pub operation_id: String,
+    pub turn_id: String,
+    pub tool_call_id: String,
+    pub requesting_profile_id: ProfileId,
+    pub target_kind: ProfileKind,
+    pub target_id: ProfileId,
+    pub task: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+struct PendingDelegationConfirmationState {
+    request: DelegationRequest,
+    prompt_options: PromptTurnOptions,
+    reason: String,
+}
+
+impl PendingDelegationConfirmationState {
+    fn view(&self) -> PendingDelegationConfirmation {
+        PendingDelegationConfirmation {
+            operation_id: self.request.operation_id.clone(),
+            turn_id: self.request.turn_id.clone(),
+            tool_call_id: self.request.tool_call_id.clone(),
+            requesting_profile_id: self.request.requesting_profile_id.clone(),
+            target_kind: self.request.target_kind,
+            target_id: self.request.target_id.clone(),
+            task: self.request.task.clone(),
+            reason: self.reason.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -371,6 +406,61 @@ impl CodingAgentSession {
         Ok(())
     }
 
+    pub fn pending_delegation_confirmations(&self) -> Vec<PendingDelegationConfirmation> {
+        self.pending_delegation_confirmations
+            .iter()
+            .map(PendingDelegationConfirmationState::view)
+            .collect()
+    }
+
+    pub async fn approve_delegation_confirmation(
+        &mut self,
+        operation_id: impl AsRef<str>,
+        tool_call_id: impl AsRef<str>,
+    ) -> Result<(), CodingSessionError> {
+        let index = self
+            .pending_delegation_confirmation_index(operation_id.as_ref(), tool_call_id.as_ref())?;
+        let operation_kind = match self.pending_delegation_confirmations[index]
+            .request
+            .target_kind
+        {
+            ProfileKind::Agent => OperationKind::AgentInvocation,
+            ProfileKind::Team => OperationKind::AgentTeam,
+        };
+        let _operation = self.operation_control.begin(operation_kind)?;
+        let pending = self.pending_delegation_confirmations.remove(index);
+        self.emit_delegation_approved(&pending.request);
+        match pending.request.target_kind {
+            ProfileKind::Agent => {
+                self.execute_approved_agent_delegation(&pending.request, pending.prompt_options)
+                    .await
+            }
+            ProfileKind::Team => {
+                self.execute_approved_team_delegation(&pending.request, pending.prompt_options)
+                    .await
+            }
+        }
+    }
+
+    pub fn reject_delegation_confirmation(
+        &mut self,
+        operation_id: impl AsRef<str>,
+        tool_call_id: impl AsRef<str>,
+        reason: impl Into<String>,
+    ) -> Result<(), CodingSessionError> {
+        let index = self
+            .pending_delegation_confirmation_index(operation_id.as_ref(), tool_call_id.as_ref())?;
+        let pending = self.pending_delegation_confirmations.remove(index);
+        let reason = reason.into();
+        let reason = if reason.trim().is_empty() {
+            "delegation rejected by user".to_string()
+        } else {
+            reason
+        };
+        self.emit_delegation_rejected(&pending.request, &reason);
+        Ok(())
+    }
+
     pub async fn prompt(
         &mut self,
         options: PromptTurnOptions,
@@ -504,6 +594,7 @@ impl CodingAgentSession {
             profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
+            pending_delegation_confirmations: Vec::new(),
         })
     }
 
@@ -522,6 +613,7 @@ impl CodingAgentSession {
             profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
+            pending_delegation_confirmations: Vec::new(),
         })
     }
 
@@ -683,7 +775,7 @@ impl CodingAgentSession {
     }
 
     async fn execute_authorized_delegations(
-        &self,
+        &mut self,
         decisions: &[DelegationAuthorizationDecision],
         prompt_options: PromptTurnOptions,
     ) -> Result<(), CodingSessionError> {
@@ -703,6 +795,13 @@ impl CodingAgentSession {
                     }
                 }
                 DelegationAuthorizationDecision::RequiresConfirmation { request, reason } => {
+                    self.pending_delegation_confirmations.push(
+                        PendingDelegationConfirmationState {
+                            request: request.clone(),
+                            prompt_options: prompt_options.clone(),
+                            reason: reason.clone(),
+                        },
+                    );
                     self.emit_delegation_confirmation_required(request, reason);
                 }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
@@ -711,6 +810,24 @@ impl CodingAgentSession {
             }
         }
         Ok(())
+    }
+
+    fn pending_delegation_confirmation_index(
+        &self,
+        operation_id: &str,
+        tool_call_id: &str,
+    ) -> Result<usize, CodingSessionError> {
+        self.pending_delegation_confirmations
+            .iter()
+            .position(|pending| {
+                pending.request.operation_id == operation_id
+                    && pending.request.tool_call_id == tool_call_id
+            })
+            .ok_or_else(|| CodingSessionError::Input {
+                message: format!(
+                    "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
+                ),
+            })
     }
 
     async fn execute_approved_agent_delegation(

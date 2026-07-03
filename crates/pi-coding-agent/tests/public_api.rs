@@ -4,9 +4,10 @@ use pi_coding_agent::api::{
     CliRunOptions, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
     CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
-    CodingDiagnosticSeverity, CodingSessionError, PrintModeOptions, ProfileId, PromptInvocation,
-    PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, SessionMode,
-    ToolFilter, builtin_tools, filter_tools, help_text, parse_args, render_diagnostics,
+    CodingDiagnosticSeverity, CodingSessionError, PendingDelegationConfirmation, PrintModeOptions,
+    ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions,
+    PromptTurnOutcome, SessionMode, ToolFilter, builtin_tools, filter_tools, help_text, parse_args,
+    render_diagnostics,
 };
 
 fn model(api: &str) -> Model {
@@ -153,12 +154,14 @@ async fn coding_session_public_api_symbols_are_importable() {
     );
     assert!(session.team_profiles().is_empty());
     assert!(session.profile_diagnostics().is_empty());
+    assert!(session.pending_delegation_confirmations().is_empty());
 
     let mut receiver = session.subscribe();
     assert!(receiver.try_recv().unwrap().is_none());
     let _receiver_type_name = std::any::type_name::<CodingAgentEventReceiver>();
     let _export_type_name = std::any::type_name::<CodingAgentSessionExport>();
     let _export_item_type_name = std::any::type_name::<CodingAgentSessionExportItem>();
+    let _pending_delegation_type_name = std::any::type_name::<PendingDelegationConfirmation>();
 
     let error = CodingSessionError::UnsupportedCapability {
         capability: "prompt".into(),

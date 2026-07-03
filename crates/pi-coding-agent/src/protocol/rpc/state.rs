@@ -54,6 +54,7 @@ pub(super) enum CodingOperationOutcome {
     Prompt(Result<PromptTurnOutcome, CliError>),
     AgentInvocation(Result<AgentInvocationOutcome, CliError>),
     AgentTeam(Result<AgentTeamOutcome, CliError>),
+    DelegationApproval(Result<(), CliError>),
 }
 
 impl RpcState {

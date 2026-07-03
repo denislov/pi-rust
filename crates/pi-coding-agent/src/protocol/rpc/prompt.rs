@@ -1,10 +1,10 @@
 use crate::CliError;
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, CodingAgentSession, CodingAgentSessionOptions,
-    OperationKind, ProfileId, PromptTurnMode, PromptTurnOptions,
+    OperationKind, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
-use crate::protocol::rpc::commands::has_images;
+use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::{
     CodingOperationOutcome, CodingOperationTaskResult, CodingRunningPrompt, RpcState, RunningPrompt,
@@ -450,6 +450,132 @@ impl RpcState {
         Ok(())
     }
 
+    pub(super) async fn handle_approve_delegation<W>(
+        &mut self,
+        id: Option<String>,
+        operation_id: String,
+        tool_call_id: String,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "approve_delegation",
+                    "cannot approve delegation while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let Some(mut session) = self.coding_session.take() else {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(id, "approve_delegation", "no active coding session"),
+            )
+            .await?;
+            return Ok(());
+        };
+
+        let pending = match session
+            .pending_delegation_confirmations()
+            .into_iter()
+            .find(|pending| {
+                pending.operation_id == operation_id && pending.tool_call_id == tool_call_id
+            }) {
+            Some(pending) => pending,
+            None => {
+                self.coding_session = Some(session);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(
+                        id,
+                        "approve_delegation",
+                        format!(
+                            "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
+                        ),
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        let operation_kind = match pending.target_kind {
+            ProfileKind::Agent => OperationKind::AgentInvocation,
+            ProfileKind::Team => OperationKind::AgentTeam,
+        };
+        let session_root = if matches!(self.options.session.mode, SessionMode::Enabled) {
+            Some(rpc_coding_session_root(&self.options.session)?)
+        } else {
+            None
+        };
+        let mut receiver = session.subscribe();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+
+        write_rpc_response(
+            writer,
+            RpcResponse::success(
+                id,
+                "approve_delegation",
+                Some(serde_json::json!({
+                    "delegation": rpc_pending_delegation_confirmation(&pending),
+                })),
+            ),
+        )
+        .await?;
+        write_json_line(writer, &ProtocolEvent::AgentStart).await?;
+
+        tokio::spawn(async move {
+            let outcome = {
+                let mut approval =
+                    Box::pin(session.approve_delegation_confirmation(operation_id, tool_call_id));
+                loop {
+                    tokio::select! {
+                        event = receiver.recv() => {
+                            if let Ok(event) = event {
+                                let _ = event_tx.send(event);
+                            }
+                        }
+                        outcome = &mut approval => {
+                            break outcome.map_err(CliError::from);
+                        }
+                    }
+                }
+            };
+
+            while let Ok(Some(event)) = receiver.try_recv() {
+                let _ = event_tx.send(event);
+            }
+
+            let _ = done_tx.send(CodingOperationTaskResult {
+                session,
+                session_root,
+                outcome: CodingOperationOutcome::DelegationApproval(outcome),
+            });
+        });
+
+        self.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
+            events: event_rx,
+            done: done_rx,
+            control: None,
+            operation_kind,
+            adapter: RpcCodingEventAdapter::new_with_provider(
+                self.model.api.clone(),
+                self.model.provider.clone(),
+                self.model.id.clone(),
+            ),
+            events_closed: false,
+        }));
+
+        Ok(())
+    }
+
     async fn start_coding_session_prompt<W>(
         &mut self,
         id: Option<String>,
@@ -627,6 +753,9 @@ impl RpcState {
                 outcome.as_ref().map(|_| ()).map_err(Clone::clone)
             }
             CodingOperationOutcome::AgentTeam(outcome) => {
+                outcome.as_ref().map(|_| ()).map_err(Clone::clone)
+            }
+            CodingOperationOutcome::DelegationApproval(outcome) => {
                 outcome.as_ref().map(|_| ()).map_err(Clone::clone)
             }
         };

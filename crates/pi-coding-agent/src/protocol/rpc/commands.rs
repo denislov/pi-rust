@@ -1,8 +1,9 @@
 use crate::CliError;
 use crate::coding_session::{
     AgentProfile, CodingAgentSession, CodingAgentSessionOptions, DelegationConfirmationMode,
-    DelegationPolicy, PluginLoadOutcome, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource,
-    SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+    DelegationPolicy, PendingDelegationConfirmation, PluginLoadOutcome, ProfileDiagnostic,
+    ProfileId, ProfileKind, ProfileSource, SupervisionPolicy, TeamProfile, TeamStrategy,
+    TeamSupervisor,
 };
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::RpcState;
@@ -251,6 +252,26 @@ impl RpcState {
             } => self.handle_invoke_agent(id, profile_id, task, writer).await,
             RpcCommand::InvokeTeam { id, team_id, task } => {
                 self.handle_invoke_team(id, team_id, task, writer).await
+            }
+            RpcCommand::ListDelegationConfirmations { id } => {
+                self.handle_list_delegation_confirmations(id, writer).await
+            }
+            RpcCommand::ApproveDelegation {
+                id,
+                operation_id,
+                tool_call_id,
+            } => {
+                self.handle_approve_delegation(id, operation_id, tool_call_id, writer)
+                    .await
+            }
+            RpcCommand::RejectDelegation {
+                id,
+                operation_id,
+                tool_call_id,
+                reason,
+            } => {
+                self.handle_reject_delegation(id, operation_id, tool_call_id, reason, writer)
+                    .await
             }
             RpcCommand::SetThinkingLevel { id, level } => {
                 self.thinking_level = level;
@@ -510,6 +531,146 @@ impl RpcState {
         Ok(())
     }
 
+    async fn handle_list_delegation_confirmations<W>(
+        &mut self,
+        id: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "list_delegation_confirmations",
+                    "cannot list delegation confirmations while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let confirmations = self
+            .coding_session
+            .as_ref()
+            .map(CodingAgentSession::pending_delegation_confirmations)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pending| rpc_pending_delegation_confirmation(&pending))
+            .collect::<Vec<_>>();
+        write_rpc_response(
+            writer,
+            RpcResponse::success(
+                id,
+                "list_delegation_confirmations",
+                Some(serde_json::json!({ "confirmations": confirmations })),
+            ),
+        )
+        .await
+    }
+
+    async fn handle_reject_delegation<W>(
+        &mut self,
+        id: Option<String>,
+        operation_id: String,
+        tool_call_id: String,
+        reason: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "reject_delegation",
+                    "cannot reject delegation while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let Some(session) = self.coding_session.as_mut() else {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(id, "reject_delegation", "no active coding session"),
+            )
+            .await?;
+            return Ok(());
+        };
+
+        let Some(pending) =
+            session
+                .pending_delegation_confirmations()
+                .into_iter()
+                .find(|pending| {
+                    pending.operation_id == operation_id && pending.tool_call_id == tool_call_id
+                })
+        else {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "reject_delegation",
+                    format!(
+                        "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
+                    ),
+                ),
+            )
+            .await?;
+            return Ok(());
+        };
+
+        let reason = reason.unwrap_or_default();
+        let reason = if reason.trim().is_empty() {
+            "delegation rejected by user".to_string()
+        } else {
+            reason
+        };
+        let mut receiver = session.subscribe();
+        let mut adapter = RpcCodingEventAdapter::new_with_provider(
+            self.model.api.clone(),
+            self.model.provider.clone(),
+            self.model.id.clone(),
+        );
+        if let Err(error) =
+            session.reject_delegation_confirmation(&operation_id, &tool_call_id, reason.clone())
+        {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(id, "reject_delegation", error.to_string()),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let mut protocol_events = Vec::new();
+        while let Ok(Some(event)) = receiver.try_recv() {
+            protocol_events.extend(adapter.push(&event));
+        }
+        write_rpc_response(
+            writer,
+            RpcResponse::success(
+                id,
+                "reject_delegation",
+                Some(serde_json::json!({
+                    "delegation": rpc_pending_delegation_confirmation(&pending),
+                    "reason": reason,
+                })),
+            ),
+        )
+        .await?;
+        for protocol_event in protocol_events {
+            write_json_line(writer, &protocol_event).await?;
+        }
+        Ok(())
+    }
+
     async fn open_profile_listing_session(&self) -> Result<CodingAgentSession, CliError> {
         Ok(CodingAgentSession::non_persistent(
             CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
@@ -726,6 +887,21 @@ fn rpc_team_profile(profile: &TeamProfile) -> serde_json::Value {
         "strategy": rpc_team_strategy(&profile.strategy),
         "members": rpc_profile_id_list(&profile.members),
         "delegation": rpc_delegation_policy(&profile.delegation),
+    })
+}
+
+pub(super) fn rpc_pending_delegation_confirmation(
+    pending: &PendingDelegationConfirmation,
+) -> serde_json::Value {
+    serde_json::json!({
+        "operationId": pending.operation_id,
+        "turnId": pending.turn_id,
+        "toolCallId": pending.tool_call_id,
+        "requestingProfileId": pending.requesting_profile_id.as_str(),
+        "targetKind": rpc_profile_kind(pending.target_kind),
+        "targetId": pending.target_id.as_str(),
+        "task": pending.task,
+        "reason": pending.reason,
     })
 }
 

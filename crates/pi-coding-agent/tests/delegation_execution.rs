@@ -444,6 +444,11 @@ system_prompt = "Coder child instructions."
         .unwrap();
 
     assert_eq!(outcome.final_text(), Some("parent ready"));
+    let pending = session.pending_delegation_confirmations();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].target_id.as_str(), "coder");
+    assert_eq!(pending[0].task, "implement parser");
+    assert_eq!(pending[0].reason, "delegation policy requires confirmation");
     let calls = calls.lock().unwrap();
     assert_eq!(
         calls.len(),
@@ -484,6 +489,212 @@ system_prompt = "Coder child instructions."
                 | CodingAgentEvent::DelegationCompleted { .. }
         )),
         "confirmation-required delegation must not approve or run child work: {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn approves_pending_delegation_confirmation_through_session_owner() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "delegation-confirmation-approve-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_agent",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::text("child result"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+
+    let pending = session.pending_delegation_confirmations();
+    assert_eq!(pending.len(), 1);
+    session
+        .approve_delegation_confirmation(&pending[0].operation_id, &pending[0].tool_call_id)
+        .await
+        .unwrap();
+    assert!(session.pending_delegation_confirmations().is_empty());
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        3,
+        "approval should run exactly one child provider call"
+    );
+    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+    assert_eq!(
+        calls[2].context.system_prompt.as_deref(),
+        Some("Coder child instructions.")
+    );
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved { target_id, task, .. }
+                if target_id.as_str() == "coder" && task == "implement parser"
+        )),
+        "expected approved event after confirmation, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
+                if target_id.as_str() == "coder" && final_text == "child result"
+        )),
+        "expected completed event after confirmation, got {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn rejects_pending_delegation_confirmation_through_session_owner() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "delegation-confirmation-reject-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_agent",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+
+    let pending = session.pending_delegation_confirmations();
+    assert_eq!(pending.len(), 1);
+    session
+        .reject_delegation_confirmation(
+            &pending[0].operation_id,
+            &pending[0].tool_call_id,
+            "not now",
+        )
+        .unwrap();
+    assert!(session.pending_delegation_confirmations().is_empty());
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        2,
+        "rejected confirmation should not run child work"
+    );
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRejected {
+                target_id,
+                task,
+                reason,
+                ..
+            } if target_id.as_str() == "coder" && task == "implement parser" && reason == "not now"
+        )),
+        "expected rejection event after confirmation rejection, got {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved { .. }
+                | CodingAgentEvent::DelegationStarted { .. }
+                | CodingAgentEvent::DelegationCompleted { .. }
+        )),
+        "rejected confirmation must not approve or run child work: {events:#?}"
     );
 }
 

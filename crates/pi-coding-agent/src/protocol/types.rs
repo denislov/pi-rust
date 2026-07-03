@@ -397,6 +397,25 @@ pub enum RpcCommand {
         team_id: String,
         task: String,
     },
+    #[serde(rename = "list_delegation_confirmations")]
+    ListDelegationConfirmations { id: Option<String> },
+    #[serde(rename = "approve_delegation")]
+    ApproveDelegation {
+        id: Option<String>,
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+    },
+    #[serde(rename = "reject_delegation")]
+    RejectDelegation {
+        id: Option<String>,
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        reason: Option<String>,
+    },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {
         id: Option<String>,
