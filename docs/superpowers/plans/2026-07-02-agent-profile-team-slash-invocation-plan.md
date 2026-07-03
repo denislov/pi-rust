@@ -383,9 +383,9 @@ Tasks:
 
 - [ ] Update `docs/TODO.md` after each implementation slice.
 - [ ] Update the Phase 6 guide if the final node names or team strategy differ from this plan.
-- [ ] Document profile file locations, schema, and precedence.
-- [ ] Document slash command usage.
-- [ ] Document delegation policy and safety behavior.
+- [x] Document profile file locations, schema, and precedence.
+- [x] Document slash command usage.
+- [x] Document delegation policy and safety behavior.
 - [ ] Run focused checks for each slice before broad checks.
 - [ ] Run full workspace verification at the end.
 
