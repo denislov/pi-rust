@@ -129,6 +129,150 @@ system_prompt = "Coder child instructions."
 }
 
 #[tokio::test]
+async fn delegated_child_rejects_nested_delegation_when_depth_is_exhausted() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["reviewer"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/reviewer.toml"),
+        r#"
+schema_version = 1
+id = "reviewer"
+display_name = "Reviewer"
+system_prompt = "Reviewer child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "delegation-recursive-depth-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_coder",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::tool_call(
+                "tool_delegate_reviewer",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
+            ),
+            ScriptedResponse::text("child ready"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        4,
+        "expected parent tool/final and child tool/final calls"
+    );
+    assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
+    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
+                if target_id.as_str() == "coder" && final_text == "child ready"
+        )),
+        "expected parent delegation to complete, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRequested {
+                requesting_profile_id,
+                target_id,
+                task,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+                && task == "review parser"
+        )),
+        "expected child nested delegation request, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRejected {
+                requesting_profile_id,
+                target_id,
+                reason,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+                && reason.contains("max_depth")
+        )),
+        "expected child nested delegation rejection, got {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved {
+                requesting_profile_id,
+                target_id,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+        )),
+        "nested delegation must not be approved when depth is exhausted: {events:#?}"
+    );
+}
+
+#[tokio::test]
 async fn prompt_executes_approved_team_delegation_after_parent_success() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");

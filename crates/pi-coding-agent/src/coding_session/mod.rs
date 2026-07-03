@@ -723,7 +723,8 @@ impl CodingAgentSession {
                 request.target_id.clone(),
                 request.task.clone(),
                 prompt_options,
-            ),
+            )
+            .with_delegation_depth(1),
             self.profile_registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
@@ -751,7 +752,8 @@ impl CodingAgentSession {
                 request.target_id.clone(),
                 request.task.clone(),
                 prompt_options,
-            ),
+            )
+            .with_delegation_depth(1),
             self.profile_registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),

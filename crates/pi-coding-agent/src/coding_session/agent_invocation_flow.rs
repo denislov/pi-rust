@@ -7,6 +7,7 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 use pi_ai::types::AssistantMessage;
 
 use super::CodingSessionError;
+use super::delegation::emit_child_delegation_authorization_decision;
 use super::event::CodingAgentEvent;
 use super::event_service::EventService;
 use super::plugin_service::PluginService;
@@ -61,6 +62,7 @@ pub struct AgentInvocationOptions {
     profile_id: ProfileId,
     task: String,
     prompt_options: PromptTurnOptions,
+    delegation_depth: usize,
 }
 
 impl AgentInvocationOptions {
@@ -73,7 +75,13 @@ impl AgentInvocationOptions {
             profile_id: profile_id.into(),
             task: task.into(),
             prompt_options,
+            delegation_depth: 0,
         }
+    }
+
+    pub fn with_delegation_depth(mut self, depth: usize) -> Self {
+        self.delegation_depth = depth;
+        self
     }
 
     pub fn profile_id(&self) -> &ProfileId {
@@ -86,6 +94,10 @@ impl AgentInvocationOptions {
 
     pub fn prompt_options(&self) -> &PromptTurnOptions {
         &self.prompt_options
+    }
+
+    pub fn delegation_depth(&self) -> usize {
+        self.delegation_depth
     }
 }
 
@@ -338,10 +350,18 @@ impl AgentInvocationContext {
                     message: "agent invocation cannot run before child prompt preparation".into(),
                 })?;
         let outcome = match PromptTurnFlow::new()?.run(child_context).await {
-            Ok(_) => child_context.finish_success(
-                child_context.non_persistent_runtime_id().map(str::to_owned),
-                None,
-            )?,
+            Ok(_) => {
+                let decisions = child_context
+                    .authorize_delegation_requests(self.options.delegation_depth)?
+                    .to_vec();
+                for decision in &decisions {
+                    emit_child_delegation_authorization_decision(&self.event_service, decision);
+                }
+                child_context.finish_success(
+                    child_context.non_persistent_runtime_id().map(str::to_owned),
+                    None,
+                )?
+            }
             Err(error) => match child_context.abort_reason() {
                 Some(reason) => child_context.finish_abort(
                     reason.to_owned(),

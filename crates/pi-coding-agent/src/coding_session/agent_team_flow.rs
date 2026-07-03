@@ -5,6 +5,7 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use pi_ai::types::AssistantMessage;
 
 use super::CodingSessionError;
+use super::delegation::emit_child_delegation_authorization_decision;
 use super::event::CodingAgentEvent;
 use super::event_service::EventService;
 use super::plugin_service::PluginService;
@@ -65,6 +66,7 @@ pub struct AgentTeamOptions {
     team_id: ProfileId,
     task: String,
     prompt_options: PromptTurnOptions,
+    delegation_depth: usize,
 }
 
 impl AgentTeamOptions {
@@ -77,7 +79,13 @@ impl AgentTeamOptions {
             team_id: team_id.into(),
             task: task.into(),
             prompt_options,
+            delegation_depth: 0,
         }
+    }
+
+    pub fn with_delegation_depth(mut self, depth: usize) -> Self {
+        self.delegation_depth = depth;
+        self
     }
 
     pub fn team_id(&self) -> &ProfileId {
@@ -90,6 +98,10 @@ impl AgentTeamOptions {
 
     pub fn prompt_options(&self) -> &PromptTurnOptions {
         &self.prompt_options
+    }
+
+    pub fn delegation_depth(&self) -> usize {
+        self.delegation_depth
     }
 }
 
@@ -408,10 +420,18 @@ impl AgentTeamContext {
         child_context.enable_live_events(self.event_service.clone());
 
         let outcome = match PromptTurnFlow::new()?.run(&mut child_context).await {
-            Ok(_) => child_context.finish_success(
-                child_context.non_persistent_runtime_id().map(str::to_owned),
-                None,
-            )?,
+            Ok(_) => {
+                let decisions = child_context
+                    .authorize_delegation_requests(self.options.delegation_depth)?
+                    .to_vec();
+                for decision in &decisions {
+                    emit_child_delegation_authorization_decision(&self.event_service, decision);
+                }
+                child_context.finish_success(
+                    child_context.non_persistent_runtime_id().map(str::to_owned),
+                    None,
+                )?
+            }
             Err(error) => match child_context.abort_reason() {
                 Some(reason) => child_context.finish_abort(
                     reason.to_owned(),

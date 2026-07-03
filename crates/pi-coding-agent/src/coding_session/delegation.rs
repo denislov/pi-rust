@@ -1,7 +1,12 @@
 use pi_agent_core::AgentTool;
 
+use super::event::CodingAgentEvent;
+use super::event_service::EventService;
 use super::profiles::{DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind};
 use super::prompt::DelegationRequest;
+
+const RECURSIVE_DELEGATION_UNSUPPORTED_REASON: &str =
+    "recursive delegation execution is not implemented yet";
 
 pub(crate) fn delegation_tools(
     profile_id: Option<&ProfileId>,
@@ -68,6 +73,53 @@ pub(crate) fn authorize_delegation_requests(
             }
         })
         .collect()
+}
+
+pub(crate) fn emit_child_delegation_authorization_decision(
+    event_service: &EventService,
+    decision: &DelegationAuthorizationDecision,
+) {
+    match decision {
+        DelegationAuthorizationDecision::Rejected { request, reason } => {
+            emit_delegation_rejected(event_service, request, reason);
+        }
+        DelegationAuthorizationDecision::RequiresConfirmation { request, reason } => {
+            event_service.emit(CodingAgentEvent::DelegationConfirmationRequired {
+                operation_id: request.operation_id.clone(),
+                turn_id: request.turn_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                requesting_profile_id: request.requesting_profile_id.clone(),
+                target_kind: request.target_kind,
+                target_id: request.target_id.clone(),
+                task: request.task.clone(),
+                reason: reason.clone(),
+            });
+        }
+        DelegationAuthorizationDecision::Approved { request } => {
+            emit_delegation_rejected(
+                event_service,
+                request,
+                RECURSIVE_DELEGATION_UNSUPPORTED_REASON,
+            );
+        }
+    }
+}
+
+fn emit_delegation_rejected(
+    event_service: &EventService,
+    request: &DelegationRequest,
+    reason: &str,
+) {
+    event_service.emit(CodingAgentEvent::DelegationRejected {
+        operation_id: request.operation_id.clone(),
+        turn_id: request.turn_id.clone(),
+        tool_call_id: request.tool_call_id.clone(),
+        requesting_profile_id: request.requesting_profile_id.clone(),
+        target_kind: request.target_kind,
+        target_id: request.target_id.clone(),
+        task: request.task.clone(),
+        reason: reason.to_owned(),
+    });
 }
 
 fn rejection_reason(
