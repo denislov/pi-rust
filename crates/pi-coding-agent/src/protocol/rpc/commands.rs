@@ -248,6 +248,9 @@ impl RpcState {
                 profile_id,
                 task,
             } => self.handle_invoke_agent(id, profile_id, task, writer).await,
+            RpcCommand::InvokeTeam { id, team_id, task } => {
+                self.handle_invoke_team(id, team_id, task, writer).await
+            }
             RpcCommand::SetThinkingLevel { id, level } => {
                 self.thinking_level = level;
                 write_rpc_response(writer, RpcResponse::success(id, "set_thinking_level", None))

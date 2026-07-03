@@ -163,6 +163,13 @@ pub enum RpcCommand {
         profile_id: String,
         task: String,
     },
+    #[serde(rename = "invoke_team")]
+    InvokeTeam {
+        id: Option<String>,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        task: String,
+    },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {
         id: Option<String>,

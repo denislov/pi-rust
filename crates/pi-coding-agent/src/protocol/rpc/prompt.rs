@@ -1,7 +1,7 @@
 use crate::CliError;
 use crate::coding_session::{
-    AgentInvocationOptions, CodingAgentSession, CodingAgentSessionOptions, OperationKind,
-    ProfileId, PromptTurnMode, PromptTurnOptions,
+    AgentInvocationOptions, AgentTeamOptions, CodingAgentSession, CodingAgentSessionOptions,
+    OperationKind, ProfileId, PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::has_images;
@@ -282,6 +282,174 @@ impl RpcState {
         Ok(())
     }
 
+    pub(super) async fn handle_invoke_team<W>(
+        &mut self,
+        id: Option<String>,
+        team_id: String,
+        task: String,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "invoke_team",
+                    "cannot invoke team while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        if task.trim().is_empty() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "invoke_team",
+                    "agent team invocation requires a non-empty task",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let team_id = match ProfileId::new(team_id) {
+            Ok(team_id) => team_id,
+            Err(message) => {
+                write_rpc_response(writer, RpcResponse::error(id, "invoke_team", message)).await?;
+                return Ok(());
+            }
+        };
+
+        let session_root = if matches!(self.options.session.mode, SessionMode::Enabled) {
+            Some(rpc_coding_session_root(&self.options.session)?)
+        } else {
+            None
+        };
+        let mut session = match self.coding_session.take() {
+            Some(session) => session,
+            None => match session_root.as_ref() {
+                Some(session_root) => {
+                    CodingAgentSession::create(
+                        CodingAgentSessionOptions::new()
+                            .with_cwd(self.options.session.cwd.clone())
+                            .with_session_log_root(session_root.clone()),
+                    )
+                    .await?
+                }
+                None => {
+                    CodingAgentSession::non_persistent(
+                        CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
+                    )
+                    .await?
+                }
+            },
+        };
+
+        if !session
+            .team_profiles()
+            .iter()
+            .any(|team| team.id.as_str() == team_id.as_str())
+        {
+            self.coding_session = Some(session);
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "invoke_team",
+                    format!("Unknown team profile: {team_id}"),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let prompt_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: task.clone(),
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            system_prompt: None,
+            max_turns: None,
+            tools: self.options.tools.clone(),
+            register_builtins: false,
+            session: Some(self.options.session.clone()),
+            session_target: None,
+            session_name: self.session_name.clone(),
+            thinking_level: Some(self.thinking_level),
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: Some(self.settings.clone()),
+            invocation: PromptInvocation::Text(task.clone()),
+        })
+        .with_mode(PromptTurnMode::Rpc);
+        let team_options = AgentTeamOptions::new(team_id.clone(), task.clone(), prompt_options);
+        let mut receiver = session.subscribe();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+
+        write_rpc_response(
+            writer,
+            RpcResponse::success(
+                id,
+                "invoke_team",
+                Some(serde_json::json!({
+                    "teamId": team_id.as_str(),
+                    "task": task,
+                })),
+            ),
+        )
+        .await?;
+        write_json_line(writer, &ProtocolEvent::AgentStart).await?;
+
+        tokio::spawn(async move {
+            let outcome = {
+                let mut invocation = Box::pin(session.invoke_team(team_options));
+                loop {
+                    tokio::select! {
+                        event = receiver.recv() => {
+                            if let Ok(event) = event {
+                                let _ = event_tx.send(event);
+                            }
+                        }
+                        outcome = &mut invocation => {
+                            break outcome.map_err(CliError::from);
+                        }
+                    }
+                }
+            };
+
+            while let Ok(Some(event)) = receiver.try_recv() {
+                let _ = event_tx.send(event);
+            }
+
+            let _ = done_tx.send(CodingOperationTaskResult {
+                session,
+                session_root,
+                outcome: CodingOperationOutcome::AgentTeam(outcome),
+            });
+        });
+
+        self.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
+            events: event_rx,
+            done: done_rx,
+            control: None,
+            operation_kind: OperationKind::AgentTeam,
+            adapter: RpcCodingEventAdapter::new_with_provider(
+                self.model.api.clone(),
+                self.model.provider.clone(),
+                self.model.id.clone(),
+            ),
+            events_closed: false,
+        }));
+
+        Ok(())
+    }
+
     async fn start_coding_session_prompt<W>(
         &mut self,
         id: Option<String>,
@@ -456,6 +624,9 @@ impl RpcState {
                 outcome.as_ref().map(|_| ()).map_err(Clone::clone)
             }
             CodingOperationOutcome::AgentInvocation(outcome) => {
+                outcome.as_ref().map(|_| ()).map_err(Clone::clone)
+            }
+            CodingOperationOutcome::AgentTeam(outcome) => {
                 outcome.as_ref().map(|_| ()).map_err(Clone::clone)
             }
         };

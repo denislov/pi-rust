@@ -359,11 +359,11 @@ Files:
 
 Tasks:
 
-- [~] Expose profile/team availability through `CodingAgentCapabilities`. `agentProfiles`, `teamProfiles`, and `delegation` now appear in the public capability model and RPC `get_state.capabilities`; RPC profile/team list, default switch, and one-off agent invocation commands are partially wired.
-- [~] Add RPC command support for listing profiles, switching default profile, invoking one-off agent work, and invoking team work. `list_agent_profiles` and `list_team_profiles` now expose session-owned registry state, `set_default_agent_profile` updates the session-owned default profile, and `invoke_agent` runs one-off `AgentInvocationFlow` through the RPC event-streaming operation path; `invoke_team` remains follow-up.
-- [~] Add protocol event mappings for profile changes, agent invocation, team invocation, and delegation lifecycle events. Agent invocation currently streams child prompt protocol events through the existing adapter; richer semantic lifecycle protocol events remain follow-up.
-- [~] Keep RPC behavior on the same `CodingAgentSession` owner paths used by interactive slash commands. Profile list/default switch and `invoke_agent` now use `CodingAgentSession`; `invoke_team` remains follow-up.
-- [~] Add serialization tests for all new capability and event fields. RPC coverage now includes profile/team list, default switch, agent invocation response/events, unknown profile rejection, and `agent_invocation` busy capability reporting.
+- [~] Expose profile/team availability through `CodingAgentCapabilities`. `agentProfiles`, `teamProfiles`, and `delegation` now appear in the public capability model and RPC `get_state.capabilities`; RPC profile/team list, default switch, one-off agent invocation, and one-off team invocation commands are wired.
+- [x] Add RPC command support for listing profiles, switching default profile, invoking one-off agent work, and invoking team work. `list_agent_profiles` and `list_team_profiles` now expose session-owned registry state, `set_default_agent_profile` updates the session-owned default profile, `invoke_agent` runs one-off `AgentInvocationFlow`, and `invoke_team` runs supervised `AgentTeamFlow` through the RPC event-streaming operation path.
+- [~] Add protocol event mappings for profile changes, agent invocation, team invocation, and delegation lifecycle events. Agent/team invocation currently streams child prompt protocol events through the existing adapter; richer semantic lifecycle protocol events remain follow-up.
+- [x] Keep RPC behavior on the same `CodingAgentSession` owner paths used by interactive slash commands. Profile list/default switch, `invoke_agent`, and `invoke_team` now use `CodingAgentSession`.
+- [~] Add serialization tests for all new capability and event fields. RPC coverage now includes profile/team list, default switch, agent/team invocation response/events, unknown target rejection, and `agent_invocation`/`agent_team` busy capability reporting.
 
 Acceptance:
 
@@ -411,5 +411,5 @@ source ~/.cargo/env && git diff --check
 - [x] Team profiles always declare supervisor semantics.
 - [~] Model-requested delegation goes through session-owned authorization and bounded execution. Request tools are now session-owned and policy-gated; bounded child execution remains follow-up.
 - [x] Child operations cannot direct-commit parent session state.
-- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events plus delegation requested/rejected events exist in `CodingAgentEvent`; `agentProfiles`, `teamProfiles`, and `delegation` exist in capabilities; RPC profile/team list, default-profile switch, and one-off `invoke_agent` commands exist; RPC `invoke_team` and richer semantic protocol surfaces remain Stage 8 follow-up.
+- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events plus delegation requested/rejected events exist in `CodingAgentEvent`; `agentProfiles`, `teamProfiles`, and `delegation` exist in capabilities; RPC profile/team list, default-profile switch, one-off `invoke_agent`, and one-off `invoke_team` commands exist; richer semantic protocol surfaces remain Stage 8 follow-up.
 - [~] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools. Current delegation request tools preserve this; follow-up child execution must keep the same boundary.

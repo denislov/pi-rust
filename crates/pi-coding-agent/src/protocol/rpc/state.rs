@@ -1,9 +1,9 @@
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
-    coding_session::CodingAgentEvent, coding_session::CodingAgentSession,
-    coding_session::OperationKind, coding_session::PromptControlHandle,
-    coding_session::PromptTurnOutcome, config, select_model,
+    coding_session::AgentTeamOutcome, coding_session::CodingAgentEvent,
+    coding_session::CodingAgentSession, coding_session::OperationKind,
+    coding_session::PromptControlHandle, coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::session::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
@@ -53,6 +53,7 @@ pub(super) struct CodingOperationTaskResult {
 pub(super) enum CodingOperationOutcome {
     Prompt(Result<PromptTurnOutcome, CliError>),
     AgentInvocation(Result<AgentInvocationOutcome, CliError>),
+    AgentTeam(Result<AgentTeamOutcome, CliError>),
 }
 
 impl RpcState {
