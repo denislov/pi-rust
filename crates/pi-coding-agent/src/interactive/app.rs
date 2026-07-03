@@ -3009,6 +3009,46 @@ display_name = "Coder"
     }
 
     #[test]
+    fn agent_command_queues_one_off_invocation_without_switching_default_profile() {
+        let _guard = crate::test_support::env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", &global);
+        }
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent".to_string(),
+            args: "coder refactor module".to_string(),
+            original: "/agent coder refactor module".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::AgentInvocation);
+        let request = root
+            .take_pending_agent_invocation_request()
+            .expect("agent invocation should be queued");
+        assert_eq!(request.profile_id.as_str(), "coder");
+        assert_eq!(request.task, "refactor module");
+        assert_eq!(root.default_agent_profile_id.as_str(), "default");
+        assert!(!last_system_text(&root).contains("requires AgentInvocationFlow"));
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
+    }
+
+    #[test]
     fn agent_use_command_rejects_missing_or_unknown_profiles() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),

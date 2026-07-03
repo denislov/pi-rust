@@ -178,6 +178,10 @@ impl CodingProtocolEventAdapter {
             }
             CodingAgentEvent::SessionOpened { .. }
             | CodingAgentEvent::DefaultAgentProfileChanged { .. }
+            | CodingAgentEvent::AgentInvocationStarted { .. }
+            | CodingAgentEvent::AgentInvocationCompleted { .. }
+            | CodingAgentEvent::AgentInvocationFailed { .. }
+            | CodingAgentEvent::AgentInvocationAborted { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }

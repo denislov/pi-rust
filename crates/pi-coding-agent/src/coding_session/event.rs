@@ -8,6 +8,30 @@ pub enum CodingAgentEvent {
     DefaultAgentProfileChanged {
         profile_id: ProfileId,
     },
+    AgentInvocationStarted {
+        operation_id: String,
+        child_operation_id: String,
+        profile_id: ProfileId,
+        task: String,
+    },
+    AgentInvocationCompleted {
+        operation_id: String,
+        child_operation_id: String,
+        profile_id: ProfileId,
+        final_text: String,
+    },
+    AgentInvocationFailed {
+        operation_id: String,
+        child_operation_id: String,
+        profile_id: ProfileId,
+        error: CodingSessionError,
+    },
+    AgentInvocationAborted {
+        operation_id: String,
+        child_operation_id: String,
+        profile_id: ProfileId,
+        reason: String,
+    },
     SessionWritePending {
         operation_id: String,
     },

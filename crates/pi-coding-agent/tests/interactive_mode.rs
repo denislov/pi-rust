@@ -155,6 +155,44 @@ async fn scripted_interactive_prompt_renders_assistant_text() {
 }
 
 #[tokio::test]
+async fn scripted_interactive_agent_invocation_renders_selected_profile_reply() {
+    let _guard = ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+    std::fs::write(
+        dir.path().join("agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    )
+    .unwrap();
+    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path());
+    }
+
+    let provider = FauxProvider::new(vec![text_response("agent reply")]);
+    let output = run_scripted_interactive(provider, "/agent coder do work\r").await;
+
+    unsafe {
+        match prior_pi_rust_dir {
+            Some(value) => std::env::set_var("PI_RUST_DIR", value),
+            None => std::env::remove_var("PI_RUST_DIR"),
+        }
+    }
+    let output = output.unwrap();
+    assert!(output.contains("/agent coder do work"), "{output:?}");
+    assert!(output.contains("agent reply"), "{output:?}");
+    assert!(output.contains("status: idle"), "{output:?}");
+    assert!(
+        !output.contains("requires AgentInvocationFlow"),
+        "{output:?}"
+    );
+}
+
+#[tokio::test]
 async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
     let provider = FauxProvider::new(vec![text_response("progress done")]);
     let output = run_scripted_interactive(provider, "show progress\r")

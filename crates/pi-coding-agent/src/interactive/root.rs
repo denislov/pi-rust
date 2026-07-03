@@ -65,6 +65,7 @@ pub(super) enum InteractiveAction {
     PluginUiAction,
     PluginUiDialog,
     AgentProfileUse,
+    AgentInvocation,
     AbortRunning,
     NewSession,
     ReloadResources,
@@ -104,6 +105,12 @@ pub(super) struct PendingBranchSummaryRequest {
     pub(super) source_leaf_id: String,
     pub(super) target_leaf_id: String,
     pub(super) custom_instructions: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingAgentInvocationRequest {
+    pub(super) profile_id: ProfileId,
+    pub(super) task: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -504,6 +511,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_submit: Option<String>,
     pub(super) pending_compact_instructions: Option<String>,
     pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
+    pub(super) pending_agent_invocation_request: Option<PendingAgentInvocationRequest>,
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
@@ -669,6 +677,7 @@ impl InteractiveRoot {
             pending_submit: None,
             pending_compact_instructions: None,
             pending_branch_summary_request: None,
+            pending_agent_invocation_request: None,
             pending_plugin_command_request: None,
             pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
@@ -808,6 +817,12 @@ impl InteractiveRoot {
         &mut self,
     ) -> Option<PendingBranchSummaryRequest> {
         self.pending_branch_summary_request.take()
+    }
+
+    pub(super) fn take_pending_agent_invocation_request(
+        &mut self,
+    ) -> Option<PendingAgentInvocationRequest> {
+        self.pending_agent_invocation_request.take()
     }
 
     pub(super) fn take_pending_plugin_command_request(

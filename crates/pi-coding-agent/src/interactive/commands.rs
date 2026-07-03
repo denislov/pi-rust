@@ -9,8 +9,9 @@ use crate::interactive::app::welcome_line;
 use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{
-    InteractiveAction, InteractiveRoot, InteractiveStatus, PendingBranchSummaryRequest,
-    PendingPluginCommandRequest, PendingPluginUiDialog, PluginUiDialogField,
+    InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
+    PendingBranchSummaryRequest, PendingPluginCommandRequest, PendingPluginUiDialog,
+    PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -211,20 +212,22 @@ fn handle_agent_command(root: &mut InteractiveRoot, args: &str) {
     }
 
     let profile_id = first;
-    if root.profile_registry.agent(profile_id).is_none() {
+    let Some(profile) = root.profile_registry.agent(profile_id) else {
         root.transcript.push(TranscriptItem::system(format!(
             "Unknown agent profile: {profile_id}"
         )));
         return;
-    }
+    };
     if rest.is_empty() {
         root.transcript
             .push(TranscriptItem::system("Usage: /agent <agent-id> <task>"));
         return;
     }
-    root.transcript.push(TranscriptItem::system(
-        "/agent <agent-id> <task> is recognized but requires AgentInvocationFlow.",
-    ));
+    root.pending_agent_invocation_request = Some(PendingAgentInvocationRequest {
+        profile_id: profile.id.clone(),
+        task: rest.to_string(),
+    });
+    root.action = InteractiveAction::AgentInvocation;
 }
 
 fn handle_team_command(root: &mut InteractiveRoot, args: &str) {

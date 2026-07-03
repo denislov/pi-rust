@@ -1,3 +1,4 @@
+mod agent_invocation_flow;
 mod branch_summary_flow;
 mod capability_service;
 mod context;
@@ -18,6 +19,7 @@ mod runtime_service;
 mod session_log;
 mod session_service;
 
+pub use agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
 pub use context::{
     CapabilityStatus, CodingAgentCapabilities, CodingAgentSessionOptions,
     CodingAgentSessionSummary, CodingAgentSessionView,
@@ -41,6 +43,7 @@ pub use prompt::{
     PromptTurnOutcome,
 };
 
+use agent_invocation_flow::AgentInvocationContext;
 use branch_summary_flow::{BranchSummaryContext, BranchSummaryOptions, BranchSummaryOutcome};
 use capability_service::CapabilityService;
 use event_service::EventService;
@@ -369,6 +372,16 @@ impl CodingAgentSession {
         self.compact_inner(options).await
     }
 
+    pub async fn invoke_agent(
+        &mut self,
+        options: AgentInvocationOptions,
+    ) -> Result<AgentInvocationOutcome, CodingSessionError> {
+        let _operation = self
+            .operation_control
+            .begin(OperationKind::AgentInvocation)?;
+        self.invoke_agent_inner(options).await
+    }
+
     pub(crate) async fn reload_plugins(&mut self) -> Result<PluginLoadOutcome, CodingSessionError> {
         self.load_plugins(self.default_plugin_load_options.clone())
             .await
@@ -596,6 +609,19 @@ impl CodingAgentSession {
         self.emit_prompt_diagnostics(&outcome);
         self.emit_prompt_outcome_event(&outcome);
         Ok(outcome)
+    }
+
+    async fn invoke_agent_inner(
+        &mut self,
+        options: AgentInvocationOptions,
+    ) -> Result<AgentInvocationOutcome, CodingSessionError> {
+        let mut context = AgentInvocationContext::new(
+            options,
+            self.profile_registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        );
+        self.flow_service.run_agent_invocation(&mut context).await
     }
 
     async fn compact_inner(
@@ -2547,6 +2573,10 @@ runtime = "lua"
         match event {
             CodingAgentEvent::SessionOpened { .. } => "session_opened",
             CodingAgentEvent::DefaultAgentProfileChanged { .. } => "default_agent_profile_changed",
+            CodingAgentEvent::AgentInvocationStarted { .. } => "agent_invocation_started",
+            CodingAgentEvent::AgentInvocationCompleted { .. } => "agent_invocation_completed",
+            CodingAgentEvent::AgentInvocationFailed { .. } => "agent_invocation_failed",
+            CodingAgentEvent::AgentInvocationAborted { .. } => "agent_invocation_aborted",
             CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
             CodingAgentEvent::SessionWriteCommitted { .. } => "session_write_committed",
             CodingAgentEvent::SessionWriteSkipped { .. } => "session_write_skipped",

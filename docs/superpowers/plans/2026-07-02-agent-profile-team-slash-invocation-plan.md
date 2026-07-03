@@ -228,9 +228,9 @@ Tasks:
 - [x] Add built-in slash command definitions for `agents`, `agent`, `teams`, and `team`.
 - [x] Implement `/agents` and `/teams` list output from the session-owned profile registry.
 - [x] Implement `/agent use <agent-id>` as a session default profile switch.
-- [ ] Implement `/agent <agent-id> <task>` as a one-off agent invocation operation.
+- [x] Implement `/agent <agent-id> <task>` as a one-off agent invocation operation.
 - [ ] Implement `/team <team-id> <task>` as a one-off team invocation operation.
-- [~] Reject missing ids/tasks with usage text. Stage 4a covers `/agent use` plus pending one-off `/agent` and `/team` parser validation; full one-off flow tests remain later.
+- [~] Reject missing ids/tasks with usage text. `/agent use`, one-off `/agent`, and pending `/team` parser validation are covered; full one-off team flow tests remain later.
 - [ ] Reject `@agent` and `@team` as normal prompt text; do not add mention parsing.
 - [ ] Keep plugin command slash aliases working and avoid id conflicts with built-in slash command names.
 - [x] Add completion/suggestion tests for the new slash commands.
@@ -260,13 +260,13 @@ Files:
 
 Tasks:
 
-- [ ] Add an `AgentInvocationFlow` for one-off `/agent <id> <task>` execution.
-- [ ] Resolve the target `AgentProfile` through the session registry.
-- [ ] Create a child operation lineage id correlated with the parent session operation.
-- [ ] Run the task through the same runtime service boundaries used by ordinary prompts.
-- [ ] Record product events for invocation started, child output, diagnostics, completion, failure, and cancellation.
-- [ ] Decide whether invocation output becomes an assistant transcript item, an artifact, or a structured event before durable commit.
-- [ ] Enforce busy-state and operation-control rules consistently with compact/export/plugin-load workflows.
+- [x] Add an `AgentInvocationFlow` for one-off `/agent <id> <task>` execution.
+- [x] Resolve the target `AgentProfile` through the session registry.
+- [x] Create a child operation lineage id correlated with the parent session operation.
+- [x] Run the task through the same runtime service boundaries used by ordinary prompts.
+- [~] Record product events for invocation started, child output, diagnostics, completion, failure, and cancellation. Start, child output, diagnostics, completion, and failure are covered; abort/cancellation event shape exists, while interactive abort for agent invocation remains unsupported.
+- [x] Decide whether invocation output becomes an assistant transcript item, an artifact, or a structured event before durable commit. One-off child output streams as product events and does not commit directly into the parent transcript.
+- [x] Enforce busy-state and operation-control rules consistently with compact/export/plugin-load workflows.
 
 Acceptance:
 
@@ -405,11 +405,11 @@ source ~/.cargo/env && git diff --check
 - [x] `default_agent_profile_id` is durable session configuration and resumes correctly.
 - [x] Ordinary prompts use the current default `AgentProfile`.
 - [x] `/agent use <id>` switches the default profile without running a task.
-- [ ] `/agent <id> <task>` runs a one-off agent operation without changing the default profile.
+- [x] `/agent <id> <task>` runs a one-off agent operation without changing the default profile.
 - [ ] `/team <id> <task>` runs a supervised team operation without changing the default profile.
 - [ ] Single-agent sessions do not require a separate LLM supervisor.
 - [ ] Team profiles always declare supervisor semantics.
 - [ ] Model-requested delegation goes through session-owned authorization and bounded execution.
-- [ ] Child operations cannot direct-commit parent session state.
+- [x] Child operations cannot direct-commit parent session state.
 - [ ] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`.
 - [ ] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools.

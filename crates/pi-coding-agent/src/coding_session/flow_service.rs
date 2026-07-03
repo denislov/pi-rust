@@ -3,6 +3,9 @@
 use pi_agent_core::flow::FlowOutcome;
 
 use super::CodingSessionError;
+use super::agent_invocation_flow::{
+    AgentInvocationContext, AgentInvocationFlow, AgentInvocationOutcome,
+};
 use super::branch_summary_flow::{BranchSummaryContext, BranchSummaryFlow, BranchSummaryOutcome};
 use super::export_flow::{ExportContext, ExportFlow, ExportOutcome};
 use super::manual_compaction_flow::{
@@ -34,6 +37,10 @@ impl FlowService {
         BranchSummaryFlow::new()
     }
 
+    pub(crate) fn agent_invocation_flow(&self) -> Result<AgentInvocationFlow, CodingSessionError> {
+        AgentInvocationFlow::new()
+    }
+
     pub(crate) fn plugin_load_flow(&self) -> Result<PluginLoadFlow, CodingSessionError> {
         PluginLoadFlow::new()
     }
@@ -54,6 +61,23 @@ impl FlowService {
         ctx: &mut ExportContext,
     ) -> Result<ExportOutcome, CodingSessionError> {
         match self.run_export_graph(ctx) {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
+    }
+
+    pub(crate) async fn run_agent_invocation_graph(
+        &self,
+        ctx: &mut AgentInvocationContext,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        self.agent_invocation_flow()?.run(ctx).await
+    }
+
+    pub(crate) async fn run_agent_invocation(
+        &self,
+        ctx: &mut AgentInvocationContext,
+    ) -> Result<AgentInvocationOutcome, CodingSessionError> {
+        match self.run_agent_invocation_graph(ctx).await {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -247,6 +271,24 @@ mod tests {
                 "run_summary_model",
                 "record_branch_summary",
                 "finalize_branch_summary",
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_invocation_flow_node_ids_are_stable() {
+        let service = FlowService::new();
+
+        service.agent_invocation_flow().unwrap();
+
+        assert_eq!(
+            crate::coding_session::agent_invocation_flow::AgentInvocationFlow::node_ids(),
+            &[
+                "start_agent_invocation",
+                "resolve_agent_profile",
+                "prepare_child_prompt",
+                "run_child_agent",
+                "finalize_agent_invocation",
             ]
         );
     }

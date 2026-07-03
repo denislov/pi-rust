@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use crate::CliError;
 use crate::coding_session::{
-    CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    PluginLoadOutcome, ProfileId, PromptTurnOptions, PromptTurnOutcome,
+    AgentInvocationOptions, AgentInvocationOutcome, CodingAgentEvent, CodingAgentSession,
+    CodingAgentSessionOptions, CodingSessionError, PluginLoadOutcome, ProfileId, PromptTurnOptions,
+    PromptTurnOutcome,
 };
 use crate::interactive::root::{
     PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
@@ -19,6 +20,7 @@ pub(super) enum PromptTaskEvent {
 
 pub(super) enum PromptTaskResult {
     Coding(CodingPromptTaskResult),
+    AgentInvocation(AgentInvocationTaskResult),
     PluginReload(PluginReloadTaskResult),
     PluginCommand(PluginCommandTaskResult),
 }
@@ -29,6 +31,11 @@ pub(super) struct CodingPromptTaskResult {
     pub(super) update_usage: bool,
     pub(super) completion_notice: Option<String>,
     pub(super) hydrate_transcript: bool,
+}
+
+pub(super) struct AgentInvocationTaskResult {
+    pub(super) session: CodingAgentSession,
+    pub(super) outcome: AgentInvocationOutcome,
 }
 
 pub(super) struct PluginReloadTaskResult {
@@ -91,6 +98,22 @@ impl PromptTask {
         Ok(Self::spawn_coding_compact(
             options,
             existing_session,
+            default_agent_profile_id,
+        ))
+    }
+
+    pub(super) fn spawn_agent_invocation(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        profile_id: ProfileId,
+        task: String,
+        default_agent_profile_id: ProfileId,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_agent_invocation(
+            options,
+            existing_session,
+            profile_id,
+            task,
             default_agent_profile_id,
         ))
     }
@@ -241,6 +264,40 @@ impl PromptTask {
             )
             .await;
             let _ = done_tx.send(result.map(PromptTaskResult::Coding));
+        });
+
+        Self {
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_agent_invocation(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        profile_id: ProfileId,
+        task: String,
+        default_agent_profile_id: ProfileId,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_agent_invocation_task(
+                options,
+                existing_session,
+                profile_id,
+                task,
+                default_agent_profile_id,
+                event_tx,
+                abort_rx,
+            )
+            .await;
+            let _ = done_tx.send(result.map(PromptTaskResult::AgentInvocation));
         });
 
         Self {
@@ -456,6 +513,61 @@ async fn run_coding_prompt_task(
         completion_notice: None,
         hydrate_transcript: false,
     })
+}
+
+async fn run_coding_agent_invocation_task(
+    options: PromptRunOptions,
+    existing_session: Option<CodingAgentSession>,
+    profile_id: ProfileId,
+    task: String,
+    default_agent_profile_id: ProfileId,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<AgentInvocationTaskResult, CliError> {
+    let mut session = match existing_session {
+        Some(session) => session,
+        None => {
+            open_interactive_coding_session(
+                options.session.as_ref(),
+                options.session_target.as_ref(),
+                default_agent_profile_id,
+            )
+            .await?
+        }
+    };
+    let mut receiver = session.subscribe();
+    let invocation_options = AgentInvocationOptions::new(
+        profile_id,
+        task,
+        PromptTurnOptions::from_prompt_run_options(options),
+    );
+
+    let outcome = {
+        let mut invocation = Box::pin(session.invoke_agent(invocation_options));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive agent invocation abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut invocation => {
+                    break outcome.map_err(CliError::from);
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(AgentInvocationTaskResult { session, outcome })
 }
 
 async fn run_coding_compact_task(
