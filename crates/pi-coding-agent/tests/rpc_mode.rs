@@ -475,6 +475,16 @@ display_name = "Coder"
     assert_eq!(lines[0]["data"]["profileId"], "coder");
     assert_eq!(lines[0]["data"]["task"], "do work");
     assert!(lines.iter().any(|line| line["type"] == "agent_start"));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "agent_invocation_start")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "agent_invocation_end")
+    );
     assert!(lines.iter().any(|line| line["type"] == "agent_end"));
     assert!(String::from_utf8_lossy(&output).contains("from agent"));
     registry::unregister(api);
@@ -641,6 +651,18 @@ members = ["coder"]
     assert_eq!(lines[0]["data"]["teamId"], "implementation");
     assert_eq!(lines[0]["data"]["task"], "ship feature");
     assert!(lines.iter().any(|line| line["type"] == "agent_start"));
+    assert!(lines.iter().any(|line| line["type"] == "agent_team_start"));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "agent_team_member_start")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "agent_team_member_end")
+    );
+    assert!(lines.iter().any(|line| line["type"] == "agent_team_end"));
     assert!(lines.iter().any(|line| line["type"] == "agent_end"));
     assert!(String::from_utf8_lossy(&output).contains("member result"));
     registry::unregister(api);

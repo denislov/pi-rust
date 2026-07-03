@@ -75,6 +75,105 @@ pub enum ProtocolEvent {
     },
     #[serde(rename = "agent_end")]
     AgentEnd { messages: Vec<StoredAgentMessage> },
+    #[serde(rename = "agent_invocation_start")]
+    AgentInvocationStart {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "childOperationId")]
+        child_operation_id: String,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+        task: String,
+    },
+    #[serde(rename = "agent_invocation_end")]
+    AgentInvocationEnd {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "childOperationId")]
+        child_operation_id: String,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+        #[serde(rename = "finalText")]
+        final_text: String,
+    },
+    #[serde(rename = "agent_invocation_error")]
+    AgentInvocationError {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "childOperationId")]
+        child_operation_id: String,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+        error: String,
+    },
+    #[serde(rename = "agent_invocation_abort")]
+    AgentInvocationAbort {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "childOperationId")]
+        child_operation_id: String,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+        reason: String,
+    },
+    #[serde(rename = "agent_team_start")]
+    AgentTeamStart {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        task: String,
+    },
+    #[serde(rename = "agent_team_member_start")]
+    AgentTeamMemberStart {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "childOperationId")]
+        child_operation_id: String,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+        task: String,
+    },
+    #[serde(rename = "agent_team_member_end")]
+    AgentTeamMemberEnd {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "childOperationId")]
+        child_operation_id: String,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+        #[serde(rename = "finalText")]
+        final_text: String,
+    },
+    #[serde(rename = "agent_team_end")]
+    AgentTeamEnd {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        #[serde(rename = "finalText")]
+        final_text: String,
+    },
+    #[serde(rename = "agent_team_error")]
+    AgentTeamError {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        error: String,
+    },
+    #[serde(rename = "agent_team_abort")]
+    AgentTeamAbort {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "teamId")]
+        team_id: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

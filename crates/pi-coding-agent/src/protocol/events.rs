@@ -176,18 +176,114 @@ impl CodingProtocolEventAdapter {
             CodingAgentEvent::PromptAborted { reason, .. } => {
                 self.push_prompt_failed_message(reason)
             }
+            CodingAgentEvent::AgentInvocationStarted {
+                operation_id,
+                child_operation_id,
+                profile_id,
+                task,
+            } => vec![ProtocolEvent::AgentInvocationStart {
+                operation_id: operation_id.clone(),
+                child_operation_id: child_operation_id.clone(),
+                profile_id: profile_id.as_str().to_string(),
+                task: task.clone(),
+            }],
+            CodingAgentEvent::AgentInvocationCompleted {
+                operation_id,
+                child_operation_id,
+                profile_id,
+                final_text,
+            } => vec![ProtocolEvent::AgentInvocationEnd {
+                operation_id: operation_id.clone(),
+                child_operation_id: child_operation_id.clone(),
+                profile_id: profile_id.as_str().to_string(),
+                final_text: final_text.clone(),
+            }],
+            CodingAgentEvent::AgentInvocationFailed {
+                operation_id,
+                child_operation_id,
+                profile_id,
+                error,
+            } => vec![ProtocolEvent::AgentInvocationError {
+                operation_id: operation_id.clone(),
+                child_operation_id: child_operation_id.clone(),
+                profile_id: profile_id.as_str().to_string(),
+                error: error.to_string(),
+            }],
+            CodingAgentEvent::AgentInvocationAborted {
+                operation_id,
+                child_operation_id,
+                profile_id,
+                reason,
+            } => vec![ProtocolEvent::AgentInvocationAbort {
+                operation_id: operation_id.clone(),
+                child_operation_id: child_operation_id.clone(),
+                profile_id: profile_id.as_str().to_string(),
+                reason: reason.clone(),
+            }],
+            CodingAgentEvent::AgentTeamStarted {
+                operation_id,
+                team_id,
+                task,
+            } => vec![ProtocolEvent::AgentTeamStart {
+                operation_id: operation_id.clone(),
+                team_id: team_id.as_str().to_string(),
+                task: task.clone(),
+            }],
+            CodingAgentEvent::AgentTeamMemberStarted {
+                operation_id,
+                child_operation_id,
+                team_id,
+                profile_id,
+                task,
+            } => vec![ProtocolEvent::AgentTeamMemberStart {
+                operation_id: operation_id.clone(),
+                child_operation_id: child_operation_id.clone(),
+                team_id: team_id.as_str().to_string(),
+                profile_id: profile_id.as_str().to_string(),
+                task: task.clone(),
+            }],
+            CodingAgentEvent::AgentTeamMemberCompleted {
+                operation_id,
+                child_operation_id,
+                team_id,
+                profile_id,
+                final_text,
+            } => vec![ProtocolEvent::AgentTeamMemberEnd {
+                operation_id: operation_id.clone(),
+                child_operation_id: child_operation_id.clone(),
+                team_id: team_id.as_str().to_string(),
+                profile_id: profile_id.as_str().to_string(),
+                final_text: final_text.clone(),
+            }],
+            CodingAgentEvent::AgentTeamCompleted {
+                operation_id,
+                team_id,
+                final_text,
+            } => vec![ProtocolEvent::AgentTeamEnd {
+                operation_id: operation_id.clone(),
+                team_id: team_id.as_str().to_string(),
+                final_text: final_text.clone(),
+            }],
+            CodingAgentEvent::AgentTeamFailed {
+                operation_id,
+                team_id,
+                error,
+            } => vec![ProtocolEvent::AgentTeamError {
+                operation_id: operation_id.clone(),
+                team_id: team_id.as_str().to_string(),
+                error: error.to_string(),
+            }],
+            CodingAgentEvent::AgentTeamAborted {
+                operation_id,
+                team_id,
+                reason,
+            } => vec![ProtocolEvent::AgentTeamAbort {
+                operation_id: operation_id.clone(),
+                team_id: team_id.as_str().to_string(),
+                reason: reason.clone(),
+            }],
             CodingAgentEvent::SessionOpened { .. }
             | CodingAgentEvent::DefaultAgentProfileChanged { .. }
-            | CodingAgentEvent::AgentInvocationStarted { .. }
-            | CodingAgentEvent::AgentInvocationCompleted { .. }
-            | CodingAgentEvent::AgentInvocationFailed { .. }
-            | CodingAgentEvent::AgentInvocationAborted { .. }
-            | CodingAgentEvent::AgentTeamStarted { .. }
-            | CodingAgentEvent::AgentTeamMemberStarted { .. }
-            | CodingAgentEvent::AgentTeamMemberCompleted { .. }
-            | CodingAgentEvent::AgentTeamCompleted { .. }
-            | CodingAgentEvent::AgentTeamFailed { .. }
-            | CodingAgentEvent::AgentTeamAborted { .. }
             | CodingAgentEvent::DelegationRequested { .. }
             | CodingAgentEvent::DelegationRejected { .. }
             | CodingAgentEvent::SessionWritePending { .. }

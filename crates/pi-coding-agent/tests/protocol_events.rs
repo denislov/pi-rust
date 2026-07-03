@@ -3,6 +3,7 @@ use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
 use pi_coding_agent::api::CodingAgentEvent;
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
 use pi_coding_agent::protocol::types::{CompactionReason, ProtocolEvent};
+use serde_json::json;
 
 #[test]
 fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
@@ -81,6 +82,128 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
         events
             .iter()
             .any(|event| matches!(event, ProtocolEvent::AgentEnd { .. }))
+    );
+}
+
+#[test]
+fn coding_event_adapter_maps_agent_invocation_lifecycle_to_protocol_events() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let events = [
+        CodingAgentEvent::AgentInvocationStarted {
+            operation_id: "op_parent".into(),
+            child_operation_id: "op_child".into(),
+            profile_id: "coder".into(),
+            task: "do work".into(),
+        },
+        CodingAgentEvent::AgentInvocationCompleted {
+            operation_id: "op_parent".into(),
+            child_operation_id: "op_child".into(),
+            profile_id: "coder".into(),
+            final_text: "done".into(),
+        },
+    ]
+    .into_iter()
+    .flat_map(|event| adapter.push(&event))
+    .map(|event| serde_json::to_value(event).unwrap())
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        events,
+        vec![
+            json!({
+                "type": "agent_invocation_start",
+                "operationId": "op_parent",
+                "childOperationId": "op_child",
+                "profileId": "coder",
+                "task": "do work"
+            }),
+            json!({
+                "type": "agent_invocation_end",
+                "operationId": "op_parent",
+                "childOperationId": "op_child",
+                "profileId": "coder",
+                "finalText": "done"
+            })
+        ]
+    );
+}
+
+#[test]
+fn coding_event_adapter_maps_agent_team_lifecycle_to_protocol_events() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let events = [
+        CodingAgentEvent::AgentTeamStarted {
+            operation_id: "op_team".into(),
+            team_id: "implementation".into(),
+            task: "ship feature".into(),
+        },
+        CodingAgentEvent::AgentTeamMemberStarted {
+            operation_id: "op_team".into(),
+            child_operation_id: "op_member".into(),
+            team_id: "implementation".into(),
+            profile_id: "coder".into(),
+            task: "ship feature".into(),
+        },
+        CodingAgentEvent::AgentTeamMemberCompleted {
+            operation_id: "op_team".into(),
+            child_operation_id: "op_member".into(),
+            team_id: "implementation".into(),
+            profile_id: "coder".into(),
+            final_text: "member done".into(),
+        },
+        CodingAgentEvent::AgentTeamCompleted {
+            operation_id: "op_team".into(),
+            team_id: "implementation".into(),
+            final_text: "team done".into(),
+        },
+    ]
+    .into_iter()
+    .flat_map(|event| adapter.push(&event))
+    .map(|event| serde_json::to_value(event).unwrap())
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        events,
+        vec![
+            json!({
+                "type": "agent_team_start",
+                "operationId": "op_team",
+                "teamId": "implementation",
+                "task": "ship feature"
+            }),
+            json!({
+                "type": "agent_team_member_start",
+                "operationId": "op_team",
+                "childOperationId": "op_member",
+                "teamId": "implementation",
+                "profileId": "coder",
+                "task": "ship feature"
+            }),
+            json!({
+                "type": "agent_team_member_end",
+                "operationId": "op_team",
+                "childOperationId": "op_member",
+                "teamId": "implementation",
+                "profileId": "coder",
+                "finalText": "member done"
+            }),
+            json!({
+                "type": "agent_team_end",
+                "operationId": "op_team",
+                "teamId": "implementation",
+                "finalText": "team done"
+            })
+        ]
     );
 }
 
