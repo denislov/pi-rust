@@ -614,6 +614,11 @@ impl CodingAgentSession {
                 None => context.finish_failure(error),
             },
         };
+        if matches!(outcome, PromptTurnOutcome::Success { .. })
+            && let Err(error) = context.authorize_delegation_requests(0)
+        {
+            outcome = context.finish_failure(error);
+        }
         let finalized = match self.finalize_prompt_transaction(&mut context, &outcome) {
             Ok(finalized) => finalized,
             Err(error) => {

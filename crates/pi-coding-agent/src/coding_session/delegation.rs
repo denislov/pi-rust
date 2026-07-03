@@ -1,6 +1,7 @@
 use pi_agent_core::AgentTool;
 
-use super::profiles::{DelegationPolicy, ProfileId};
+use super::profiles::{DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind};
+use super::prompt::DelegationRequest;
 
 pub(crate) fn delegation_tools(
     profile_id: Option<&ProfileId>,
@@ -20,6 +21,95 @@ pub(crate) fn delegation_tools(
         tools.push(delegate_team_tool(profile_id, policy.clone()));
     }
     tools
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DelegationAuthorizationDecision {
+    Approved {
+        request: DelegationRequest,
+    },
+    RequiresConfirmation {
+        request: DelegationRequest,
+        reason: String,
+    },
+    Rejected {
+        request: DelegationRequest,
+        reason: String,
+    },
+}
+
+pub(crate) fn authorize_delegation_requests(
+    requests: &[DelegationRequest],
+    policy: &DelegationPolicy,
+    current_depth: usize,
+) -> Vec<DelegationAuthorizationDecision> {
+    let mut accepted_children = 0usize;
+    requests
+        .iter()
+        .map(|request| {
+            if let Some(reason) =
+                rejection_reason(request, policy, current_depth, accepted_children)
+            {
+                return DelegationAuthorizationDecision::Rejected {
+                    request: request.clone(),
+                    reason,
+                };
+            }
+            accepted_children += 1;
+            if let Some(reason) = confirmation_reason(request, policy) {
+                DelegationAuthorizationDecision::RequiresConfirmation {
+                    request: request.clone(),
+                    reason,
+                }
+            } else {
+                DelegationAuthorizationDecision::Approved {
+                    request: request.clone(),
+                }
+            }
+        })
+        .collect()
+}
+
+fn rejection_reason(
+    request: &DelegationRequest,
+    policy: &DelegationPolicy,
+    current_depth: usize,
+    accepted_children: usize,
+) -> Option<String> {
+    if current_depth >= policy.max_depth {
+        return Some("delegation policy max_depth is exhausted".into());
+    }
+    if accepted_children >= policy.max_parallel_children {
+        return Some("delegation policy max_parallel_children is exhausted".into());
+    }
+    match request.target_kind {
+        ProfileKind::Agent if !policy.allow_delegate_agent => {
+            Some("delegation policy does not allow agent delegation".into())
+        }
+        ProfileKind::Agent if !target_is_allowed(&policy.allowed_agents, &request.target_id) => {
+            Some("target agent is not allowed by delegation policy".into())
+        }
+        ProfileKind::Team if !policy.allow_delegate_team => {
+            Some("delegation policy does not allow team delegation".into())
+        }
+        ProfileKind::Team if !target_is_allowed(&policy.allowed_teams, &request.target_id) => {
+            Some("target team is not allowed by delegation policy".into())
+        }
+        _ => None,
+    }
+}
+
+fn confirmation_reason(request: &DelegationRequest, policy: &DelegationPolicy) -> Option<String> {
+    match policy.require_confirmation {
+        DelegationConfirmationMode::Never => None,
+        DelegationConfirmationMode::Always => {
+            Some("delegation policy requires confirmation".into())
+        }
+        DelegationConfirmationMode::Writes if request.target_kind == ProfileKind::Team => {
+            Some("team delegation requires confirmation under writes policy".into())
+        }
+        DelegationConfirmationMode::Writes => None,
+    }
 }
 
 fn delegate_agent_tool(profile_id: ProfileId, policy: DelegationPolicy) -> AgentTool {
@@ -163,6 +253,8 @@ mod tests {
     use pi_agent_core::AgentToolOutput;
     use pi_ai::types::ContentBlock;
 
+    use super::super::profiles::{DelegationConfirmationMode, ProfileKind};
+    use super::super::prompt::DelegationRequest;
     use super::*;
 
     #[tokio::test]
@@ -244,6 +336,112 @@ mod tests {
         .await;
         assert_eq!(response["status"], "rejected");
         assert!(response["message"].as_str().unwrap().contains("max_depth"));
+    }
+
+    #[test]
+    fn delegation_authorization_auto_approves_agent_when_confirmation_is_never() {
+        let policy = DelegationPolicy {
+            allow_delegate_agent: true,
+            max_depth: 1,
+            max_parallel_children: 2,
+            require_confirmation: DelegationConfirmationMode::Never,
+            allowed_agents: vec![ProfileId::from("coder")],
+            ..DelegationPolicy::default()
+        };
+        let requests = vec![request("tool_1", ProfileKind::Agent, "coder")];
+
+        let decisions = authorize_delegation_requests(&requests, &policy, 0);
+
+        assert_eq!(decisions.len(), 1);
+        assert!(matches!(
+            &decisions[0],
+            DelegationAuthorizationDecision::Approved { request }
+                if request.tool_call_id == "tool_1" && request.target_id.as_str() == "coder"
+        ));
+    }
+
+    #[test]
+    fn delegation_authorization_holds_team_when_writes_confirmation_required() {
+        let policy = DelegationPolicy {
+            allow_delegate_team: true,
+            max_depth: 1,
+            max_parallel_children: 1,
+            require_confirmation: DelegationConfirmationMode::Writes,
+            allowed_teams: vec![ProfileId::from("implementation")],
+            ..DelegationPolicy::default()
+        };
+        let requests = vec![request("tool_1", ProfileKind::Team, "implementation")];
+
+        let decisions = authorize_delegation_requests(&requests, &policy, 0);
+
+        assert_eq!(decisions.len(), 1);
+        assert!(matches!(
+            &decisions[0],
+            DelegationAuthorizationDecision::RequiresConfirmation { request, reason }
+                if request.target_id.as_str() == "implementation" && reason.contains("team")
+        ));
+    }
+
+    #[test]
+    fn delegation_authorization_rejects_requests_past_child_limit() {
+        let policy = DelegationPolicy {
+            allow_delegate_agent: true,
+            max_depth: 1,
+            max_parallel_children: 1,
+            require_confirmation: DelegationConfirmationMode::Never,
+            ..DelegationPolicy::default()
+        };
+        let requests = vec![
+            request("tool_1", ProfileKind::Agent, "coder"),
+            request("tool_2", ProfileKind::Agent, "reviewer"),
+        ];
+
+        let decisions = authorize_delegation_requests(&requests, &policy, 0);
+
+        assert_eq!(decisions.len(), 2);
+        assert!(matches!(
+            &decisions[0],
+            DelegationAuthorizationDecision::Approved { request }
+                if request.tool_call_id == "tool_1"
+        ));
+        assert!(matches!(
+            &decisions[1],
+            DelegationAuthorizationDecision::Rejected { request, reason }
+                if request.tool_call_id == "tool_2" && reason.contains("max_parallel_children")
+        ));
+    }
+
+    #[test]
+    fn delegation_authorization_rejects_when_depth_budget_is_exhausted() {
+        let policy = DelegationPolicy {
+            allow_delegate_agent: true,
+            max_depth: 1,
+            max_parallel_children: 1,
+            require_confirmation: DelegationConfirmationMode::Never,
+            ..DelegationPolicy::default()
+        };
+        let requests = vec![request("tool_1", ProfileKind::Agent, "coder")];
+
+        let decisions = authorize_delegation_requests(&requests, &policy, 1);
+
+        assert_eq!(decisions.len(), 1);
+        assert!(matches!(
+            &decisions[0],
+            DelegationAuthorizationDecision::Rejected { request, reason }
+                if request.tool_call_id == "tool_1" && reason.contains("max_depth")
+        ));
+    }
+
+    fn request(tool_call_id: &str, target_kind: ProfileKind, target_id: &str) -> DelegationRequest {
+        DelegationRequest {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: tool_call_id.into(),
+            requesting_profile_id: ProfileId::from("planner"),
+            target_kind,
+            target_id: ProfileId::from(target_id),
+            task: "help with task".into(),
+        }
     }
 
     async fn run_tool(tool: &AgentTool, args: serde_json::Value) -> serde_json::Value {

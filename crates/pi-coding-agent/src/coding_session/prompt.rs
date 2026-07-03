@@ -18,6 +18,7 @@ use crate::runtime::{PromptInvocation, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
 
 use super::CodingSessionError;
+use super::delegation::{DelegationAuthorizationDecision, authorize_delegation_requests};
 use super::event::CodingAgentEvent;
 use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
 use super::operation_control::PromptControlReceiver;
@@ -477,6 +478,7 @@ pub(crate) struct PromptTurnContext {
     agent_observations: Vec<AgentRunObservation>,
     coding_events: Vec<CodingAgentEvent>,
     delegation_requests: Vec<DelegationRequest>,
+    delegation_authorization_decisions: Vec<DelegationAuthorizationDecision>,
     assistant_session_message_id: Option<String>,
     completed_assistant_session_message_id: Option<String>,
     live_event_service: Option<EventService>,
@@ -505,6 +507,7 @@ impl PromptTurnContext {
             agent_observations: Vec::new(),
             coding_events: Vec::new(),
             delegation_requests: Vec::new(),
+            delegation_authorization_decisions: Vec::new(),
             assistant_session_message_id: None,
             completed_assistant_session_message_id: None,
             live_event_service: None,
@@ -875,6 +878,32 @@ impl PromptTurnContext {
 
     pub(crate) fn delegation_requests(&self) -> &[DelegationRequest] {
         &self.delegation_requests
+    }
+
+    pub(crate) fn authorize_delegation_requests(
+        &mut self,
+        current_depth: usize,
+    ) -> Result<&[DelegationAuthorizationDecision], CodingSessionError> {
+        if self.delegation_requests.is_empty() {
+            self.delegation_authorization_decisions.clear();
+            return Ok(&self.delegation_authorization_decisions);
+        }
+        let policy = self
+            .runtime
+            .as_ref()
+            .and_then(RuntimeSnapshot::profile_delegation_policy)
+            .cloned()
+            .ok_or_else(|| CodingSessionError::Config {
+                message: "prompt turn cannot authorize delegation without active profile policy"
+                    .into(),
+            })?;
+        self.delegation_authorization_decisions =
+            authorize_delegation_requests(&self.delegation_requests, &policy, current_depth);
+        Ok(&self.delegation_authorization_decisions)
+    }
+
+    pub(crate) fn delegation_authorization_decisions(&self) -> &[DelegationAuthorizationDecision] {
+        &self.delegation_authorization_decisions
     }
 
     fn record_delegation_requests(&mut self, events: &[CodingAgentEvent]) {
@@ -1274,6 +1303,8 @@ mod tests {
     use pi_agent_core::{AgentEvent, AgentResources, AgentToolResult, ToolExecutionMode};
     use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
 
+    use super::super::delegation::DelegationAuthorizationDecision;
+    use super::super::profiles::{DelegationConfirmationMode, ProfileSource, SupervisionPolicy};
     use super::*;
     use crate::runtime::{SessionMode, SessionRunOptions};
 
@@ -1499,6 +1530,69 @@ mod tests {
                 if tool_call_id == "tool_delegate"
         )));
         assert!(context.delegation_requests().is_empty());
+    }
+
+    #[test]
+    fn prompt_turn_context_authorizes_queued_delegation_from_runtime_policy() {
+        let mut options = PromptTurnOptions::from_prompt_run_options(session_prompt_options());
+        options
+            .apply_agent_profile(
+                &AgentProfile {
+                    schema_version: 1,
+                    id: ProfileId::from("planner"),
+                    display_name: "Planner".into(),
+                    description: None,
+                    model: None,
+                    system_prompt: None,
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    supervision: SupervisionPolicy::Session,
+                    delegation: DelegationPolicy {
+                        allow_delegate_team: true,
+                        max_depth: 1,
+                        max_parallel_children: 1,
+                        require_confirmation: DelegationConfirmationMode::Writes,
+                        allowed_teams: vec![ProfileId::from("implementation")],
+                        ..DelegationPolicy::default()
+                    },
+                    source: ProfileSource::BuiltIn,
+                    path: None,
+                },
+                Vec::new(),
+            )
+            .unwrap();
+        let mut context = PromptTurnContext::new(PromptTurnIds::new("op_1", "turn_1"), options);
+        context.resolve_request().unwrap();
+        context.resolve_runtime_from_options().unwrap();
+        let envelope = serde_json::json!({
+            "status": "requested",
+            "target_kind": "team",
+            "target_id": "implementation",
+            "task": "ship feature",
+            "requesting_profile_id": "planner",
+            "message": "delegation request captured for session-owned authorization"
+        })
+        .to_string();
+
+        context
+            .record_agent_event(AgentEvent::ToolCallEnd {
+                tool_call_id: "tool_delegate".into(),
+                tool_name: "delegate_team".into(),
+                result: AgentToolResult::ok(vec![ContentBlock::Text {
+                    text: envelope,
+                    text_signature: None,
+                }]),
+            })
+            .unwrap();
+
+        let decisions = context.authorize_delegation_requests(0).unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert!(matches!(
+            &decisions[0],
+            DelegationAuthorizationDecision::RequiresConfirmation { request, reason }
+                if request.target_id.as_str() == "implementation" && reason.contains("team")
+        ));
+        assert_eq!(context.delegation_authorization_decisions().len(), 1);
     }
 
     #[test]
