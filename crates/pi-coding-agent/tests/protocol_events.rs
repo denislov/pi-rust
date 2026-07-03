@@ -247,6 +247,16 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
             target_id: "coder".into(),
             task: "implement parser".into(),
         },
+        CodingAgentEvent::DelegationConfirmationRequired {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate_team".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Team,
+            target_id: "review-team".into(),
+            task: "review parser".into(),
+            reason: "team delegation requires confirmation under writes policy".into(),
+        },
         CodingAgentEvent::DelegationStarted {
             operation_id: "op_parent".into(),
             turn_id: "turn_parent".into(),
@@ -311,6 +321,17 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "targetKind": "agent",
                 "targetId": "coder",
                 "task": "implement parser"
+            }),
+            json!({
+                "type": "delegation_confirmation_required",
+                "operationId": "op_parent",
+                "turnId": "turn_parent",
+                "toolCallId": "tool_delegate_team",
+                "requestingProfileId": "planner",
+                "targetKind": "team",
+                "targetId": "review-team",
+                "task": "review parser",
+                "reason": "team delegation requires confirmation under writes policy"
             }),
             json!({
                 "type": "delegation_started",

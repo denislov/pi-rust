@@ -94,6 +94,16 @@ pub enum CodingAgentEvent {
         target_id: ProfileId,
         task: String,
     },
+    DelegationConfirmationRequired {
+        operation_id: String,
+        turn_id: String,
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        reason: String,
+    },
     DelegationStarted {
         operation_id: String,
         turn_id: String,

@@ -129,6 +129,23 @@ pub enum ProtocolEvent {
         target_id: String,
         task: String,
     },
+    #[serde(rename = "delegation_confirmation_required")]
+    DelegationConfirmationRequired {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "requestingProfileId")]
+        requesting_profile_id: String,
+        #[serde(rename = "targetKind")]
+        target_kind: String,
+        #[serde(rename = "targetId")]
+        target_id: String,
+        task: String,
+        reason: String,
+    },
     #[serde(rename = "delegation_started")]
     DelegationStarted {
         #[serde(rename = "operationId")]

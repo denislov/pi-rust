@@ -238,6 +238,111 @@ members = ["coder"]
     );
 }
 
+#[tokio::test]
+async fn prompt_emits_confirmation_required_without_running_child_delegation() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "delegation-confirmation-required-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_agent",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        2,
+        "confirmation-required delegation should not run child work"
+    );
+    assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["plan feature"]);
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRequested { target_id, task, .. }
+                if target_id.as_str() == "coder" && task == "implement parser"
+        )),
+        "expected delegation request event, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationConfirmationRequired {
+                target_id,
+                task,
+                reason,
+                ..
+            } if target_id.as_str() == "coder"
+                && task == "implement parser"
+                && reason == "delegation policy requires confirmation"
+        )),
+        "expected delegation confirmation-required event, got {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved { .. }
+                | CodingAgentEvent::DelegationStarted { .. }
+                | CodingAgentEvent::DelegationCompleted { .. }
+        )),
+        "confirmation-required delegation must not approve or run child work: {events:#?}"
+    );
+}
+
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
     PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: prompt.into(),

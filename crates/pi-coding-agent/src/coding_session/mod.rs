@@ -702,7 +702,9 @@ impl CodingAgentSession {
                         }
                     }
                 }
-                DelegationAuthorizationDecision::RequiresConfirmation { .. } => {}
+                DelegationAuthorizationDecision::RequiresConfirmation { request, reason } => {
+                    self.emit_delegation_confirmation_required(request, reason);
+                }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
                     self.emit_delegation_rejected(request, reason);
                 }
@@ -771,6 +773,20 @@ impl CodingAgentSession {
     fn emit_delegation_rejected(&self, request: &DelegationRequest, reason: &str) {
         self.event_service
             .emit(CodingAgentEvent::DelegationRejected {
+                operation_id: request.operation_id.clone(),
+                turn_id: request.turn_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                requesting_profile_id: request.requesting_profile_id.clone(),
+                target_kind: request.target_kind,
+                target_id: request.target_id.clone(),
+                task: request.task.clone(),
+                reason: reason.to_owned(),
+            });
+    }
+
+    fn emit_delegation_confirmation_required(&self, request: &DelegationRequest, reason: &str) {
+        self.event_service
+            .emit(CodingAgentEvent::DelegationConfirmationRequired {
                 operation_id: request.operation_id.clone(),
                 turn_id: request.turn_id.clone(),
                 tool_call_id: request.tool_call_id.clone(),
@@ -2778,6 +2794,9 @@ runtime = "lua"
             CodingAgentEvent::DelegationRequested { .. } => "delegation_requested",
             CodingAgentEvent::DelegationRejected { .. } => "delegation_rejected",
             CodingAgentEvent::DelegationApproved { .. } => "delegation_approved",
+            CodingAgentEvent::DelegationConfirmationRequired { .. } => {
+                "delegation_confirmation_required"
+            }
             CodingAgentEvent::DelegationStarted { .. } => "delegation_started",
             CodingAgentEvent::DelegationCompleted { .. } => "delegation_completed",
             CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
