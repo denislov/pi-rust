@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use super::event::{
-    DiagnosticLevel, PersistedContentBlock, PersistedToolResult, SessionEventData,
-    SessionEventEnvelope,
+    DiagnosticLevel, PersistedContentBlock, PersistedDelegationRuntimeSeed, PersistedToolResult,
+    SessionEventData, SessionEventEnvelope,
 };
+use crate::coding_session::profiles::{ProfileId, ProfileKind};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionReplay {
     pub(crate) session_id: String,
     pub(crate) cwd: Option<String>,
@@ -13,6 +14,7 @@ pub(crate) struct SessionReplay {
     pub(crate) leaves: Vec<ReplayLeaf>,
     pub(crate) transcript: Vec<TranscriptItem>,
     pub(crate) diagnostics: Vec<ReplayDiagnostic>,
+    pub(crate) pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +80,19 @@ pub(crate) struct ReplayDiagnostic {
     pub(crate) message: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ReplayPendingDelegationConfirmation {
+    pub(crate) source_operation_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) tool_call_id: String,
+    pub(crate) requesting_profile_id: ProfileId,
+    pub(crate) target_kind: ProfileKind,
+    pub(crate) target_id: ProfileId,
+    pub(crate) task: String,
+    pub(crate) reason: String,
+    pub(crate) runtime_seed: PersistedDelegationRuntimeSeed,
+}
+
 #[derive(Debug, Default)]
 struct ReplayBuilder {
     session_id: Option<String>,
@@ -90,6 +105,7 @@ struct ReplayBuilder {
     tool_indices: HashMap<String, usize>,
     operation_kinds: HashMap<String, super::event::OperationKind>,
     operation_transcript_starts: HashMap<String, usize>,
+    pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
 }
 
 pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
@@ -120,6 +136,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         leaves: builder.leaves,
         transcript: builder.transcript,
         diagnostics: builder.diagnostics,
+        pending_delegation_confirmations: builder.pending_delegation_confirmations,
     }
 }
 
@@ -212,6 +229,41 @@ impl ReplayBuilder {
                         message,
                     });
                 }
+            }
+            SessionEventData::DelegationConfirmationRequested {
+                source_operation_id,
+                turn_id,
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+                reason,
+                runtime_seed,
+            } => {
+                self.add_pending_delegation_confirmation(ReplayPendingDelegationConfirmation {
+                    source_operation_id: source_operation_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    requesting_profile_id: requesting_profile_id.clone(),
+                    target_kind: *target_kind,
+                    target_id: target_id.clone(),
+                    task: task.clone(),
+                    reason: reason.clone(),
+                    runtime_seed: runtime_seed.clone(),
+                });
+            }
+            SessionEventData::DelegationConfirmationApproved {
+                source_operation_id,
+                tool_call_id,
+                ..
+            }
+            | SessionEventData::DelegationConfirmationRejected {
+                source_operation_id,
+                tool_call_id,
+                ..
+            } => {
+                self.resolve_pending_delegation_confirmation(source_operation_id, tool_call_id);
             }
             SessionEventData::OperationCommitted { new_leaf_id } => {
                 if let Some(new_leaf_id) = new_leaf_id {
@@ -384,6 +436,48 @@ impl ReplayBuilder {
         });
     }
 
+    fn add_pending_delegation_confirmation(
+        &mut self,
+        pending: ReplayPendingDelegationConfirmation,
+    ) {
+        if self
+            .pending_delegation_confirmations
+            .iter()
+            .any(|existing| {
+                existing.source_operation_id == pending.source_operation_id
+                    && existing.tool_call_id == pending.tool_call_id
+            })
+        {
+            self.warn(format!(
+                "duplicate pending delegation confirmation: operation_id={}, tool_call_id={}",
+                pending.source_operation_id, pending.tool_call_id
+            ));
+            return;
+        }
+        self.pending_delegation_confirmations.push(pending);
+    }
+
+    fn resolve_pending_delegation_confirmation(
+        &mut self,
+        source_operation_id: &str,
+        tool_call_id: &str,
+    ) {
+        let Some(index) = self
+            .pending_delegation_confirmations
+            .iter()
+            .position(|pending| {
+                pending.source_operation_id == source_operation_id
+                    && pending.tool_call_id == tool_call_id
+            })
+        else {
+            self.warn(format!(
+                "delegation confirmation resolution references unknown pending request: operation_id={source_operation_id}, tool_call_id={tool_call_id}"
+            ));
+            return;
+        };
+        self.pending_delegation_confirmations.remove(index);
+    }
+
     fn tool_mut(&mut self, tool_call_id: &str) -> Option<&mut String> {
         let index = *self.tool_indices.get(tool_call_id)?;
         match self.transcript.get_mut(index)? {
@@ -528,6 +622,7 @@ fn tool_result_summary(result: &PersistedToolResult) -> String {
 mod tests {
     use super::super::event::{OperationKind, PersistedRole};
     use super::*;
+    use pi_ai::types::{Model, ModelCost, ModelInput};
 
     fn event(
         event_id: &str,
@@ -548,6 +643,153 @@ mod tests {
 
     fn op_event(event_id: &str, data: SessionEventData) -> SessionEventEnvelope {
         event(event_id, Some("op_1"), Some("turn_1"), data)
+    }
+
+    fn delegation_runtime_seed() -> PersistedDelegationRuntimeSeed {
+        PersistedDelegationRuntimeSeed {
+            mode: "print".into(),
+            model: Model {
+                id: "test-model".into(),
+                name: "Test Model".into(),
+                api: "test-api".into(),
+                provider: "test".into(),
+                base_url: String::new(),
+                reasoning: false,
+                thinking_level_map: None,
+                input: vec![ModelInput::Text],
+                cost: ModelCost::default(),
+                context_window: 0,
+                max_tokens: 0,
+                headers: None,
+                compat: None,
+            },
+            system_prompt: Some("runtime instructions".into()),
+            max_turns: Some(4),
+            tool_names: vec!["read".into()],
+            register_builtins: false,
+            thinking_level: None,
+            tool_execution: None,
+            session_name: None,
+            parent_delegation_depth: 0,
+        }
+    }
+
+    fn delegation_confirmation_requested(event_id: &str) -> SessionEventEnvelope {
+        event(
+            event_id,
+            Some("op_parent"),
+            Some("turn_parent"),
+            SessionEventData::DelegationConfirmationRequested {
+                source_operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: ProfileId::from("planner"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("coder"),
+                task: "implement parser".into(),
+                reason: "delegation policy requires confirmation".into(),
+                runtime_seed: delegation_runtime_seed(),
+            },
+        )
+    }
+
+    fn parent_operation_committed(event_id: &str) -> SessionEventEnvelope {
+        event(
+            event_id,
+            Some("op_parent"),
+            Some("turn_parent"),
+            SessionEventData::OperationCommitted { new_leaf_id: None },
+        )
+    }
+
+    #[test]
+    fn delegation_confirmation_requested_replays_as_pending_confirmation() {
+        let events = vec![
+            delegation_confirmation_requested("evt_1"),
+            parent_operation_committed("evt_2"),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(replay.pending_delegation_confirmations.len(), 1);
+        let pending = &replay.pending_delegation_confirmations[0];
+        assert_eq!(pending.source_operation_id, "op_parent");
+        assert_eq!(pending.turn_id, "turn_parent");
+        assert_eq!(pending.tool_call_id, "tool_delegate");
+        assert_eq!(pending.requesting_profile_id.as_str(), "planner");
+        assert_eq!(pending.target_kind, ProfileKind::Agent);
+        assert_eq!(pending.target_id.as_str(), "coder");
+        assert_eq!(pending.task, "implement parser");
+        assert_eq!(pending.reason, "delegation policy requires confirmation");
+        assert_eq!(pending.runtime_seed.model.id, "test-model");
+    }
+
+    #[test]
+    fn delegation_confirmation_approved_removes_pending_confirmation() {
+        let events = vec![
+            delegation_confirmation_requested("evt_1"),
+            event(
+                "evt_2",
+                Some("op_parent"),
+                None,
+                SessionEventData::DelegationConfirmationApproved {
+                    source_operation_id: "op_parent".into(),
+                    tool_call_id: "tool_delegate".into(),
+                    approval_operation_id: "op_approval".into(),
+                },
+            ),
+            parent_operation_committed("evt_3"),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert!(replay.pending_delegation_confirmations.is_empty());
+        assert!(replay.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn delegation_confirmation_rejected_removes_pending_confirmation() {
+        let events = vec![
+            delegation_confirmation_requested("evt_1"),
+            event(
+                "evt_2",
+                Some("op_parent"),
+                None,
+                SessionEventData::DelegationConfirmationRejected {
+                    source_operation_id: "op_parent".into(),
+                    tool_call_id: "tool_delegate".into(),
+                    reason: "not now".into(),
+                },
+            ),
+            parent_operation_committed("evt_3"),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert!(replay.pending_delegation_confirmations.is_empty());
+        assert!(replay.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn duplicate_delegation_confirmation_request_keeps_first_and_warns() {
+        let events = vec![
+            delegation_confirmation_requested("evt_1"),
+            delegation_confirmation_requested("evt_2"),
+            parent_operation_committed("evt_3"),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(replay.pending_delegation_confirmations.len(), 1);
+        assert!(
+            replay.diagnostics.iter().any(|diagnostic| {
+                diagnostic
+                    .message
+                    .contains("duplicate pending delegation confirmation")
+            }),
+            "expected duplicate warning, got {:#?}",
+            replay.diagnostics
+        );
     }
 
     #[test]

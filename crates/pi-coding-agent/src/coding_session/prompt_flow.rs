@@ -665,6 +665,7 @@ mod tests {
             leaves: Vec::new(),
             transcript: Vec::new(),
             diagnostics: Vec::new(),
+            pending_delegation_confirmations: Vec::new(),
         });
         context.begin_transaction(&store, handle.clone()).unwrap();
         (temp, store, handle)
@@ -774,6 +775,15 @@ mod tests {
                 }
                 SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
                 SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
+                SessionEventData::DelegationConfirmationRequested { .. } => {
+                    "delegation.confirmation.requested"
+                }
+                SessionEventData::DelegationConfirmationApproved { .. } => {
+                    "delegation.confirmation.approved"
+                }
+                SessionEventData::DelegationConfirmationRejected { .. } => {
+                    "delegation.confirmation.rejected"
+                }
             })
             .collect()
     }
@@ -1463,6 +1473,7 @@ mod tests {
                 },
             ],
             diagnostics: Vec::new(),
+            pending_delegation_confirmations: Vec::new(),
         });
 
         flow.run(&mut context).await.unwrap();

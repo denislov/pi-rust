@@ -61,15 +61,18 @@ use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
 use prompt::{DelegationRequest, PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
-use session_log::event::PersistedPluginDiagnostic;
+use session_log::event::{PersistedDelegationRuntimeSeed, PersistedPluginDiagnostic};
 use session_log::id::{IdGenerator, SystemIdGenerator};
-use session_log::replay::TranscriptItem;
+use session_log::replay::{ReplayPendingDelegationConfirmation, TranscriptItem};
 use session_service::{FinalizedSessionWrite, SessionService};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::plugins::{
     CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
 };
+use crate::prompt_options::PromptRunOptions;
+use crate::runtime::{PromptInvocation, SessionRunOptions};
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -187,6 +190,145 @@ fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> Profi
 
 fn default_cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn pending_state_from_replay(
+    replay_pending: ReplayPendingDelegationConfirmation,
+    cwd: &Path,
+) -> Result<PendingDelegationConfirmationState, CodingSessionError> {
+    Ok(PendingDelegationConfirmationState {
+        request: DelegationRequest {
+            operation_id: replay_pending.source_operation_id,
+            turn_id: replay_pending.turn_id,
+            tool_call_id: replay_pending.tool_call_id,
+            requesting_profile_id: replay_pending.requesting_profile_id,
+            target_kind: replay_pending.target_kind,
+            target_id: replay_pending.target_id,
+            task: replay_pending.task,
+        },
+        prompt_options: prompt_options_from_delegation_runtime_seed(
+            replay_pending.runtime_seed,
+            cwd,
+        )?,
+        reason: replay_pending.reason,
+    })
+}
+
+fn prompt_options_from_delegation_runtime_seed(
+    seed: PersistedDelegationRuntimeSeed,
+    cwd: &Path,
+) -> Result<PromptTurnOptions, CodingSessionError> {
+    let (config, mut diagnostics) = crate::config::load_config(cwd);
+    let api_key = crate::config::auth::resolve_api_key(
+        &seed.model.provider,
+        None,
+        &config.auth,
+        &mut diagnostics,
+    )
+    .map(|key| key.value);
+    let tools = restored_builtin_tools(cwd, &seed.tool_names);
+    let options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+        prompt: String::new(),
+        model: seed.model,
+        api_key,
+        system_prompt: seed.system_prompt,
+        max_turns: seed.max_turns,
+        tools,
+        register_builtins: seed.register_builtins,
+        session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
+        session_target: None,
+        session_name: seed.session_name,
+        thinking_level: parse_optional_runtime_value("thinking level", seed.thinking_level)?,
+        tool_execution: parse_optional_runtime_value("tool execution mode", seed.tool_execution)?,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: Some(config.settings),
+        invocation: PromptInvocation::Text(String::new()),
+    })
+    .with_mode(parse_prompt_turn_mode(&seed.mode)?);
+    Ok(options)
+}
+
+fn restored_builtin_tools(cwd: &Path, tool_names: &[String]) -> Vec<pi_agent_core::AgentTool> {
+    if tool_names.is_empty() {
+        return Vec::new();
+    }
+    let names = tool_names
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    crate::tools::builtin_tools(cwd.to_path_buf())
+        .into_iter()
+        .filter(|tool| names.contains(tool.name.as_str()))
+        .collect()
+}
+
+fn parse_optional_runtime_value<T>(
+    label: &str,
+    value: Option<String>,
+) -> Result<Option<T>, CodingSessionError>
+where
+    T: std::str::FromStr<Err = String>,
+{
+    value
+        .map(|value| {
+            value
+                .parse::<T>()
+                .map_err(|message| CodingSessionError::Session {
+                    message: format!("invalid persisted delegation {label}: {message}"),
+                })
+        })
+        .transpose()
+}
+
+fn parse_prompt_turn_mode(value: &str) -> Result<PromptTurnMode, CodingSessionError> {
+    match value {
+        "print" => Ok(PromptTurnMode::Print),
+        "json" => Ok(PromptTurnMode::Json),
+        "rpc" => Ok(PromptTurnMode::Rpc),
+        other => Err(CodingSessionError::Session {
+            message: format!("invalid persisted delegation prompt mode: {other}"),
+        }),
+    }
+}
+
+fn prompt_turn_mode_label(mode: PromptTurnMode) -> &'static str {
+    match mode {
+        PromptTurnMode::Print => "print",
+        PromptTurnMode::Json => "json",
+        PromptTurnMode::Rpc => "rpc",
+    }
+}
+
+fn persisted_delegation_model(model: &pi_ai::types::Model) -> pi_ai::types::Model {
+    let mut persisted = model.clone();
+    persisted.headers = None;
+    persisted
+}
+
+fn delegation_runtime_seed_from_prompt_options(
+    options: &PromptTurnOptions,
+) -> Result<PersistedDelegationRuntimeSeed, CodingSessionError> {
+    let runtime = options
+        .runtime()
+        .ok_or_else(|| CodingSessionError::Config {
+            message: "delegation confirmation options do not include a runtime snapshot".into(),
+        })?;
+    Ok(PersistedDelegationRuntimeSeed {
+        mode: prompt_turn_mode_label(options.mode()).to_string(),
+        model: persisted_delegation_model(runtime.model()),
+        system_prompt: runtime.system_prompt().map(str::to_owned),
+        max_turns: runtime.max_turns(),
+        tool_names: runtime
+            .tools()
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect(),
+        register_builtins: runtime.register_builtins(),
+        thinking_level: runtime.thinking_level().map(|level| level.to_string()),
+        tool_execution: runtime.tool_execution().map(|mode| mode.to_string()),
+        session_name: options.session_name().map(str::to_owned),
+        parent_delegation_depth: 0,
+    })
 }
 
 impl CodingAgentSession {
@@ -428,6 +570,8 @@ impl CodingAgentSession {
             ProfileKind::Team => OperationKind::AgentTeam,
         };
         let _operation = self.operation_control.begin(operation_kind)?;
+        let mut ids = SystemIdGenerator;
+        self.record_delegation_confirmation_approved(index, ids.next_operation_id())?;
         let pending = self.pending_delegation_confirmations.remove(index);
         self.emit_delegation_approved(&pending.request);
         match pending.request.target_kind {
@@ -450,13 +594,14 @@ impl CodingAgentSession {
     ) -> Result<(), CodingSessionError> {
         let index = self
             .pending_delegation_confirmation_index(operation_id.as_ref(), tool_call_id.as_ref())?;
-        let pending = self.pending_delegation_confirmations.remove(index);
         let reason = reason.into();
         let reason = if reason.trim().is_empty() {
             "delegation rejected by user".to_string()
         } else {
             reason
         };
+        self.record_delegation_confirmation_rejected(index, reason.clone())?;
+        let pending = self.pending_delegation_confirmations.remove(index);
         self.emit_delegation_rejected(&pending.request, &reason);
         Ok(())
     }
@@ -579,6 +724,17 @@ impl CodingAgentSession {
         default_plugin_load_options: PluginLoadOptions,
         profile_registry: ProfileRegistry,
     ) -> Result<Self, CodingSessionError> {
+        let replay = session_service.replay()?;
+        let cwd = replay
+            .cwd
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(default_cwd);
+        let pending_delegation_confirmations = replay
+            .pending_delegation_confirmations
+            .into_iter()
+            .map(|pending| pending_state_from_replay(pending, &cwd))
+            .collect::<Result<Vec<_>, _>>()?;
         let event_service = EventService::new();
         event_service.emit(CodingAgentEvent::SessionOpened {
             session_id: session_service.session_id().to_owned(),
@@ -594,7 +750,7 @@ impl CodingAgentSession {
             profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
-            pending_delegation_confirmations: Vec::new(),
+            pending_delegation_confirmations,
         })
     }
 
@@ -795,13 +951,30 @@ impl CodingAgentSession {
                     }
                 }
                 DelegationAuthorizationDecision::RequiresConfirmation { request, reason } => {
-                    self.pending_delegation_confirmations.push(
-                        PendingDelegationConfirmationState {
-                            request: request.clone(),
-                            prompt_options: prompt_options.clone(),
-                            reason: reason.clone(),
-                        },
-                    );
+                    let pending = PendingDelegationConfirmationState {
+                        request: request.clone(),
+                        prompt_options: prompt_options.clone(),
+                        reason: reason.clone(),
+                    };
+                    if self
+                        .pending_delegation_confirmations
+                        .iter()
+                        .any(|existing| {
+                            existing.request.operation_id == pending.request.operation_id
+                                && existing.request.tool_call_id == pending.request.tool_call_id
+                        })
+                    {
+                        self.event_service.emit(CodingAgentEvent::Diagnostic {
+                            operation_id: Some(request.operation_id.clone()),
+                            message: format!(
+                                "duplicate pending delegation confirmation ignored: operation_id={}, tool_call_id={}",
+                                request.operation_id, request.tool_call_id
+                            ),
+                        });
+                        continue;
+                    }
+                    self.record_delegation_confirmation_requested(&pending)?;
+                    self.pending_delegation_confirmations.push(pending);
                     self.emit_delegation_confirmation_required(request, reason);
                 }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
@@ -828,6 +1001,59 @@ impl CodingAgentSession {
                     "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
                 ),
             })
+    }
+
+    fn record_delegation_confirmation_requested(
+        &mut self,
+        pending: &PendingDelegationConfirmationState,
+    ) -> Result<(), CodingSessionError> {
+        let runtime_seed = delegation_runtime_seed_from_prompt_options(&pending.prompt_options)?;
+        if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
+            session_service.record_delegation_confirmation_requested(
+                pending.request.operation_id.clone(),
+                pending.request.turn_id.clone(),
+                pending.request.tool_call_id.clone(),
+                pending.request.requesting_profile_id.clone(),
+                pending.request.target_kind,
+                pending.request.target_id.clone(),
+                pending.request.task.clone(),
+                pending.reason.clone(),
+                runtime_seed,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn record_delegation_confirmation_approved(
+        &mut self,
+        index: usize,
+        approval_operation_id: String,
+    ) -> Result<(), CodingSessionError> {
+        let pending = &self.pending_delegation_confirmations[index];
+        if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
+            session_service.record_delegation_confirmation_approved(
+                pending.request.operation_id.clone(),
+                pending.request.tool_call_id.clone(),
+                approval_operation_id,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn record_delegation_confirmation_rejected(
+        &mut self,
+        index: usize,
+        reason: String,
+    ) -> Result<(), CodingSessionError> {
+        let pending = &self.pending_delegation_confirmations[index];
+        if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
+            session_service.record_delegation_confirmation_rejected(
+                pending.request.operation_id.clone(),
+                pending.request.tool_call_id.clone(),
+                reason,
+            )?;
+        }
+        Ok(())
     }
 
     async fn execute_approved_agent_delegation(
@@ -1497,6 +1723,37 @@ mod tests {
             settings: None,
             invocation: PromptInvocation::Text(prompt.into()),
         })
+    }
+
+    #[test]
+    fn delegation_runtime_seed_strips_model_headers() {
+        let mut runtime_model = model("delegation-seed-api");
+        runtime_model.headers = Some(serde_json::json!({
+            "authorization": "Bearer secret",
+            "x-model": "metadata",
+        }));
+        let options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: "plan".into(),
+            model: runtime_model,
+            api_key: Some("secret-key".into()),
+            system_prompt: Some("system".into()),
+            max_turns: Some(2),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: Some(SessionRunOptions::disabled(".".into())),
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text("plan".into()),
+        });
+
+        let seed = delegation_runtime_seed_from_prompt_options(&options).unwrap();
+
+        assert_eq!(seed.model.id, "test-model");
+        assert!(seed.model.headers.is_none());
     }
 
     fn compact_options(api: &str, custom_instructions: Option<&str>) -> PromptTurnOptions {

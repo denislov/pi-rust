@@ -501,6 +501,7 @@ mod tests {
                 level: DiagnosticLevel::Warn,
                 message: "ignored".into(),
             }],
+            pending_delegation_confirmations: Vec::new(),
         };
 
         service.hydrate_agent_runtime(&agent, &runtime, &replay);

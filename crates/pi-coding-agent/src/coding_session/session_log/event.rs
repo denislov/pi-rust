@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::coding_session::profiles::{ProfileId, ProfileKind};
+use pi_ai::types::Model;
+
 use super::manifest::{EVENT_SCHEMA, EVENT_VERSION};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -109,6 +112,30 @@ pub(crate) enum SessionEventData {
         loaded_plugin_ids: Vec<String>,
         diagnostics: Vec<PersistedPluginDiagnostic>,
         capability_changed: bool,
+    },
+    #[serde(rename = "delegation.confirmation.requested")]
+    DelegationConfirmationRequested {
+        source_operation_id: String,
+        turn_id: String,
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        reason: String,
+        runtime_seed: PersistedDelegationRuntimeSeed,
+    },
+    #[serde(rename = "delegation.confirmation.approved")]
+    DelegationConfirmationApproved {
+        source_operation_id: String,
+        tool_call_id: String,
+        approval_operation_id: String,
+    },
+    #[serde(rename = "delegation.confirmation.rejected")]
+    DelegationConfirmationRejected {
+        source_operation_id: String,
+        tool_call_id: String,
+        reason: String,
     },
     #[serde(rename = "operation.started")]
     OperationStarted { operation: OperationKind },
@@ -226,6 +253,25 @@ pub(crate) struct PersistedPluginDiagnostic {
     pub(crate) message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct PersistedDelegationRuntimeSeed {
+    pub(crate) mode: String,
+    pub(crate) model: Model,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) max_turns: Option<u32>,
+    pub(crate) tool_names: Vec<String>,
+    pub(crate) register_builtins: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) thinking_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_execution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_name: Option<String>,
+    pub(crate) parent_delegation_depth: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DiagnosticLevel {
@@ -238,6 +284,7 @@ pub(crate) enum DiagnosticLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pi_ai::types::{ModelCost, ModelInput};
     use serde_json::json;
 
     #[test]
@@ -326,6 +373,36 @@ mod tests {
                     capability_changed: true,
                 },
                 "plugin.load.completed",
+            ),
+            (
+                SessionEventData::DelegationConfirmationRequested {
+                    source_operation_id: "op_parent".into(),
+                    turn_id: "turn_parent".into(),
+                    tool_call_id: "tool_delegate".into(),
+                    requesting_profile_id: ProfileId::from("planner"),
+                    target_kind: ProfileKind::Agent,
+                    target_id: ProfileId::from("coder"),
+                    task: "implement parser".into(),
+                    reason: "delegation policy requires confirmation".into(),
+                    runtime_seed: test_delegation_runtime_seed(),
+                },
+                "delegation.confirmation.requested",
+            ),
+            (
+                SessionEventData::DelegationConfirmationApproved {
+                    source_operation_id: "op_parent".into(),
+                    tool_call_id: "tool_delegate".into(),
+                    approval_operation_id: "op_approval".into(),
+                },
+                "delegation.confirmation.approved",
+            ),
+            (
+                SessionEventData::DelegationConfirmationRejected {
+                    source_operation_id: "op_parent".into(),
+                    tool_call_id: "tool_delegate".into(),
+                    reason: "not now".into(),
+                },
+                "delegation.confirmation.rejected",
             ),
             (
                 SessionEventData::OperationStarted {
@@ -443,6 +520,35 @@ mod tests {
             let value = serde_json::to_value(event).unwrap();
             assert_eq!(value["kind"], expected_kind);
             assert!(value.get("data").is_some());
+        }
+    }
+
+    fn test_delegation_runtime_seed() -> PersistedDelegationRuntimeSeed {
+        PersistedDelegationRuntimeSeed {
+            mode: "print".into(),
+            model: Model {
+                id: "test-model".into(),
+                name: "Test Model".into(),
+                api: "test-api".into(),
+                provider: "test".into(),
+                base_url: String::new(),
+                reasoning: false,
+                thinking_level_map: None,
+                input: vec![ModelInput::Text],
+                cost: ModelCost::default(),
+                context_window: 0,
+                max_tokens: 0,
+                headers: None,
+                compat: None,
+            },
+            system_prompt: Some("runtime instructions".into()),
+            max_turns: Some(4),
+            tool_names: vec!["read".into()],
+            register_builtins: false,
+            thinking_level: None,
+            tool_execution: None,
+            session_name: Some("session".into()),
+            parent_delegation_depth: 0,
         }
     }
 }

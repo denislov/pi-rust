@@ -267,6 +267,7 @@ mod tests {
             leaves: Vec::new(),
             transcript: Vec::new(),
             diagnostics: Vec::new(),
+            pending_delegation_confirmations: Vec::new(),
         });
         context.begin_transaction(&store, handle).unwrap();
 
@@ -979,6 +980,7 @@ version = "0.1.0"
                 text: "hello <flow>".into(),
             }],
             diagnostics: Vec::new(),
+            pending_delegation_confirmations: Vec::new(),
         };
         let mut context = ExportContext::new(ExportOptions::html(output.clone()), summary, replay);
 

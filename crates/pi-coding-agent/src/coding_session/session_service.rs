@@ -7,8 +7,8 @@ use pi_ai::types::ContentBlock;
 use super::export_flow::{ExportContext, ExportOptions};
 use super::prompt::PromptTurnTransaction;
 use super::session_log::event::{
-    OperationKind, PersistedContentBlock, PersistedPluginDiagnostic, SessionEventData,
-    SessionEventEnvelope,
+    OperationKind, PersistedContentBlock, PersistedDelegationRuntimeSeed,
+    PersistedPluginDiagnostic, SessionEventData, SessionEventEnvelope,
 };
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
@@ -19,7 +19,7 @@ use super::session_log::transaction::TurnTransaction;
 use super::{
     CodingAgentEvent, CodingAgentSessionDiagnostic, CodingAgentSessionHydration,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionTranscriptItem,
-    CodingAgentSessionTree, CodingAgentSessionView, CodingSessionError, ProfileId,
+    CodingAgentSessionTree, CodingAgentSessionView, CodingSessionError, ProfileId, ProfileKind,
 };
 
 #[derive(Debug)]
@@ -206,6 +206,69 @@ impl SessionService {
                 }
                 _ => None,
             }))
+    }
+
+    pub(crate) fn record_delegation_confirmation_requested(
+        &mut self,
+        source_operation_id: String,
+        turn_id: String,
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        reason: String,
+        runtime_seed: PersistedDelegationRuntimeSeed,
+    ) -> Result<(), CodingSessionError> {
+        self.append_durable_session_event(
+            Some(source_operation_id.clone()),
+            Some(turn_id.clone()),
+            SessionEventData::DelegationConfirmationRequested {
+                source_operation_id,
+                turn_id,
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+                reason,
+                runtime_seed,
+            },
+        )
+    }
+
+    pub(crate) fn record_delegation_confirmation_approved(
+        &mut self,
+        source_operation_id: String,
+        tool_call_id: String,
+        approval_operation_id: String,
+    ) -> Result<(), CodingSessionError> {
+        self.append_durable_session_event(
+            Some(source_operation_id.clone()),
+            None,
+            SessionEventData::DelegationConfirmationApproved {
+                source_operation_id,
+                tool_call_id,
+                approval_operation_id,
+            },
+        )
+    }
+
+    pub(crate) fn record_delegation_confirmation_rejected(
+        &mut self,
+        source_operation_id: String,
+        tool_call_id: String,
+        reason: String,
+    ) -> Result<(), CodingSessionError> {
+        self.append_durable_session_event(
+            Some(source_operation_id.clone()),
+            None,
+            SessionEventData::DelegationConfirmationRejected {
+                source_operation_id,
+                tool_call_id,
+                reason,
+            },
+        )
     }
 
     #[allow(dead_code)]
@@ -660,6 +723,31 @@ impl SessionService {
         store.append_events(&handle, &[created])?;
 
         Ok(Self { store, handle })
+    }
+
+    fn append_durable_session_event(
+        &mut self,
+        operation_id: Option<String>,
+        turn_id: Option<String>,
+        data: SessionEventData,
+    ) -> Result<(), CodingSessionError> {
+        let session_id = self.session_id().to_owned();
+        let mut ids = SystemIdGenerator;
+        let clock = SystemClock;
+        let updated_at = clock.now_rfc3339();
+        let mut event = SessionEventEnvelope::new(
+            session_id.clone(),
+            ids.next_event_id(),
+            updated_at.clone(),
+            data,
+        );
+        event.operation_id = operation_id;
+        event.turn_id = turn_id;
+        self.store.append_events(&self.handle, &[event])?;
+        self.store
+            .update_manifest(&self.handle, ManifestPatch::new().updated_at(updated_at))?;
+        self.handle = self.store.open_session_id(&session_id)?;
+        Ok(())
     }
 
     fn skipped_write(

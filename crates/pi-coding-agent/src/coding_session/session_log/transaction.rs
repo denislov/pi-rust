@@ -465,6 +465,15 @@ mod tests {
                 SessionEventData::MetadataUpdated { .. } => "metadata.updated",
                 SessionEventData::ActiveLeafChanged { .. } => "active_leaf.changed",
                 SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
+                SessionEventData::DelegationConfirmationRequested { .. } => {
+                    "delegation.confirmation.requested"
+                }
+                SessionEventData::DelegationConfirmationApproved { .. } => {
+                    "delegation.confirmation.approved"
+                }
+                SessionEventData::DelegationConfirmationRejected { .. } => {
+                    "delegation.confirmation.rejected"
+                }
                 SessionEventData::SessionCreated { .. } => "session.created",
                 SessionEventData::SessionCloned { .. } => "session.cloned",
                 SessionEventData::SessionForked { .. } => "session.forked",

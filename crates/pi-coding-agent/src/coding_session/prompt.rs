@@ -684,6 +684,7 @@ impl PromptTurnContext {
             leaves: Vec::new(),
             transcript,
             diagnostics: Vec::new(),
+            pending_delegation_confirmations: Vec::new(),
         });
     }
 

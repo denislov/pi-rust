@@ -2,9 +2,9 @@
 
 ## Purpose
 
-`pi-rust` now supports policy-gated model-requested delegation through `delegate_agent` and `delegate_team`, including confirmation-held requests that can be listed, approved, or rejected through RPC and interactive slash commands.
+`pi-rust` supports policy-gated model-requested delegation through `delegate_agent` and `delegate_team`, including confirmation-held requests that can be listed, approved, or rejected through RPC and interactive slash commands.
 
-The remaining gap is durability. A confirmation-held request currently lives only in `CodingAgentSession` memory. If the process exits or the session is reopened, the request is lost even though the session event log contains the prompt and tool call that produced it. This weakens auditability and blocks later recursive budget and capability work.
+Before this design, a confirmation-held request lived only in `CodingAgentSession` memory. If the process exited or the session was reopened, the request was lost even though the session event log contained the prompt and tool call that produced it. That weakened auditability and blocked later recursive budget and capability work.
 
 This design makes pending delegation confirmations part of the Rust-native typed session event log. The session owner should derive pending confirmations from durable request and resolution events rather than from an independent sidecar state file.
 
@@ -34,18 +34,18 @@ This design makes pending delegation confirmations part of the Rust-native typed
 - Do not expose raw session storage or runtime internals to plugins.
 - Do not allow approval of requests that cannot be represented as typed `DelegationRequest` values.
 
-## Current State
+## Pre-Implementation State
 
-`CodingAgentSession` owns:
+Before this slice, `CodingAgentSession` owned:
 
 - `pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>`
 - `pending_delegation_confirmations()`
 - `approve_delegation_confirmation(operation_id, tool_call_id)`
 - `reject_delegation_confirmation(operation_id, tool_call_id, reason)`
 
-When `PromptTurnContext` authorizes a queued request as `RequiresConfirmation`, the owner pushes an in-memory pending state and emits `DelegationConfirmationRequired`. Approval removes the pending state, emits `DelegationApproved`, and executes the held child flow. Rejection removes the pending state and emits `DelegationRejected`.
+When `PromptTurnContext` authorized a queued request as `RequiresConfirmation`, the owner pushed an in-memory pending state and emitted `DelegationConfirmationRequired`. Approval removed the pending state, emitted `DelegationApproved`, and executed the held child flow. Rejection removed the pending state and emitted `DelegationRejected`.
 
-The Rust-native session log currently persists prompt transcript operations, branch summaries, manual compaction, plugin load results, and active leaf changes. It does not have durable delegation confirmation request or resolution events.
+The Rust-native session log already persisted prompt transcript operations, branch summaries, manual compaction, plugin load results, and active leaf changes. It did not yet have durable delegation confirmation request or resolution events.
 
 ## Design
 
@@ -81,13 +81,19 @@ delegation.confirmation.rejected
 - `target_id`
 - `task`
 - `reason`
-- a minimal child prompt runtime seed:
+- a non-sensitive child prompt runtime seed:
   - prompt mode;
-  - session target identity when needed by existing prompt option construction;
+  - model metadata with request headers stripped;
+  - system prompt when present;
+  - max turns when present;
+  - runtime tool names;
+  - whether built-in tools were registered;
+  - thinking level when present;
+  - tool execution mode when present;
   - session display name when present;
   - parent delegation depth.
 
-The durable event must not store `RuntimeSnapshot`, provider credentials, resolved tools, plugin service internals, loaded runtime instances, or raw `CodingAgentSession` state. After reopen, approval rebuilds child `PromptTurnOptions` from the persisted runtime seed plus the current session owner configuration, settings, auth, plugin service, and profile registry. This means restored approval uses the current available runtime configuration, while the delegated target and task remain the originally requested target and task.
+The durable event must not store `RuntimeSnapshot`, provider credentials, model request headers, resolved tool closures, plugin service internals, loaded runtime instances, or raw `CodingAgentSession` state. After reopen, approval rebuilds child `PromptTurnOptions` from the persisted runtime seed plus the current session owner configuration, settings, auth, plugin service, and profile registry. API keys are resolved from current auth at approval time, model headers are not restored from the session log, and built-in tools are restored by name when still available. This means restored approval uses the current available runtime configuration, while the delegated target and task remain the originally requested target and task.
 
 `delegation.confirmation.approved` stores:
 
