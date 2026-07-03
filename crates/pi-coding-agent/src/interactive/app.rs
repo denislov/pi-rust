@@ -2237,6 +2237,36 @@ mod tests {
     fn parse_slash_command_preserves_non_slash_prompt_path() {
         assert_eq!(parse_slash_command("hello"), None);
         assert_eq!(parse_slash_command("  /quit"), None);
+        assert_eq!(parse_slash_command("@agent coder refactor module"), None);
+        assert_eq!(
+            parse_slash_command("@team implementation ship feature"),
+            None
+        );
+    }
+
+    #[test]
+    fn at_agent_and_at_team_submit_as_plain_prompt_text() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.editor.set_text("@agent coder refactor module");
+        root.handle_input(&key_event("\r"));
+        assert_eq!(root.take_action(), InteractiveAction::Submit);
+        assert_eq!(
+            root.take_pending_submit().as_deref(),
+            Some("@agent coder refactor module")
+        );
+
+        root.editor.set_text("@team implementation ship feature");
+        root.handle_input(&key_event("\r"));
+        assert_eq!(root.take_action(), InteractiveAction::Submit);
+        assert_eq!(
+            root.take_pending_submit().as_deref(),
+            Some("@team implementation ship feature")
+        );
     }
 
     #[test]
@@ -3348,6 +3378,49 @@ members = ["coder"]
             .expect("plugin command request should be queued");
         assert_eq!(request.command_id, "lua.say_hello");
         assert_eq!(request.args, serde_json::json!({"name": "tui"}));
+    }
+
+    #[test]
+    fn builtin_slash_command_wins_over_same_named_plugin_alias() {
+        let _guard = crate::test_support::env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        unsafe {
+            std::env::set_var("PI_RUST_DIR", &global);
+        }
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+        root.set_plugin_commands(vec![PluginSlashCommand::new(
+            "agent",
+            "conflicting plugin alias",
+        )]);
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent".to_string(),
+            args: "coder refactor module".to_string(),
+            original: "/agent coder refactor module".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::AgentInvocation);
+        assert!(root.take_pending_plugin_command_request().is_none());
+        let request = root
+            .take_pending_agent_invocation_request()
+            .expect("built-in /agent should handle the command");
+        assert_eq!(request.profile_id.as_str(), "coder");
+        assert_eq!(request.task, "refactor module");
+        unsafe {
+            std::env::remove_var("PI_RUST_DIR");
+        }
     }
 
     #[test]

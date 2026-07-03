@@ -225,6 +225,117 @@ members = ["missing"]
     )));
 }
 
+#[tokio::test]
+async fn team_invocation_rejects_unknown_supervisor_with_product_event() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_agent(&cwd, "coder", "Coder", None);
+    write_file(
+        cwd.join(".pi-rust/teams/broken-supervisor.toml"),
+        r#"
+schema_version = 1
+id = "broken-supervisor"
+display_name = "Broken Supervisor Team"
+supervisor = "missing-lead"
+strategy = "plan_execute_review"
+members = ["coder"]
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "agent-team-missing-supervisor-api";
+    let _provider_guard = ProviderGuard::register(api, Arc::new(Mutex::new(Vec::new())), vec![]);
+    let mut session =
+        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
+            .await
+            .unwrap();
+    let mut events = session.subscribe();
+
+    let error = session
+        .invoke_team(AgentTeamOptions::new(
+            "broken-supervisor",
+            "task",
+            prompt_options(&cwd, api, "task"),
+        ))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("Unknown team supervisor agent profile: missing-lead"),
+        "{error}"
+    );
+    let events = drain_events(&mut events);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        CodingAgentEvent::AgentTeamFailed { team_id, error, .. }
+            if team_id.as_str() == "broken-supervisor"
+                && error
+                    .to_string()
+                    .contains("Unknown team supervisor agent profile: missing-lead")
+    )));
+}
+
+#[tokio::test]
+async fn team_invocation_reports_child_runtime_failure() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_agent(&cwd, "coder", "Coder", None);
+    write_file(
+        cwd.join(".pi-rust/teams/failing-member.toml"),
+        r#"
+schema_version = 1
+id = "failing-member"
+display_name = "Failing Member Team"
+supervisor = "deterministic"
+strategy = "plan_execute_review"
+members = ["coder"]
+"#,
+    );
+    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+
+    let api = "agent-team-child-failure-api";
+    let _provider_guard = ProviderGuard::register_failing(api);
+    let mut session =
+        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
+            .await
+            .unwrap();
+    let mut events = session.subscribe();
+
+    let error = session
+        .invoke_team(AgentTeamOptions::new(
+            "failing-member",
+            "task",
+            prompt_options(&cwd, api, "task"),
+        ))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("member child failed"), "{error}");
+    let events = drain_events(&mut events);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        CodingAgentEvent::PromptFailed { error, .. }
+            if error.to_string().contains("member child failed")
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        CodingAgentEvent::AgentTeamFailed { team_id, error, .. }
+            if team_id.as_str() == "failing-member"
+                && error.to_string().contains("member child failed")
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        CodingAgentEvent::AgentTeamCompleted { team_id, .. }
+            if team_id.as_str() == "failing-member"
+    )));
+}
+
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
     PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: prompt.into(),
@@ -302,6 +413,8 @@ struct QueueProvider {
     responses: Arc<Mutex<VecDeque<String>>>,
 }
 
+struct FailingProvider;
+
 impl ApiProvider for QueueProvider {
     fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
         let user_texts = ctx
@@ -347,6 +460,21 @@ impl ApiProvider for QueueProvider {
     }
 }
 
+impl ApiProvider for FailingProvider {
+    fn stream(&self, model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        let model_id = model.id.clone();
+        Box::pin(stream! {
+            let mut message = AssistantMessage::empty("agent-team-failure", &model_id);
+            message.error_message = Some("member child failed".into());
+            message.stop_reason = StopReason::Error;
+            yield AssistantMessageEvent::Error {
+                reason: StopReason::Error,
+                message,
+            };
+        })
+    }
+}
+
 struct ProviderGuard {
     api: String,
 }
@@ -362,6 +490,11 @@ impl ProviderGuard {
                 )),
             }),
         );
+        Self { api: api.into() }
+    }
+
+    fn register_failing(api: &str) -> Self {
+        registry::register(api, Arc::new(FailingProvider));
         Self { api: api.into() }
     }
 }

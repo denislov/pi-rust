@@ -323,7 +323,7 @@ impl PromptTask {
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (abort_tx, abort_rx) = oneshot::channel();
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
             let result = run_coding_agent_invocation_task(
@@ -333,14 +333,14 @@ impl PromptTask {
                 task,
                 default_agent_profile_id,
                 event_tx,
-                abort_rx,
+                control_rx,
             )
             .await;
             let _ = done_tx.send(result.map(PromptTaskResult::AgentInvocation));
         });
 
         Self {
-            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            control: PromptTaskControlHandle::Prompt(control_tx),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -625,7 +625,7 @@ async fn run_coding_agent_invocation_task(
     task: String,
     default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut abort_rx: oneshot::Receiver<()>,
+    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
 ) -> Result<AgentInvocationTaskResult, CliError> {
     let mut session = match existing_session {
         Some(session) => session,
@@ -638,6 +638,7 @@ async fn run_coding_agent_invocation_task(
             .await?
         }
     };
+    let prompt_control = session.prompt_control_handle()?;
     let mut receiver = session.subscribe();
     let invocation_options = AgentInvocationOptions::new(
         profile_id,
@@ -647,12 +648,27 @@ async fn run_coding_agent_invocation_task(
 
     let outcome = {
         let mut invocation = Box::pin(session.invoke_agent(invocation_options));
+        let mut abort_requested = false;
+        let mut controls_open = true;
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive agent invocation abort is not implemented yet".into(),
-                    ));
+                control = control_rx.recv(), if controls_open => {
+                    match control {
+                        Some(PromptTaskControl::Abort) if !abort_requested => {
+                            abort_requested = true;
+                            prompt_control.abort("user cancelled")?;
+                        }
+                        Some(PromptTaskControl::Steer(text)) => {
+                            prompt_control.steer(text)?;
+                        }
+                        Some(PromptTaskControl::FollowUp(text)) => {
+                            prompt_control.follow_up(text)?;
+                        }
+                        Some(PromptTaskControl::Abort) => {}
+                        None => {
+                            controls_open = false;
+                        }
+                    }
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {

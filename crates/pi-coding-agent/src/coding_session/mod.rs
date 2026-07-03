@@ -631,7 +631,9 @@ impl CodingAgentSession {
         let _operation = self
             .operation_control
             .begin(OperationKind::AgentInvocation)?;
-        self.invoke_agent_inner(options).await
+        let result = self.invoke_agent_inner(options).await;
+        self.operation_control.clear_prompt_control_receiver();
+        result
     }
 
     pub async fn invoke_team(
@@ -908,12 +910,16 @@ impl CodingAgentSession {
         &mut self,
         options: AgentInvocationOptions,
     ) -> Result<AgentInvocationOutcome, CodingSessionError> {
+        let prompt_control_receiver = self.operation_control.take_prompt_control_receiver();
         let mut context = AgentInvocationContext::new(
             options,
             self.profile_registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
         );
+        if let Some(receiver) = prompt_control_receiver {
+            context.set_prompt_control_receiver(receiver);
+        }
         self.flow_service.run_agent_invocation(&mut context).await
     }
 

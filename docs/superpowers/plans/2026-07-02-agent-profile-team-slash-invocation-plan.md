@@ -231,8 +231,8 @@ Tasks:
 - [x] Implement `/agent <agent-id> <task>` as a one-off agent invocation operation.
 - [x] Implement `/team <team-id> <task>` as a one-off team invocation operation.
 - [x] Reject missing ids/tasks with usage text. `/agent use`, one-off `/agent`, and `/team` parser validation are covered.
-- [ ] Reject `@agent` and `@team` as normal prompt text; do not add mention parsing.
-- [ ] Keep plugin command slash aliases working and avoid id conflicts with built-in slash command names.
+- [x] Reject `@agent` and `@team` as normal prompt text; do not add mention parsing. Parser/root tests now keep both forms on the ordinary prompt submission path.
+- [x] Keep plugin command slash aliases working and avoid id conflicts with built-in slash command names. Built-in `/agent` wins over a same-named loaded plugin alias, while non-conflicting plugin aliases still dispatch through the plugin-command runner.
 - [x] Add completion/suggestion tests for the new slash commands.
 
 Acceptance:
@@ -264,7 +264,7 @@ Tasks:
 - [x] Resolve the target `AgentProfile` through the session registry.
 - [x] Create a child operation lineage id correlated with the parent session operation.
 - [x] Run the task through the same runtime service boundaries used by ordinary prompts. `AgentInvocationFlow` now normalizes the child prompt invocation from `AgentInvocationOptions::task`, so callers cannot accidentally execute a stale parent prompt from reused `PromptTurnOptions`.
-- [~] Record product events for invocation started, child output, diagnostics, completion, failure, and cancellation. Start, child output, diagnostics, completion, and failure are covered; abort/cancellation event shape exists, while interactive abort for agent invocation remains unsupported.
+- [~] Record product events for invocation started, child output, diagnostics, completion, failure, and cancellation. Start, child output, diagnostics, completion, and failure are covered; abort/cancellation event shape exists, and interactive Ctrl-C for agent invocation now routes through an owner-issued prompt-control handle to cancel the child provider. Direct product-event cancellation regression coverage remains follow-up.
 - [x] Decide whether invocation output becomes an assistant transcript item, an artifact, or a structured event before durable commit. One-off child output streams as product events and does not commit directly into the parent transcript.
 - [x] Enforce busy-state and operation-control rules consistently with compact/export/plugin-load workflows.
 
@@ -299,7 +299,7 @@ Tasks:
 - [x] Resolve member ids to `AgentProfile` values at the session boundary.
 - [x] Enforce child operation isolation and parent-controlled commit policy.
 - [x] Record team/member lineage in typed product events.
-- [~] Add deterministic faux-provider tests for two-member success, member failure, supervisor rejection, and coherent operation lineage. Current coverage includes two-member success, unknown-member failure, profile-backed supervisor execution, parent transcript isolation, and child operation lineage; explicit supervisor rejection and child runtime failure tests remain follow-up.
+- [~] Add deterministic faux-provider tests for two-member success, member failure, supervisor rejection, and coherent operation lineage. Current coverage includes two-member success, unknown-member failure, unknown-supervisor failure, profile-backed supervisor execution, child runtime failure, parent transcript isolation, and child operation lineage; richer semantic supervisor rejection remains follow-up if the team strategy grows an explicit rejection mode.
 
 Acceptance:
 

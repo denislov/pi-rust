@@ -12,6 +12,8 @@ use pi_ai::{
 use pi_coding_agent::interactive::test_harness::run_scripted_idle_interactive;
 use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
 
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[derive(Debug)]
 struct AbortAwareProvider {
     cancelled: Arc<AtomicBool>,
@@ -82,5 +84,59 @@ async fn ctrl_c_cancels_running_prompt_on_coding_session_path() {
     assert!(output.contains("please wait"));
     assert!(output.contains("prompt aborted: user cancelled"));
     assert!(output.contains("status: idle"));
+    assert!(cancelled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn ctrl_c_cancels_running_agent_invocation_child_prompt() {
+    let _guard = ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+    std::fs::write(
+        dir.path().join("agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    )
+    .unwrap();
+    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path());
+    }
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let provider = Arc::new(AbortAwareProvider::new(Arc::clone(&cancelled)));
+    let output = tokio::time::timeout(
+        Duration::from_millis(500),
+        run_scripted_interactive_with_provider_chunks(
+            provider,
+            vec!["/agent coder please wait\r", "\x03", "\x03"],
+        ),
+    )
+    .await
+    .expect("interactive loop should not hang while aborting agent invocation");
+
+    unsafe {
+        match prior_pi_rust_dir {
+            Some(value) => std::env::set_var("PI_RUST_DIR", value),
+            None => std::env::remove_var("PI_RUST_DIR"),
+        }
+    }
+
+    let output = output.expect("scripted interactive run should succeed");
+    assert_eq!(output.exit_code, 0);
+    assert!(output.terminal_restored);
+    assert!(output.contains("/agent coder please wait"), "{output:?}");
+    assert!(
+        output.contains("agent invocation aborted: user cancelled"),
+        "{output:?}"
+    );
+    assert!(
+        !output.contains("interactive agent invocation abort is not implemented yet"),
+        "{output:?}"
+    );
+    assert!(output.contains("status: idle"), "{output:?}");
     assert!(cancelled.load(Ordering::SeqCst));
 }

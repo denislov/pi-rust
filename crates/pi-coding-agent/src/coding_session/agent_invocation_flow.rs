@@ -10,6 +10,7 @@ use super::CodingSessionError;
 use super::delegation::emit_child_delegation_authorization_decision;
 use super::event::CodingAgentEvent;
 use super::event_service::EventService;
+use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
 use super::profiles::{AgentProfile, ProfileId, ProfileRegistry};
 use super::prompt::{
@@ -215,6 +216,7 @@ pub(crate) struct AgentInvocationContext {
     turn_id: String,
     profile: Option<AgentProfile>,
     child_context: Option<PromptTurnContext>,
+    prompt_control_receiver: Option<PromptControlReceiver>,
     prompt_outcome: Option<PromptTurnOutcome>,
     failure_error: Option<CodingSessionError>,
 }
@@ -237,6 +239,7 @@ impl AgentInvocationContext {
             turn_id: ids.next_turn_id(),
             profile: None,
             child_context: None,
+            prompt_control_receiver: None,
             prompt_outcome: None,
             failure_error: None,
         }
@@ -252,6 +255,10 @@ impl AgentInvocationContext {
 
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
         self.failure_error.take()
+    }
+
+    pub(crate) fn set_prompt_control_receiver(&mut self, receiver: PromptControlReceiver) {
+        self.prompt_control_receiver = Some(receiver);
     }
 
     pub(crate) fn finish_success(&self) -> Result<AgentInvocationOutcome, CodingSessionError> {
@@ -337,6 +344,9 @@ impl AgentInvocationContext {
             format!("agent_invocation_{}", self.child_operation_id),
             Vec::new(),
         );
+        if let Some(receiver) = self.prompt_control_receiver.take() {
+            child_context.set_prompt_control_receiver(receiver);
+        }
         child_context.enable_live_events(self.event_service.clone());
         self.child_context = Some(child_context);
         Ok(())
