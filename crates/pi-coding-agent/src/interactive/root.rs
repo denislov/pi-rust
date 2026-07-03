@@ -64,6 +64,7 @@ pub(super) enum InteractiveAction {
     PluginCommand,
     PluginUiAction,
     PluginUiDialog,
+    DelegationConfirmation,
     AgentProfileUse,
     AgentInvocation,
     AgentTeam,
@@ -124,6 +125,24 @@ pub(super) struct PendingAgentTeamRequest {
 pub(super) struct PendingPluginCommandRequest {
     pub(super) command_id: String,
     pub(super) args: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingDelegationConfirmationSelection {
+    pub(super) operation_id: Option<String>,
+    pub(super) tool_call_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PendingDelegationConfirmationCommand {
+    List,
+    Approve {
+        selection: PendingDelegationConfirmationSelection,
+    },
+    Reject {
+        selection: PendingDelegationConfirmationSelection,
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -521,6 +540,8 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_agent_invocation_request: Option<PendingAgentInvocationRequest>,
     pub(super) pending_agent_team_request: Option<PendingAgentTeamRequest>,
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
+    pub(super) pending_delegation_confirmation_command:
+        Option<PendingDelegationConfirmationCommand>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
@@ -688,6 +709,7 @@ impl InteractiveRoot {
             pending_agent_invocation_request: None,
             pending_agent_team_request: None,
             pending_plugin_command_request: None,
+            pending_delegation_confirmation_command: None,
             pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
             active_plugin_ui_dialog: None,
@@ -842,6 +864,12 @@ impl InteractiveRoot {
         &mut self,
     ) -> Option<PendingPluginCommandRequest> {
         self.pending_plugin_command_request.take()
+    }
+
+    pub(super) fn take_pending_delegation_confirmation_command(
+        &mut self,
+    ) -> Option<PendingDelegationConfirmationCommand> {
+        self.pending_delegation_confirmation_command.take()
     }
 
     pub(super) fn take_pending_plugin_ui_action(&mut self) -> Option<PendingPluginUiAction> {

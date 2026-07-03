@@ -92,6 +92,11 @@ Every team profile must declare supervisor semantics. Current execution supports
 /agent <agent-id> <task>
 /teams
 /team <team-id> <task>
+/delegations
+/delegation list
+/delegation approve <tool-call-id>
+/delegation approve <operation-id> <tool-call-id>
+/delegation reject <tool-call-id> [reason]
 ```
 
 Semantics:
@@ -101,6 +106,9 @@ Semantics:
 - `/agent <agent-id> <task>` runs one isolated one-off agent invocation without changing the default profile.
 - `/teams` lists resolved team profiles.
 - `/team <team-id> <task>` runs one supervised team invocation without changing the default profile.
+- `/delegations` and `/delegation list` show delegation requests currently waiting for confirmation on the in-memory session owner.
+- `/delegation approve <tool-call-id>` approves the unique pending request with that tool call id. Use `/delegation approve <operation-id> <tool-call-id>` when multiple pending requests share a tool call id.
+- `/delegation reject <tool-call-id> [reason]` rejects the unique pending request with that tool call id. A rejection emits a product event and does not run child work.
 - Ordinary text prompts run with the current session default agent profile.
 
 One-off child work streams events but does not directly commit child transcript state into the parent session.
@@ -141,14 +149,15 @@ Current behavior:
 - Rejected requests return structured rejection envelopes and emit `DelegationRejected` product events.
 - Auto-approved requests run through session-owned child agent/team flows and emit `DelegationApproved`, `DelegationStarted`, and either `DelegationCompleted` or `DelegationFailed` product events.
 - Delegated child prompts authorize their own queued delegation requests at child depth. Exhausted nested requests emit `DelegationRejected` instead of being silently dropped.
-- Requests that require confirmation emit `DelegationConfirmationRequired`, are held in the current session owner's pending confirmation queue, and can be listed, approved, or rejected through RPC.
+- Requests that require confirmation emit `DelegationConfirmationRequired`, are held in the current session owner's pending confirmation queue, and can be listed, approved, or rejected through interactive slash commands or RPC.
 - Pending-confirmation approval emits `DelegationApproved`, starts the child agent/team flow, and then emits `DelegationStarted` plus `DelegationCompleted` or `DelegationFailed`. Pending-confirmation rejection emits `DelegationRejected` and does not run child work.
 - The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_confirmation_required`, `delegation_approved`, `delegation_started`, `delegation_completed`, and `delegation_failed`.
+- The interactive event bridge renders confirmation-required, approval, rejection, start, completion, and failure delegation events as system notices in the transcript. Confirmation-required notices include the exact approve/reject slash commands.
 - The pending confirmation queue is currently in-memory owner state. It is not restored after process restart or session reopen.
 
 Still follow-up:
 
-- Interactive confirmation prompts/approval UI for write-capable, team, or high-cost delegation.
+- Richer interactive confirmation prompts/approval UI for write-capable, team, or high-cost delegation beyond the current slash-command path.
 - Durable pending-confirmation persistence, expiry, and stale-request policy.
 - Recursive child execution and inherited budget accounting beyond the current child-depth authorization boundary.
 - Capability release policy for delegated child work.

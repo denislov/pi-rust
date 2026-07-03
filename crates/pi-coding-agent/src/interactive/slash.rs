@@ -44,6 +44,14 @@ pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
             description: "Run a team profile".into(),
         },
         BuiltinSlashCommand {
+            name: "delegations".into(),
+            description: "List pending delegation confirmations".into(),
+        },
+        BuiltinSlashCommand {
+            name: "delegation".into(),
+            description: "Approve or reject a delegation confirmation".into(),
+        },
+        BuiltinSlashCommand {
             name: "scoped-models".into(),
             description: "Enable or disable models for cycling".into(),
         },

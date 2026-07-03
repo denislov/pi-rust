@@ -10,8 +10,9 @@ use crate::interactive::key_hints::{app_key_hint, key_hint};
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
-    PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingPluginCommandRequest,
-    PendingPluginUiDialog, PluginUiDialogField,
+    PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
+    PendingDelegationConfirmationSelection, PendingPluginCommandRequest, PendingPluginUiDialog,
+    PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -96,6 +97,8 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "agent" => handle_agent_command(root, &command.args),
         "teams" => handle_teams_command(root),
         "team" => handle_team_command(root, &command.args),
+        "delegations" => handle_delegations_command(root, &command.args),
+        "delegation" => handle_delegation_command(root, &command.args),
         "resume" => handle_resume_command(root, &command.args),
         "export" => handle_export_command(root, &command.args),
         "import" => handle_import_command(root, &command.args),
@@ -256,6 +259,137 @@ fn handle_team_command(root: &mut InteractiveRoot, args: &str) {
         task: task.to_string(),
     });
     root.action = InteractiveAction::AgentTeam;
+}
+
+fn handle_delegations_command(root: &mut InteractiveRoot, args: &str) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before listing delegation confirmations.",
+        ));
+        return;
+    }
+    if !args.trim().is_empty() {
+        root.transcript
+            .push(TranscriptItem::system("Usage: /delegations"));
+        return;
+    }
+    root.pending_delegation_confirmation_command = Some(PendingDelegationConfirmationCommand::List);
+    root.action = InteractiveAction::DelegationConfirmation;
+}
+
+fn handle_delegation_command(root: &mut InteractiveRoot, args: &str) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before handling delegation confirmations.",
+        ));
+        return;
+    }
+
+    let args = args.trim();
+    if args.is_empty() || args == "list" {
+        root.pending_delegation_confirmation_command =
+            Some(PendingDelegationConfirmationCommand::List);
+        root.action = InteractiveAction::DelegationConfirmation;
+        return;
+    }
+
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let verb = parts.next().unwrap_or_default();
+    let rest = parts.next().unwrap_or_default().trim();
+    match verb {
+        "approve" => match parse_delegation_selection(rest) {
+            Ok(selection) => {
+                root.pending_delegation_confirmation_command =
+                    Some(PendingDelegationConfirmationCommand::Approve { selection });
+                root.action = InteractiveAction::DelegationConfirmation;
+            }
+            Err(usage) => root.transcript.push(TranscriptItem::system(usage)),
+        },
+        "reject" => match parse_delegation_rejection(rest) {
+            Ok((selection, reason)) => {
+                root.pending_delegation_confirmation_command =
+                    Some(PendingDelegationConfirmationCommand::Reject { selection, reason });
+                root.action = InteractiveAction::DelegationConfirmation;
+            }
+            Err(usage) => root.transcript.push(TranscriptItem::system(usage)),
+        },
+        _ => root.transcript.push(TranscriptItem::system(
+            "Usage: /delegation list | approve <tool-call-id> | approve <operation-id> <tool-call-id> | reject <tool-call-id> [reason]",
+        )),
+    }
+}
+
+fn parse_delegation_selection(
+    args: &str,
+) -> Result<PendingDelegationConfirmationSelection, String> {
+    let mut parts = args.split_whitespace();
+    let Some(first) = parts.next() else {
+        return Err(
+            "Usage: /delegation approve <tool-call-id> or /delegation approve <operation-id> <tool-call-id>"
+                .to_string(),
+        );
+    };
+    let second = parts.next();
+    if parts.next().is_some() {
+        return Err(
+            "Usage: /delegation approve <tool-call-id> or /delegation approve <operation-id> <tool-call-id>"
+                .to_string(),
+        );
+    }
+    Ok(match second {
+        Some(tool_call_id) => PendingDelegationConfirmationSelection {
+            operation_id: Some(first.to_string()),
+            tool_call_id: tool_call_id.to_string(),
+        },
+        None => PendingDelegationConfirmationSelection {
+            operation_id: None,
+            tool_call_id: first.to_string(),
+        },
+    })
+}
+
+fn parse_delegation_rejection(
+    args: &str,
+) -> Result<(PendingDelegationConfirmationSelection, Option<String>), String> {
+    let mut parts = args.split_whitespace();
+    let Some(first) = parts.next() else {
+        return Err(
+            "Usage: /delegation reject <tool-call-id> [reason] or /delegation reject <operation-id> <tool-call-id> [reason]"
+                .to_string(),
+        );
+    };
+    let Some(second) = parts.next() else {
+        return Ok((
+            PendingDelegationConfirmationSelection {
+                operation_id: None,
+                tool_call_id: first.to_string(),
+            },
+            None,
+        ));
+    };
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    if first.starts_with("op_") {
+        let reason = (!rest.is_empty()).then_some(rest);
+        return Ok((
+            PendingDelegationConfirmationSelection {
+                operation_id: Some(first.to_string()),
+                tool_call_id: second.to_string(),
+            },
+            reason,
+        ));
+    }
+
+    let reason = std::iter::once(second)
+        .chain(rest.split_whitespace())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok((
+        PendingDelegationConfirmationSelection {
+            operation_id: None,
+            tool_call_id: first.to_string(),
+        },
+        (!reason.is_empty()).then_some(reason),
+    ))
 }
 
 fn handle_pending_slash_command(root: &mut InteractiveRoot, command: &ParsedSlashCommand) {

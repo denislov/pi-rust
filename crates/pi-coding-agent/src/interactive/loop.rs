@@ -7,7 +7,10 @@ use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };
 
-use crate::coding_session::{CodingAgentSession, PluginLoadOutcome, PromptTurnOutcome};
+use crate::coding_session::{
+    CodingAgentSession, PendingDelegationConfirmation, PluginLoadOutcome, ProfileKind,
+    PromptTurnOutcome,
+};
 use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
     PromptContext, build_prompt_context, resolve_prompt_api_key, session_label,
@@ -17,6 +20,7 @@ use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskRes
 use crate::interactive::root::{
     ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
     PendingAgentInvocationRequest, PendingAgentTeamRequest, PendingBranchSummaryRequest,
+    PendingDelegationConfirmationCommand, PendingDelegationConfirmationSelection,
     PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
@@ -592,6 +596,7 @@ fn handle_input_event<T: Terminal>(
         branch_summary_request,
         agent_invocation_request,
         agent_team_request,
+        delegation_confirmation_command,
         plugin_command_request,
         plugin_ui_action,
         plugin_ui_dialog,
@@ -636,6 +641,12 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let delegation_confirmation_command = if action == InteractiveAction::DelegationConfirmation
+        {
+            root.take_pending_delegation_confirmation_command()
+        } else {
+            None
+        };
         let plugin_command_request = if action == InteractiveAction::PluginCommand {
             root.take_pending_plugin_command_request()
         } else {
@@ -666,6 +677,7 @@ fn handle_input_event<T: Terminal>(
             branch_summary_request,
             agent_invocation_request,
             agent_team_request,
+            delegation_confirmation_command,
             plugin_command_request,
             plugin_ui_action,
             plugin_ui_dialog,
@@ -923,6 +935,23 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::DelegationConfirmation => {
+            if running.is_some() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            let Some(command) = delegation_confirmation_command else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            handle_delegation_confirmation_command(
+                tui,
+                root_id,
+                command,
+                prompt_context,
+                running,
+                coding_session,
+            )?;
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
         InteractiveAction::Submit => {
             let Some(prompt) = prompt else {
                 return Ok(LoopControl::Continue(render_request));
@@ -1059,6 +1088,220 @@ fn dispatch_plugin_ui_dialog<T: Terminal>(
         &dialog.fields,
     ));
     Ok(())
+}
+
+fn handle_delegation_confirmation_command<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    command: PendingDelegationConfirmationCommand,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<(), CliError> {
+    match command {
+        PendingDelegationConfirmationCommand::List => {
+            show_pending_delegation_confirmations(tui, root_id, coding_session.as_ref())
+        }
+        PendingDelegationConfirmationCommand::Approve { selection } => {
+            start_delegation_approval_task(
+                tui,
+                root_id,
+                selection,
+                prompt_context,
+                running,
+                coding_session,
+            )
+        }
+        PendingDelegationConfirmationCommand::Reject { selection, reason } => {
+            reject_pending_delegation_confirmation(tui, root_id, selection, reason, coding_session)
+        }
+    }
+}
+
+fn show_pending_delegation_confirmations<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    coding_session: Option<&CodingAgentSession>,
+) -> Result<(), CliError> {
+    let text = match coding_session {
+        Some(session) => {
+            format_pending_delegation_confirmations(&session.pending_delegation_confirmations())
+        }
+        None => "No active coding session.".to_string(),
+    };
+    root_mut(tui, root_id)?
+        .transcript
+        .push(TranscriptItem::system(text));
+    Ok(())
+}
+
+fn start_delegation_approval_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    selection: PendingDelegationConfirmationSelection,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<(), CliError> {
+    let Some(session) = coding_session.as_ref() else {
+        root_mut(tui, root_id)?
+            .transcript
+            .push(TranscriptItem::system("No active coding session."));
+        return Ok(());
+    };
+    let (operation_id, tool_call_id) =
+        match resolve_pending_delegation_confirmation(session, &selection) {
+            Ok(resolved) => resolved,
+            Err(message) => {
+                root_mut(tui, root_id)?
+                    .transcript
+                    .push(TranscriptItem::system(message));
+                return Ok(());
+            }
+        };
+
+    let session = coding_session
+        .take()
+        .expect("coding session was checked before starting delegation approval");
+    {
+        let root = root_mut(tui, root_id)?;
+        root.transcript.push(TranscriptItem::system(format!(
+            "Approving delegation: {operation_id} {tool_call_id}"
+        )));
+        root.set_status(InteractiveStatus::Running);
+    }
+    *running = Some(PromptTask::spawn_delegation_approval(
+        session,
+        operation_id,
+        tool_call_id,
+    )?);
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(())
+}
+
+fn reject_pending_delegation_confirmation<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    selection: PendingDelegationConfirmationSelection,
+    reason: Option<String>,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<(), CliError> {
+    let Some(session) = coding_session.as_mut() else {
+        root_mut(tui, root_id)?
+            .transcript
+            .push(TranscriptItem::system("No active coding session."));
+        return Ok(());
+    };
+    let (operation_id, tool_call_id) =
+        match resolve_pending_delegation_confirmation(session, &selection) {
+            Ok(resolved) => resolved,
+            Err(message) => {
+                root_mut(tui, root_id)?
+                    .transcript
+                    .push(TranscriptItem::system(message));
+                return Ok(());
+            }
+        };
+
+    let mut receiver = session.subscribe();
+    session
+        .reject_delegation_confirmation(
+            &operation_id,
+            &tool_call_id,
+            reason.as_deref().unwrap_or("delegation rejected by user"),
+        )
+        .map_err(CliError::from)?;
+
+    let mut bridge = CodingEventBridge::new();
+    let mut ui_events = Vec::new();
+    while let Ok(Some(event)) = receiver.try_recv() {
+        ui_events.extend(bridge.handle(&event));
+    }
+    if ui_events.is_empty() {
+        ui_events.push(UiEvent::SystemNotice {
+            text: format!("Delegation rejected: {operation_id} {tool_call_id}"),
+        });
+    }
+    root_mut(tui, root_id)?.apply_events(ui_events);
+    Ok(())
+}
+
+fn resolve_pending_delegation_confirmation(
+    session: &CodingAgentSession,
+    selection: &PendingDelegationConfirmationSelection,
+) -> Result<(String, String), String> {
+    let pending = session.pending_delegation_confirmations();
+    if pending.is_empty() {
+        return Err("No pending delegation confirmations.".to_string());
+    }
+    if let Some(operation_id) = selection.operation_id.as_deref() {
+        return pending
+            .iter()
+            .find(|pending| {
+                pending.operation_id == operation_id
+                    && pending.tool_call_id == selection.tool_call_id
+            })
+            .map(|pending| (pending.operation_id.clone(), pending.tool_call_id.clone()))
+            .ok_or_else(|| {
+                format!(
+                    "Pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={}",
+                    selection.tool_call_id
+                )
+            });
+    }
+
+    let matches = pending
+        .iter()
+        .filter(|pending| pending.tool_call_id == selection.tool_call_id)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [pending] => Ok((pending.operation_id.clone(), pending.tool_call_id.clone())),
+        [] => Err(format!(
+            "Pending delegation confirmation not found: tool_call_id={}",
+            selection.tool_call_id
+        )),
+        _ => Err(format!(
+            "Multiple pending delegation confirmations match tool_call_id={}; include the operation id.",
+            selection.tool_call_id
+        )),
+    }
+}
+
+fn format_pending_delegation_confirmations(pending: &[PendingDelegationConfirmation]) -> String {
+    if pending.is_empty() {
+        return "No pending delegation confirmations.".to_string();
+    }
+
+    let mut lines = vec!["Pending delegation confirmations:".to_string()];
+    for item in pending {
+        lines.push(format!(
+            "  {} {} -> {} {}: {}",
+            item.operation_id,
+            item.tool_call_id,
+            profile_kind_label(item.target_kind),
+            item.target_id,
+            item.task
+        ));
+        lines.push(format!("    reason: {}", item.reason));
+        lines.push(format!(
+            "    approve: /delegation approve {} {}",
+            item.operation_id, item.tool_call_id
+        ));
+        lines.push(format!(
+            "    reject: /delegation reject {} {} [reason]",
+            item.operation_id, item.tool_call_id
+        ));
+    }
+    lines.join("\n")
+}
+
+fn profile_kind_label(kind: ProfileKind) -> &'static str {
+    match kind {
+        ProfileKind::Agent => "agent",
+        ProfileKind::Team => "team",
+    }
 }
 
 fn plugin_dialog_field_line(field: &PluginUiDialogField) -> String {
@@ -1566,6 +1809,20 @@ fn finish_prompt<T: Terminal>(
         }
         Ok(PromptTaskResult::AgentTeam(result)) => {
             let _final_text = &result.outcome.final_text;
+            root.set_default_agent_profile_id(
+                result.session.view().default_agent_profile_id.clone(),
+            );
+            if let Ok(Some(hydration)) = result.session.hydrate_current() {
+                let hydrated = hydrated_session_from_rust_native(hydration);
+                let mut choice = hydrated.choice;
+                if choice.active_leaf_id.is_none() {
+                    choice.active_leaf_id = root.active_leaf_id.clone();
+                }
+                root.set_active_session_choice(choice);
+            }
+            *coding_session = Some(result.session);
+        }
+        Ok(PromptTaskResult::DelegationApproval(result)) => {
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );

@@ -309,6 +309,13 @@ impl Transcript {
                 ));
                 mutation
             }
+            UiEvent::SystemNotice { text } => {
+                let mut mutation = self.close_open_assistant();
+                mutation.extend(TranscriptMutation::single(
+                    self.push_with_index(TranscriptItem::System { text }),
+                ));
+                mutation
+            }
             UiEvent::CompactionNotice { summary } => {
                 TranscriptMutation::single(self.push_with_index(TranscriptItem::Assistant {
                     id: format!("compaction_{}", self.items.len()),

@@ -28,8 +28,9 @@ use crate::interactive::render::{
 };
 #[cfg(test)]
 use crate::interactive::root::{
-    FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus, PluginKeybinding,
-    PluginSlashCommand, PluginUiAction, PluginUiDialog,
+    FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus,
+    PendingDelegationConfirmationCommand, PluginKeybinding, PluginSlashCommand, PluginUiAction,
+    PluginUiDialog,
 };
 #[cfg(test)]
 use crate::interactive::session_actions::SessionChoiceKind;
@@ -1167,6 +1168,8 @@ mod tests {
                 "agent",
                 "teams",
                 "team",
+                "delegations",
+                "delegation",
                 "scoped-models",
                 "export",
                 "share",
@@ -1208,7 +1211,7 @@ mod tests {
         assert!(rendered.contains("/settings"), "{rendered}");
         assert!(rendered.contains("Open settings menu"), "{rendered}");
         assert!(rendered.contains("/model"), "{rendered}");
-        assert!(rendered.contains("(1/27)"), "{rendered}");
+        assert!(rendered.contains("(1/29)"), "{rendered}");
     }
 
     #[test]
@@ -2003,14 +2006,14 @@ mod tests {
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
-        assert!(moved.contains("(3/27)"), "{moved}");
+        assert!(moved.contains("(3/29)"), "{moved}");
 
         root.handle_input(&key_event("\t"));
 
         assert_eq!(root.editor.text(), "/model ");
         assert_eq!(root.take_action(), InteractiveAction::None);
         let rendered = root.render(80).join("\n");
-        assert!(!rendered.contains("(2/27)"), "{rendered}");
+        assert!(!rendered.contains("(2/29)"), "{rendered}");
     }
 
     #[test]
@@ -3097,6 +3100,144 @@ members = ["coder"]
         unsafe {
             std::env::remove_var("PI_RUST_DIR");
         }
+    }
+
+    #[test]
+    fn delegations_command_queues_pending_confirmation_list() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "delegations".to_string(),
+            args: String::new(),
+            original: "/delegations".to_string(),
+        });
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        assert_eq!(
+            root.take_pending_delegation_confirmation_command(),
+            Some(PendingDelegationConfirmationCommand::List)
+        );
+    }
+
+    #[test]
+    fn delegation_approve_command_queues_tool_only_selection() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "delegation".to_string(),
+            args: "approve tool_delegate_agent".to_string(),
+            original: "/delegation approve tool_delegate_agent".to_string(),
+        });
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        let command = root
+            .take_pending_delegation_confirmation_command()
+            .expect("delegation approval should be queued");
+        let PendingDelegationConfirmationCommand::Approve { selection } = command else {
+            panic!("expected approval command");
+        };
+        assert_eq!(selection.operation_id, None);
+        assert_eq!(selection.tool_call_id, "tool_delegate_agent");
+    }
+
+    #[test]
+    fn delegation_approve_command_accepts_operation_and_tool_ids() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "delegation".to_string(),
+            args: "approve op_1 tool_delegate_agent".to_string(),
+            original: "/delegation approve op_1 tool_delegate_agent".to_string(),
+        });
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        let command = root
+            .take_pending_delegation_confirmation_command()
+            .expect("delegation approval should be queued");
+        let PendingDelegationConfirmationCommand::Approve { selection } = command else {
+            panic!("expected approval command");
+        };
+        assert_eq!(selection.operation_id.as_deref(), Some("op_1"));
+        assert_eq!(selection.tool_call_id, "tool_delegate_agent");
+    }
+
+    #[test]
+    fn delegation_reject_command_queues_reason() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "delegation".to_string(),
+            args: "reject tool_delegate_agent not now".to_string(),
+            original: "/delegation reject tool_delegate_agent not now".to_string(),
+        });
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        let command = root
+            .take_pending_delegation_confirmation_command()
+            .expect("delegation rejection should be queued");
+        let PendingDelegationConfirmationCommand::Reject { selection, reason } = command else {
+            panic!("expected rejection command");
+        };
+        assert_eq!(selection.operation_id, None);
+        assert_eq!(selection.tool_call_id, "tool_delegate_agent");
+        assert_eq!(reason.as_deref(), Some("not now"));
+    }
+
+    #[test]
+    fn delegation_reject_command_accepts_non_tool_prefixed_call_ids() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "delegation".to_string(),
+            args: "reject op_1 call_delegate_agent not now".to_string(),
+            original: "/delegation reject op_1 call_delegate_agent not now".to_string(),
+        });
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        let command = root
+            .take_pending_delegation_confirmation_command()
+            .expect("delegation rejection should be queued");
+        let PendingDelegationConfirmationCommand::Reject { selection, reason } = command else {
+            panic!("expected rejection command");
+        };
+        assert_eq!(selection.operation_id.as_deref(), Some("op_1"));
+        assert_eq!(selection.tool_call_id, "call_delegate_agent");
+        assert_eq!(reason.as_deref(), Some("not now"));
     }
 
     #[test]

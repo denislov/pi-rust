@@ -22,6 +22,7 @@ pub(super) enum PromptTaskResult {
     Coding(CodingPromptTaskResult),
     AgentInvocation(AgentInvocationTaskResult),
     AgentTeam(AgentTeamTaskResult),
+    DelegationApproval(DelegationApprovalTaskResult),
     PluginReload(PluginReloadTaskResult),
     PluginCommand(PluginCommandTaskResult),
 }
@@ -42,6 +43,10 @@ pub(super) struct AgentInvocationTaskResult {
 pub(super) struct AgentTeamTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: AgentTeamOutcome,
+}
+
+pub(super) struct DelegationApprovalTaskResult {
+    pub(super) session: CodingAgentSession,
 }
 
 pub(super) struct PluginReloadTaskResult {
@@ -137,6 +142,18 @@ impl PromptTask {
             team_id,
             task,
             default_agent_profile_id,
+        ))
+    }
+
+    pub(super) fn spawn_delegation_approval(
+        existing_session: CodingAgentSession,
+        operation_id: String,
+        tool_call_id: String,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_delegation_approval(
+            existing_session,
+            operation_id,
+            tool_call_id,
         ))
     }
 
@@ -354,6 +371,36 @@ impl PromptTask {
             )
             .await;
             let _ = done_tx.send(result.map(PromptTaskResult::AgentTeam));
+        });
+
+        Self {
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_delegation_approval(
+        existing_session: CodingAgentSession,
+        operation_id: String,
+        tool_call_id: String,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_delegation_approval_task(
+                existing_session,
+                operation_id,
+                tool_call_id,
+                event_tx,
+                abort_rx,
+            )
+            .await;
+            let _ = done_tx.send(result.map(PromptTaskResult::DelegationApproval));
         });
 
         Self {
@@ -679,6 +726,44 @@ async fn run_coding_agent_team_task(
     }
 
     Ok(AgentTeamTaskResult { session, outcome })
+}
+
+async fn run_coding_delegation_approval_task(
+    mut session: CodingAgentSession,
+    operation_id: String,
+    tool_call_id: String,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<DelegationApprovalTaskResult, CliError> {
+    let mut receiver = session.subscribe();
+
+    {
+        let mut approval =
+            Box::pin(session.approve_delegation_confirmation(&operation_id, &tool_call_id));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive delegation approval abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut approval => {
+                    break outcome.map_err(CliError::from);
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(DelegationApprovalTaskResult { session })
 }
 
 async fn run_coding_compact_task(

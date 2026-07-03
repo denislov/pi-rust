@@ -1,4 +1,4 @@
-use crate::coding_session::CodingAgentEvent;
+use crate::coding_session::{CodingAgentEvent, ProfileKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
@@ -27,6 +27,9 @@ pub enum UiEvent {
     },
     AgentError {
         error: String,
+    },
+    SystemNotice {
+        text: String,
     },
     CompactionNotice {
         summary: String,
@@ -123,6 +126,94 @@ impl CodingEventBridge {
             CodingAgentEvent::PromptAborted { reason, .. } => vec![UiEvent::AgentError {
                 error: format!("prompt aborted: {reason}"),
             }],
+            CodingAgentEvent::DelegationConfirmationRequired {
+                operation_id,
+                tool_call_id,
+                target_kind,
+                target_id,
+                task,
+                reason,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Delegation confirmation required for {} {}.\nTask: {}\nReason: {}\nApprove: /delegation approve {} {}\nReject: /delegation reject {} {} [reason]\nList pending: /delegations",
+                    profile_kind_label(*target_kind),
+                    target_id,
+                    task,
+                    reason,
+                    operation_id,
+                    tool_call_id,
+                    operation_id,
+                    tool_call_id
+                ),
+            }],
+            CodingAgentEvent::DelegationApproved {
+                target_kind,
+                target_id,
+                task,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Delegation approved for {} {}: {}",
+                    profile_kind_label(*target_kind),
+                    target_id,
+                    task
+                ),
+            }],
+            CodingAgentEvent::DelegationRejected {
+                target_kind,
+                target_id,
+                task,
+                reason,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Delegation rejected for {} {}: {} ({})",
+                    profile_kind_label(*target_kind),
+                    target_id,
+                    task,
+                    reason
+                ),
+            }],
+            CodingAgentEvent::DelegationStarted {
+                target_kind,
+                target_id,
+                task,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Delegation started for {} {}: {}",
+                    profile_kind_label(*target_kind),
+                    target_id,
+                    task
+                ),
+            }],
+            CodingAgentEvent::DelegationCompleted {
+                target_kind,
+                target_id,
+                final_text,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Delegation completed for {} {}: {}",
+                    profile_kind_label(*target_kind),
+                    target_id,
+                    final_text
+                ),
+            }],
+            CodingAgentEvent::DelegationFailed {
+                target_kind,
+                target_id,
+                error,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Delegation failed for {} {}: {}",
+                    profile_kind_label(*target_kind),
+                    target_id,
+                    error
+                ),
+            }],
             CodingAgentEvent::SessionOpened { .. }
             | CodingAgentEvent::DefaultAgentProfileChanged { .. }
             | CodingAgentEvent::AgentInvocationStarted { .. }
@@ -136,12 +227,6 @@ impl CodingEventBridge {
             | CodingAgentEvent::AgentTeamFailed { .. }
             | CodingAgentEvent::AgentTeamAborted { .. }
             | CodingAgentEvent::DelegationRequested { .. }
-            | CodingAgentEvent::DelegationRejected { .. }
-            | CodingAgentEvent::DelegationApproved { .. }
-            | CodingAgentEvent::DelegationConfirmationRequired { .. }
-            | CodingAgentEvent::DelegationStarted { .. }
-            | CodingAgentEvent::DelegationCompleted { .. }
-            | CodingAgentEvent::DelegationFailed { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }
@@ -158,4 +243,11 @@ impl CodingEventBridge {
 fn parse_tool_arguments(arguments_json: &str) -> serde_json::Value {
     serde_json::from_str(arguments_json)
         .unwrap_or_else(|_| serde_json::Value::String(arguments_json.to_string()))
+}
+
+fn profile_kind_label(kind: ProfileKind) -> &'static str {
+    match kind {
+        ProfileKind::Agent => "agent",
+        ProfileKind::Team => "team",
+    }
 }

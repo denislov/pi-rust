@@ -66,6 +66,82 @@ impl ApiProvider for PausingTwoTurnProvider {
     }
 }
 
+struct DelegationConfirmationProvider {
+    calls: Arc<Mutex<usize>>,
+    parent_ready: Arc<Notify>,
+    child_started: Arc<Notify>,
+}
+
+impl ApiProvider for DelegationConfirmationProvider {
+    fn stream(&self, model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        let call_index = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
+        let parent_ready = Arc::clone(&self.parent_ready);
+        let child_started = Arc::clone(&self.child_started);
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            let mut message = AssistantMessage::empty("interactive-delegation", &model_id);
+            message.provider = Some("interactive-delegation".into());
+            match call_index {
+                1 => {
+                    message.content.push(ContentBlock::ToolCall {
+                        id: "tool_delegate_agent".to_string(),
+                        name: "delegate_agent".to_string(),
+                        arguments: serde_json::json!({
+                            "agent_id": "coder",
+                            "task": "implement parser"
+                        }),
+                        thought_signature: None,
+                    });
+                    message.stop_reason = StopReason::ToolUse;
+                    yield AssistantMessageEvent::Done {
+                        reason: StopReason::ToolUse,
+                        message,
+                    };
+                }
+                2 => {
+                    parent_ready.notify_waiters();
+                    message.content.push(ContentBlock::Text {
+                        text: "parent ready".to_string(),
+                        text_signature: None,
+                    });
+                    message.stop_reason = StopReason::Stop;
+                    yield AssistantMessageEvent::Done {
+                        reason: StopReason::Stop,
+                        message,
+                    };
+                }
+                3 => {
+                    child_started.notify_waiters();
+                    message.content.push(ContentBlock::Text {
+                        text: "child result".to_string(),
+                        text_signature: None,
+                    });
+                    message.stop_reason = StopReason::Stop;
+                    yield AssistantMessageEvent::Done {
+                        reason: StopReason::Stop,
+                        message,
+                    };
+                }
+                _ => {
+                    message.content.push(ContentBlock::Text {
+                        text: "unexpected extra call".to_string(),
+                        text_signature: None,
+                    });
+                    message.stop_reason = StopReason::Stop;
+                    yield AssistantMessageEvent::Done {
+                        reason: StopReason::Stop,
+                        message,
+                    };
+                }
+            }
+        })
+    }
+}
+
 #[tokio::test]
 async fn scripted_interactive_submit_while_running_sends_steer_control() {
     let contexts = Arc::new(Mutex::new(Vec::new()));
@@ -254,6 +330,85 @@ members = ["coder", "reviewer"]
     assert!(output.contains("reviewer reply"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
     assert!(!output.contains("requires AgentTeamFlow"), "{output:?}");
+}
+
+#[tokio::test]
+async fn scripted_interactive_approves_pending_delegation_confirmation() {
+    let _guard = ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+    std::fs::write(
+        dir.path().join("agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["coder"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+"#,
+    )
+    .unwrap();
+    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
+    unsafe {
+        std::env::set_var("PI_RUST_DIR", dir.path());
+    }
+
+    let parent_ready = Arc::new(Notify::new());
+    let child_started = Arc::new(Notify::new());
+    let calls = Arc::new(Mutex::new(0));
+    let provider = Arc::new(DelegationConfirmationProvider {
+        calls: Arc::clone(&calls),
+        parent_ready: Arc::clone(&parent_ready),
+        child_started: Arc::clone(&child_started),
+    });
+    let output = tokio::time::timeout(
+        Duration::from_secs(2),
+        run_scripted_interactive_with_provider_driver(provider, move |tx| async move {
+            tx.send("/agent use delegating-planner\rplan feature\r".to_string())
+                .unwrap();
+            parent_ready.notified().await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            tx.send("/delegation approve tool_delegate_agent\r".to_string())
+                .unwrap();
+            child_started.notified().await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(tx);
+        }),
+    )
+    .await
+    .expect("interactive delegation approval should finish");
+
+    unsafe {
+        match prior_pi_rust_dir {
+            Some(value) => std::env::set_var("PI_RUST_DIR", value),
+            None => std::env::remove_var("PI_RUST_DIR"),
+        }
+    }
+    let output = output.unwrap();
+    assert_eq!(*calls.lock().unwrap(), 3, "{output:?}");
+    assert!(
+        output.contains("Delegation confirmation required"),
+        "{output:?}"
+    );
+    assert!(output.contains("/delegation approve op_"), "{output:?}");
+    assert!(output.contains("Approving delegation"), "{output:?}");
+    assert!(output.contains("child result"), "{output:?}");
+    assert!(output.contains("status: idle"), "{output:?}");
 }
 
 #[tokio::test]
@@ -506,7 +661,7 @@ async fn scripted_interactive_slash_suggestions_render_after_slash() {
     assert!(frame.contains("Show help"), "{frame}");
     assert!(frame.contains("/settings"), "{frame}");
     assert!(frame.contains("Open settings menu"), "{frame}");
-    assert!(frame.contains("(1/27)"), "{frame}");
+    assert!(frame.contains("(1/29)"), "{frame}");
 }
 
 #[tokio::test]

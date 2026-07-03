@@ -1,4 +1,4 @@
-use pi_coding_agent::api::{CodingAgentEvent, CodingSessionError};
+use pi_coding_agent::api::{CodingAgentEvent, CodingSessionError, ProfileKind};
 use pi_coding_agent::interactive::{CodingEventBridge, Transcript, TranscriptItem, UiEvent};
 
 #[test]
@@ -19,6 +19,21 @@ fn ui_events_apply_to_transcript() {
             markdown: "hello".to_string(),
             thinking: String::new(),
             done: true,
+        }]
+    );
+}
+
+#[test]
+fn system_notice_ui_event_applies_to_transcript() {
+    let mut transcript = Transcript::new();
+    transcript.apply_event(UiEvent::SystemNotice {
+        text: "Delegation pending".to_string(),
+    });
+
+    assert_eq!(
+        transcript.items(),
+        &[TranscriptItem::System {
+            text: "Delegation pending".to_string(),
         }]
     );
 }
@@ -202,6 +217,55 @@ fn coding_event_bridge_maps_failure_abort_and_compaction() {
             },
         ]
     );
+}
+
+#[test]
+fn coding_event_bridge_maps_delegation_confirmation_events() {
+    let mut bridge = CodingEventBridge::new();
+
+    let events = bridge.handle(&CodingAgentEvent::DelegationConfirmationRequired {
+        operation_id: "op_1".to_string(),
+        turn_id: "turn_1".to_string(),
+        tool_call_id: "tool_delegate_agent".to_string(),
+        requesting_profile_id: "planner".into(),
+        target_kind: ProfileKind::Agent,
+        target_id: "coder".into(),
+        task: "implement parser".to_string(),
+        reason: "profile policy requires confirmation".to_string(),
+    });
+
+    let [UiEvent::SystemNotice { text }] = events.as_slice() else {
+        panic!("expected one system notice, got {events:?}");
+    };
+    assert!(text.contains("Delegation confirmation required"), "{text}");
+    assert!(text.contains("agent coder"), "{text}");
+    assert!(text.contains("implement parser"), "{text}");
+    assert!(
+        text.contains("/delegation approve op_1 tool_delegate_agent"),
+        "{text}"
+    );
+    assert!(
+        text.contains("/delegation reject op_1 tool_delegate_agent"),
+        "{text}"
+    );
+
+    let completed = bridge.handle(&CodingAgentEvent::DelegationCompleted {
+        operation_id: "op_1".to_string(),
+        turn_id: "turn_1".to_string(),
+        tool_call_id: "tool_delegate_agent".to_string(),
+        requesting_profile_id: "planner".into(),
+        target_kind: ProfileKind::Agent,
+        target_id: "coder".into(),
+        task: "implement parser".to_string(),
+        child_operation_id: "op_child".to_string(),
+        final_text: "child result".to_string(),
+    });
+
+    let [UiEvent::SystemNotice { text }] = completed.as_slice() else {
+        panic!("expected one system notice, got {completed:?}");
+    };
+    assert!(text.contains("Delegation completed"), "{text}");
+    assert!(text.contains("child result"), "{text}");
 }
 
 #[test]
