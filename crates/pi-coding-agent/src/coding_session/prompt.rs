@@ -22,7 +22,7 @@ use super::event::CodingAgentEvent;
 use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
 use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
-use super::profiles::{AgentProfile, DelegationPolicy, ProfileId};
+use super::profiles::{AgentProfile, DelegationPolicy, ProfileId, ProfileKind};
 use super::session_log::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
     SessionEventEnvelope,
@@ -261,6 +261,17 @@ impl AgentRunObservation {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DelegationRequest {
+    pub(crate) operation_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) tool_call_id: String,
+    pub(crate) requesting_profile_id: ProfileId,
+    pub(crate) target_kind: ProfileKind,
+    pub(crate) target_id: ProfileId,
+    pub(crate) task: String,
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimeSnapshot {
     model: Model,
@@ -465,6 +476,7 @@ pub(crate) struct PromptTurnContext {
     final_message: Option<AssistantMessage>,
     agent_observations: Vec<AgentRunObservation>,
     coding_events: Vec<CodingAgentEvent>,
+    delegation_requests: Vec<DelegationRequest>,
     assistant_session_message_id: Option<String>,
     completed_assistant_session_message_id: Option<String>,
     live_event_service: Option<EventService>,
@@ -492,6 +504,7 @@ impl PromptTurnContext {
             final_message: None,
             agent_observations: Vec::new(),
             coding_events: Vec::new(),
+            delegation_requests: Vec::new(),
             assistant_session_message_id: None,
             completed_assistant_session_message_id: None,
             live_event_service: None,
@@ -836,6 +849,7 @@ impl PromptTurnContext {
             mapping_context = mapping_context.with_assistant_message_id(message_id);
         }
         let coding_events = map_agent_event(&mapping_context, &event);
+        self.record_delegation_requests(&coding_events);
         self.coding_events.extend(coding_events.clone());
         if let Some(event_service) = &self.live_event_service {
             for event in &coding_events {
@@ -857,6 +871,35 @@ impl PromptTurnContext {
 
     pub(crate) fn coding_events(&self) -> &[CodingAgentEvent] {
         &self.coding_events
+    }
+
+    pub(crate) fn delegation_requests(&self) -> &[DelegationRequest] {
+        &self.delegation_requests
+    }
+
+    fn record_delegation_requests(&mut self, events: &[CodingAgentEvent]) {
+        for event in events {
+            if let CodingAgentEvent::DelegationRequested {
+                operation_id,
+                turn_id,
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+            } = event
+            {
+                self.delegation_requests.push(DelegationRequest {
+                    operation_id: operation_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    requesting_profile_id: requesting_profile_id.clone(),
+                    target_kind: *target_kind,
+                    target_id: target_id.clone(),
+                    task: task.clone(),
+                });
+            }
+        }
     }
 
     pub(crate) fn record_prompt_completed(&mut self) -> Result<(), CodingSessionError> {
@@ -1228,7 +1271,7 @@ fn content_blocks_text(content: &[ContentBlock]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use pi_agent_core::{AgentResources, ToolExecutionMode};
+    use pi_agent_core::{AgentEvent, AgentResources, AgentToolResult, ToolExecutionMode};
     use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
 
     use super::*;
@@ -1372,6 +1415,90 @@ mod tests {
                 .to_string()
                 .contains("cannot finish successfully without a final message")
         );
+    }
+
+    #[test]
+    fn prompt_turn_context_queues_requested_delegation() {
+        let mut context = PromptTurnContext::new(
+            PromptTurnIds::new("op_1", "turn_1"),
+            PromptTurnOptions::new(PromptInvocation::Text("hello".into())),
+        );
+        let envelope = serde_json::json!({
+            "status": "requested",
+            "target_kind": "agent",
+            "target_id": "coder",
+            "task": "implement parser",
+            "requesting_profile_id": "planner",
+            "message": "delegation request captured for session-owned authorization"
+        })
+        .to_string();
+
+        context
+            .record_agent_event(AgentEvent::ToolCallEnd {
+                tool_call_id: "tool_delegate".into(),
+                tool_name: "delegate_agent".into(),
+                result: AgentToolResult::ok(vec![ContentBlock::Text {
+                    text: envelope,
+                    text_signature: None,
+                }]),
+            })
+            .unwrap();
+
+        assert!(context.coding_events().iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRequested {
+                tool_call_id,
+                target_id,
+                ..
+            } if tool_call_id == "tool_delegate" && target_id.as_str() == "coder"
+        )));
+        let requests = context.delegation_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].operation_id, "op_1");
+        assert_eq!(requests[0].turn_id, "turn_1");
+        assert_eq!(requests[0].tool_call_id, "tool_delegate");
+        assert_eq!(requests[0].requesting_profile_id.as_str(), "planner");
+        assert_eq!(
+            requests[0].target_kind,
+            super::super::profiles::ProfileKind::Agent
+        );
+        assert_eq!(requests[0].target_id.as_str(), "coder");
+        assert_eq!(requests[0].task, "implement parser");
+    }
+
+    #[test]
+    fn prompt_turn_context_does_not_queue_rejected_delegation() {
+        let mut context = PromptTurnContext::new(
+            PromptTurnIds::new("op_1", "turn_1"),
+            PromptTurnOptions::new(PromptInvocation::Text("hello".into())),
+        );
+        let envelope = serde_json::json!({
+            "status": "rejected",
+            "target_kind": "team",
+            "target_id": "implementation",
+            "task": "ship feature",
+            "requesting_profile_id": "planner",
+            "message": "target is not allowed by delegation policy"
+        })
+        .to_string();
+
+        context
+            .record_agent_event(AgentEvent::ToolCallEnd {
+                tool_call_id: "tool_delegate".into(),
+                tool_name: "delegate_team".into(),
+                result: AgentToolResult::ok(vec![ContentBlock::Text {
+                    text: envelope,
+                    text_signature: None,
+                }]),
+            })
+            .unwrap();
+
+        assert!(context.coding_events().iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRejected { tool_call_id, .. }
+                if tool_call_id == "tool_delegate"
+        )));
+        assert!(context.delegation_requests().is_empty());
     }
 
     #[test]
