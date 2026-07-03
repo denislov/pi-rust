@@ -238,6 +238,36 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
             task: "review parser".into(),
             reason: "delegation target is not allowed".into(),
         },
+        CodingAgentEvent::DelegationApproved {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+        },
+        CodingAgentEvent::DelegationStarted {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+            child_operation_id: "op_child".into(),
+        },
+        CodingAgentEvent::DelegationCompleted {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+            child_operation_id: "op_child".into(),
+            final_text: "child result".into(),
+        },
     ]
     .into_iter()
     .flat_map(|event| adapter.push(&event))
@@ -271,6 +301,39 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "targetId": "review-team",
                 "task": "review parser",
                 "reason": "delegation target is not allowed"
+            }),
+            json!({
+                "type": "delegation_approved",
+                "operationId": "op_parent",
+                "turnId": "turn_parent",
+                "toolCallId": "tool_delegate",
+                "requestingProfileId": "planner",
+                "targetKind": "agent",
+                "targetId": "coder",
+                "task": "implement parser"
+            }),
+            json!({
+                "type": "delegation_started",
+                "operationId": "op_parent",
+                "turnId": "turn_parent",
+                "toolCallId": "tool_delegate",
+                "requestingProfileId": "planner",
+                "targetKind": "agent",
+                "targetId": "coder",
+                "task": "implement parser",
+                "childOperationId": "op_child"
+            }),
+            json!({
+                "type": "delegation_completed",
+                "operationId": "op_parent",
+                "turnId": "turn_parent",
+                "toolCallId": "tool_delegate",
+                "requestingProfileId": "planner",
+                "targetKind": "agent",
+                "targetId": "coder",
+                "task": "implement parser",
+                "childOperationId": "op_child",
+                "finalText": "child result"
             })
         ]
     );

@@ -50,6 +50,7 @@ use agent_invocation_flow::AgentInvocationContext;
 use agent_team_flow::AgentTeamContext;
 use branch_summary_flow::{BranchSummaryContext, BranchSummaryOptions, BranchSummaryOutcome};
 use capability_service::CapabilityService;
+use delegation::DelegationAuthorizationDecision;
 use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
@@ -58,7 +59,7 @@ use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
-use prompt::{PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
+use prompt::{DelegationRequest, PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
 use session_log::event::PersistedPluginDiagnostic;
 use session_log::id::{IdGenerator, SystemIdGenerator};
@@ -614,10 +615,25 @@ impl CodingAgentSession {
                 None => context.finish_failure(error),
             },
         };
-        if matches!(outcome, PromptTurnOutcome::Success { .. })
-            && let Err(error) = context.authorize_delegation_requests(0)
-        {
-            outcome = context.finish_failure(error);
+        if matches!(outcome, PromptTurnOutcome::Success { .. }) {
+            match context.authorize_delegation_requests(0) {
+                Ok(decisions) => {
+                    let decisions = decisions.to_vec();
+                    let prompt_options = context.options().clone();
+                    if let Err(error) = self
+                        .execute_authorized_delegations(&decisions, prompt_options)
+                        .await
+                    {
+                        self.event_service.emit(CodingAgentEvent::Diagnostic {
+                            operation_id: Some(context.operation_id().to_owned()),
+                            message: format!("delegation execution failed: {error}"),
+                        });
+                    }
+                }
+                Err(error) => {
+                    outcome = context.finish_failure(error);
+                }
+            }
         }
         let finalized = match self.finalize_prompt_transaction(&mut context, &outcome) {
             Ok(finalized) => finalized,
@@ -664,6 +680,140 @@ impl CodingAgentSession {
             self.event_service.clone(),
         );
         self.flow_service.run_agent_team(&mut context).await
+    }
+
+    async fn execute_authorized_delegations(
+        &self,
+        decisions: &[DelegationAuthorizationDecision],
+        prompt_options: PromptTurnOptions,
+    ) -> Result<(), CodingSessionError> {
+        for decision in decisions {
+            match decision {
+                DelegationAuthorizationDecision::Approved { request } => {
+                    self.emit_delegation_approved(request);
+                    match request.target_kind {
+                        ProfileKind::Agent => {
+                            self.execute_approved_agent_delegation(request, prompt_options.clone())
+                                .await?;
+                        }
+                        ProfileKind::Team => {
+                            self.execute_approved_team_delegation(request, prompt_options.clone())
+                                .await?;
+                        }
+                    }
+                }
+                DelegationAuthorizationDecision::RequiresConfirmation { .. } => {}
+                DelegationAuthorizationDecision::Rejected { request, reason } => {
+                    self.emit_delegation_rejected(request, reason);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn execute_approved_agent_delegation(
+        &self,
+        request: &DelegationRequest,
+        prompt_options: PromptTurnOptions,
+    ) -> Result<(), CodingSessionError> {
+        let mut context = AgentInvocationContext::new(
+            AgentInvocationOptions::new(
+                request.target_id.clone(),
+                request.task.clone(),
+                prompt_options,
+            ),
+            self.profile_registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        );
+        let child_operation_id = context.operation_id().to_owned();
+        self.emit_delegation_started(request, child_operation_id.clone());
+        let outcome = self.flow_service.run_agent_invocation(&mut context).await?;
+        self.emit_delegation_completed(request, child_operation_id, outcome.final_text);
+        Ok(())
+    }
+
+    async fn execute_approved_team_delegation(
+        &self,
+        request: &DelegationRequest,
+        prompt_options: PromptTurnOptions,
+    ) -> Result<(), CodingSessionError> {
+        let mut context = AgentTeamContext::new(
+            AgentTeamOptions::new(
+                request.target_id.clone(),
+                request.task.clone(),
+                prompt_options,
+            ),
+            self.profile_registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        );
+        let child_operation_id = context.operation_id().to_owned();
+        self.emit_delegation_started(request, child_operation_id.clone());
+        let outcome = self.flow_service.run_agent_team(&mut context).await?;
+        self.emit_delegation_completed(request, child_operation_id, outcome.final_text);
+        Ok(())
+    }
+
+    fn emit_delegation_approved(&self, request: &DelegationRequest) {
+        self.event_service
+            .emit(CodingAgentEvent::DelegationApproved {
+                operation_id: request.operation_id.clone(),
+                turn_id: request.turn_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                requesting_profile_id: request.requesting_profile_id.clone(),
+                target_kind: request.target_kind,
+                target_id: request.target_id.clone(),
+                task: request.task.clone(),
+            });
+    }
+
+    fn emit_delegation_rejected(&self, request: &DelegationRequest, reason: &str) {
+        self.event_service
+            .emit(CodingAgentEvent::DelegationRejected {
+                operation_id: request.operation_id.clone(),
+                turn_id: request.turn_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                requesting_profile_id: request.requesting_profile_id.clone(),
+                target_kind: request.target_kind,
+                target_id: request.target_id.clone(),
+                task: request.task.clone(),
+                reason: reason.to_owned(),
+            });
+    }
+
+    fn emit_delegation_started(&self, request: &DelegationRequest, child_operation_id: String) {
+        self.event_service
+            .emit(CodingAgentEvent::DelegationStarted {
+                operation_id: request.operation_id.clone(),
+                turn_id: request.turn_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                requesting_profile_id: request.requesting_profile_id.clone(),
+                target_kind: request.target_kind,
+                target_id: request.target_id.clone(),
+                task: request.task.clone(),
+                child_operation_id,
+            });
+    }
+
+    fn emit_delegation_completed(
+        &self,
+        request: &DelegationRequest,
+        child_operation_id: String,
+        final_text: String,
+    ) {
+        self.event_service
+            .emit(CodingAgentEvent::DelegationCompleted {
+                operation_id: request.operation_id.clone(),
+                turn_id: request.turn_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                requesting_profile_id: request.requesting_profile_id.clone(),
+                target_kind: request.target_kind,
+                target_id: request.target_id.clone(),
+                task: request.task.clone(),
+                child_operation_id,
+                final_text,
+            });
     }
 
     async fn compact_inner(
@@ -2627,6 +2777,9 @@ runtime = "lua"
             CodingAgentEvent::AgentTeamAborted { .. } => "agent_team_aborted",
             CodingAgentEvent::DelegationRequested { .. } => "delegation_requested",
             CodingAgentEvent::DelegationRejected { .. } => "delegation_rejected",
+            CodingAgentEvent::DelegationApproved { .. } => "delegation_approved",
+            CodingAgentEvent::DelegationStarted { .. } => "delegation_started",
+            CodingAgentEvent::DelegationCompleted { .. } => "delegation_completed",
             CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
             CodingAgentEvent::SessionWriteCommitted { .. } => "session_write_committed",
             CodingAgentEvent::SessionWriteSkipped { .. } => "session_write_skipped",

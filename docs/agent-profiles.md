@@ -119,7 +119,7 @@ RPC mode currently supports:
 
 `set_default_agent_profile` emits a `default_agent_profile_changed` protocol event after the command response. `invoke_agent` and `invoke_team` run through the same background operation path as prompts and stream semantic lifecycle protocol events such as `agent_invocation_start`, `agent_team_start`, `agent_team_member_start`, and matching end/error/abort events.
 
-RPC `get_state.capabilities` includes `agentProfiles`, `teamProfiles`, and `delegation`. Profile/team operations report `busy` while an agent or team invocation is running. Delegation currently reports unsupported until bounded child execution is implemented.
+RPC `get_state.capabilities` includes `agentProfiles`, `teamProfiles`, and `delegation`. Profile/team operations report `busy` while an agent or team invocation is running. Delegation currently reports unsupported while confirmation UX, recursive budget accounting, and capability release policy remain unfinished.
 
 ## Delegation Boundary
 
@@ -134,13 +134,13 @@ Current behavior:
 - Allowed target ids and zero-depth policy are enforced at the request boundary.
 - Accepted requests return structured envelopes and emit `DelegationRequested` product events.
 - Rejected requests return structured rejection envelopes and emit `DelegationRejected` product events.
-- The protocol adapter serializes these as `delegation_requested` and `delegation_rejected`.
+- Auto-approved requests run through session-owned child agent/team flows and emit `DelegationApproved`, `DelegationStarted`, and `DelegationCompleted` product events.
+- The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_approved`, `delegation_started`, and `delegation_completed`.
 
 Still follow-up:
 
 - Confirmation prompts for write-capable, team, or high-cost delegation.
-- Approved/started/completed lifecycle events.
 - Recursive depth and child budget accounting beyond the current request boundary.
-- Owner-authorized child execution for model-requested delegation.
+- Child-failure lifecycle events and capability release policy.
 
 Profiles and delegation tools do not expose raw `CodingAgentSession`, session storage, runtime service, provider internals, filesystem handles, shell handles, or Flow graph mutation APIs.

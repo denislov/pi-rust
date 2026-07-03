@@ -237,6 +237,10 @@ impl AgentTeamContext {
         }
     }
 
+    pub(crate) fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
         self.failure_error.take()
     }
