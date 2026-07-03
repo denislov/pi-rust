@@ -826,15 +826,28 @@ display_name = "Coder"
         "setting the default profile should create a session"
     );
     let lines = parse_lines(&output);
-    assert_eq!(lines[0]["command"], "list_agent_profiles");
-    assert_eq!(lines[0]["data"]["defaultAgentProfileId"], "default");
-    assert_eq!(lines[1]["id"], "s1");
-    assert_eq!(lines[1]["command"], "set_default_agent_profile");
-    assert_eq!(lines[1]["success"], true);
-    assert_eq!(lines[1]["data"]["defaultAgentProfileId"], "coder");
-    assert_eq!(lines[2]["command"], "list_agent_profiles");
-    assert_eq!(lines[2]["data"]["defaultAgentProfileId"], "coder");
-    let agents = lines[2]["data"]["agents"].as_array().unwrap();
+    let first_listing = lines
+        .iter()
+        .find(|line| line["id"] == "l1" && line["command"] == "list_agent_profiles")
+        .expect("first profile listing response");
+    assert_eq!(first_listing["data"]["defaultAgentProfileId"], "default");
+
+    let set_response = lines
+        .iter()
+        .find(|line| line["id"] == "s1" && line["command"] == "set_default_agent_profile")
+        .expect("default profile switch response");
+    assert_eq!(set_response["success"], true);
+    assert_eq!(set_response["data"]["defaultAgentProfileId"], "coder");
+    assert!(lines.iter().any(|line| {
+        line["type"] == "default_agent_profile_changed" && line["profileId"] == "coder"
+    }));
+
+    let second_listing = lines
+        .iter()
+        .find(|line| line["id"] == "l2" && line["command"] == "list_agent_profiles")
+        .expect("second profile listing response");
+    assert_eq!(second_listing["data"]["defaultAgentProfileId"], "coder");
+    let agents = second_listing["data"]["agents"].as_array().unwrap();
     let coder = agents
         .iter()
         .find(|profile| profile["id"] == "coder")

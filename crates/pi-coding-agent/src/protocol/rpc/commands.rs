@@ -4,9 +4,10 @@ use crate::coding_session::{
     DelegationPolicy, PluginLoadOutcome, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource,
     SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
 };
+use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
-use crate::protocol::rpc::wire::write_rpc_response;
+use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
 use crate::protocol::types::{RpcCommand, RpcResponse};
 use crate::runtime::SessionMode;
 use crate::session::resolve_session_dir;
@@ -450,6 +451,12 @@ impl RpcState {
             }
         };
 
+        let mut adapter = RpcCodingEventAdapter::new_with_provider(
+            self.model.api.clone(),
+            self.model.provider.clone(),
+            self.model.id.clone(),
+        );
+        let mut protocol_events = Vec::new();
         let data = match self.ensure_mutable_coding_session().await {
             Ok(session) => {
                 if !session
@@ -468,6 +475,7 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
+                let mut receiver = session.subscribe();
                 if let Err(error) = session.set_default_agent_profile_id(profile_id.clone()) {
                     write_rpc_response(
                         writer,
@@ -475,6 +483,9 @@ impl RpcState {
                     )
                     .await?;
                     return Ok(());
+                }
+                while let Ok(Some(event)) = receiver.try_recv() {
+                    protocol_events.extend(adapter.push(&event));
                 }
                 serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() })
             }
@@ -492,7 +503,11 @@ impl RpcState {
             writer,
             RpcResponse::success(id, "set_default_agent_profile", Some(data)),
         )
-        .await
+        .await?;
+        for protocol_event in protocol_events {
+            write_json_line(writer, &protocol_event).await?;
+        }
+        Ok(())
     }
 
     async fn open_profile_listing_session(&self) -> Result<CodingAgentSession, CliError> {

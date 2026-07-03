@@ -1,4 +1,4 @@
-use crate::coding_session::CodingAgentEvent;
+use crate::coding_session::{CodingAgentEvent, ProfileKind};
 use crate::protocol::types::{
     CompactionProtocolResult, CompactionReason, ProtocolEvent, ToolExecutionResult,
 };
@@ -176,6 +176,47 @@ impl CodingProtocolEventAdapter {
             CodingAgentEvent::PromptAborted { reason, .. } => {
                 self.push_prompt_failed_message(reason)
             }
+            CodingAgentEvent::DefaultAgentProfileChanged { profile_id } => {
+                vec![ProtocolEvent::DefaultAgentProfileChanged {
+                    profile_id: profile_id.as_str().to_string(),
+                }]
+            }
+            CodingAgentEvent::DelegationRequested {
+                operation_id,
+                turn_id,
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+            } => vec![ProtocolEvent::DelegationRequested {
+                operation_id: operation_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                requesting_profile_id: requesting_profile_id.as_str().to_string(),
+                target_kind: profile_kind_to_protocol(*target_kind).to_string(),
+                target_id: target_id.as_str().to_string(),
+                task: task.clone(),
+            }],
+            CodingAgentEvent::DelegationRejected {
+                operation_id,
+                turn_id,
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+                reason,
+            } => vec![ProtocolEvent::DelegationRejected {
+                operation_id: operation_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                requesting_profile_id: requesting_profile_id.as_str().to_string(),
+                target_kind: profile_kind_to_protocol(*target_kind).to_string(),
+                target_id: target_id.as_str().to_string(),
+                task: task.clone(),
+                reason: reason.clone(),
+            }],
             CodingAgentEvent::AgentInvocationStarted {
                 operation_id,
                 child_operation_id,
@@ -283,9 +324,6 @@ impl CodingProtocolEventAdapter {
                 reason: reason.clone(),
             }],
             CodingAgentEvent::SessionOpened { .. }
-            | CodingAgentEvent::DefaultAgentProfileChanged { .. }
-            | CodingAgentEvent::DelegationRequested { .. }
-            | CodingAgentEvent::DelegationRejected { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }
@@ -436,6 +474,13 @@ impl CodingProtocolEventAdapter {
         self.current_tool_results.clear();
         self.assistant_open = false;
         events
+    }
+}
+
+fn profile_kind_to_protocol(kind: ProfileKind) -> &'static str {
+    match kind {
+        ProfileKind::Agent => "agent",
+        ProfileKind::Team => "team",
     }
 }
 

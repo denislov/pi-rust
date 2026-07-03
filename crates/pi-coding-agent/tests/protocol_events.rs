@@ -1,6 +1,6 @@
 use pi_agent_core::session::StoredAgentMessage;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
-use pi_coding_agent::api::CodingAgentEvent;
+use pi_coding_agent::api::{CodingAgentEvent, ProfileKind};
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
 use pi_coding_agent::protocol::types::{CompactionReason, ProtocolEvent};
 use serde_json::json;
@@ -202,6 +202,75 @@ fn coding_event_adapter_maps_agent_team_lifecycle_to_protocol_events() {
                 "operationId": "op_team",
                 "teamId": "implementation",
                 "finalText": "team done"
+            })
+        ]
+    );
+}
+
+#[test]
+fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let events = [
+        CodingAgentEvent::DefaultAgentProfileChanged {
+            profile_id: "coder".into(),
+        },
+        CodingAgentEvent::DelegationRequested {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+        },
+        CodingAgentEvent::DelegationRejected {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate_team".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Team,
+            target_id: "review-team".into(),
+            task: "review parser".into(),
+            reason: "delegation target is not allowed".into(),
+        },
+    ]
+    .into_iter()
+    .flat_map(|event| adapter.push(&event))
+    .map(|event| serde_json::to_value(event).unwrap())
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        events,
+        vec![
+            json!({
+                "type": "default_agent_profile_changed",
+                "profileId": "coder"
+            }),
+            json!({
+                "type": "delegation_requested",
+                "operationId": "op_parent",
+                "turnId": "turn_parent",
+                "toolCallId": "tool_delegate",
+                "requestingProfileId": "planner",
+                "targetKind": "agent",
+                "targetId": "coder",
+                "task": "implement parser"
+            }),
+            json!({
+                "type": "delegation_rejected",
+                "operationId": "op_parent",
+                "turnId": "turn_parent",
+                "toolCallId": "tool_delegate_team",
+                "requestingProfileId": "planner",
+                "targetKind": "team",
+                "targetId": "review-team",
+                "task": "review parser",
+                "reason": "delegation target is not allowed"
             })
         ]
     );

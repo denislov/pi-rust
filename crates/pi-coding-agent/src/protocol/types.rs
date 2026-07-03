@@ -75,6 +75,44 @@ pub enum ProtocolEvent {
     },
     #[serde(rename = "agent_end")]
     AgentEnd { messages: Vec<StoredAgentMessage> },
+    #[serde(rename = "default_agent_profile_changed")]
+    DefaultAgentProfileChanged {
+        #[serde(rename = "profileId")]
+        profile_id: String,
+    },
+    #[serde(rename = "delegation_requested")]
+    DelegationRequested {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "requestingProfileId")]
+        requesting_profile_id: String,
+        #[serde(rename = "targetKind")]
+        target_kind: String,
+        #[serde(rename = "targetId")]
+        target_id: String,
+        task: String,
+    },
+    #[serde(rename = "delegation_rejected")]
+    DelegationRejected {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "requestingProfileId")]
+        requesting_profile_id: String,
+        #[serde(rename = "targetKind")]
+        target_kind: String,
+        #[serde(rename = "targetId")]
+        target_id: String,
+        task: String,
+        reason: String,
+    },
     #[serde(rename = "agent_invocation_start")]
     AgentInvocationStart {
         #[serde(rename = "operationId")]
