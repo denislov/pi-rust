@@ -56,6 +56,7 @@ pub(super) fn is_supported_m5_command(command: &str) -> bool {
             | "plugin_command"
             | "list_agent_profiles"
             | "list_team_profiles"
+            | "set_default_agent_profile"
             | "set_thinking_level"
             | "set_steering_mode"
             | "set_follow_up_mode"

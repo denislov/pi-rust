@@ -194,6 +194,10 @@ impl RpcState {
                 self.handle_list_agent_profiles(id, writer).await
             }
             RpcCommand::ListTeamProfiles { id } => self.handle_list_team_profiles(id, writer).await,
+            RpcCommand::SetDefaultAgentProfile { id, profile_id } => {
+                self.handle_set_default_agent_profile(id, profile_id, writer)
+                    .await
+            }
             RpcCommand::SetThinkingLevel { id, level } => {
                 self.thinking_level = level;
                 write_rpc_response(writer, RpcResponse::success(id, "set_thinking_level", None))
@@ -294,15 +298,19 @@ impl RpcState {
             return Ok(());
         }
 
-        let data = match self.ensure_profile_listing_session().await {
-            Ok(session) => rpc_agent_profiles_data(session),
-            Err(error) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(id, "list_agent_profiles", error.to_string()),
-                )
-                .await?;
-                return Ok(());
+        let data = if let Some(session) = self.coding_session.as_ref() {
+            rpc_agent_profiles_data(session)
+        } else {
+            match self.open_profile_listing_session().await {
+                Ok(session) => rpc_agent_profiles_data(&session),
+                Err(error) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(id, "list_agent_profiles", error.to_string()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
             }
         };
         write_rpc_response(
@@ -333,15 +341,19 @@ impl RpcState {
             return Ok(());
         }
 
-        let data = match self.ensure_profile_listing_session().await {
-            Ok(session) => rpc_team_profiles_data(session),
-            Err(error) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(id, "list_team_profiles", error.to_string()),
-                )
-                .await?;
-                return Ok(());
+        let data = if let Some(session) = self.coding_session.as_ref() {
+            rpc_team_profiles_data(session)
+        } else {
+            match self.open_profile_listing_session().await {
+                Ok(session) => rpc_team_profiles_data(&session),
+                Err(error) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(id, "list_team_profiles", error.to_string()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
             }
         };
         write_rpc_response(
@@ -351,16 +363,95 @@ impl RpcState {
         .await
     }
 
-    async fn ensure_profile_listing_session(
+    async fn handle_set_default_agent_profile<W>(
         &mut self,
-    ) -> Result<&mut CodingAgentSession, CliError> {
-        if self.coding_session.is_none() {
-            self.coding_session = Some(
-                CodingAgentSession::non_persistent(
-                    CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
+        id: Option<String>,
+        profile_id: String,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "set_default_agent_profile",
+                    "cannot set default agent profile while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let profile_id = match ProfileId::new(profile_id) {
+            Ok(profile_id) => profile_id,
+            Err(message) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "set_default_agent_profile", message),
                 )
-                .await?,
-            );
+                .await?;
+                return Ok(());
+            }
+        };
+
+        let data = match self.ensure_mutable_coding_session().await {
+            Ok(session) => {
+                if !session
+                    .agent_profiles()
+                    .iter()
+                    .any(|profile| profile.id.as_str() == profile_id.as_str())
+                {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(
+                            id,
+                            "set_default_agent_profile",
+                            format!("Unknown agent profile: {profile_id}"),
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                if let Err(error) = session.set_default_agent_profile_id(profile_id.clone()) {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() })
+            }
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+
+        write_rpc_response(
+            writer,
+            RpcResponse::success(id, "set_default_agent_profile", Some(data)),
+        )
+        .await
+    }
+
+    async fn open_profile_listing_session(&self) -> Result<CodingAgentSession, CliError> {
+        Ok(CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
+        )
+        .await?)
+    }
+
+    async fn ensure_mutable_coding_session(&mut self) -> Result<&mut CodingAgentSession, CliError> {
+        if self.coding_session.is_none() {
+            self.coding_session = Some(self.open_reload_session().await?);
         }
         Ok(self
             .coding_session

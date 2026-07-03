@@ -438,6 +438,169 @@ require_confirmation = "always"
 }
 
 #[tokio::test]
+async fn rpc_set_default_agent_profile_updates_session_listing() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    );
+
+    let input = br#"{"id":"l1","type":"list_agent_profiles"}
+{"id":"s1","type":"set_default_agent_profile","profileId":"coder"}
+{"id":"l2","type":"list_agent_profiles"}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd);
+    session_options.session_dir = Some(sessions.clone());
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-set-default-agent")),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        sessions.exists(),
+        "setting the default profile should create a session"
+    );
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["command"], "list_agent_profiles");
+    assert_eq!(lines[0]["data"]["defaultAgentProfileId"], "default");
+    assert_eq!(lines[1]["id"], "s1");
+    assert_eq!(lines[1]["command"], "set_default_agent_profile");
+    assert_eq!(lines[1]["success"], true);
+    assert_eq!(lines[1]["data"]["defaultAgentProfileId"], "coder");
+    assert_eq!(lines[2]["command"], "list_agent_profiles");
+    assert_eq!(lines[2]["data"]["defaultAgentProfileId"], "coder");
+    let agents = lines[2]["data"]["agents"].as_array().unwrap();
+    let coder = agents
+        .iter()
+        .find(|profile| profile["id"] == "coder")
+        .expect("coder profile should be listed");
+    assert_eq!(coder["isDefault"], true);
+    let default = agents
+        .iter()
+        .find(|profile| profile["id"] == "default")
+        .expect("default profile should be listed");
+    assert_eq!(default["isDefault"], false);
+}
+
+#[tokio::test]
+async fn rpc_set_default_agent_profile_rejects_unknown_profile() {
+    let input = br#"{"id":"s1","type":"set_default_agent_profile","profileId":"missing"}
+"#;
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-set-default-agent-missing")),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "s1");
+    assert_eq!(lines[0]["command"], "set_default_agent_profile");
+    assert_eq!(lines[0]["success"], false);
+    assert_eq!(lines[0]["error"], "Unknown agent profile: missing");
+}
+
+#[tokio::test]
+async fn rpc_set_default_agent_profile_rejects_while_prompt_running() {
+    let api = "pi-coding-rpc-set-default-agent-busy";
+    let release = Arc::new(Notify::new());
+    registry::register(
+        api,
+        Arc::new(PausingProvider {
+            release: Arc::clone(&release),
+            opened: Arc::new(AtomicBool::new(false)),
+        }),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(512);
+    let (output_writer, output_reader) = tokio::io::duplex(4096);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    input_writer
+        .write_all(b"{\"id\":\"p1\",\"type\":\"prompt\",\"message\":\"hello\"}\n")
+        .await
+        .unwrap();
+
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+    let prompt_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
+        .await
+        .expect("prompt response before provider completes")
+        .unwrap()
+        .unwrap();
+    let prompt_response: serde_json::Value = serde_json::from_str(&prompt_response).unwrap();
+    assert_eq!(prompt_response["success"], true);
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"s1\",\"type\":\"set_default_agent_profile\",\"profileId\":\"default\"}\n",
+        )
+        .await
+        .unwrap();
+
+    let response = tokio::time::timeout(Duration::from_millis(250), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before set_default_agent_profile response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "set_default_agent_profile" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("set_default_agent_profile rejection while prompt is running");
+
+    release.notify_one();
+    drop(input_writer);
+    task.await.unwrap();
+
+    assert_eq!(response["id"], "s1");
+    assert_eq!(response["success"], false);
+    assert_eq!(
+        response["error"],
+        "cannot set default agent profile while agent is streaming"
+    );
+    registry::unregister(api);
+}
+
+#[tokio::test]
 async fn rpc_list_agent_profiles_rejects_while_prompt_running() {
     let api = "pi-coding-rpc-list-agents-busy";
     let release = Arc::new(Notify::new());

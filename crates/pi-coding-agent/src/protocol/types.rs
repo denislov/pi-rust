@@ -150,6 +150,12 @@ pub enum RpcCommand {
     ListAgentProfiles { id: Option<String> },
     #[serde(rename = "list_team_profiles")]
     ListTeamProfiles { id: Option<String> },
+    #[serde(rename = "set_default_agent_profile")]
+    SetDefaultAgentProfile {
+        id: Option<String>,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+    },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {
         id: Option<String>,
