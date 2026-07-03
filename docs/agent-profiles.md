@@ -119,7 +119,7 @@ RPC mode currently supports:
 
 `set_default_agent_profile` emits a `default_agent_profile_changed` protocol event after the command response. `invoke_agent` and `invoke_team` run through the same background operation path as prompts and stream semantic lifecycle protocol events such as `agent_invocation_start`, `agent_team_start`, `agent_team_member_start`, and matching end/error/abort events.
 
-RPC `get_state.capabilities` includes `agentProfiles`, `teamProfiles`, and `delegation`. Profile/team operations report `busy` while an agent or team invocation is running. Delegation currently reports unsupported while confirmation UX, recursive budget accounting, and capability release policy remain unfinished.
+RPC `get_state.capabilities` includes `agentProfiles`, `teamProfiles`, and `delegation`. Profile/team operations report `busy` while an agent or team invocation is running. Delegation reports `available` when the session owner can run bounded, policy-gated delegation and `busy` while another owner operation is active. Individual `delegate_agent` and `delegate_team` tools are still exposed only when the active `AgentProfile` policy allows them.
 
 ## Delegation Boundary
 

@@ -39,12 +39,7 @@ mod tests {
         assert_eq!(capabilities.plugin_reload, CapabilityStatus::Available);
         assert_eq!(capabilities.agent_profiles, CapabilityStatus::Available);
         assert_eq!(capabilities.team_profiles, CapabilityStatus::Available);
-        assert_eq!(
-            capabilities.delegation,
-            CapabilityStatus::Unsupported {
-                reason: "delegation child execution is not implemented yet".into(),
-            }
-        );
+        assert_eq!(capabilities.delegation, CapabilityStatus::Available);
         assert_eq!(capabilities.tools, CapabilityStatus::Available);
         assert_eq!(capabilities.shell, CapabilityStatus::Available);
         assert_eq!(capabilities.plugins, CapabilityStatus::Available);
@@ -137,6 +132,7 @@ mod tests {
             capabilities.plugin_reload,
             capabilities.agent_profiles,
             capabilities.team_profiles,
+            capabilities.delegation,
         ] {
             assert_eq!(
                 capability,

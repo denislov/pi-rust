@@ -260,11 +260,7 @@ async fn rpc_state_reports_capabilities_when_idle() {
     assert_eq!(capabilities["tools"]["status"], "available");
     assert_eq!(capabilities["agentProfiles"]["status"], "available");
     assert_eq!(capabilities["teamProfiles"]["status"], "available");
-    assert_eq!(capabilities["delegation"]["status"], "unsupported");
-    assert_eq!(
-        capabilities["delegation"]["reason"],
-        "delegation child execution is not implemented yet"
-    );
+    assert_eq!(capabilities["delegation"]["status"], "available");
     for capability in [
         "compact",
         "fork",
@@ -599,6 +595,8 @@ async fn rpc_state_reports_agent_invocation_busy_while_running() {
         capabilities["teamProfiles"]["operation"],
         "agent_invocation"
     );
+    assert_eq!(capabilities["delegation"]["status"], "busy");
+    assert_eq!(capabilities["delegation"]["operation"], "agent_invocation");
     registry::unregister(api);
 }
 
@@ -784,6 +782,8 @@ members = ["default"]
     assert_eq!(capabilities["agentProfiles"]["operation"], "agent_team");
     assert_eq!(capabilities["teamProfiles"]["status"], "busy");
     assert_eq!(capabilities["teamProfiles"]["operation"], "agent_team");
+    assert_eq!(capabilities["delegation"]["status"], "busy");
+    assert_eq!(capabilities["delegation"]["operation"], "agent_team");
     registry::unregister(api);
 }
 
@@ -1117,6 +1117,8 @@ async fn rpc_state_reports_prompt_busy_while_running() {
     assert_eq!(capabilities["agentProfiles"]["operation"], "prompt");
     assert_eq!(capabilities["teamProfiles"]["status"], "busy");
     assert_eq!(capabilities["teamProfiles"]["operation"], "prompt");
+    assert_eq!(capabilities["delegation"]["status"], "busy");
+    assert_eq!(capabilities["delegation"]["operation"], "prompt");
     registry::unregister(api);
 }
 

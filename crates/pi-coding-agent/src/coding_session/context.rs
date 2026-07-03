@@ -207,10 +207,8 @@ impl CodingAgentCapabilities {
             export: persistent_session_capability.clone(),
             plugin_reload: persistent_session_capability,
             agent_profiles: profile_operation_capability.clone(),
-            team_profiles: profile_operation_capability,
-            delegation: CapabilityStatus::Unsupported {
-                reason: "delegation child execution is not implemented yet".into(),
-            },
+            team_profiles: profile_operation_capability.clone(),
+            delegation: profile_operation_capability,
             tools: CapabilityStatus::Available,
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,
