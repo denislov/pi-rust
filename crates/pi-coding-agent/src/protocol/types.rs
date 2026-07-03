@@ -156,6 +156,13 @@ pub enum RpcCommand {
         #[serde(rename = "profileId")]
         profile_id: String,
     },
+    #[serde(rename = "invoke_agent")]
+    InvokeAgent {
+        id: Option<String>,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+        task: String,
+    },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {
         id: Option<String>,

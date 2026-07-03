@@ -1,12 +1,13 @@
 use crate::CliError;
 use crate::coding_session::{
-    CodingAgentSession, CodingAgentSessionOptions, PromptTurnMode, PromptTurnOptions,
+    AgentInvocationOptions, CodingAgentSession, CodingAgentSessionOptions, OperationKind,
+    ProfileId, PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::has_images;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::{
-    CodingPromptTaskResult, CodingRunningPrompt, RpcState, RunningPrompt,
+    CodingOperationOutcome, CodingOperationTaskResult, CodingRunningPrompt, RpcState, RunningPrompt,
 };
 use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
 use crate::protocol::types::{ProtocolEvent, RpcResponse, StreamingBehavior};
@@ -70,9 +71,25 @@ impl RpcState {
             return Ok(());
         };
 
+        let Some(control) = running.control.as_ref() else {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "prompt",
+                    format!(
+                        "cannot send prompt control while {} is running",
+                        running.operation_kind.as_str()
+                    ),
+                ),
+            )
+            .await?;
+            return Ok(());
+        };
+
         let result = match streaming_behavior {
-            Some(StreamingBehavior::Steer) => running.control.steer(message),
-            Some(StreamingBehavior::FollowUp) => running.control.follow_up(message),
+            Some(StreamingBehavior::Steer) => control.steer(message),
+            Some(StreamingBehavior::FollowUp) => control.follow_up(message),
             None => {
                 write_rpc_response(
                     writer,
@@ -94,6 +111,175 @@ impl RpcState {
                     .await
             }
         }
+    }
+
+    pub(super) async fn handle_invoke_agent<W>(
+        &mut self,
+        id: Option<String>,
+        profile_id: String,
+        task: String,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "invoke_agent",
+                    "cannot invoke agent while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        if task.trim().is_empty() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "invoke_agent",
+                    "agent invocation requires a non-empty task",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let profile_id = match ProfileId::new(profile_id) {
+            Ok(profile_id) => profile_id,
+            Err(message) => {
+                write_rpc_response(writer, RpcResponse::error(id, "invoke_agent", message)).await?;
+                return Ok(());
+            }
+        };
+
+        let session_root = if matches!(self.options.session.mode, SessionMode::Enabled) {
+            Some(rpc_coding_session_root(&self.options.session)?)
+        } else {
+            None
+        };
+        let mut session = match self.coding_session.take() {
+            Some(session) => session,
+            None => match session_root.as_ref() {
+                Some(session_root) => {
+                    CodingAgentSession::create(
+                        CodingAgentSessionOptions::new()
+                            .with_cwd(self.options.session.cwd.clone())
+                            .with_session_log_root(session_root.clone()),
+                    )
+                    .await?
+                }
+                None => {
+                    CodingAgentSession::non_persistent(
+                        CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
+                    )
+                    .await?
+                }
+            },
+        };
+
+        if !session
+            .agent_profiles()
+            .iter()
+            .any(|profile| profile.id.as_str() == profile_id.as_str())
+        {
+            self.coding_session = Some(session);
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "invoke_agent",
+                    format!("Unknown agent profile: {profile_id}"),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let prompt_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: task.clone(),
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            system_prompt: None,
+            max_turns: None,
+            tools: self.options.tools.clone(),
+            register_builtins: false,
+            session: Some(self.options.session.clone()),
+            session_target: None,
+            session_name: self.session_name.clone(),
+            thinking_level: Some(self.thinking_level),
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: Some(self.settings.clone()),
+            invocation: PromptInvocation::Text(task.clone()),
+        })
+        .with_mode(PromptTurnMode::Rpc);
+        let invocation_options =
+            AgentInvocationOptions::new(profile_id.clone(), task.clone(), prompt_options);
+        let mut receiver = session.subscribe();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+
+        write_rpc_response(
+            writer,
+            RpcResponse::success(
+                id,
+                "invoke_agent",
+                Some(serde_json::json!({
+                    "profileId": profile_id.as_str(),
+                    "task": task,
+                })),
+            ),
+        )
+        .await?;
+        write_json_line(writer, &ProtocolEvent::AgentStart).await?;
+
+        tokio::spawn(async move {
+            let outcome = {
+                let mut invocation = Box::pin(session.invoke_agent(invocation_options));
+                loop {
+                    tokio::select! {
+                        event = receiver.recv() => {
+                            if let Ok(event) = event {
+                                let _ = event_tx.send(event);
+                            }
+                        }
+                        outcome = &mut invocation => {
+                            break outcome.map_err(CliError::from);
+                        }
+                    }
+                }
+            };
+
+            while let Ok(Some(event)) = receiver.try_recv() {
+                let _ = event_tx.send(event);
+            }
+
+            let _ = done_tx.send(CodingOperationTaskResult {
+                session,
+                session_root,
+                outcome: CodingOperationOutcome::AgentInvocation(outcome),
+            });
+        });
+
+        self.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
+            events: event_rx,
+            done: done_rx,
+            control: None,
+            operation_kind: OperationKind::AgentInvocation,
+            adapter: RpcCodingEventAdapter::new_with_provider(
+                self.model.api.clone(),
+                self.model.provider.clone(),
+                self.model.id.clone(),
+            ),
+            events_closed: false,
+        }));
+
+        Ok(())
     }
 
     async fn start_coding_session_prompt<W>(
@@ -181,17 +367,18 @@ impl RpcState {
                 let _ = event_tx.send(event);
             }
 
-            let _ = done_tx.send(CodingPromptTaskResult {
+            let _ = done_tx.send(CodingOperationTaskResult {
                 session,
                 session_root,
-                outcome,
+                outcome: CodingOperationOutcome::Prompt(outcome),
             });
         });
 
         self.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
             events: event_rx,
             done: done_rx,
-            control,
+            control: Some(control),
+            operation_kind: OperationKind::Prompt,
             adapter: RpcCodingEventAdapter::new_with_provider(
                 self.model.api.clone(),
                 self.model.provider.clone(),
@@ -230,7 +417,7 @@ impl RpcState {
 
     pub(super) async fn finish_coding_running_prompt<W>(
         &mut self,
-        result: Result<CodingPromptTaskResult, oneshot::error::RecvError>,
+        result: Result<CodingOperationTaskResult, oneshot::error::RecvError>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
@@ -252,26 +439,31 @@ impl RpcState {
             ))
         })?;
 
-        match &result.outcome {
-            Ok(outcome) => {
-                if let (Some(session_root), Some(session_id)) = (
-                    result.session_root.as_ref(),
-                    prompt_outcome_session_id(outcome),
-                ) {
+        let outcome = match &result.outcome {
+            CodingOperationOutcome::Prompt(outcome) => {
+                if let Ok(outcome) = outcome
+                    && let (Some(session_root), Some(session_id)) = (
+                        result.session_root.as_ref(),
+                        prompt_outcome_session_id(outcome),
+                    )
+                {
                     self.active_leaf_id = prompt_outcome_leaf_id(outcome).map(ToString::to_string);
                     self.active_session_path = Some(session_root.join(session_id));
-                } else {
+                } else if outcome.is_ok() {
                     self.active_leaf_id = None;
                     self.active_session_path = None;
                 }
+                outcome.as_ref().map(|_| ()).map_err(Clone::clone)
             }
-            Err(_) => {}
-        }
+            CodingOperationOutcome::AgentInvocation(outcome) => {
+                outcome.as_ref().map(|_| ()).map_err(Clone::clone)
+            }
+        };
 
         self.coding_session = Some(result.session);
         self.steering.clear();
         self.follow_up.clear();
-        result.outcome.map(|_| ())
+        outcome
     }
 
     pub(super) async fn emit_queue_update<W>(&self, writer: &mut W) -> Result<(), CliError>

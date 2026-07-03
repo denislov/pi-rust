@@ -1,4 +1,4 @@
-use crate::coding_session::{CodingAgentCapabilities, OperationKind};
+use crate::coding_session::CodingAgentCapabilities;
 use crate::plugins::PluginCapabilities;
 use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
@@ -41,7 +41,7 @@ impl RpcState {
     pub(super) fn capabilities(&self) -> CodingAgentCapabilities {
         let plugin_capabilities = PluginCapabilities::new();
         let active_operation = match &self.running {
-            Some(RunningPrompt::Coding(_)) => Some(OperationKind::Prompt),
+            Some(RunningPrompt::Coding(running)) => Some(running.operation_kind),
             None => None,
         };
         CodingAgentCapabilities::from_runtime_state(

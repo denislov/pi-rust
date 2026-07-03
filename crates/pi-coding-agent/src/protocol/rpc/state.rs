@@ -1,7 +1,8 @@
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::{
-    CliArgs, CliError, CliRunOptions, coding_session::CodingAgentEvent,
-    coding_session::CodingAgentSession, coding_session::PromptControlHandle,
+    CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
+    coding_session::CodingAgentEvent, coding_session::CodingAgentSession,
+    coding_session::OperationKind, coding_session::PromptControlHandle,
     coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::session::StoredAgentMessage;
@@ -36,16 +37,22 @@ pub(super) enum RunningPrompt {
 
 pub(super) struct CodingRunningPrompt {
     pub(super) events: mpsc::UnboundedReceiver<CodingAgentEvent>,
-    pub(super) done: oneshot::Receiver<CodingPromptTaskResult>,
-    pub(super) control: PromptControlHandle,
+    pub(super) done: oneshot::Receiver<CodingOperationTaskResult>,
+    pub(super) control: Option<PromptControlHandle>,
+    pub(super) operation_kind: OperationKind,
     pub(super) adapter: RpcCodingEventAdapter,
     pub(super) events_closed: bool,
 }
 
-pub(super) struct CodingPromptTaskResult {
+pub(super) struct CodingOperationTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) session_root: Option<PathBuf>,
-    pub(super) outcome: Result<PromptTurnOutcome, CliError>,
+    pub(super) outcome: CodingOperationOutcome,
+}
+
+pub(super) enum CodingOperationOutcome {
+    Prompt(Result<PromptTurnOutcome, CliError>),
+    AgentInvocation(Result<AgentInvocationOutcome, CliError>),
 }
 
 impl RpcState {

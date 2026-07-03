@@ -438,6 +438,161 @@ require_confirmation = "always"
 }
 
 #[tokio::test]
+async fn rpc_invoke_agent_returns_response_then_agent_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    );
+
+    let api = "pi-coding-rpc-invoke-agent";
+    registry::register(api, Arc::new(FauxProvider::simple_text("from agent")));
+    let input = br#"{"id":"a1","type":"invoke_agent","profileId":"coder","task":"do work"}
+"#;
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: SessionRunOptions::disabled(cwd),
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "a1");
+    assert_eq!(lines[0]["command"], "invoke_agent");
+    assert_eq!(lines[0]["success"], true);
+    assert_eq!(lines[0]["data"]["profileId"], "coder");
+    assert_eq!(lines[0]["data"]["task"], "do work");
+    assert!(lines.iter().any(|line| line["type"] == "agent_start"));
+    assert!(lines.iter().any(|line| line["type"] == "agent_end"));
+    assert!(String::from_utf8_lossy(&output).contains("from agent"));
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_invoke_agent_rejects_unknown_profile() {
+    let input = br#"{"id":"a1","type":"invoke_agent","profileId":"missing","task":"do work"}
+"#;
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-invoke-agent-missing")),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "a1");
+    assert_eq!(lines[0]["command"], "invoke_agent");
+    assert_eq!(lines[0]["success"], false);
+    assert_eq!(lines[0]["error"], "Unknown agent profile: missing");
+}
+
+#[tokio::test]
+async fn rpc_state_reports_agent_invocation_busy_while_running() {
+    let api = "pi-coding-rpc-invoke-agent-busy";
+    let release = Arc::new(Notify::new());
+    registry::register(
+        api,
+        Arc::new(PausingProvider {
+            release: Arc::clone(&release),
+            opened: Arc::new(AtomicBool::new(false)),
+        }),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(512);
+    let (output_writer, output_reader) = tokio::io::duplex(4096);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"a1\",\"type\":\"invoke_agent\",\"profileId\":\"default\",\"task\":\"hello\"}\n",
+        )
+        .await
+        .unwrap();
+
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+    let invoke_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
+        .await
+        .expect("invoke_agent response before provider completes")
+        .unwrap()
+        .unwrap();
+    let invoke_response: serde_json::Value = serde_json::from_str(&invoke_response).unwrap();
+    assert_eq!(invoke_response["success"], true);
+
+    input_writer
+        .write_all(b"{\"id\":\"s1\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+
+    let state = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before get_state response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "get_state" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("state response while agent invocation is running");
+
+    release.notify_one();
+    drop(input_writer);
+    task.await.unwrap();
+
+    assert_eq!(state["data"]["isStreaming"], true);
+    let capabilities = &state["data"]["capabilities"];
+    assert_eq!(capabilities["prompt"]["status"], "busy");
+    assert_eq!(capabilities["prompt"]["operation"], "agent_invocation");
+    assert_eq!(capabilities["abort"]["status"], "disabled");
+    assert_eq!(capabilities["agentProfiles"]["status"], "busy");
+    assert_eq!(
+        capabilities["agentProfiles"]["operation"],
+        "agent_invocation"
+    );
+    assert_eq!(capabilities["teamProfiles"]["status"], "busy");
+    assert_eq!(
+        capabilities["teamProfiles"]["operation"],
+        "agent_invocation"
+    );
+    registry::unregister(api);
+}
+
+#[tokio::test]
 async fn rpc_set_default_agent_profile_updates_session_listing() {
     let temp = tempfile::tempdir().unwrap();
     let cwd = temp.path().join("project");

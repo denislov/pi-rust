@@ -9,7 +9,7 @@ use crate::protocol::jsonl::JsonlLineReader;
 use crate::protocol::types::{RpcCommand, RpcResponse};
 use crate::{CliError, CliRunOptions};
 use serde_json::Value;
-use state::{CodingPromptTaskResult, RpcState, RunningPrompt};
+use state::{CodingOperationTaskResult, RpcState, RunningPrompt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 pub use wire::write_rpc_response;
@@ -88,7 +88,7 @@ where
 enum RpcLoopEvent {
     Input(Result<Option<String>, std::io::Error>),
     CodingEvent(Option<crate::coding_session::CodingAgentEvent>),
-    CodingPromptDone(Result<CodingPromptTaskResult, oneshot::error::RecvError>),
+    CodingPromptDone(Result<CodingOperationTaskResult, oneshot::error::RecvError>),
 }
 
 async fn handle_input_line<W>(

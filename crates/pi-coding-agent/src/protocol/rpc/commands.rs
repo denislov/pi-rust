@@ -49,7 +49,22 @@ impl RpcState {
                     return Ok(());
                 }
                 if let Some(RunningPrompt::Coding(running)) = self.running.as_ref() {
-                    match running.control.steer(message) {
+                    let Some(control) = running.control.as_ref() else {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(
+                                id,
+                                "steer",
+                                format!(
+                                    "cannot steer while {} is running",
+                                    running.operation_kind.as_str()
+                                ),
+                            ),
+                        )
+                        .await?;
+                        return Ok(());
+                    };
+                    match control.steer(message) {
                         Ok(()) => {
                             write_rpc_response(writer, RpcResponse::success(id, "steer", None))
                                 .await?
@@ -86,7 +101,22 @@ impl RpcState {
                     return Ok(());
                 }
                 if let Some(RunningPrompt::Coding(running)) = self.running.as_ref() {
-                    match running.control.follow_up(message) {
+                    let Some(control) = running.control.as_ref() else {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(
+                                id,
+                                "follow_up",
+                                format!(
+                                    "cannot follow up while {} is running",
+                                    running.operation_kind.as_str()
+                                ),
+                            ),
+                        )
+                        .await?;
+                        return Ok(());
+                    };
+                    match control.follow_up(message) {
                         Ok(()) => {
                             write_rpc_response(writer, RpcResponse::success(id, "follow_up", None))
                                 .await?
@@ -108,7 +138,22 @@ impl RpcState {
             RpcCommand::Abort { id } => {
                 let cancelled = if let Some(RunningPrompt::Coding(running)) = self.running.as_ref()
                 {
-                    match running.control.abort("rpc abort requested") {
+                    let Some(control) = running.control.as_ref() else {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(
+                                id,
+                                "abort",
+                                format!(
+                                    "cannot abort while {} is running",
+                                    running.operation_kind.as_str()
+                                ),
+                            ),
+                        )
+                        .await?;
+                        return Ok(());
+                    };
+                    match control.abort("rpc abort requested") {
                         Ok(()) => true,
                         Err(error) => {
                             write_rpc_response(
@@ -198,6 +243,11 @@ impl RpcState {
                 self.handle_set_default_agent_profile(id, profile_id, writer)
                     .await
             }
+            RpcCommand::InvokeAgent {
+                id,
+                profile_id,
+                task,
+            } => self.handle_invoke_agent(id, profile_id, task, writer).await,
             RpcCommand::SetThinkingLevel { id, level } => {
                 self.thinking_level = level;
                 write_rpc_response(writer, RpcResponse::success(id, "set_thinking_level", None))
