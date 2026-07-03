@@ -16,6 +16,7 @@ use super::prompt::{
 };
 use super::prompt_flow::PromptTurnFlow;
 use super::session_log::id::{IdGenerator, SystemIdGenerator};
+use crate::runtime::PromptInvocation;
 
 const DEFAULT_ACTION: &str = "default";
 
@@ -308,6 +309,7 @@ impl AgentInvocationContext {
                     .into(),
             })?;
         let mut prompt_options = self.options.prompt_options.clone();
+        prompt_options.set_invocation(PromptInvocation::Text(self.options.task.clone()));
         prompt_options.apply_agent_profile(profile, Vec::new())?;
         if prompt_options.runtime().is_none() {
             return Err(CodingSessionError::Config {

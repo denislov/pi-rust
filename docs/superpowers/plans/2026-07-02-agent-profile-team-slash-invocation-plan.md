@@ -263,7 +263,7 @@ Tasks:
 - [x] Add an `AgentInvocationFlow` for one-off `/agent <id> <task>` execution.
 - [x] Resolve the target `AgentProfile` through the session registry.
 - [x] Create a child operation lineage id correlated with the parent session operation.
-- [x] Run the task through the same runtime service boundaries used by ordinary prompts.
+- [x] Run the task through the same runtime service boundaries used by ordinary prompts. `AgentInvocationFlow` now normalizes the child prompt invocation from `AgentInvocationOptions::task`, so callers cannot accidentally execute a stale parent prompt from reused `PromptTurnOptions`.
 - [~] Record product events for invocation started, child output, diagnostics, completion, failure, and cancellation. Start, child output, diagnostics, completion, and failure are covered; abort/cancellation event shape exists, while interactive abort for agent invocation remains unsupported.
 - [x] Decide whether invocation output becomes an assistant transcript item, an artifact, or a structured event before durable commit. One-off child output streams as product events and does not commit directly into the parent transcript.
 - [x] Enforce busy-state and operation-control rules consistently with compact/export/plugin-load workflows.

@@ -8,8 +8,8 @@ use pi_agent_core::{AgentResources, AgentTool};
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
-    StopReason, StreamOptions,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
+    ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
     AgentInvocationOptions, CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions,
@@ -102,6 +102,31 @@ tools = ["echo"]
         )),
         "expected invocation completion event, got {events:#?}"
     );
+}
+
+#[tokio::test]
+async fn one_off_agent_invocation_uses_task_over_prompt_options_invocation() {
+    let temp = tempdir().unwrap();
+    let api = "agent-invocation-task-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(vec![api.into()], calls.clone());
+    let mut session =
+        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(temp.path()))
+            .await
+            .unwrap();
+
+    session
+        .invoke_agent(AgentInvocationOptions::new(
+            "default",
+            "delegated task",
+            prompt_options(temp.path(), api, "parent prompt"),
+        ))
+        .await
+        .unwrap();
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(user_texts(&calls[0].context), vec!["delegated task"]);
 }
 
 #[tokio::test]
@@ -274,6 +299,26 @@ fn drain_events(
         events.push(event);
     }
     events
+}
+
+fn user_texts(context: &Context) -> Vec<String> {
+    context
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User { content } => Some(
+                content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
