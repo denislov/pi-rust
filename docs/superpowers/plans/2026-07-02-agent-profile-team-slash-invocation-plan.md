@@ -252,20 +252,27 @@ source ~/.cargo/env && cargo test -p pi-coding-agent --test interactive_mode tea
 
 Design: [Agent and team menu invocation](../specs/2026-07-04-agent-team-menu-invocation-design.md)
 
-The argument-style interactive entrypoints implemented in Stage 4 were useful as the first wiring slice, but they are no longer the target TUI shape. The next interactive UX slice should replace:
+The space-argument interactive entrypoints implemented in Stage 4 were useful as the first wiring slice, but they are no longer the target TUI shape. The next interactive UX slice should remove:
 
 - `/agent use <agent-id>`
 - `/agent <agent-id> <task>`
 - `/team <team-id> <task>`
 
-with bare menu entrypoints:
+and add menu entrypoints:
 
 - `/agent`
 - `/team`
 
+The same slice should support colon run shortcuts:
+
+- `/agent:<agent-id> <task>`
+- `/team:<team-id> <task>`
+
 The `/agent` menu should expose `Info`, `Use`, and `Run`. `Use` selects the default agent profile for later ordinary prompts. `Run` selects an agent profile and enters pending task mode; the next submitted editor text runs a one-off `AgentInvocationFlow`.
 
 The `/team` menu should expose `Info` and `Run`. `Run` selects a team profile and enters pending task mode; the next submitted editor text runs `AgentTeamFlow`.
+
+The colon forms are direct equivalents of the `Run` actions for users who already know the profile id. They do not replace the menu and do not change the default agent profile.
 
 This follow-up is intentionally an interactive breaking change. RPC and Rust API commands remain unchanged.
 

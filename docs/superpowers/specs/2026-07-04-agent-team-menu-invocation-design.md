@@ -12,7 +12,7 @@ The current interactive agent and team surface uses argument-heavy slash command
 
 This is workable, but it makes users remember profile ids and command shapes even though `pi-rust` already owns a session-scoped `ProfileRegistry`. The interactive UI should use that registry to present discovered agents and teams directly.
 
-This design replaces the interactive argument forms with menu-driven `/agent` and `/team` flows. It keeps the Rust API and RPC command surface unchanged.
+This design replaces the interactive space-argument forms with menu-driven `/agent` and `/team` flows. It also keeps colon run shortcuts for users who already know the target id. It keeps the Rust API and RPC command surface unchanged.
 
 ## Goals
 
@@ -22,6 +22,8 @@ This design replaces the interactive argument forms with menu-driven `/agent` an
   - `/agent use <agent-id>`
   - `/agent <agent-id> <task>`
   - `/team <team-id> <task>`
+- Support `/agent:<agent-id> <task>` as a direct shortcut for the agent menu `Run` action.
+- Support `/team:<team-id> <task>` as a direct shortcut for the team menu `Run` action.
 - Keep one-off execution available through a menu `Run` action.
 - Keep default agent switching available through a menu `Use` action.
 - Use the session-owned `ProfileRegistry` as the source for discovered agents and teams.
@@ -35,8 +37,8 @@ This design replaces the interactive argument forms with menu-driven `/agent` an
 
 ## Non-Goals
 
-- Do not add `/agent:<id>` or `/team:<id>` as supported command syntax in this design.
 - Do not keep compatibility for the removed interactive argument forms.
+- Do not support `/agent:<id>` or `/team:<id>` without a task as a profile selection command. Bare colon targets without task text should report usage rather than entering pending task mode.
 - Do not add a default team profile.
 - Do not change model-requested delegation tools.
 - Do not change the profile discovery roots or precedence rules.
@@ -142,6 +144,27 @@ Empty task submission should keep the pending target and show a concise usage/er
 
 Esc in pending task mode cancels the pending target. Ctrl-C while idle should follow existing editor-clearing behavior, but if a pending target is active and the editor is empty, it should cancel the pending target before exiting the app.
 
+### Colon Run Shortcuts
+
+Users who already know the target id can bypass the menu `Run` selector:
+
+```text
+/agent:coder refactor module
+/team:implementation ship feature
+```
+
+These forms are equivalent to:
+
+```text
+/agent
+Agent -> Run -> coder -> refactor module
+
+/team
+Team -> Run -> implementation -> ship feature
+```
+
+They do not mutate the default agent profile. They exist only for one-off run behavior.
+
 ## Command Semantics
 
 Interactive slash handling changes as follows:
@@ -158,21 +181,56 @@ opens the agent menu.
 
 opens the team menu.
 
-Any interactive arguments to those commands are invalid:
+Space-style interactive arguments to those commands are invalid:
 
 ```text
 /agent use coder
 /agent coder refactor module
-/agent:coder refactor module
 /team implementation ship feature
+```
+
+The UI should report the same explicit usage used for malformed colon forms:
+
+```text
+Usage: /agent or /agent:<agent-id> <task>
+Usage: /team or /team:<team-id> <task>
+```
+
+Colon run shortcuts are valid only when both an id and a non-empty task are present:
+
+```text
+/agent:coder refactor module
 /team:implementation ship feature
 ```
 
-The UI should report:
+The parser should normalize these to the same pending request types used by menu `Run`:
+
+```rust
+PendingAgentInvocationRequest {
+    profile_id: "coder",
+    task: "refactor module",
+}
+
+PendingAgentTeamRequest {
+    team_id: "implementation",
+    task: "ship feature",
+}
+```
+
+Malformed colon forms should report usage:
 
 ```text
-Usage: /agent
-Usage: /team
+/agent:
+/agent:coder
+/team:
+/team:implementation
+```
+
+The usage text should always make the run shortcut explicit:
+
+```text
+Usage: /agent or /agent:<agent-id> <task>
+Usage: /team or /team:<team-id> <task>
 ```
 
 `/agents` and `/teams` may remain as list commands for quick textual listing, but they are no longer the primary discovery path. They should continue to read from the same `ProfileRegistry`.
@@ -303,6 +361,14 @@ The status line should not be inserted into the transcript. It is transient UI s
 9. Root creates `PendingAgentInvocationRequest` and sets `InteractiveAction::AgentInvocation`.
 10. Existing `PromptTask::spawn_coding_agent_invocation` runs `CodingAgentSession::invoke_agent`.
 
+### Agent Colon Run
+
+1. User submits `/agent:coder refactor module`.
+2. Slash parsing identifies command family `agent`, target id `coder`, and task `refactor module`.
+3. Root validates that `coder` exists in `root.profile_registry.agent("coder")`.
+4. Root creates `PendingAgentInvocationRequest` and sets `InteractiveAction::AgentInvocation`.
+5. Existing `PromptTask::spawn_coding_agent_invocation` runs `CodingAgentSession::invoke_agent`.
+
 ### Team Run
 
 1. User submits `/team`.
@@ -316,10 +382,22 @@ The status line should not be inserted into the transcript. It is transient UI s
 9. Root creates `PendingAgentTeamRequest` and sets `InteractiveAction::AgentTeam`.
 10. Existing `PromptTask::spawn_coding_agent_team` runs `CodingAgentSession::invoke_team`.
 
+### Team Colon Run
+
+1. User submits `/team:implementation ship feature`.
+2. Slash parsing identifies command family `team`, target id `implementation`, and task `ship feature`.
+3. Root validates that `implementation` exists in `root.profile_registry.team("implementation")`.
+4. Root creates `PendingAgentTeamRequest` and sets `InteractiveAction::AgentTeam`.
+5. Existing `PromptTask::spawn_coding_agent_team` runs `CodingAgentSession::invoke_team`.
+
 ## Error Handling
 
-- `/agent` with arguments reports `Usage: /agent`.
-- `/team` with arguments reports `Usage: /team`.
+- `/agent` with unsupported space arguments reports `Usage: /agent or /agent:<agent-id> <task>`.
+- `/team` with unsupported space arguments reports `Usage: /team or /team:<team-id> <task>`.
+- `/agent:<id>` without task reports `Usage: /agent or /agent:<agent-id> <task>`.
+- `/team:<id>` without task reports `Usage: /team or /team:<team-id> <task>`.
+- `/agent:<id> <task>` with an unknown id reports `Unknown agent profile: <id>`.
+- `/team:<id> <task>` with an unknown id reports `Unknown team profile: <id>`.
 - Agent `Use` with no profiles should show an empty-state menu. The built-in `default` profile normally prevents this, but the UI should still handle an empty registry defensively.
 - Agent `Run` with no profiles should show an empty-state menu.
 - Team `Run` with no teams should show an empty-state menu.
@@ -334,11 +412,13 @@ Add focused tests around the root/input layer:
 
 - `/agent` opens the agent root menu.
 - `/team` opens the team root menu.
-- `/agent use coder` reports `Usage: /agent` and does not change the default profile.
-- `/agent coder refactor module` reports `Usage: /agent` and does not queue invocation.
-- `/agent:coder refactor module` reports `Usage: /agent` and does not queue invocation.
-- `/team implementation ship feature` reports `Usage: /team` and does not queue team invocation.
-- `/team:implementation ship feature` reports `Usage: /team` and does not queue team invocation.
+- `/agent use coder` reports `Usage: /agent or /agent:<agent-id> <task>` and does not change the default profile.
+- `/agent coder refactor module` reports `Usage: /agent or /agent:<agent-id> <task>` and does not queue invocation.
+- `/agent:coder refactor module` queues `PendingAgentInvocationRequest`.
+- `/agent:coder` reports `Usage: /agent or /agent:<agent-id> <task>`.
+- `/team implementation ship feature` reports `Usage: /team or /team:<team-id> <task>` and does not queue team invocation.
+- `/team:implementation ship feature` queues `PendingAgentTeamRequest`.
+- `/team:implementation` reports `Usage: /team or /team:<team-id> <task>`.
 - `@agent coder refactor module` remains ordinary prompt text.
 - `@team implementation ship feature` remains ordinary prompt text.
 - Agent `Info` renders the current default profile and discovered profile ids.
@@ -357,6 +437,8 @@ Add scripted interactive tests:
 - menu-driven agent `Run` executes a one-off agent invocation.
 - menu-driven team `Run` executes a team invocation.
 - menu-driven agent `Use` affects the following ordinary prompt.
+- `/agent:<id> <task>` executes a one-off agent invocation.
+- `/team:<id> <task>` executes a team invocation.
 
 Suggested verification after implementation:
 
@@ -387,9 +469,16 @@ The user-facing docs should describe:
 
 as menu entrypoints, and should remove the old argument examples from the interactive command list. RPC examples should remain unchanged.
 
+They should also document colon run shortcuts:
+
+```text
+/agent:<agent-id> <task>
+/team:<team-id> <task>
+```
+
 ## Migration Notes
 
-This is an intentional interactive breaking change. Existing TUI scripts using `/agent <id> <task>`, `/agent use <id>`, or `/team <id> <task>` must move to the menu flow or to RPC for non-interactive invocation.
+This is an intentional interactive breaking change. Existing TUI scripts using `/agent <id> <task>`, `/agent use <id>`, or `/team <id> <task>` must move to the menu flow, the colon run shortcut, or RPC for non-interactive invocation.
 
 The Rust API and RPC remain stable, so automation should prefer:
 
