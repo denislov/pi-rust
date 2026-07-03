@@ -248,6 +248,27 @@ source ~/.cargo/env && cargo test -p pi-coding-agent --test interactive_mode age
 source ~/.cargo/env && cargo test -p pi-coding-agent --test interactive_mode team_profile
 ```
 
+### Stage 4 Follow-Up: Menu-Driven Interactive Invocation
+
+Design: [Agent and team menu invocation](../specs/2026-07-04-agent-team-menu-invocation-design.md)
+
+The argument-style interactive entrypoints implemented in Stage 4 were useful as the first wiring slice, but they are no longer the target TUI shape. The next interactive UX slice should replace:
+
+- `/agent use <agent-id>`
+- `/agent <agent-id> <task>`
+- `/team <team-id> <task>`
+
+with bare menu entrypoints:
+
+- `/agent`
+- `/team`
+
+The `/agent` menu should expose `Info`, `Use`, and `Run`. `Use` selects the default agent profile for later ordinary prompts. `Run` selects an agent profile and enters pending task mode; the next submitted editor text runs a one-off `AgentInvocationFlow`.
+
+The `/team` menu should expose `Info` and `Run`. `Run` selects a team profile and enters pending task mode; the next submitted editor text runs `AgentTeamFlow`.
+
+This follow-up is intentionally an interactive breaking change. RPC and Rust API commands remain unchanged.
+
 ## Stage 5: AgentInvocationFlow
 
 Files:
