@@ -360,7 +360,7 @@ Files:
 Tasks:
 
 - [~] Expose profile/team availability through `CodingAgentCapabilities`. `agentProfiles`, `teamProfiles`, and `delegation` now appear in the public capability model and RPC `get_state.capabilities`; RPC commands for profile/team operations remain follow-up.
-- [ ] Add RPC command support for listing profiles, switching default profile, invoking one-off agent work, and invoking team work.
+- [~] Add RPC command support for listing profiles, switching default profile, invoking one-off agent work, and invoking team work. `list_agent_profiles` and `list_team_profiles` now expose session-owned registry state; switching default profile plus one-off agent/team invocation commands remain follow-up.
 - [ ] Add protocol event mappings for profile changes, agent invocation, team invocation, and delegation lifecycle events.
 - [ ] Keep RPC behavior on the same `CodingAgentSession` owner paths used by interactive slash commands.
 - [ ] Add serialization tests for all new capability and event fields.
@@ -411,5 +411,5 @@ source ~/.cargo/env && git diff --check
 - [x] Team profiles always declare supervisor semantics.
 - [~] Model-requested delegation goes through session-owned authorization and bounded execution. Request tools are now session-owned and policy-gated; bounded child execution remains follow-up.
 - [x] Child operations cannot direct-commit parent session state.
-- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events plus delegation requested/rejected events exist in `CodingAgentEvent`; `agentProfiles`, `teamProfiles`, and `delegation` exist in capabilities; RPC commands and richer protocol surfaces remain Stage 8 follow-up.
+- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events plus delegation requested/rejected events exist in `CodingAgentEvent`; `agentProfiles`, `teamProfiles`, and `delegation` exist in capabilities; RPC profile/team list commands exist; RPC profile switch/invocation commands and richer protocol surfaces remain Stage 8 follow-up.
 - [~] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools. Current delegation request tools preserve this; follow-up child execution must keep the same boundary.

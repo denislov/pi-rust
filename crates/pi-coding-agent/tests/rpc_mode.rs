@@ -40,6 +40,12 @@ fn parse_lines(bytes: &[u8]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn write_file(path: impl AsRef<std::path::Path>, content: &str) {
+    let path = path.as_ref();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, content.trim_start()).unwrap();
+}
+
 struct PausingProvider {
     release: Arc<Notify>,
     opened: Arc<AtomicBool>,
@@ -273,6 +279,237 @@ async fn rpc_state_reports_capabilities_when_idle() {
             "requires persistent Rust-native session"
         );
     }
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_list_agent_profiles_reports_registry() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+description = "Implementation agent"
+model = "gpt-5-codex"
+system_prompt = "You write code."
+tools = ["shell", "apply_patch"]
+skills = ["superpowers:test-driven-development"]
+supervision = "self_review"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+require_confirmation = "writes"
+allowed_agents = ["reviewer"]
+"#,
+    );
+
+    let input = br#"{"id":"a1","type":"list_agent_profiles"}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd);
+    session_options.session_dir = Some(sessions.clone());
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-list-agents")),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !sessions.exists(),
+        "profile listing should not create a session"
+    );
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "a1");
+    assert_eq!(lines[0]["command"], "list_agent_profiles");
+    assert_eq!(lines[0]["success"], true);
+    assert_eq!(lines[0]["data"]["defaultAgentProfileId"], "default");
+    assert!(
+        lines[0]["data"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let agents = lines[0]["data"]["agents"].as_array().unwrap();
+    let default = agents
+        .iter()
+        .find(|profile| profile["id"] == "default")
+        .expect("default profile is listed");
+    assert_eq!(default["source"], "built_in");
+    assert_eq!(default["isDefault"], true);
+
+    let coder = agents
+        .iter()
+        .find(|profile| profile["id"] == "coder")
+        .expect("project profile is listed");
+    assert_eq!(coder["displayName"], "Coder");
+    assert_eq!(coder["description"], "Implementation agent");
+    assert_eq!(coder["source"], "project");
+    assert_eq!(coder["isDefault"], false);
+    assert_eq!(coder["model"], "gpt-5-codex");
+    assert_eq!(coder["systemPrompt"], "You write code.");
+    assert_eq!(coder["tools"][0], "shell");
+    assert_eq!(coder["skills"][0], "superpowers:test-driven-development");
+    assert_eq!(coder["supervision"], "self_review");
+    assert_eq!(coder["delegation"]["allowDelegateAgent"], true);
+    assert_eq!(coder["delegation"]["allowDelegateTeam"], false);
+    assert_eq!(coder["delegation"]["maxDepth"], 1);
+    assert_eq!(coder["delegation"]["requireConfirmation"], "writes");
+    assert_eq!(coder["delegation"]["allowedAgents"][0], "reviewer");
+}
+
+#[tokio::test]
+async fn rpc_list_team_profiles_reports_registry() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    write_file(
+        cwd.join(".pi-rust/teams/implementation.toml"),
+        r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+description = "Planner and coder"
+supervisor = "planner"
+strategy = "plan_execute_review"
+members = ["planner", "coder"]
+
+[delegation]
+max_parallel_children = 2
+max_depth = 1
+require_confirmation = "always"
+"#,
+    );
+
+    let input = br#"{"id":"t1","type":"list_team_profiles"}
+"#;
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-list-teams")),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: SessionRunOptions::disabled(cwd),
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "t1");
+    assert_eq!(lines[0]["command"], "list_team_profiles");
+    assert_eq!(lines[0]["success"], true);
+    assert!(
+        lines[0]["data"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let teams = lines[0]["data"]["teams"].as_array().unwrap();
+    let team = teams
+        .iter()
+        .find(|profile| profile["id"] == "implementation")
+        .expect("project team profile is listed");
+    assert_eq!(team["displayName"], "Implementation Team");
+    assert_eq!(team["description"], "Planner and coder");
+    assert_eq!(team["source"], "project");
+    assert_eq!(team["supervisor"]["mode"], "agent");
+    assert_eq!(team["supervisor"]["profileId"], "planner");
+    assert_eq!(team["strategy"], "plan_execute_review");
+    assert_eq!(team["members"][0], "planner");
+    assert_eq!(team["members"][1], "coder");
+    assert_eq!(team["delegation"]["maxParallelChildren"], 2);
+    assert_eq!(team["delegation"]["requireConfirmation"], "always");
+}
+
+#[tokio::test]
+async fn rpc_list_agent_profiles_rejects_while_prompt_running() {
+    let api = "pi-coding-rpc-list-agents-busy";
+    let release = Arc::new(Notify::new());
+    registry::register(
+        api,
+        Arc::new(PausingProvider {
+            release: Arc::clone(&release),
+            opened: Arc::new(AtomicBool::new(false)),
+        }),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(512);
+    let (output_writer, output_reader) = tokio::io::duplex(4096);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    input_writer
+        .write_all(b"{\"id\":\"p1\",\"type\":\"prompt\",\"message\":\"hello\"}\n")
+        .await
+        .unwrap();
+
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+    let prompt_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
+        .await
+        .expect("prompt response before provider completes")
+        .unwrap()
+        .unwrap();
+    let prompt_response: serde_json::Value = serde_json::from_str(&prompt_response).unwrap();
+    assert_eq!(prompt_response["success"], true);
+
+    input_writer
+        .write_all(b"{\"id\":\"a1\",\"type\":\"list_agent_profiles\"}\n")
+        .await
+        .unwrap();
+
+    let response = tokio::time::timeout(Duration::from_millis(250), async {
+        loop {
+            let Some(line) = lines.next_line().await.unwrap() else {
+                panic!("rpc output closed before list_agent_profiles response");
+            };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["type"] == "response" && value["command"] == "list_agent_profiles" {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("list_agent_profiles rejection while prompt is running");
+
+    release.notify_one();
+    drop(input_writer);
+    task.await.unwrap();
+
+    assert_eq!(response["id"], "a1");
+    assert_eq!(response["success"], false);
+    assert_eq!(
+        response["error"],
+        "cannot list agent profiles while agent is streaming"
+    );
     registry::unregister(api);
 }
 

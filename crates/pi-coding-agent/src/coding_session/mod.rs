@@ -340,6 +340,18 @@ impl CodingAgentSession {
         }
     }
 
+    pub fn agent_profiles(&self) -> Vec<AgentProfile> {
+        self.profile_registry.agents().cloned().collect()
+    }
+
+    pub fn team_profiles(&self) -> Vec<TeamProfile> {
+        self.profile_registry.teams().cloned().collect()
+    }
+
+    pub fn profile_diagnostics(&self) -> Vec<ProfileDiagnostic> {
+        self.profile_registry.diagnostics().to_vec()
+    }
+
     pub fn set_default_agent_profile_id(
         &mut self,
         profile_id: impl Into<ProfileId>,

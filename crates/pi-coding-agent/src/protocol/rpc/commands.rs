@@ -1,5 +1,9 @@
 use crate::CliError;
-use crate::coding_session::{CodingAgentSession, CodingAgentSessionOptions, PluginLoadOutcome};
+use crate::coding_session::{
+    AgentProfile, CodingAgentSession, CodingAgentSessionOptions, DelegationConfirmationMode,
+    DelegationPolicy, PluginLoadOutcome, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource,
+    SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+};
 use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::rpc::wire::write_rpc_response;
@@ -186,6 +190,10 @@ impl RpcState {
                 )
                 .await
             }
+            RpcCommand::ListAgentProfiles { id } => {
+                self.handle_list_agent_profiles(id, writer).await
+            }
+            RpcCommand::ListTeamProfiles { id } => self.handle_list_team_profiles(id, writer).await,
             RpcCommand::SetThinkingLevel { id, level } => {
                 self.thinking_level = level;
                 write_rpc_response(writer, RpcResponse::success(id, "set_thinking_level", None))
@@ -263,6 +271,101 @@ impl RpcState {
                 .await
             }
         }
+    }
+
+    async fn handle_list_agent_profiles<W>(
+        &mut self,
+        id: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "list_agent_profiles",
+                    "cannot list agent profiles while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let data = match self.ensure_profile_listing_session().await {
+            Ok(session) => rpc_agent_profiles_data(session),
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "list_agent_profiles", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        write_rpc_response(
+            writer,
+            RpcResponse::success(id, "list_agent_profiles", Some(data)),
+        )
+        .await
+    }
+
+    async fn handle_list_team_profiles<W>(
+        &mut self,
+        id: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "list_team_profiles",
+                    "cannot list team profiles while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let data = match self.ensure_profile_listing_session().await {
+            Ok(session) => rpc_team_profiles_data(session),
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "list_team_profiles", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        write_rpc_response(
+            writer,
+            RpcResponse::success(id, "list_team_profiles", Some(data)),
+        )
+        .await
+    }
+
+    async fn ensure_profile_listing_session(
+        &mut self,
+    ) -> Result<&mut CodingAgentSession, CliError> {
+        if self.coding_session.is_none() {
+            self.coding_session = Some(
+                CodingAgentSession::non_persistent(
+                    CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
+                )
+                .await?,
+            );
+        }
+        Ok(self
+            .coding_session
+            .as_mut()
+            .expect("coding session is initialized"))
     }
 
     async fn handle_plugin_command<W>(
@@ -404,6 +507,147 @@ impl RpcState {
             )
             .await?)
         }
+    }
+}
+
+fn rpc_agent_profiles_data(session: &CodingAgentSession) -> serde_json::Value {
+    let view = session.view();
+    let default_profile_id = view.default_agent_profile_id;
+    let agents = session
+        .agent_profiles()
+        .into_iter()
+        .map(|profile| rpc_agent_profile(&profile, &default_profile_id))
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "defaultAgentProfileId": default_profile_id.as_str(),
+        "agents": agents,
+        "diagnostics": rpc_profile_diagnostics(session),
+    })
+}
+
+fn rpc_team_profiles_data(session: &CodingAgentSession) -> serde_json::Value {
+    let teams = session
+        .team_profiles()
+        .into_iter()
+        .map(|profile| rpc_team_profile(&profile))
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "teams": teams,
+        "diagnostics": rpc_profile_diagnostics(session),
+    })
+}
+
+fn rpc_agent_profile(profile: &AgentProfile, default_profile_id: &ProfileId) -> serde_json::Value {
+    serde_json::json!({
+        "id": profile.id.as_str(),
+        "displayName": profile.display_name,
+        "description": profile.description.as_deref(),
+        "source": rpc_profile_source(profile.source),
+        "path": profile.path.as_ref().map(|path| path.display().to_string()),
+        "isDefault": &profile.id == default_profile_id,
+        "model": profile.model.as_deref(),
+        "systemPrompt": profile.system_prompt.as_deref(),
+        "tools": profile.tools,
+        "skills": profile.skills,
+        "supervision": rpc_supervision_policy(&profile.supervision),
+        "delegation": rpc_delegation_policy(&profile.delegation),
+    })
+}
+
+fn rpc_team_profile(profile: &TeamProfile) -> serde_json::Value {
+    serde_json::json!({
+        "id": profile.id.as_str(),
+        "displayName": profile.display_name,
+        "description": profile.description.as_deref(),
+        "source": rpc_profile_source(profile.source),
+        "path": profile.path.as_ref().map(|path| path.display().to_string()),
+        "supervisor": rpc_team_supervisor(&profile.supervisor),
+        "strategy": rpc_team_strategy(&profile.strategy),
+        "members": rpc_profile_id_list(&profile.members),
+        "delegation": rpc_delegation_policy(&profile.delegation),
+    })
+}
+
+fn rpc_profile_diagnostics(session: &CodingAgentSession) -> Vec<serde_json::Value> {
+    session
+        .profile_diagnostics()
+        .into_iter()
+        .map(|diagnostic| rpc_profile_diagnostic(&diagnostic))
+        .collect()
+}
+
+fn rpc_profile_diagnostic(diagnostic: &ProfileDiagnostic) -> serde_json::Value {
+    serde_json::json!({
+        "source": rpc_profile_source(diagnostic.source),
+        "kind": rpc_profile_kind(diagnostic.kind),
+        "path": diagnostic.path.as_ref().map(|path| path.display().to_string()),
+        "profileId": diagnostic.profile_id.as_ref().map(ProfileId::as_str),
+        "message": diagnostic.message,
+    })
+}
+
+fn rpc_delegation_policy(policy: &DelegationPolicy) -> serde_json::Value {
+    serde_json::json!({
+        "allowDelegateAgent": policy.allow_delegate_agent,
+        "allowDelegateTeam": policy.allow_delegate_team,
+        "maxDepth": policy.max_depth,
+        "maxParallelChildren": policy.max_parallel_children,
+        "requireConfirmation": rpc_delegation_confirmation_mode(&policy.require_confirmation),
+        "allowedAgents": rpc_profile_id_list(&policy.allowed_agents),
+        "allowedTeams": rpc_profile_id_list(&policy.allowed_teams),
+    })
+}
+
+fn rpc_profile_id_list(ids: &[ProfileId]) -> Vec<&str> {
+    ids.iter().map(ProfileId::as_str).collect()
+}
+
+fn rpc_team_supervisor(supervisor: &TeamSupervisor) -> serde_json::Value {
+    match supervisor {
+        TeamSupervisor::Deterministic => serde_json::json!({ "mode": "deterministic" }),
+        TeamSupervisor::Agent(profile_id) => serde_json::json!({
+            "mode": "agent",
+            "profileId": profile_id.as_str(),
+        }),
+    }
+}
+
+fn rpc_profile_source(source: ProfileSource) -> &'static str {
+    match source {
+        ProfileSource::BuiltIn => "built_in",
+        ProfileSource::User => "user",
+        ProfileSource::Project => "project",
+    }
+}
+
+fn rpc_profile_kind(kind: ProfileKind) -> &'static str {
+    match kind {
+        ProfileKind::Agent => "agent",
+        ProfileKind::Team => "team",
+    }
+}
+
+fn rpc_supervision_policy(policy: &SupervisionPolicy) -> &'static str {
+    match policy {
+        SupervisionPolicy::Session => "session",
+        SupervisionPolicy::SelfReview => "self_review",
+        SupervisionPolicy::LlmSupervisor => "llm_supervisor",
+    }
+}
+
+fn rpc_delegation_confirmation_mode(mode: &DelegationConfirmationMode) -> &'static str {
+    match mode {
+        DelegationConfirmationMode::Never => "never",
+        DelegationConfirmationMode::Writes => "writes",
+        DelegationConfirmationMode::Always => "always",
+    }
+}
+
+fn rpc_team_strategy(strategy: &TeamStrategy) -> &'static str {
+    match strategy {
+        TeamStrategy::PlanExecuteReview => "plan_execute_review",
     }
 }
 

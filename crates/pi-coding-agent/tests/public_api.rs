@@ -147,6 +147,15 @@ async fn coding_session_public_api_symbols_are_importable() {
         }
     );
 
+    let agent_profiles = session.agent_profiles();
+    assert!(
+        agent_profiles.iter().any(|profile| {
+            profile.id.as_str() == "default" && profile.display_name == "Default"
+        })
+    );
+    assert!(session.team_profiles().is_empty());
+    assert!(session.profile_diagnostics().is_empty());
+
     let mut receiver = session.subscribe();
     assert!(receiver.try_recv().unwrap().is_none());
     let _receiver_type_name = std::any::type_name::<CodingAgentEventReceiver>();

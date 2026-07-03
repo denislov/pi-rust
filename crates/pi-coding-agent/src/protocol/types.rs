@@ -146,6 +146,10 @@ pub enum RpcCommand {
         #[serde(default)]
         args: Option<serde_json::Value>,
     },
+    #[serde(rename = "list_agent_profiles")]
+    ListAgentProfiles { id: Option<String> },
+    #[serde(rename = "list_team_profiles")]
+    ListTeamProfiles { id: Option<String> },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {
         id: Option<String>,
