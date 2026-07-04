@@ -1,3 +1,5 @@
+mod support;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,6 +18,7 @@ use pi_coding_agent::interactive::test_harness::{
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
+use support::EnvGuard;
 use tokio::sync::Notify;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -231,6 +234,37 @@ async fn scripted_interactive_prompt_renders_assistant_text() {
 }
 
 #[tokio::test]
+async fn scripted_interactive_self_healing_edit_uses_model_repair_policy() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("src")).unwrap();
+    std::fs::write(temp.path().join("src/app.txt"), "one\ntwo\nthree\n").unwrap();
+    let provider = FauxProvider::simple_text(r#"{"edits":[{"oldText":"deux","newText":"dos"}]}"#);
+
+    let output = run_scripted_interactive_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            (
+                "/self-healing-edit src/app.txt two => deux --model-repair --check grep -q dos src/app.txt\r",
+                "self_healing_edit.completed",
+            ),
+            ("\x03", ""),
+        ],
+        80,
+        24,
+    )
+    .await
+    .expect("scripted interactive self-healing edit should succeed");
+
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("src/app.txt")).unwrap(),
+        "one\ndos\nthree\n"
+    );
+    assert!(output.contains("Successfully replaced"), "{output:?}");
+    assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
 async fn scripted_interactive_agent_invocation_renders_selected_profile_reply() {
     let _guard = ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -244,22 +278,14 @@ display_name = "Coder"
 "#,
     )
     .unwrap();
-    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path());
-    }
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
 
     let provider = FauxProvider::new(vec![text_response("agent reply")]);
-    let output = run_scripted_interactive(provider, "/agent coder do work\r").await;
+    let output = run_scripted_interactive(provider, "/agent:coder do work\r").await;
 
-    unsafe {
-        match prior_pi_rust_dir {
-            Some(value) => std::env::set_var("PI_RUST_DIR", value),
-            None => std::env::remove_var("PI_RUST_DIR"),
-        }
-    }
     let output = output.unwrap();
-    assert!(output.contains("/agent coder do work"), "{output:?}");
+    assert!(output.contains("/agent:coder do work"), "{output:?}");
     assert!(output.contains("agent reply"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
     assert!(
@@ -304,26 +330,18 @@ members = ["coder", "reviewer"]
 "#,
     )
     .unwrap();
-    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path());
-    }
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
 
     let provider = FauxProvider::new(vec![
         text_response("coder reply"),
         text_response("reviewer reply"),
     ]);
-    let output = run_scripted_interactive(provider, "/team implementation do work\r").await;
+    let output = run_scripted_interactive(provider, "/team:implementation do work\r").await;
 
-    unsafe {
-        match prior_pi_rust_dir {
-            Some(value) => std::env::set_var("PI_RUST_DIR", value),
-            None => std::env::remove_var("PI_RUST_DIR"),
-        }
-    }
     let output = output.unwrap();
     assert!(
-        output.contains("/team implementation do work"),
+        output.contains("/team:implementation do work"),
         "{output:?}"
     );
     assert!(output.contains("coder reply"), "{output:?}");
@@ -363,10 +381,8 @@ system_prompt = "Coder child instructions."
 "#,
     )
     .unwrap();
-    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path());
-    }
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
 
     let parent_ready = Arc::new(Notify::new());
     let child_started = Arc::new(Notify::new());
@@ -379,12 +395,13 @@ system_prompt = "Coder child instructions."
     let output = tokio::time::timeout(
         Duration::from_secs(2),
         run_scripted_interactive_with_provider_driver(provider, move |tx| async move {
-            tx.send("/agent use delegating-planner\rplan feature\r".to_string())
+            tx.send("/agent\r\x1b[B\rdelegating\rplan feature\r".to_string())
                 .unwrap();
             parent_ready.notified().await;
             tokio::time::sleep(Duration::from_millis(100)).await;
-            tx.send("/delegation approve tool_delegate_agent\r".to_string())
-                .unwrap();
+            tx.send("/delegations\r".to_string()).unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            tx.send("\r".to_string()).unwrap();
             child_started.notified().await;
             tokio::time::sleep(Duration::from_millis(100)).await;
             drop(tx);
@@ -393,12 +410,6 @@ system_prompt = "Coder child instructions."
     .await
     .expect("interactive delegation approval should finish");
 
-    unsafe {
-        match prior_pi_rust_dir {
-            Some(value) => std::env::set_var("PI_RUST_DIR", value),
-            None => std::env::remove_var("PI_RUST_DIR"),
-        }
-    }
     let output = output.unwrap();
     assert_eq!(*calls.lock().unwrap(), 3, "{output:?}");
     assert!(
@@ -661,7 +672,7 @@ async fn scripted_interactive_slash_suggestions_render_after_slash() {
     assert!(frame.contains("Show help"), "{frame}");
     assert!(frame.contains("/settings"), "{frame}");
     assert!(frame.contains("Open settings menu"), "{frame}");
-    assert!(frame.contains("(1/29)"), "{frame}");
+    assert!(frame.contains("(1/30)"), "{frame}");
 }
 
 #[tokio::test]
@@ -993,19 +1004,11 @@ async fn scripted_interactive_model_selector_confirms_filtered_model() {
         )
         .unwrap();
     }
-    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path());
-    }
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
 
     let output = run_scripted_idle_interactive("/model\rclaude-haiku-4-5\r").await;
 
-    unsafe {
-        match prior_pi_rust_dir {
-            Some(value) => std::env::set_var("PI_RUST_DIR", value),
-            None => std::env::remove_var("PI_RUST_DIR"),
-        }
-    }
     match previous_provider {
         Some(provider) => registry::register(&default_model.api, provider),
         None => registry::unregister(&default_model.api),
@@ -1038,37 +1041,18 @@ async fn scripted_interactive_model_selector_lists_configured_provider_models() 
         )
         .unwrap();
     }
-    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-    let prior_anthropic_key = std::env::var_os("ANTHROPIC_API_KEY");
-    let prior_claude_key = std::env::var_os("CLAUDE_API_KEY");
-    let prior_anthropic_key_alt = std::env::var_os("ANTHROPIC_KEY");
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path());
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::remove_var("CLAUDE_API_KEY");
-        std::env::remove_var("ANTHROPIC_KEY");
-    }
+    let env = EnvGuard::new(&[
+        "PI_RUST_DIR",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_API_KEY",
+        "ANTHROPIC_KEY",
+    ]);
+    env.set_pi_rust_dir(dir.path());
+    env.remove("ANTHROPIC_API_KEY");
+    env.remove("CLAUDE_API_KEY");
+    env.remove("ANTHROPIC_KEY");
 
     let output = run_scripted_idle_interactive("/model\r").await;
-
-    unsafe {
-        match prior_pi_rust_dir {
-            Some(value) => std::env::set_var("PI_RUST_DIR", value),
-            None => std::env::remove_var("PI_RUST_DIR"),
-        }
-        match prior_anthropic_key {
-            Some(value) => std::env::set_var("ANTHROPIC_API_KEY", value),
-            None => std::env::remove_var("ANTHROPIC_API_KEY"),
-        }
-        match prior_claude_key {
-            Some(value) => std::env::set_var("CLAUDE_API_KEY", value),
-            None => std::env::remove_var("CLAUDE_API_KEY"),
-        }
-        match prior_anthropic_key_alt {
-            Some(value) => std::env::set_var("ANTHROPIC_KEY", value),
-            None => std::env::remove_var("ANTHROPIC_KEY"),
-        }
-    }
 
     let output = output.unwrap();
     let frame = output.rendered_lines.join("\n");
@@ -1110,31 +1094,13 @@ async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider()
         )
         .unwrap();
     }
-    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-    let prior_openai_key = std::env::var_os("OPENAI_API_KEY");
-    let prior_anthropic_key = std::env::var_os("ANTHROPIC_API_KEY");
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path());
-        std::env::remove_var("OPENAI_API_KEY");
-        std::env::remove_var("ANTHROPIC_API_KEY");
-    }
+    let env = EnvGuard::new(&["PI_RUST_DIR", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
+    env.set_pi_rust_dir(dir.path());
+    env.remove("OPENAI_API_KEY");
+    env.remove("ANTHROPIC_API_KEY");
 
     let output = run_scripted_idle_interactive("/model gpt-5\rhi\r").await;
 
-    unsafe {
-        match prior_pi_rust_dir {
-            Some(value) => std::env::set_var("PI_RUST_DIR", value),
-            None => std::env::remove_var("PI_RUST_DIR"),
-        }
-        match prior_openai_key {
-            Some(value) => std::env::set_var("OPENAI_API_KEY", value),
-            None => std::env::remove_var("OPENAI_API_KEY"),
-        }
-        match prior_anthropic_key {
-            Some(value) => std::env::set_var("ANTHROPIC_API_KEY", value),
-            None => std::env::remove_var("ANTHROPIC_API_KEY"),
-        }
-    }
     match previous_provider {
         Some(provider) => registry::register(&target_model.api, provider),
         None => registry::unregister(&target_model.api),

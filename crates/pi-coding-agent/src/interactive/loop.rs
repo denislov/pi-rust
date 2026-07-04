@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pi_agent_core::session::create_session_id;
+use pi_agent_core::{AgentResources, session::create_session_id};
 use pi_ai::types::Usage;
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };
 
 use crate::coding_session::{
-    CodingAgentSession, PendingDelegationConfirmation, PluginLoadOutcome, ProfileKind,
-    PromptTurnOutcome,
+    CodingAgentSession, PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
+    SelfHealingEditModelRepairOptions, SelfHealingEditRequest,
 };
 use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
@@ -21,7 +21,8 @@ use crate::interactive::root::{
     ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
     PendingAgentInvocationRequest, PendingAgentTeamRequest, PendingBranchSummaryRequest,
     PendingDelegationConfirmationCommand, PendingDelegationConfirmationSelection,
-    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog, PluginUiDialogField,
+    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog,
+    PendingSelfHealingEditRequest, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
@@ -597,6 +598,7 @@ fn handle_input_event<T: Terminal>(
         agent_invocation_request,
         agent_team_request,
         delegation_confirmation_command,
+        self_healing_edit_request,
         plugin_command_request,
         plugin_ui_action,
         plugin_ui_dialog,
@@ -647,6 +649,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let self_healing_edit_request = if action == InteractiveAction::SelfHealingEdit {
+            root.take_pending_self_healing_edit_request()
+        } else {
+            None
+        };
         let plugin_command_request = if action == InteractiveAction::PluginCommand {
             root.take_pending_plugin_command_request()
         } else {
@@ -678,6 +685,7 @@ fn handle_input_event<T: Terminal>(
             agent_invocation_request,
             agent_team_request,
             delegation_confirmation_command,
+            self_healing_edit_request,
             plugin_command_request,
             plugin_ui_action,
             plugin_ui_dialog,
@@ -1017,6 +1025,22 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
+        InteractiveAction::SelfHealingEdit => {
+            if running.is_some() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            let Some(request) = self_healing_edit_request else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            *running = Some(start_self_healing_edit_task(
+                tui,
+                root_id,
+                request,
+                prompt_context,
+                coding_session,
+            )?);
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
         InteractiveAction::PluginCommand => {
             if running.is_some() {
                 return Ok(LoopControl::Continue(render_request));
@@ -1123,15 +1147,22 @@ fn show_pending_delegation_confirmations<T: Terminal>(
     root_id: usize,
     coding_session: Option<&CodingAgentSession>,
 ) -> Result<(), CliError> {
-    let text = match coding_session {
-        Some(session) => {
-            format_pending_delegation_confirmations(&session.pending_delegation_confirmations())
-        }
-        None => "No active coding session.".to_string(),
+    let Some(session) = coding_session else {
+        root_mut(tui, root_id)?
+            .transcript
+            .push(TranscriptItem::system("No active coding session."));
+        return Ok(());
     };
-    root_mut(tui, root_id)?
-        .transcript
-        .push(TranscriptItem::system(text));
+    let pending = session.pending_delegation_confirmations();
+    if pending.is_empty() {
+        root_mut(tui, root_id)?
+            .transcript
+            .push(TranscriptItem::system(
+                "No pending delegation confirmations.",
+            ));
+        return Ok(());
+    }
+    root_mut(tui, root_id)?.open_delegation_confirmation_menu(pending);
     Ok(())
 }
 
@@ -1269,41 +1300,6 @@ fn resolve_pending_delegation_confirmation(
     }
 }
 
-fn format_pending_delegation_confirmations(pending: &[PendingDelegationConfirmation]) -> String {
-    if pending.is_empty() {
-        return "No pending delegation confirmations.".to_string();
-    }
-
-    let mut lines = vec!["Pending delegation confirmations:".to_string()];
-    for item in pending {
-        lines.push(format!(
-            "  {} {} -> {} {}: {}",
-            item.operation_id,
-            item.tool_call_id,
-            profile_kind_label(item.target_kind),
-            item.target_id,
-            item.task
-        ));
-        lines.push(format!("    reason: {}", item.reason));
-        lines.push(format!(
-            "    approve: /delegation approve {} {}",
-            item.operation_id, item.tool_call_id
-        ));
-        lines.push(format!(
-            "    reject: /delegation reject {} {} [reason]",
-            item.operation_id, item.tool_call_id
-        ));
-    }
-    lines.join("\n")
-}
-
-fn profile_kind_label(kind: ProfileKind) -> &'static str {
-    match kind {
-        ProfileKind::Agent => "agent",
-        ProfileKind::Team => "team",
-    }
-}
-
 fn plugin_dialog_field_line(field: &PluginUiDialogField) -> String {
     if field.description.trim().is_empty() {
         field.label.clone()
@@ -1405,7 +1401,7 @@ fn start_agent_invocation_task<T: Terminal>(
 ) -> Result<PromptTask, CliError> {
     {
         let root = root_mut(tui, root_id)?;
-        root.push_user(format!("/agent {} {}", request.profile_id, request.task));
+        root.push_user(format!("/agent:{} {}", request.profile_id, request.task));
         root.set_status(InteractiveStatus::Running);
     }
 
@@ -1450,7 +1446,7 @@ fn start_agent_team_task<T: Terminal>(
 ) -> Result<PromptTask, CliError> {
     {
         let root = root_mut(tui, root_id)?;
-        root.push_user(format!("/team {} {}", request.team_id, request.task));
+        root.push_user(format!("/team:{} {}", request.team_id, request.task));
         root.set_status(InteractiveStatus::Running);
     }
 
@@ -1520,6 +1516,88 @@ fn start_plugin_reload_task<T: Terminal>(
     let task = PromptTask::spawn_plugin_reload(
         options,
         coding_session.take(),
+        prompt_context.default_agent_profile_id.clone(),
+    )?;
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(task)
+}
+
+fn interactive_self_healing_model_repair_options(
+    prompt_context: &PromptContext,
+    max_attempts: usize,
+) -> SelfHealingEditModelRepairOptions {
+    let prompt = "repair self-healing edit".to_string();
+    let prompt_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+        prompt: prompt.clone(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: Some("Return only self-healing edit repair JSON.".to_string()),
+        max_turns: Some(1),
+        tools: prompt_context.tools.clone(),
+        register_builtins: false,
+        session: prompt_context.session.clone(),
+        session_target: None,
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: None,
+        resources: AgentResources::default(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(prompt),
+    });
+    SelfHealingEditModelRepairOptions::new(prompt_options).with_max_attempts(max_attempts)
+}
+
+fn start_self_healing_edit_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    request: PendingSelfHealingEditRequest,
+    prompt_context: &PromptContext,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<PromptTask, CliError> {
+    {
+        let root = root_mut(tui, root_id)?;
+        root.transcript.push(TranscriptItem::system(format!(
+            "Applying self-healing edit: {}",
+            request.path
+        )));
+        root.set_status(InteractiveStatus::Running);
+    }
+
+    let options = PromptRunOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(String::new()),
+    };
+
+    let mut edit_request = SelfHealingEditRequest::new(request.path, request.replacements);
+    if let Some(command) = request.check_command {
+        edit_request = edit_request.with_check_command(command);
+    }
+    if let Some(model_repair) = request.model_repair {
+        edit_request =
+            edit_request.with_model_repair(interactive_self_healing_model_repair_options(
+                prompt_context,
+                model_repair.max_attempts,
+            ));
+    }
+    let task = PromptTask::spawn_self_healing_edit(
+        options,
+        coding_session.take(),
+        edit_request,
         prompt_context.default_agent_profile_id.clone(),
     )?;
     if prompt_context.settings.terminal.show_progress {
@@ -1823,6 +1901,26 @@ fn finish_prompt<T: Terminal>(
             *coding_session = Some(result.session);
         }
         Ok(PromptTaskResult::DelegationApproval(result)) => {
+            root.set_default_agent_profile_id(
+                result.session.view().default_agent_profile_id.clone(),
+            );
+            if let Ok(Some(hydration)) = result.session.hydrate_current() {
+                let hydrated = hydrated_session_from_rust_native(hydration);
+                let mut choice = hydrated.choice;
+                if choice.active_leaf_id.is_none() {
+                    choice.active_leaf_id = root.active_leaf_id.clone();
+                }
+                root.set_active_session_choice(choice);
+            }
+            *coding_session = Some(result.session);
+        }
+        Ok(PromptTaskResult::SelfHealingEdit(result)) => {
+            root.transcript
+                .push(TranscriptItem::system(result.outcome.message.clone()));
+            for diagnostic in &result.outcome.diagnostics {
+                root.transcript
+                    .push(TranscriptItem::system(diagnostic.message.clone()));
+            }
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );

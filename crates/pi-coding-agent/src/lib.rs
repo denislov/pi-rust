@@ -44,8 +44,10 @@ pub mod api {
         CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
         DelegationConfirmationMode, DelegationPolicy, PendingDelegationConfirmation,
         ProfileDiagnostic, ProfileId, ProfileKind, ProfileRegistry, ProfileRegistryOptions,
-        ProfileSource, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, SupervisionPolicy,
-        TeamProfile, TeamStrategy, TeamSupervisor,
+        ProfileSource, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
+        SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
+        SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
+        SelfHealingEditRequest, SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
     };
     pub use crate::error::CliError;
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};

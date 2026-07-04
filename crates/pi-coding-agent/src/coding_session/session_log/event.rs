@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::coding_session::delegation::DelegationLineageEntry;
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use pi_ai::types::Model;
 
@@ -188,6 +189,29 @@ pub(crate) enum SessionEventData {
         tool_call_id: String,
         reason: String,
     },
+    #[serde(rename = "self_healing_edit.started")]
+    SelfHealingEditStarted { path: String, replacements: usize },
+    #[serde(rename = "self_healing_edit.repair_attempted")]
+    SelfHealingEditRepairAttempted {
+        path: String,
+        attempt: usize,
+        replacements: Vec<PersistedSelfHealingEditReplacement>,
+        diagnostics: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_output: Option<PersistedSelfHealingEditCheckOutput>,
+    },
+    #[serde(rename = "self_healing_edit.completed")]
+    SelfHealingEditCompleted {
+        path: String,
+        message: String,
+        diff: String,
+        patch: String,
+        first_changed_line: Option<usize>,
+        attempts: usize,
+        diagnostics: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_output: Option<PersistedSelfHealingEditCheckOutput>,
+    },
     #[serde(rename = "diagnostic.emitted")]
     DiagnosticEmitted {
         level: DiagnosticLevel,
@@ -207,6 +231,7 @@ pub(crate) enum OperationKind {
     BranchSummary,
     Export,
     PluginLoad,
+    SelfHealingEdit,
     Other { name: String },
 }
 
@@ -253,6 +278,20 @@ pub(crate) struct PersistedPluginDiagnostic {
     pub(crate) message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PersistedSelfHealingEditCheckOutput {
+    pub(crate) command: String,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) exit_code: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PersistedSelfHealingEditReplacement {
+    pub(crate) old_text: String,
+    pub(crate) new_text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PersistedDelegationRuntimeSeed {
     pub(crate) mode: String,
@@ -270,6 +309,8 @@ pub(crate) struct PersistedDelegationRuntimeSeed {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) session_name: Option<String>,
     pub(crate) parent_delegation_depth: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) delegation_lineage: Vec<DelegationLineageEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -373,6 +414,39 @@ mod tests {
                     capability_changed: true,
                 },
                 "plugin.load.completed",
+            ),
+            (
+                SessionEventData::SelfHealingEditStarted {
+                    path: "src/app.txt".into(),
+                    replacements: 1,
+                },
+                "self_healing_edit.started",
+            ),
+            (
+                SessionEventData::SelfHealingEditRepairAttempted {
+                    path: "src/app.txt".into(),
+                    attempt: 1,
+                    replacements: vec![PersistedSelfHealingEditReplacement {
+                        old_text: "deux".into(),
+                        new_text: "dos".into(),
+                    }],
+                    diagnostics: vec!["compile error".into()],
+                    check_output: None,
+                },
+                "self_healing_edit.repair_attempted",
+            ),
+            (
+                SessionEventData::SelfHealingEditCompleted {
+                    path: "src/app.txt".into(),
+                    message: "Successfully replaced 1 block".into(),
+                    diff: "-two\n+deux".into(),
+                    patch: "--- src/app.txt\n+++ src/app.txt".into(),
+                    first_changed_line: Some(2),
+                    attempts: 1,
+                    diagnostics: Vec::new(),
+                    check_output: None,
+                },
+                "self_healing_edit.completed",
             ),
             (
                 SessionEventData::DelegationConfirmationRequested {
@@ -549,6 +623,7 @@ mod tests {
             tool_execution: None,
             session_name: Some("session".into()),
             parent_delegation_depth: 0,
+            delegation_lineage: Vec::new(),
         }
     }
 }

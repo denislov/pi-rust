@@ -1,5 +1,6 @@
 use pi_agent_core::AgentToolOutput;
 use pi_ai::types::ContentBlock;
+use pi_coding_agent::builtin_tools;
 use pi_coding_agent::tools::edit::edit_execute;
 use tempfile::tempdir;
 
@@ -13,6 +14,64 @@ fn text(output: &AgentToolOutput) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[tokio::test]
+async fn builtin_edit_tool_reports_self_healing_workflow_details() {
+    let d = tempdir().unwrap();
+    let p = d.path().join("f.txt");
+    std::fs::write(&p, "hello world").unwrap();
+    let tool = builtin_tools(d.path().to_path_buf())
+        .into_iter()
+        .find(|tool| tool.name == "edit")
+        .expect("builtin edit tool should exist");
+
+    let output = (tool.execute)(
+        serde_json::json!({
+            "path":"f.txt",
+            "edits":[{"oldText":"world","newText":"rust"}]
+        }),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), "hello rust");
+    assert!(text(&output).contains("Successfully replaced 1 block(s) in f.txt."));
+    let details = output.details.expect("edit result should include details");
+    assert!(details["diff"].as_str().unwrap().contains("+1 hello rust"));
+    assert!(details["patch"].as_str().unwrap().contains("+hello rust"));
+    assert_eq!(details["firstChangedLine"], 1);
+    assert_eq!(details["selfHealingEdit"]["attempts"], 1);
+    assert_eq!(
+        details["selfHealingEdit"]["diagnostics"],
+        serde_json::json!([])
+    );
+}
+
+#[tokio::test]
+async fn builtin_edit_tool_preserves_edit_error_message() {
+    let d = tempdir().unwrap();
+    std::fs::write(d.path().join("f.txt"), "abc").unwrap();
+    let tool = builtin_tools(d.path().to_path_buf())
+        .into_iter()
+        .find(|tool| tool.name == "edit")
+        .expect("builtin edit tool should exist");
+
+    let error = (tool.execute)(
+        serde_json::json!({
+            "path":"f.txt",
+            "edits":[{"oldText":"xyz","newText":"q"}]
+        }),
+        None,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        "Could not find the exact text in f.txt. The old text must match exactly including all whitespace and newlines."
+    );
 }
 
 #[tokio::test]

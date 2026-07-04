@@ -775,6 +775,11 @@ mod tests {
                 }
                 SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
                 SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
+                SessionEventData::SelfHealingEditStarted { .. } => "self_healing_edit.started",
+                SessionEventData::SelfHealingEditRepairAttempted { .. } => {
+                    "self_healing_edit.repair_attempted"
+                }
+                SessionEventData::SelfHealingEditCompleted { .. } => "self_healing_edit.completed",
                 SessionEventData::DelegationConfirmationRequested { .. } => {
                     "delegation.confirmation.requested"
                 }

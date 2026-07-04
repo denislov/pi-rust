@@ -1,12 +1,11 @@
 use pi_agent_core::AgentTool;
+use serde::{Deserialize, Serialize};
 
+use super::CodingSessionError;
 use super::event::CodingAgentEvent;
 use super::event_service::EventService;
 use super::profiles::{DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind};
 use super::prompt::DelegationRequest;
-
-const RECURSIVE_DELEGATION_UNSUPPORTED_REASON: &str =
-    "recursive delegation execution is not implemented yet";
 
 pub(crate) fn delegation_tools(
     profile_id: Option<&ProfileId>,
@@ -32,10 +31,12 @@ pub(crate) fn delegation_tools(
 pub(crate) enum DelegationAuthorizationDecision {
     Approved {
         request: DelegationRequest,
+        child_delegation_depth: usize,
     },
     RequiresConfirmation {
         request: DelegationRequest,
         reason: String,
+        child_delegation_depth: usize,
     },
     Rejected {
         request: DelegationRequest,
@@ -43,69 +44,117 @@ pub(crate) enum DelegationAuthorizationDecision {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DelegationLineageEntry {
+    pub(crate) kind: ProfileKind,
+    pub(crate) id: ProfileId,
+}
+
+impl DelegationLineageEntry {
+    pub(crate) fn new(kind: ProfileKind, id: impl Into<ProfileId>) -> Self {
+        Self {
+            kind,
+            id: id.into(),
+        }
+    }
+
+    pub(crate) fn agent(id: impl Into<ProfileId>) -> Self {
+        Self::new(ProfileKind::Agent, id)
+    }
+}
+
+pub(crate) fn delegation_lineage_for_request(
+    parent_lineage: &[DelegationLineageEntry],
+    request: &DelegationRequest,
+) -> Vec<DelegationLineageEntry> {
+    let mut lineage = parent_lineage.to_vec();
+    push_unique_lineage_entry(
+        &mut lineage,
+        DelegationLineageEntry::agent(request.requesting_profile_id.clone()),
+    );
+    push_unique_lineage_entry(
+        &mut lineage,
+        DelegationLineageEntry::new(request.target_kind, request.target_id.clone()),
+    );
+    lineage
+}
+
+fn push_unique_lineage_entry(
+    lineage: &mut Vec<DelegationLineageEntry>,
+    entry: DelegationLineageEntry,
+) {
+    if !lineage.iter().any(|existing| existing == &entry) {
+        lineage.push(entry);
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn authorize_delegation_requests(
     requests: &[DelegationRequest],
     policy: &DelegationPolicy,
     current_depth: usize,
 ) -> Vec<DelegationAuthorizationDecision> {
+    authorize_delegation_requests_with_lineage(requests, policy, current_depth, &[])
+}
+
+pub(crate) fn authorize_delegation_requests_with_lineage(
+    requests: &[DelegationRequest],
+    policy: &DelegationPolicy,
+    current_depth: usize,
+    lineage: &[DelegationLineageEntry],
+) -> Vec<DelegationAuthorizationDecision> {
     let mut accepted_children = 0usize;
     requests
         .iter()
         .map(|request| {
-            if let Some(reason) =
-                rejection_reason(request, policy, current_depth, accepted_children)
-            {
+            let mut effective_lineage = lineage.to_vec();
+            push_unique_lineage_entry(
+                &mut effective_lineage,
+                DelegationLineageEntry::agent(request.requesting_profile_id.clone()),
+            );
+            if let Some(reason) = rejection_reason(
+                request,
+                policy,
+                current_depth,
+                accepted_children,
+                &effective_lineage,
+            ) {
                 return DelegationAuthorizationDecision::Rejected {
                     request: request.clone(),
                     reason,
                 };
             }
             accepted_children += 1;
+            let child_delegation_depth = current_depth.saturating_add(1);
             if let Some(reason) = confirmation_reason(request, policy) {
                 DelegationAuthorizationDecision::RequiresConfirmation {
                     request: request.clone(),
                     reason,
+                    child_delegation_depth,
                 }
             } else {
                 DelegationAuthorizationDecision::Approved {
                     request: request.clone(),
+                    child_delegation_depth,
                 }
             }
         })
         .collect()
 }
 
-pub(crate) fn emit_child_delegation_authorization_decision(
-    event_service: &EventService,
-    decision: &DelegationAuthorizationDecision,
-) {
-    match decision {
-        DelegationAuthorizationDecision::Rejected { request, reason } => {
-            emit_delegation_rejected(event_service, request, reason);
-        }
-        DelegationAuthorizationDecision::RequiresConfirmation { request, reason } => {
-            event_service.emit(CodingAgentEvent::DelegationConfirmationRequired {
-                operation_id: request.operation_id.clone(),
-                turn_id: request.turn_id.clone(),
-                tool_call_id: request.tool_call_id.clone(),
-                requesting_profile_id: request.requesting_profile_id.clone(),
-                target_kind: request.target_kind,
-                target_id: request.target_id.clone(),
-                task: request.task.clone(),
-                reason: reason.clone(),
-            });
-        }
-        DelegationAuthorizationDecision::Approved { request } => {
-            emit_delegation_rejected(
-                event_service,
-                request,
-                RECURSIVE_DELEGATION_UNSUPPORTED_REASON,
-            );
-        }
-    }
+pub(crate) fn emit_delegation_approved(event_service: &EventService, request: &DelegationRequest) {
+    event_service.emit(CodingAgentEvent::DelegationApproved {
+        operation_id: request.operation_id.clone(),
+        turn_id: request.turn_id.clone(),
+        tool_call_id: request.tool_call_id.clone(),
+        requesting_profile_id: request.requesting_profile_id.clone(),
+        target_kind: request.target_kind,
+        target_id: request.target_id.clone(),
+        task: request.task.clone(),
+    });
 }
 
-fn emit_delegation_rejected(
+pub(crate) fn emit_delegation_rejected(
     event_service: &EventService,
     request: &DelegationRequest,
     reason: &str,
@@ -122,17 +171,100 @@ fn emit_delegation_rejected(
     });
 }
 
+pub(crate) fn emit_delegation_confirmation_required(
+    event_service: &EventService,
+    request: &DelegationRequest,
+    reason: &str,
+) {
+    event_service.emit(CodingAgentEvent::DelegationConfirmationRequired {
+        operation_id: request.operation_id.clone(),
+        turn_id: request.turn_id.clone(),
+        tool_call_id: request.tool_call_id.clone(),
+        requesting_profile_id: request.requesting_profile_id.clone(),
+        target_kind: request.target_kind,
+        target_id: request.target_id.clone(),
+        task: request.task.clone(),
+        reason: reason.to_owned(),
+    });
+}
+
+pub(crate) fn emit_delegation_started(
+    event_service: &EventService,
+    request: &DelegationRequest,
+    child_operation_id: String,
+) {
+    event_service.emit(CodingAgentEvent::DelegationStarted {
+        operation_id: request.operation_id.clone(),
+        turn_id: request.turn_id.clone(),
+        tool_call_id: request.tool_call_id.clone(),
+        requesting_profile_id: request.requesting_profile_id.clone(),
+        target_kind: request.target_kind,
+        target_id: request.target_id.clone(),
+        task: request.task.clone(),
+        child_operation_id,
+    });
+}
+
+pub(crate) fn emit_delegation_completed(
+    event_service: &EventService,
+    request: &DelegationRequest,
+    child_operation_id: String,
+    final_text: String,
+) {
+    event_service.emit(CodingAgentEvent::DelegationCompleted {
+        operation_id: request.operation_id.clone(),
+        turn_id: request.turn_id.clone(),
+        tool_call_id: request.tool_call_id.clone(),
+        requesting_profile_id: request.requesting_profile_id.clone(),
+        target_kind: request.target_kind,
+        target_id: request.target_id.clone(),
+        task: request.task.clone(),
+        child_operation_id,
+        final_text,
+    });
+}
+
+pub(crate) fn emit_delegation_failed(
+    event_service: &EventService,
+    request: &DelegationRequest,
+    child_operation_id: String,
+    error: CodingSessionError,
+) {
+    event_service.emit(CodingAgentEvent::DelegationFailed {
+        operation_id: request.operation_id.clone(),
+        turn_id: request.turn_id.clone(),
+        tool_call_id: request.tool_call_id.clone(),
+        requesting_profile_id: request.requesting_profile_id.clone(),
+        target_kind: request.target_kind,
+        target_id: request.target_id.clone(),
+        task: request.task.clone(),
+        child_operation_id,
+        error,
+    });
+}
+
 fn rejection_reason(
     request: &DelegationRequest,
     policy: &DelegationPolicy,
     current_depth: usize,
     accepted_children: usize,
+    lineage: &[DelegationLineageEntry],
 ) -> Option<String> {
     if current_depth >= policy.max_depth {
         return Some("delegation policy max_depth is exhausted".into());
     }
     if accepted_children >= policy.max_parallel_children {
         return Some("delegation policy max_parallel_children is exhausted".into());
+    }
+    if lineage
+        .iter()
+        .any(|entry| entry.kind == request.target_kind && entry.id == request.target_id)
+    {
+        return Some(format!(
+            "delegation cycle detected for {} target {}",
+            profile_kind_label(request.target_kind),
+            request.target_id
+        ));
     }
     match request.target_kind {
         ProfileKind::Agent if !policy.allow_delegate_agent => {
@@ -148,6 +280,13 @@ fn rejection_reason(
             Some("target team is not allowed by delegation policy".into())
         }
         _ => None,
+    }
+}
+
+fn profile_kind_label(kind: ProfileKind) -> &'static str {
+    match kind {
+        ProfileKind::Agent => "agent",
+        ProfileKind::Team => "team",
     }
 }
 
@@ -407,8 +546,13 @@ mod tests {
         assert_eq!(decisions.len(), 1);
         assert!(matches!(
             &decisions[0],
-            DelegationAuthorizationDecision::Approved { request }
-                if request.tool_call_id == "tool_1" && request.target_id.as_str() == "coder"
+            DelegationAuthorizationDecision::Approved {
+                request,
+                child_delegation_depth,
+            }
+                if request.tool_call_id == "tool_1"
+                    && request.target_id.as_str() == "coder"
+                    && *child_delegation_depth == 1
         ));
     }
 
@@ -429,8 +573,14 @@ mod tests {
         assert_eq!(decisions.len(), 1);
         assert!(matches!(
             &decisions[0],
-            DelegationAuthorizationDecision::RequiresConfirmation { request, reason }
-                if request.target_id.as_str() == "implementation" && reason.contains("team")
+            DelegationAuthorizationDecision::RequiresConfirmation {
+                request,
+                reason,
+                child_delegation_depth,
+            }
+                if request.target_id.as_str() == "implementation"
+                    && reason.contains("team")
+                    && *child_delegation_depth == 1
         ));
     }
 
@@ -453,7 +603,7 @@ mod tests {
         assert_eq!(decisions.len(), 2);
         assert!(matches!(
             &decisions[0],
-            DelegationAuthorizationDecision::Approved { request }
+            DelegationAuthorizationDecision::Approved { request, .. }
                 if request.tool_call_id == "tool_1"
         ));
         assert!(matches!(

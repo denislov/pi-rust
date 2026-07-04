@@ -1,3 +1,5 @@
+mod support;
+
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::registry;
 use pi_ai::stream::EventStream;
@@ -9,6 +11,7 @@ use pi_coding_agent::{CliRunOptions, SessionRunOptions, protocol::rpc::run_rpc_m
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use support::EnvGuard;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, oneshot};
@@ -298,6 +301,7 @@ async fn rpc_state_reports_capabilities_when_idle() {
         "branchSummary",
         "export",
         "pluginReload",
+        "selfHealingEdit",
     ] {
         assert_eq!(capabilities[capability]["status"], "disabled");
         assert_eq!(
@@ -305,6 +309,277 @@ async fn rpc_state_reports_capabilities_when_idle() {
             "requires persistent Rust-native session"
         );
     }
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn rpc_self_healing_edit_applies_edit_through_persistent_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let target = cwd.join("src/app.txt");
+    write_file(&target, "one\ntwo\nthree\n");
+
+    let input = br#"{"id":"e1","type":"self_healing_edit","path":"src/app.txt","edits":[{"oldText":"two","newText":"deux"}]}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd.clone());
+    session_options.session_dir = Some(sessions.clone());
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-self-healing-edit")),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        sessions.exists(),
+        "self-healing edit should create a persistent session log"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "one\ndeux\nthree\n"
+    );
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "e1");
+    assert_eq!(lines[0]["command"], "self_healing_edit");
+    assert_eq!(lines[0]["success"], true);
+    let data = &lines[0]["data"];
+    assert_eq!(data["path"], "src/app.txt");
+    assert_eq!(data["attempts"], 1);
+    assert_eq!(data["firstChangedLine"], 2);
+    assert_eq!(data["diagnostics"], serde_json::json!([]));
+    assert_eq!(data["checkOutput"], serde_json::Value::Null);
+    assert!(
+        data["message"]
+            .as_str()
+            .unwrap()
+            .contains("Successfully replaced 1 block(s) in src/app.txt.")
+    );
+    assert!(data["diff"].as_str().unwrap().contains("-2 two"));
+    assert!(data["diff"].as_str().unwrap().contains("+2 deux"));
+    assert!(data["patch"].as_str().unwrap().contains("--- src/app.txt"));
+    assert!(data["patch"].as_str().unwrap().contains("+++ src/app.txt"));
+}
+
+#[tokio::test]
+async fn rpc_self_healing_edit_runs_check_command() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let target = cwd.join("src/app.txt");
+    write_file(&target, "one\ntwo\nthree\n");
+
+    let input = br#"{"id":"e-check","type":"self_healing_edit","path":"src/app.txt","edits":[{"oldText":"two","newText":"deux"}],"checkCommand":"printf rpc-check-ok"}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd.clone());
+    session_options.session_dir = Some(sessions);
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-self-healing-edit-check")),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "one\ndeux\nthree\n"
+    );
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "e-check");
+    assert_eq!(lines[0]["command"], "self_healing_edit");
+    assert_eq!(lines[0]["success"], true);
+    let check_output = &lines[0]["data"]["checkOutput"];
+    assert_eq!(check_output["command"], "printf rpc-check-ok");
+    assert_eq!(check_output["stdout"], "rpc-check-ok");
+    assert_eq!(check_output["stderr"], "");
+    assert_eq!(check_output["exitCode"], 0);
+}
+
+#[tokio::test]
+async fn rpc_self_healing_edit_failed_check_returns_check_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let target = cwd.join("src/app.txt");
+    write_file(&target, "one\ntwo\nthree\n");
+
+    let input = br#"{"id":"e-check-fail","type":"self_healing_edit","path":"src/app.txt","edits":[{"oldText":"two","newText":"deux"}],"checkCommand":"printf rpc-check-failed >&2; exit 9"}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd.clone());
+    session_options.session_dir = Some(sessions);
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-self-healing-edit-check-fail")),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "one\ndeux\nthree\n"
+    );
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "e-check-fail");
+    assert_eq!(lines[0]["command"], "self_healing_edit");
+    assert_eq!(lines[0]["success"], false);
+    assert!(
+        lines[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("self-healing edit check failed")
+    );
+    let data = &lines[0]["data"];
+    assert_eq!(data["diagnostics"].as_array().unwrap().len(), 1);
+    assert!(
+        data["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("rpc-check-failed")
+    );
+    let check_output = &data["checkOutput"];
+    assert_eq!(
+        check_output["command"],
+        "printf rpc-check-failed >&2; exit 9"
+    );
+    assert_eq!(check_output["stdout"], "");
+    assert_eq!(check_output["stderr"], "rpc-check-failed");
+    assert_eq!(check_output["exitCode"], 9);
+}
+
+#[tokio::test]
+async fn rpc_self_healing_edit_uses_planned_repair_attempts() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let target = cwd.join("src/app.txt");
+    write_file(&target, "one\ntwo\nthree\n");
+
+    let input = br#"{"id":"e-repair","type":"self_healing_edit","path":"src/app.txt","edits":[{"oldText":"two","newText":"deux"}],"checkCommand":"grep -q dos src/app.txt","repairAttempts":[[{"oldText":"deux","newText":"dos"}]]}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd.clone());
+    session_options.session_dir = Some(sessions);
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-self-healing-edit-repair")),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "one\ndos\nthree\n"
+    );
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "e-repair");
+    assert_eq!(lines[0]["command"], "self_healing_edit");
+    assert_eq!(lines[0]["success"], true);
+    let data = &lines[0]["data"];
+    assert_eq!(data["attempts"], 2);
+    assert_eq!(data["checkOutput"]["command"], "grep -q dos src/app.txt");
+    assert_eq!(data["checkOutput"]["exitCode"], 0);
+    assert_eq!(data["diagnostics"].as_array().unwrap().len(), 1);
+    assert!(
+        data["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("grep -q dos src/app.txt")
+    );
+    let repair_attempts = data["repairAttempts"].as_array().unwrap();
+    assert_eq!(repair_attempts.len(), 1);
+    let repair = &repair_attempts[0];
+    assert_eq!(repair["attempt"], 1);
+    assert_eq!(repair["edits"][0]["oldText"], "deux");
+    assert_eq!(repair["edits"][0]["newText"], "dos");
+    assert!(
+        repair["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("grep -q dos src/app.txt")
+    );
+    assert_eq!(repair["checkOutput"]["command"], "grep -q dos src/app.txt");
+    assert_eq!(repair["checkOutput"]["exitCode"], 0);
+}
+
+#[tokio::test]
+async fn rpc_self_healing_edit_uses_model_repair_policy() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let target = cwd.join("src/app.txt");
+    write_file(&target, "one\ntwo\nthree\n");
+    let api = "pi-coding-rpc-self-healing-edit-model-repair";
+    registry::register(
+        api,
+        Arc::new(FauxProvider::simple_text(
+            r#"{"edits":[{"oldText":"deux","newText":"dos"}]}"#,
+        )),
+    );
+
+    let input = br#"{"id":"e-model-repair","type":"self_healing_edit","path":"src/app.txt","edits":[{"oldText":"two","newText":"deux"}],"checkCommand":"grep -q dos src/app.txt","modelRepair":{"maxAttempts":1}}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd.clone());
+    session_options.session_dir = Some(sessions);
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "one\ndos\nthree\n"
+    );
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "e-model-repair");
+    assert_eq!(lines[0]["command"], "self_healing_edit");
+    assert_eq!(lines[0]["success"], true);
+    let data = &lines[0]["data"];
+    assert_eq!(data["attempts"], 2);
+    assert_eq!(data["checkOutput"]["command"], "grep -q dos src/app.txt");
+    assert_eq!(data["checkOutput"]["exitCode"], 0);
+    assert_eq!(data["diagnostics"].as_array().unwrap().len(), 1);
+    assert!(
+        data["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("grep -q dos src/app.txt")
+    );
     registry::unregister(api);
 }
 
@@ -1075,6 +1350,11 @@ async fn rpc_state_reports_agent_invocation_busy_while_running() {
     );
     assert_eq!(capabilities["delegation"]["status"], "busy");
     assert_eq!(capabilities["delegation"]["operation"], "agent_invocation");
+    assert_eq!(capabilities["selfHealingEdit"]["status"], "disabled");
+    assert_eq!(
+        capabilities["selfHealingEdit"]["reason"],
+        "requires persistent Rust-native session"
+    );
     registry::unregister(api);
 }
 
@@ -1597,6 +1877,11 @@ async fn rpc_state_reports_prompt_busy_while_running() {
     assert_eq!(capabilities["teamProfiles"]["operation"], "prompt");
     assert_eq!(capabilities["delegation"]["status"], "busy");
     assert_eq!(capabilities["delegation"]["operation"], "prompt");
+    assert_eq!(capabilities["selfHealingEdit"]["status"], "disabled");
+    assert_eq!(
+        capabilities["selfHealingEdit"]["reason"],
+        "requires persistent Rust-native session"
+    );
     registry::unregister(api);
 }
 
@@ -1639,9 +1924,8 @@ async fn rpc_uses_settings_default_model_when_no_override_is_provided() {
         "default_model = \"claude-haiku-4-5\"\n",
     )
     .unwrap();
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
-    }
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
 
     let input = b"{\"id\":\"s1\",\"type\":\"get_state\"}\n";
     let mut output = Vec::new();
@@ -1659,10 +1943,6 @@ async fn rpc_uses_settings_default_model_when_no_override_is_provided() {
 
     let lines = parse_lines(&output);
     assert_eq!(lines[0]["data"]["model"]["id"], "claude-haiku-4-5");
-
-    unsafe {
-        std::env::remove_var("PI_RUST_DIR");
-    }
 }
 
 #[tokio::test]

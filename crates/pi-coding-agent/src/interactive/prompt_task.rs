@@ -4,7 +4,8 @@ use crate::CliError;
 use crate::coding_session::{
     AgentInvocationOptions, AgentInvocationOutcome, AgentTeamOptions, AgentTeamOutcome,
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    PluginLoadOutcome, ProfileId, PromptTurnOptions, PromptTurnOutcome,
+    PluginLoadOutcome, ProfileId, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome,
+    SelfHealingEditRequest,
 };
 use crate::interactive::root::{
     PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
@@ -23,6 +24,7 @@ pub(super) enum PromptTaskResult {
     AgentInvocation(AgentInvocationTaskResult),
     AgentTeam(AgentTeamTaskResult),
     DelegationApproval(DelegationApprovalTaskResult),
+    SelfHealingEdit(SelfHealingEditTaskResult),
     PluginReload(PluginReloadTaskResult),
     PluginCommand(PluginCommandTaskResult),
 }
@@ -47,6 +49,11 @@ pub(super) struct AgentTeamTaskResult {
 
 pub(super) struct DelegationApprovalTaskResult {
     pub(super) session: CodingAgentSession,
+}
+
+pub(super) struct SelfHealingEditTaskResult {
+    pub(super) session: CodingAgentSession,
+    pub(super) outcome: SelfHealingEditOutcome,
 }
 
 pub(super) struct PluginReloadTaskResult {
@@ -165,6 +172,20 @@ impl PromptTask {
         Ok(Self::spawn_coding_plugin_reload(
             options,
             existing_session,
+            default_agent_profile_id,
+        ))
+    }
+
+    pub(super) fn spawn_self_healing_edit(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        request: SelfHealingEditRequest,
+        default_agent_profile_id: ProfileId,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_self_healing_edit(
+            options,
+            existing_session,
+            request,
             default_agent_profile_id,
         ))
     }
@@ -431,6 +452,38 @@ impl PromptTask {
             )
             .await;
             let _ = done_tx.send(result.map(PromptTaskResult::PluginReload));
+        });
+
+        Self {
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_self_healing_edit(
+        options: PromptRunOptions,
+        existing_session: Option<CodingAgentSession>,
+        request: SelfHealingEditRequest,
+        default_agent_profile_id: ProfileId,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_self_healing_edit_task(
+                options,
+                existing_session,
+                request,
+                default_agent_profile_id,
+                event_tx,
+                abort_rx,
+            )
+            .await;
+            let _ = done_tx.send(result.map(PromptTaskResult::SelfHealingEdit));
         });
 
         Self {
@@ -835,6 +888,55 @@ async fn run_coding_compact_task(
         completion_notice: None,
         hydrate_transcript: false,
     })
+}
+
+async fn run_coding_self_healing_edit_task(
+    options: PromptRunOptions,
+    existing_session: Option<CodingAgentSession>,
+    request: SelfHealingEditRequest,
+    default_agent_profile_id: ProfileId,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<SelfHealingEditTaskResult, CliError> {
+    let mut session = match existing_session {
+        Some(session) => session,
+        None => {
+            open_interactive_coding_session(
+                options.session.as_ref(),
+                options.session_target.as_ref(),
+                default_agent_profile_id,
+            )
+            .await?
+        }
+    };
+    let mut receiver = session.subscribe();
+
+    let outcome = {
+        let mut edit = Box::pin(session.self_healing_edit_with_options(request));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive self-healing edit abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut edit => {
+                    break outcome.map_err(CliError::from);
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(SelfHealingEditTaskResult { session, outcome })
 }
 
 async fn run_coding_plugin_reload_task(

@@ -130,6 +130,7 @@ mod tests {
             capabilities.export,
             capabilities.branch_summary,
             capabilities.plugin_reload,
+            capabilities.self_healing_edit,
             capabilities.agent_profiles,
             capabilities.team_profiles,
             capabilities.delegation,
@@ -186,5 +187,16 @@ mod tests {
                 reason: "requires persistent Rust-native session".into(),
             }
         );
+        assert_eq!(
+            capabilities.self_healing_edit,
+            CapabilityStatus::Disabled {
+                reason: "requires persistent Rust-native session".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn self_healing_edit_operation_kind_reports_stable_name() {
+        assert_eq!(OperationKind::SelfHealingEdit.as_str(), "self_healing_edit");
     }
 }

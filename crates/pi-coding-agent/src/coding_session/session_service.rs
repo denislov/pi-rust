@@ -20,6 +20,7 @@ use super::{
     CodingAgentEvent, CodingAgentSessionDiagnostic, CodingAgentSessionHydration,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionTranscriptItem,
     CodingAgentSessionTree, CodingAgentSessionView, CodingSessionError, ProfileId, ProfileKind,
+    SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
 
 #[derive(Debug)]
@@ -348,6 +349,16 @@ impl SessionService {
         )
     }
 
+    pub(crate) fn begin_self_healing_edit_transaction(&self) -> PromptTurnTransaction {
+        TurnTransaction::begin(
+            &self.store,
+            self.handle.clone(),
+            SystemIdGenerator,
+            SystemClock,
+            OperationKind::SelfHealingEdit,
+        )
+    }
+
     pub(crate) fn commit_prompt_transaction(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -464,6 +475,34 @@ impl SessionService {
         )
     }
 
+    pub(crate) fn commit_self_healing_edit_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        self.commit_non_leaf_transaction(
+            transaction,
+            operation_id,
+            "no active self-healing edit transaction",
+        )
+    }
+
+    pub(crate) fn fail_self_healing_edit_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        error_code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        self.fail_non_leaf_transaction(
+            transaction,
+            operation_id,
+            error_code,
+            message,
+            "no active self-healing edit transaction",
+        )
+    }
+
     fn commit_non_leaf_transaction(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -545,6 +584,29 @@ impl SessionService {
         capability_changed: bool,
     ) -> Result<(), CodingSessionError> {
         transaction.record_plugin_load_completed(loaded_plugin_ids, diagnostics, capability_changed)
+    }
+
+    pub(crate) fn record_self_healing_edit_started(
+        transaction: &mut PromptTurnTransaction,
+        path: String,
+        replacements: usize,
+    ) -> Result<(), CodingSessionError> {
+        transaction.record_self_healing_edit_started(path, replacements)
+    }
+
+    pub(crate) fn record_self_healing_edit_repair_attempted(
+        transaction: &mut PromptTurnTransaction,
+        path: &str,
+        repair: &SelfHealingEditRepairAttempt,
+    ) -> Result<(), CodingSessionError> {
+        transaction.record_self_healing_edit_repair_attempted(path, repair)
+    }
+
+    pub(crate) fn record_self_healing_edit_completed(
+        transaction: &mut PromptTurnTransaction,
+        outcome: &SelfHealingEditOutcome,
+    ) -> Result<(), CodingSessionError> {
+        transaction.record_self_healing_edit_completed(outcome)
     }
 
     #[allow(dead_code)]

@@ -4,11 +4,15 @@ use serde_json::Value;
 
 use super::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedPluginDiagnostic,
-    PersistedRole, PersistedToolResult, SessionEventData, SessionEventEnvelope,
+    PersistedRole, PersistedSelfHealingEditCheckOutput, PersistedSelfHealingEditReplacement,
+    PersistedToolResult, SessionEventData, SessionEventEnvelope,
 };
 use super::id::{Clock, IdGenerator};
 use super::store::{ManifestPatch, SessionHandle, SessionLogStore};
 use crate::coding_session::CodingSessionError;
+use crate::coding_session::self_healing_edit_flow::{
+    SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransactionState {
@@ -294,6 +298,82 @@ where
         Ok(())
     }
 
+    pub(crate) fn record_self_healing_edit_started(
+        &mut self,
+        path: impl Into<String>,
+        replacements: usize,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::SelfHealingEditStarted {
+            path: path.into(),
+            replacements,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn record_self_healing_edit_repair_attempted(
+        &mut self,
+        path: impl Into<String>,
+        repair: &SelfHealingEditRepairAttempt,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::SelfHealingEditRepairAttempted {
+            path: path.into(),
+            attempt: repair.attempt,
+            replacements: repair
+                .replacements
+                .iter()
+                .map(|replacement| PersistedSelfHealingEditReplacement {
+                    old_text: replacement.old_text.clone(),
+                    new_text: replacement.new_text.clone(),
+                })
+                .collect(),
+            diagnostics: repair
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect(),
+            check_output: repair.check_output.as_ref().map(|output| {
+                PersistedSelfHealingEditCheckOutput {
+                    command: output.command.clone(),
+                    stdout: output.stdout.clone(),
+                    stderr: output.stderr.clone(),
+                    exit_code: output.exit_code,
+                }
+            }),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn record_self_healing_edit_completed(
+        &mut self,
+        outcome: &SelfHealingEditOutcome,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::SelfHealingEditCompleted {
+            path: outcome.path.clone(),
+            message: outcome.message.clone(),
+            diff: outcome.diff.clone(),
+            patch: outcome.patch.clone(),
+            first_changed_line: outcome.first_changed_line,
+            attempts: outcome.attempts,
+            diagnostics: outcome
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect(),
+            check_output: outcome.check_output.as_ref().map(|output| {
+                PersistedSelfHealingEditCheckOutput {
+                    command: output.command.clone(),
+                    stdout: output.stdout.clone(),
+                    stderr: output.stderr.clone(),
+                    exit_code: output.exit_code,
+                }
+            }),
+        });
+        Ok(())
+    }
+
     pub(crate) fn commit(&mut self, new_leaf_id: Option<String>) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
         self.push_event(SessionEventData::OperationCommitted {
@@ -418,6 +498,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding_session::self_healing_edit_flow::{
+        SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditOutcome,
+        SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
+    };
     use crate::coding_session::session_log::id::{DeterministicIdGenerator, FixedClock};
     use crate::coding_session::session_log::store::{CreateSessionOptions, SessionLogStore};
 
@@ -465,6 +549,11 @@ mod tests {
                 SessionEventData::MetadataUpdated { .. } => "metadata.updated",
                 SessionEventData::ActiveLeafChanged { .. } => "active_leaf.changed",
                 SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
+                SessionEventData::SelfHealingEditStarted { .. } => "self_healing_edit.started",
+                SessionEventData::SelfHealingEditRepairAttempted { .. } => {
+                    "self_healing_edit.repair_attempted"
+                }
+                SessionEventData::SelfHealingEditCompleted { .. } => "self_healing_edit.completed",
                 SessionEventData::DelegationConfirmationRequested { .. } => {
                     "delegation.confirmation.requested"
                 }
@@ -623,6 +712,105 @@ mod tests {
             }) if loaded_plugin_ids == &["plugin-a".to_owned()]
                 && diagnostics[0].plugin_id.as_deref() == Some("plugin-b")
                 && diagnostics[0].message == "plugin warning"
+        ));
+    }
+
+    #[test]
+    fn self_healing_edit_transaction_records_lifecycle_events() {
+        let (_temp, store, handle) = setup();
+        let mut tx = TurnTransaction::begin(
+            &store,
+            handle.clone(),
+            DeterministicIdGenerator::new(),
+            FixedClock::new("2026-06-29T00:00:01Z"),
+            OperationKind::SelfHealingEdit,
+        );
+        let outcome = SelfHealingEditOutcome {
+            path: "src/app.txt".into(),
+            message: "Successfully replaced 1 block".into(),
+            diff: "-two\n+deux".into(),
+            patch: "--- src/app.txt\n+++ src/app.txt".into(),
+            first_changed_line: Some(2),
+            attempts: 1,
+            diagnostics: vec![SelfHealingEditDiagnostic {
+                message: "checked".into(),
+            }],
+            check_output: Some(SelfHealingEditCheckOutput {
+                command: "cargo check".into(),
+                stdout: "ok".into(),
+                stderr: String::new(),
+                exit_code: 0,
+            }),
+            repair_attempts: vec![SelfHealingEditRepairAttempt {
+                attempt: 1,
+                replacements: vec![SelfHealingEditReplacement::new("deux", "dos")],
+                diagnostics: vec![SelfHealingEditDiagnostic {
+                    message: "compile error".into(),
+                }],
+                check_output: Some(SelfHealingEditCheckOutput {
+                    command: "cargo check".into(),
+                    stdout: "ok".into(),
+                    stderr: String::new(),
+                    exit_code: 0,
+                }),
+            }],
+        };
+
+        tx.record_self_healing_edit_started("src/app.txt", 1)
+            .unwrap();
+        tx.record_self_healing_edit_repair_attempted("src/app.txt", &outcome.repair_attempts[0])
+            .unwrap();
+        tx.record_self_healing_edit_completed(&outcome).unwrap();
+        tx.commit(None).unwrap();
+
+        let events = store.read_events(&handle).unwrap();
+        assert_eq!(
+            event_kinds(&events),
+            vec![
+                "operation.started",
+                "turn.started",
+                "self_healing_edit.started",
+                "self_healing_edit.repair_attempted",
+                "self_healing_edit.completed",
+                "operation.committed",
+            ]
+        );
+        assert!(matches!(
+            events
+                .iter()
+                .find(|event| {
+                    matches!(
+                        &event.data,
+                        SessionEventData::SelfHealingEditRepairAttempted { .. }
+                    )
+                })
+                .map(|event| &event.data),
+            Some(SessionEventData::SelfHealingEditRepairAttempted {
+                path,
+                attempt: 1,
+                replacements,
+                diagnostics,
+                check_output: Some(check_output),
+            }) if path == "src/app.txt"
+                && replacements[0].old_text == "deux"
+                && replacements[0].new_text == "dos"
+                && diagnostics == &["compile error".to_owned()]
+                && check_output.command == "cargo check"
+                && check_output.exit_code == 0
+        ));
+        assert!(matches!(
+            events.iter().rev().nth(1).map(|event| &event.data),
+            Some(SessionEventData::SelfHealingEditCompleted {
+                path,
+                first_changed_line: Some(2),
+                attempts: 1,
+                diagnostics,
+                check_output: Some(check_output),
+                ..
+            }) if path == "src/app.txt"
+                && diagnostics == &["checked".to_owned()]
+                && check_output.command == "cargo check"
+                && check_output.exit_code == 0
         ));
     }
 

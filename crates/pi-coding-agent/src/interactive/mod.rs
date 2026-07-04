@@ -1,12 +1,14 @@
 pub mod app;
 mod clipboard;
 mod commands;
+mod delegation_confirmation_menu;
 pub mod event_bridge;
 mod git_branch;
 mod input;
 pub mod key_hints;
 mod r#loop;
 mod model_selector;
+mod profile_menu;
 mod prompt_task;
 mod render;
 mod root;

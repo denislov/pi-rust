@@ -1,3 +1,7 @@
+use crate::coding_session::{
+    CodingSessionError, SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOptions,
+    SelfHealingEditOutcome, SelfHealingEditReplacement,
+};
 use crate::tools::edit_diff::{
     TextReplacement, apply_replacements_preserving_unchanged_lines, generate_diff_string,
     generate_unified_patch,
@@ -296,6 +300,93 @@ pub async fn edit_execute(cwd: &Path, args: serde_json::Value) -> Result<AgentTo
     edit_execute_with_operations(cwd, args, Arc::new(RealEditOperations)).await
 }
 
+async fn edit_tool_execute_with_operations(
+    cwd: &Path,
+    args: serde_json::Value,
+    ops: Arc<dyn EditOperations>,
+) -> Result<AgentToolOutput, String> {
+    let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("edit: missing or non-string 'path' argument")?
+        .to_string();
+    let replacements = parse_edits(&args)?
+        .into_iter()
+        .map(|edit| SelfHealingEditReplacement::new(edit.old_text, edit.new_text))
+        .collect::<Vec<_>>();
+    let options =
+        SelfHealingEditOptions::new(cwd.to_path_buf(), path, replacements).with_operations(ops);
+    let mut context = SelfHealingEditContext::new(options);
+    let flow = SelfHealingEditFlow::new().map_err(|error| error.to_string())?;
+    match flow.run(&mut context).await {
+        Ok(_) => context
+            .finish_success()
+            .map(self_healing_outcome_to_tool_output)
+            .map_err(coding_session_error_message),
+        Err(error) => Err(coding_session_error_message(
+            context.take_failure_error().unwrap_or(error),
+        )),
+    }
+}
+
+fn coding_session_error_message(error: CodingSessionError) -> String {
+    match error {
+        CodingSessionError::Config { message }
+        | CodingSessionError::Auth { message }
+        | CodingSessionError::Input { message }
+        | CodingSessionError::Resource { message }
+        | CodingSessionError::Session { message }
+        | CodingSessionError::SelfHealingEditFailed { message, .. }
+        | CodingSessionError::Provider { message }
+        | CodingSessionError::Tool { message }
+        | CodingSessionError::Flow { message }
+        | CodingSessionError::Plugin { message } => message,
+        CodingSessionError::Cancelled => "cancelled".to_owned(),
+        CodingSessionError::UnsupportedCapability { capability } => {
+            format!("unsupported capability: {capability}")
+        }
+        CodingSessionError::Busy { operation } => format!("busy: {operation}"),
+    }
+}
+
+fn self_healing_outcome_to_tool_output(outcome: SelfHealingEditOutcome) -> AgentToolOutput {
+    let diagnostics = outcome
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect::<Vec<_>>();
+    let check_output = outcome.check_output.as_ref().map(|output| {
+        serde_json::json!({
+            "command": output.command.clone(),
+            "stdout": output.stdout.clone(),
+            "stderr": output.stderr.clone(),
+            "exitCode": output.exit_code,
+        })
+    });
+    let mut workflow = serde_json::json!({
+        "attempts": outcome.attempts,
+        "diagnostics": diagnostics,
+    });
+    if let Some(check_output) = check_output {
+        workflow["checkOutput"] = check_output;
+    }
+
+    let mut details = serde_json::json!({
+        "diff": outcome.diff,
+        "patch": outcome.patch,
+        "selfHealingEdit": workflow,
+    });
+    if let Some(first_changed_line) = outcome.first_changed_line {
+        details["firstChangedLine"] = serde_json::json!(first_changed_line);
+    }
+
+    AgentToolOutput::new(vec![ContentBlock::Text {
+        text: outcome.message,
+        text_signature: None,
+    }])
+    .with_details(details)
+}
+
 pub async fn edit_execute_with_operations(
     cwd: &Path,
     args: serde_json::Value,
@@ -345,7 +436,7 @@ pub fn edit_tool_with_operations(cwd: PathBuf, ops: Arc<dyn EditOperations>) -> 
     let execute: ToolFn = Arc::new(move |args, _on_update| {
         let cwd = cwd.clone();
         let ops = ops.clone();
-        Box::pin(async move { edit_execute_with_operations(&cwd, args, ops).await })
+        Box::pin(async move { edit_tool_execute_with_operations(&cwd, args, ops).await })
     });
     AgentTool {
         name: "edit".into(),

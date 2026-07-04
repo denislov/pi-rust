@@ -1,4 +1,7 @@
-use pi_coding_agent::api::{CodingAgentEvent, CodingSessionError, ProfileKind};
+use pi_coding_agent::api::{
+    CodingAgentEvent, CodingSessionError, ProfileKind, SelfHealingEditCheckOutput,
+    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+};
 use pi_coding_agent::interactive::{CodingEventBridge, Transcript, TranscriptItem, UiEvent};
 
 #[test]
@@ -266,6 +269,70 @@ fn coding_event_bridge_maps_delegation_confirmation_events() {
     };
     assert!(text.contains("Delegation completed"), "{text}");
     assert!(text.contains("child result"), "{text}");
+}
+
+#[test]
+fn coding_event_bridge_maps_self_healing_edit_events() {
+    let mut bridge = CodingEventBridge::new();
+
+    let started = bridge.handle(&CodingAgentEvent::SelfHealingEditStarted {
+        operation_id: "op_edit".to_string(),
+        path: "src/app.txt".to_string(),
+        replacements: 1,
+    });
+    let [UiEvent::SystemNotice { text }] = started.as_slice() else {
+        panic!("expected one system notice, got {started:?}");
+    };
+    assert!(text.contains("Self-healing edit started"), "{text}");
+    assert!(text.contains("src/app.txt"), "{text}");
+
+    let repair = bridge.handle(&CodingAgentEvent::SelfHealingEditRepairAttempted {
+        operation_id: "op_edit".to_string(),
+        path: "src/app.txt".to_string(),
+        attempt: 1,
+        replacements: vec![SelfHealingEditReplacement::new("deux", "dos")],
+        diagnostics: vec![SelfHealingEditDiagnostic {
+            message: "compile error".to_string(),
+        }],
+        check_output: Some(SelfHealingEditCheckOutput {
+            command: "cargo check".to_string(),
+            stdout: "fixed".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        }),
+    });
+    let [UiEvent::SystemNotice { text }] = repair.as_slice() else {
+        panic!("expected one system notice, got {repair:?}");
+    };
+    assert!(text.contains("repair attempt 1"), "{text}");
+    assert!(text.contains("src/app.txt"), "{text}");
+    assert!(text.contains("exit 0"), "{text}");
+
+    let completed = bridge.handle(&CodingAgentEvent::SelfHealingEditCompleted {
+        operation_id: "op_edit".to_string(),
+        path: "src/app.txt".to_string(),
+        attempts: 2,
+        first_changed_line: Some(2),
+        check_output: None,
+    });
+    let [UiEvent::SystemNotice { text }] = completed.as_slice() else {
+        panic!("expected one system notice, got {completed:?}");
+    };
+    assert!(text.contains("Self-healing edit completed"), "{text}");
+    assert!(text.contains("2 attempts"), "{text}");
+
+    let failed = bridge.handle(&CodingAgentEvent::SelfHealingEditFailed {
+        operation_id: "op_edit_failed".to_string(),
+        path: "src/bad.txt".to_string(),
+        error: CodingSessionError::Input {
+            message: "bad edit".to_string(),
+        },
+    });
+    let [UiEvent::SystemNotice { text }] = failed.as_slice() else {
+        panic!("expected one system notice, got {failed:?}");
+    };
+    assert!(text.contains("Self-healing edit failed"), "{text}");
+    assert!(text.contains("invalid input: bad edit"), "{text}");
 }
 
 #[test]

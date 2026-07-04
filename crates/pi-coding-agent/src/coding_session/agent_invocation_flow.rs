@@ -6,18 +6,23 @@ use std::pin::Pin;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::types::AssistantMessage;
 
-use super::CodingSessionError;
-use super::delegation::emit_child_delegation_authorization_decision;
+use super::agent_team_flow::{AgentTeamContext, AgentTeamFlow, AgentTeamOptions};
+use super::delegation::{
+    DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
+    emit_delegation_approved, emit_delegation_completed, emit_delegation_confirmation_required,
+    emit_delegation_failed, emit_delegation_rejected, emit_delegation_started,
+};
 use super::event::CodingAgentEvent;
 use super::event_service::EventService;
 use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
-use super::profiles::{AgentProfile, ProfileId, ProfileRegistry};
+use super::profiles::{AgentProfile, ProfileId, ProfileKind, ProfileRegistry};
 use super::prompt::{
     CodingDiagnostic, PromptTurnContext, PromptTurnIds, PromptTurnOptions, PromptTurnOutcome,
 };
 use super::prompt_flow::PromptTurnFlow;
-use super::session_log::id::{IdGenerator, SystemIdGenerator};
+use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
+use super::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::PromptInvocation;
 
 const DEFAULT_ACTION: &str = "default";
@@ -64,6 +69,7 @@ pub struct AgentInvocationOptions {
     task: String,
     prompt_options: PromptTurnOptions,
     delegation_depth: usize,
+    delegation_lineage: Vec<DelegationLineageEntry>,
 }
 
 impl AgentInvocationOptions {
@@ -77,11 +83,17 @@ impl AgentInvocationOptions {
             task: task.into(),
             prompt_options,
             delegation_depth: 0,
+            delegation_lineage: Vec::new(),
         }
     }
 
     pub fn with_delegation_depth(mut self, depth: usize) -> Self {
         self.delegation_depth = depth;
+        self
+    }
+
+    pub(crate) fn with_delegation_lineage(mut self, lineage: Vec<DelegationLineageEntry>) -> Self {
+        self.delegation_lineage = lineage;
         self
     }
 
@@ -99,6 +111,10 @@ impl AgentInvocationOptions {
 
     pub fn delegation_depth(&self) -> usize {
         self.delegation_depth
+    }
+
+    pub(crate) fn delegation_lineage(&self) -> &[DelegationLineageEntry] {
+        &self.delegation_lineage
     }
 }
 
@@ -218,6 +234,7 @@ pub(crate) struct AgentInvocationContext {
     child_context: Option<PromptTurnContext>,
     prompt_control_receiver: Option<PromptControlReceiver>,
     prompt_outcome: Option<PromptTurnOutcome>,
+    pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
 }
 
@@ -241,6 +258,7 @@ impl AgentInvocationContext {
             child_context: None,
             prompt_control_receiver: None,
             prompt_outcome: None,
+            pending_delegation_confirmations: Vec::new(),
             failure_error: None,
         }
     }
@@ -255,6 +273,12 @@ impl AgentInvocationContext {
 
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
         self.failure_error.take()
+    }
+
+    pub(crate) fn take_pending_delegation_confirmations(
+        &mut self,
+    ) -> Vec<PendingDelegationConfirmationState> {
+        std::mem::take(&mut self.pending_delegation_confirmations)
     }
 
     pub(crate) fn set_prompt_control_receiver(&mut self, receiver: PromptControlReceiver) {
@@ -329,7 +353,11 @@ impl AgentInvocationContext {
             })?;
         let mut prompt_options = self.options.prompt_options.clone();
         prompt_options.set_invocation(PromptInvocation::Text(self.options.task.clone()));
-        prompt_options.apply_agent_profile(profile, Vec::new())?;
+        if self.options.delegation_depth > 0 {
+            prompt_options.apply_delegated_agent_profile(profile, Vec::new())?;
+        } else {
+            prompt_options.apply_agent_profile(profile, Vec::new())?;
+        }
         if prompt_options.runtime().is_none() {
             return Err(CodingSessionError::Config {
                 message: "agent invocation options do not include a runtime snapshot".into(),
@@ -353,35 +381,223 @@ impl AgentInvocationContext {
     }
 
     async fn run_child_agent(&mut self) -> Result<(), CodingSessionError> {
+        let mut finished_outcome = None;
+        let child_delegations = {
+            let child_context =
+                self.child_context
+                    .as_mut()
+                    .ok_or_else(|| CodingSessionError::Session {
+                        message: "agent invocation cannot run before child prompt preparation"
+                            .into(),
+                    })?;
+            match PromptTurnFlow::new()?.run(child_context).await {
+                Ok(_) => Some((
+                    child_context
+                        .authorize_delegation_requests_with_lineage(
+                            self.options.delegation_depth,
+                            self.options.delegation_lineage(),
+                        )?
+                        .to_vec(),
+                    child_context.options().clone(),
+                    child_context.non_persistent_runtime_id().map(str::to_owned),
+                )),
+                Err(error) => {
+                    finished_outcome = Some(match child_context.abort_reason() {
+                        Some(reason) => child_context.finish_abort(
+                            reason.to_owned(),
+                            child_context.non_persistent_runtime_id().map(str::to_owned),
+                        ),
+                        None => child_context.finish_failure(error),
+                    });
+                    None
+                }
+            }
+        };
+
+        let Some((decisions, prompt_options, runtime_id)) = child_delegations else {
+            self.prompt_outcome = finished_outcome;
+            return Ok(());
+        };
+        if let Err(error) = self
+            .execute_authorized_delegations(&decisions, prompt_options)
+            .await
+        {
+            self.event_service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: Some(self.child_operation_id.clone()),
+                message: format!("delegation execution failed: {error}"),
+            });
+        }
         let child_context =
             self.child_context
-                .as_mut()
+                .as_ref()
                 .ok_or_else(|| CodingSessionError::Session {
-                    message: "agent invocation cannot run before child prompt preparation".into(),
+                    message: "agent invocation completed without child prompt context".into(),
                 })?;
-        let outcome = match PromptTurnFlow::new()?.run(child_context).await {
-            Ok(_) => {
-                let decisions = child_context
-                    .authorize_delegation_requests(self.options.delegation_depth)?
-                    .to_vec();
-                for decision in &decisions {
-                    emit_child_delegation_authorization_decision(&self.event_service, decision);
-                }
-                child_context.finish_success(
-                    child_context.non_persistent_runtime_id().map(str::to_owned),
-                    None,
-                )?
-            }
-            Err(error) => match child_context.abort_reason() {
-                Some(reason) => child_context.finish_abort(
-                    reason.to_owned(),
-                    child_context.non_persistent_runtime_id().map(str::to_owned),
-                ),
-                None => child_context.finish_failure(error),
-            },
-        };
-        self.prompt_outcome = Some(outcome);
+        self.prompt_outcome = Some(child_context.finish_success(runtime_id, None)?);
         Ok(())
+    }
+
+    async fn execute_authorized_delegations(
+        &mut self,
+        decisions: &[DelegationAuthorizationDecision],
+        prompt_options: PromptTurnOptions,
+    ) -> Result<(), CodingSessionError> {
+        for decision in decisions {
+            match decision {
+                DelegationAuthorizationDecision::Approved {
+                    request,
+                    child_delegation_depth,
+                } => {
+                    emit_delegation_approved(&self.event_service, request);
+                    match request.target_kind {
+                        ProfileKind::Agent => {
+                            self.execute_approved_agent_delegation(
+                                request,
+                                prompt_options.clone(),
+                                *child_delegation_depth,
+                            )
+                            .await?;
+                        }
+                        ProfileKind::Team => {
+                            self.execute_approved_team_delegation(
+                                request,
+                                prompt_options.clone(),
+                                *child_delegation_depth,
+                            )
+                            .await?;
+                        }
+                    }
+                }
+                DelegationAuthorizationDecision::RequiresConfirmation {
+                    request,
+                    reason,
+                    child_delegation_depth,
+                } => {
+                    self.pending_delegation_confirmations.push(
+                        PendingDelegationConfirmationState {
+                            request: request.clone(),
+                            prompt_options: prompt_options.clone(),
+                            reason: reason.clone(),
+                            requested_at: SystemClock.now_rfc3339(),
+                            child_delegation_depth: *child_delegation_depth,
+                            delegation_lineage: delegation_lineage_for_request(
+                                self.options.delegation_lineage(),
+                                request,
+                            ),
+                        },
+                    );
+                    emit_delegation_confirmation_required(&self.event_service, request, reason);
+                }
+                DelegationAuthorizationDecision::Rejected { request, reason } => {
+                    emit_delegation_rejected(&self.event_service, request, reason);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn execute_approved_agent_delegation(
+        &mut self,
+        request: &super::prompt::DelegationRequest,
+        prompt_options: PromptTurnOptions,
+        child_delegation_depth: usize,
+    ) -> Result<(), CodingSessionError> {
+        let mut context = AgentInvocationContext::new(
+            AgentInvocationOptions::new(
+                request.target_id.clone(),
+                request.task.clone(),
+                prompt_options,
+            )
+            .with_delegation_depth(child_delegation_depth)
+            .with_delegation_lineage(delegation_lineage_for_request(
+                self.options.delegation_lineage(),
+                request,
+            )),
+            self.registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        );
+        let child_operation_id = context.operation_id().to_owned();
+        emit_delegation_started(&self.event_service, request, child_operation_id.clone());
+        let result = AgentInvocationFlow::new()?.run(&mut context).await;
+        self.pending_delegation_confirmations
+            .extend(context.take_pending_delegation_confirmations());
+        let outcome = match result {
+            Ok(_) => context.finish_success(),
+            Err(error) => Err(context.take_failure_error().unwrap_or(error)),
+        };
+        match outcome {
+            Ok(outcome) => {
+                emit_delegation_completed(
+                    &self.event_service,
+                    request,
+                    child_operation_id,
+                    outcome.final_text,
+                );
+                Ok(())
+            }
+            Err(error) => {
+                emit_delegation_failed(
+                    &self.event_service,
+                    request,
+                    child_operation_id,
+                    error.clone(),
+                );
+                Err(error)
+            }
+        }
+    }
+
+    async fn execute_approved_team_delegation(
+        &mut self,
+        request: &super::prompt::DelegationRequest,
+        prompt_options: PromptTurnOptions,
+        child_delegation_depth: usize,
+    ) -> Result<(), CodingSessionError> {
+        let mut context = AgentTeamContext::new(
+            AgentTeamOptions::new(
+                request.target_id.clone(),
+                request.task.clone(),
+                prompt_options,
+            )
+            .with_delegation_depth(child_delegation_depth)
+            .with_delegation_lineage(delegation_lineage_for_request(
+                self.options.delegation_lineage(),
+                request,
+            )),
+            self.registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        );
+        let child_operation_id = context.operation_id().to_owned();
+        emit_delegation_started(&self.event_service, request, child_operation_id.clone());
+        let result = AgentTeamFlow::new()?.run(&mut context).await;
+        self.pending_delegation_confirmations
+            .extend(context.take_pending_delegation_confirmations());
+        let outcome = match result {
+            Ok(_) => context.finish_success(),
+            Err(error) => Err(context.take_failure_error().unwrap_or(error)),
+        };
+        match outcome {
+            Ok(outcome) => {
+                emit_delegation_completed(
+                    &self.event_service,
+                    request,
+                    child_operation_id,
+                    outcome.final_text,
+                );
+                Ok(())
+            }
+            Err(error) => {
+                emit_delegation_failed(
+                    &self.event_service,
+                    request,
+                    child_operation_id,
+                    error.clone(),
+                );
+                Err(error)
+            }
+        }
     }
 
     fn finalize_agent_invocation(&mut self) -> Result<(), CodingSessionError> {

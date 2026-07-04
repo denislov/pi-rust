@@ -18,7 +18,10 @@ use crate::runtime::{PromptInvocation, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
 
 use super::CodingSessionError;
-use super::delegation::{DelegationAuthorizationDecision, authorize_delegation_requests};
+use super::delegation::{
+    DelegationAuthorizationDecision, DelegationLineageEntry,
+    authorize_delegation_requests_with_lineage,
+};
 use super::event::CodingAgentEvent;
 use super::event_service::{AgentEventMappingContext, EventService, map_agent_event};
 use super::operation_control::PromptControlReceiver;
@@ -135,6 +138,21 @@ impl PromptTurnOptions {
                 message: "prompt turn options do not include a runtime snapshot".into(),
             })?;
         runtime.apply_agent_profile(profile, diagnostics);
+        Ok(())
+    }
+
+    pub(crate) fn apply_delegated_agent_profile(
+        &mut self,
+        profile: &AgentProfile,
+        diagnostics: Vec<CodingDiagnostic>,
+    ) -> Result<(), CodingSessionError> {
+        let runtime = self
+            .runtime
+            .as_mut()
+            .ok_or_else(|| CodingSessionError::Config {
+                message: "prompt turn options do not include a runtime snapshot".into(),
+            })?;
+        runtime.apply_delegated_agent_profile(profile, diagnostics);
         Ok(())
     }
 }
@@ -359,6 +377,26 @@ impl RuntimeSnapshot {
     pub(crate) fn apply_agent_profile(
         &mut self,
         profile: &AgentProfile,
+        diagnostics: Vec<CodingDiagnostic>,
+    ) {
+        self.apply_agent_profile_core(profile, diagnostics);
+        self.profile_tool_allowlist = (!profile.tools.is_empty()).then(|| profile.tools.clone());
+        self.profile_skill_allowlist = (!profile.skills.is_empty()).then(|| profile.skills.clone());
+    }
+
+    pub(crate) fn apply_delegated_agent_profile(
+        &mut self,
+        profile: &AgentProfile,
+        diagnostics: Vec<CodingDiagnostic>,
+    ) {
+        self.apply_agent_profile_core(profile, diagnostics);
+        self.profile_tool_allowlist = Some(profile.tools.clone());
+        self.profile_skill_allowlist = Some(profile.skills.clone());
+    }
+
+    fn apply_agent_profile_core(
+        &mut self,
+        profile: &AgentProfile,
         mut diagnostics: Vec<CodingDiagnostic>,
     ) {
         self.profile_diagnostics.append(&mut diagnostics);
@@ -378,8 +416,6 @@ impl RuntimeSnapshot {
         }
         self.profile_id = Some(profile.id.clone());
         self.profile_delegation_policy = Some(profile.delegation.clone());
-        self.profile_tool_allowlist = (!profile.tools.is_empty()).then(|| profile.tools.clone());
-        self.profile_skill_allowlist = (!profile.skills.is_empty()).then(|| profile.skills.clone());
     }
 
     pub(crate) fn model(&self) -> &Model {
@@ -885,6 +921,14 @@ impl PromptTurnContext {
         &mut self,
         current_depth: usize,
     ) -> Result<&[DelegationAuthorizationDecision], CodingSessionError> {
+        self.authorize_delegation_requests_with_lineage(current_depth, &[])
+    }
+
+    pub(crate) fn authorize_delegation_requests_with_lineage(
+        &mut self,
+        current_depth: usize,
+        lineage: &[DelegationLineageEntry],
+    ) -> Result<&[DelegationAuthorizationDecision], CodingSessionError> {
         if self.delegation_requests.is_empty() {
             self.delegation_authorization_decisions.clear();
             return Ok(&self.delegation_authorization_decisions);
@@ -898,8 +942,12 @@ impl PromptTurnContext {
                 message: "prompt turn cannot authorize delegation without active profile policy"
                     .into(),
             })?;
-        self.delegation_authorization_decisions =
-            authorize_delegation_requests(&self.delegation_requests, &policy, current_depth);
+        self.delegation_authorization_decisions = authorize_delegation_requests_with_lineage(
+            &self.delegation_requests,
+            &policy,
+            current_depth,
+            lineage,
+        );
         Ok(&self.delegation_authorization_decisions)
     }
 
@@ -1590,7 +1638,7 @@ mod tests {
         assert_eq!(decisions.len(), 1);
         assert!(matches!(
             &decisions[0],
-            DelegationAuthorizationDecision::RequiresConfirmation { request, reason }
+            DelegationAuthorizationDecision::RequiresConfirmation { request, reason, .. }
                 if request.target_id.as_str() == "implementation" && reason.contains("team")
         ));
         assert_eq!(context.delegation_authorization_decisions().len(), 1);

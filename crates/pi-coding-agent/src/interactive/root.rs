@@ -10,14 +10,24 @@ use pi_tui::{
     matches_key, paint_with, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
 };
 
-use crate::coding_session::{ProfileId, ProfileRegistry, ProfileRegistryOptions};
+use crate::coding_session::{
+    PendingDelegationConfirmation, ProfileId, ProfileRegistry, ProfileRegistryOptions,
+    SelfHealingEditReplacement,
+};
 use crate::config::{AuthStore, Settings};
 use crate::interactive::app::{PromptContext, welcome_line};
 use crate::interactive::clipboard::{ClipboardSink, SystemClipboard};
 use crate::interactive::commands;
+use crate::interactive::delegation_confirmation_menu::{
+    DelegationConfirmationMenuOutcome, DelegationConfirmationMenuRenderState,
+    DelegationConfirmationMenuState,
+};
 use crate::interactive::git_branch::GitBranchProvider;
 use crate::interactive::input;
 use crate::interactive::model_selector;
+use crate::interactive::profile_menu::{
+    PendingProfileTask, ProfileMenuOutcome, ProfileMenuRenderState, ProfileMenuState,
+};
 use crate::interactive::render::{
     TranscriptRenderCache, TranscriptRenderOptions, TranscriptRowSnapshot, TranscriptStyles,
     WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens, running_status_text,
@@ -61,6 +71,7 @@ pub(super) enum InteractiveAction {
     FollowUp,
     CompactSession,
     BranchSummary,
+    SelfHealingEdit,
     PluginCommand,
     PluginUiAction,
     PluginUiDialog,
@@ -119,6 +130,19 @@ pub(super) struct PendingAgentInvocationRequest {
 pub(super) struct PendingAgentTeamRequest {
     pub(super) team_id: ProfileId,
     pub(super) task: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingSelfHealingEditModelRepair {
+    pub(super) max_attempts: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingSelfHealingEditRequest {
+    pub(super) path: String,
+    pub(super) replacements: Vec<SelfHealingEditReplacement>,
+    pub(super) check_command: Option<String>,
+    pub(super) model_repair: Option<PendingSelfHealingEditModelRepair>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -539,12 +563,16 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
     pub(super) pending_agent_invocation_request: Option<PendingAgentInvocationRequest>,
     pub(super) pending_agent_team_request: Option<PendingAgentTeamRequest>,
+    pub(super) pending_self_healing_edit_request: Option<PendingSelfHealingEditRequest>,
     pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) pending_delegation_confirmation_command:
         Option<PendingDelegationConfirmationCommand>,
+    delegation_confirmation_menu: Option<DelegationConfirmationMenuState>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
+    profile_menu: Option<ProfileMenuState>,
+    pending_profile_task: Option<PendingProfileTask>,
     pub(super) selected_agent_profile_id: Option<ProfileId>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
@@ -623,6 +651,9 @@ pub(super) struct InteractiveRenderState {
     selecting_session: bool,
     session_selection_selected: usize,
     active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
+    delegation_confirmation_menu_state: Option<DelegationConfirmationMenuRenderState>,
+    profile_menu_state: Option<ProfileMenuRenderState>,
+    pending_profile_task: Option<PendingProfileTask>,
 }
 
 impl InteractiveRoot {
@@ -708,11 +739,15 @@ impl InteractiveRoot {
             pending_branch_summary_request: None,
             pending_agent_invocation_request: None,
             pending_agent_team_request: None,
+            pending_self_healing_edit_request: None,
             pending_plugin_command_request: None,
             pending_delegation_confirmation_command: None,
+            delegation_confirmation_menu: None,
             pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
             active_plugin_ui_dialog: None,
+            profile_menu: None,
+            pending_profile_task: None,
             selected_agent_profile_id: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
@@ -858,6 +893,12 @@ impl InteractiveRoot {
 
     pub(super) fn take_pending_agent_team_request(&mut self) -> Option<PendingAgentTeamRequest> {
         self.pending_agent_team_request.take()
+    }
+
+    pub(super) fn take_pending_self_healing_edit_request(
+        &mut self,
+    ) -> Option<PendingSelfHealingEditRequest> {
+        self.pending_self_healing_edit_request.take()
     }
 
     pub(super) fn take_pending_plugin_command_request(
@@ -1068,6 +1109,217 @@ impl InteractiveRoot {
         lines
     }
 
+    pub(super) fn open_delegation_confirmation_menu(
+        &mut self,
+        pending: Vec<PendingDelegationConfirmation>,
+    ) {
+        self.delegation_confirmation_menu = Some(DelegationConfirmationMenuState::new(pending));
+        self.profile_menu = None;
+        self.pending_profile_task = None;
+        self.editor.set_text("");
+        self.slash_suggestion_selected = 0;
+        self.slash_suggestions_dismissed_for = None;
+    }
+
+    pub(super) fn has_active_delegation_confirmation_menu(&self) -> bool {
+        self.delegation_confirmation_menu.is_some()
+    }
+
+    pub(super) fn handle_delegation_confirmation_menu_input(&mut self, event: &InputEvent) -> bool {
+        let Some(menu) = self.delegation_confirmation_menu.as_mut() else {
+            return false;
+        };
+        let outcome = menu.handle_input(&self.keybindings, event);
+        match outcome {
+            DelegationConfirmationMenuOutcome::None => {}
+            DelegationConfirmationMenuOutcome::Close => {
+                self.delegation_confirmation_menu = None;
+                self.editor.set_text("");
+            }
+            DelegationConfirmationMenuOutcome::Approve {
+                operation_id,
+                tool_call_id,
+            } => {
+                self.delegation_confirmation_menu = None;
+                self.pending_delegation_confirmation_command =
+                    Some(PendingDelegationConfirmationCommand::Approve {
+                        selection: PendingDelegationConfirmationSelection {
+                            operation_id: Some(operation_id),
+                            tool_call_id,
+                        },
+                    });
+                self.action = InteractiveAction::DelegationConfirmation;
+            }
+            DelegationConfirmationMenuOutcome::Reject {
+                operation_id,
+                tool_call_id,
+            } => {
+                self.delegation_confirmation_menu = None;
+                self.pending_delegation_confirmation_command =
+                    Some(PendingDelegationConfirmationCommand::Reject {
+                        selection: PendingDelegationConfirmationSelection {
+                            operation_id: Some(operation_id),
+                            tool_call_id,
+                        },
+                        reason: None,
+                    });
+                self.action = InteractiveAction::DelegationConfirmation;
+            }
+        }
+        true
+    }
+
+    fn render_delegation_confirmation_menu(&mut self, width: usize) -> Vec<String> {
+        let Some(menu) = self.delegation_confirmation_menu.as_mut() else {
+            return Vec::new();
+        };
+        menu.render(width)
+    }
+
+    pub(super) fn has_active_profile_menu(&self) -> bool {
+        self.profile_menu.is_some()
+    }
+
+    pub(super) fn has_pending_profile_task(&self) -> bool {
+        self.pending_profile_task.is_some()
+    }
+
+    pub(super) fn open_agent_menu(&mut self) {
+        self.delegation_confirmation_menu = None;
+        self.profile_menu = Some(ProfileMenuState::agent());
+        self.pending_profile_task = None;
+        self.editor.set_text("");
+        self.slash_suggestion_selected = 0;
+        self.slash_suggestions_dismissed_for = None;
+    }
+
+    pub(super) fn open_team_menu(&mut self) {
+        self.delegation_confirmation_menu = None;
+        self.profile_menu = Some(ProfileMenuState::team());
+        self.pending_profile_task = None;
+        self.editor.set_text("");
+        self.slash_suggestion_selected = 0;
+        self.slash_suggestions_dismissed_for = None;
+    }
+
+    pub(super) fn handle_profile_menu_input(&mut self, event: &InputEvent) -> bool {
+        let Some(menu) = self.profile_menu.as_mut() else {
+            return false;
+        };
+        let outcome = menu.handle_input(
+            &self.keybindings,
+            event,
+            &self.profile_registry,
+            &self.default_agent_profile_id,
+        );
+        match outcome {
+            ProfileMenuOutcome::None => {}
+            ProfileMenuOutcome::Close => {
+                self.profile_menu = None;
+                self.editor.set_text("");
+            }
+            ProfileMenuOutcome::SetDefaultAgent(profile_id) => {
+                self.profile_menu = None;
+                self.set_default_agent_profile_id(profile_id.clone());
+                self.selected_agent_profile_id = Some(profile_id.clone());
+                self.action = InteractiveAction::AgentProfileUse;
+                self.transcript.push(TranscriptItem::system(format!(
+                    "Default agent profile: {profile_id}"
+                )));
+            }
+            ProfileMenuOutcome::BeginAgentTask(profile_id) => {
+                self.profile_menu = None;
+                self.pending_profile_task = Some(PendingProfileTask::Agent { profile_id });
+                self.editor.set_text("");
+            }
+            ProfileMenuOutcome::BeginTeamTask(team_id) => {
+                self.profile_menu = None;
+                self.pending_profile_task = Some(PendingProfileTask::Team { team_id });
+                self.editor.set_text("");
+            }
+        }
+        true
+    }
+
+    pub(super) fn handle_pending_profile_task_input(&mut self, event: &InputEvent) -> bool {
+        let Some(pending_task) = self.pending_profile_task.clone() else {
+            return false;
+        };
+        if matches_key(event, "escape") || matches_key(event, "ctrl+c") {
+            self.pending_profile_task = None;
+            self.editor.set_text("");
+            self.transcript
+                .push(TranscriptItem::system("Profile task canceled"));
+            return true;
+        }
+
+        let before_text = self.editor.text().to_string();
+        self.editor.handle_input(event);
+        if self.editor.text() != before_text {
+            self.slash_suggestion_selected = 0;
+            self.slash_suggestions_dismissed_for = None;
+        }
+        if let Some(command) = self.take_scroll_command() {
+            let page_rows = self.viewport_height.saturating_sub(2).max(1);
+            match command {
+                TranscriptScrollCommand::PageUp => self.transcript.scroll_page_up(page_rows),
+                TranscriptScrollCommand::PageDown => self.transcript.scroll_page_down(page_rows),
+            }
+        }
+        let Some(text) = self.take_submitted() else {
+            return true;
+        };
+        let task = text.trim().to_string();
+        if task.is_empty() {
+            self.transcript
+                .push(TranscriptItem::system("Profile task requires text"));
+            return true;
+        }
+        self.editor.add_to_history(&task);
+        match pending_task {
+            PendingProfileTask::Agent { profile_id } => {
+                self.pending_agent_invocation_request =
+                    Some(PendingAgentInvocationRequest { profile_id, task });
+                self.action = InteractiveAction::AgentInvocation;
+            }
+            PendingProfileTask::Team { team_id } => {
+                self.pending_agent_team_request = Some(PendingAgentTeamRequest { team_id, task });
+                self.action = InteractiveAction::AgentTeam;
+            }
+        }
+        self.pending_profile_task = None;
+        true
+    }
+
+    fn render_profile_menu(&mut self, width: usize) -> Vec<String> {
+        let Some(menu) = self.profile_menu.as_mut() else {
+            return Vec::new();
+        };
+        menu.render(
+            &self.profile_registry,
+            &self.default_agent_profile_id,
+            width,
+        )
+    }
+
+    fn render_pending_profile_task(&self, width: usize) -> Vec<String> {
+        let Some(pending_task) = &self.pending_profile_task else {
+            return Vec::new();
+        };
+        let text = match pending_task {
+            PendingProfileTask::Agent { profile_id } => {
+                format!("Agent {profile_id}: enter task, then press Enter")
+            }
+            PendingProfileTask::Team { team_id } => {
+                format!("Team {team_id}: enter task, then press Enter")
+            }
+        };
+        vec![fit_line(
+            &paint_with(&text, &SYSTEM, color_enabled()),
+            width,
+        )]
+    }
+
     pub(super) fn apply_prompt_context(&mut self, prompt_context: &PromptContext) {
         self.cwd = prompt_context
             .session
@@ -1139,6 +1391,9 @@ impl InteractiveRoot {
             || self.selecting_session
             || self.selecting_settings
             || self.selecting_tree
+            || self.delegation_confirmation_menu.is_some()
+            || self.profile_menu.is_some()
+            || self.pending_profile_task.is_some()
         {
             return false;
         }
@@ -1629,11 +1884,23 @@ impl InteractiveRoot {
             selecting_session: self.selecting_session,
             session_selection_selected: self.session_selection_selected,
             active_plugin_ui_dialog: self.active_plugin_ui_dialog.clone(),
+            delegation_confirmation_menu_state: self
+                .delegation_confirmation_menu
+                .as_ref()
+                .map(|menu| menu.render_state()),
+            profile_menu_state: self.profile_menu.as_ref().map(|menu| menu.render_state()),
+            pending_profile_task: self.pending_profile_task.clone(),
         }
     }
 
     pub(super) fn editor_border_style(&self) -> Style {
-        if self.selecting_model || self.selecting_settings || self.selecting_session {
+        if self.selecting_model
+            || self.selecting_settings
+            || self.selecting_session
+            || self.delegation_confirmation_menu.is_some()
+            || self.profile_menu.is_some()
+            || self.pending_profile_task.is_some()
+        {
             self.theme.editor.menu_border
         } else if let Some(resolved) = &self.resolved_theme {
             // Editor border reflects the active thinking level, mirroring TS
@@ -1663,7 +1930,13 @@ impl InteractiveRoot {
     }
 
     fn render_slash_suggestions(&mut self, width: usize) -> Vec<String> {
-        if self.selecting_model || self.selecting_settings || self.selecting_session {
+        if self.selecting_model
+            || self.selecting_settings
+            || self.selecting_session
+            || self.delegation_confirmation_menu.is_some()
+            || self.profile_menu.is_some()
+            || self.pending_profile_task.is_some()
+        {
             return Vec::new();
         }
 
@@ -1972,7 +2245,13 @@ impl InteractiveRoot {
     }
 
     pub(super) fn handle_slash_suggestion_input(&mut self, event: &InputEvent) -> bool {
-        if self.selecting_model || self.selecting_settings || self.selecting_session {
+        if self.selecting_model
+            || self.selecting_settings
+            || self.selecting_session
+            || self.delegation_confirmation_menu.is_some()
+            || self.profile_menu.is_some()
+            || self.pending_profile_task.is_some()
+        {
             return false;
         }
         let commands = self.all_slash_commands();
@@ -2093,18 +2372,23 @@ impl Component for InteractiveRoot {
         };
         let mut lines = self.transcript_lines(max_tool_result_lines);
         lines.extend(self.render_editor_box(width));
+        lines.extend(self.render_pending_profile_task(width));
         if self.selecting_tree {
             if let Some(ref selector) = self.tree_selector {
                 lines.extend(selector.render(width));
             }
+        } else if self.active_plugin_ui_dialog.is_some() {
+            lines.extend(self.render_plugin_dialog_form(width));
+        } else if self.delegation_confirmation_menu.is_some() {
+            lines.extend(self.render_delegation_confirmation_menu(width));
+        } else if self.profile_menu.is_some() {
+            lines.extend(self.render_profile_menu(width));
         } else if self.selecting_model {
             lines.extend(self.render_model_selector(width));
         } else if self.selecting_session {
             lines.extend(self.render_session_selector(width));
         } else if self.selecting_settings {
             lines.extend(self.render_settings_menu(width));
-        } else if self.active_plugin_ui_dialog.is_some() {
-            lines.extend(self.render_plugin_dialog_form(width));
         } else {
             lines.extend(self.render_slash_suggestions(width));
         }

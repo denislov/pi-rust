@@ -90,6 +90,7 @@ pub(crate) struct ReplayPendingDelegationConfirmation {
     pub(crate) target_id: ProfileId,
     pub(crate) task: String,
     pub(crate) reason: String,
+    pub(crate) requested_at: String,
     pub(crate) runtime_seed: PersistedDelegationRuntimeSeed,
 }
 
@@ -117,6 +118,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         builder.observe_session_id(event);
         if let Some(operation_id) = event.operation_id.as_deref()
             && !finalized_operations.contains(operation_id)
+            && !is_delegation_confirmation_event(&event.data)
         {
             continue;
         }
@@ -140,6 +142,15 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
     }
 }
 
+fn is_delegation_confirmation_event(data: &SessionEventData) -> bool {
+    matches!(
+        data,
+        SessionEventData::DelegationConfirmationRequested { .. }
+            | SessionEventData::DelegationConfirmationApproved { .. }
+            | SessionEventData::DelegationConfirmationRejected { .. }
+    )
+}
+
 fn finalized_operation_ids(events: &[SessionEventEnvelope]) -> HashSet<String> {
     events
         .iter()
@@ -159,6 +170,9 @@ fn incomplete_operation_ids(
     let mut seen = HashSet::new();
     let mut incomplete = Vec::new();
     for event in events {
+        if is_delegation_confirmation_event(&event.data) {
+            continue;
+        }
         let Some(operation_id) = event.operation_id.as_deref() else {
             continue;
         };
@@ -199,6 +213,9 @@ impl ReplayBuilder {
             | SessionEventData::SessionForked { .. }
             | SessionEventData::SessionCompactionStarted { .. }
             | SessionEventData::TurnStarted {}
+            | SessionEventData::SelfHealingEditStarted { .. }
+            | SessionEventData::SelfHealingEditRepairAttempted { .. }
+            | SessionEventData::SelfHealingEditCompleted { .. }
             | SessionEventData::MetadataUpdated { .. } => {}
             SessionEventData::SessionCompactionCompleted {
                 summary,
@@ -250,6 +267,7 @@ impl ReplayBuilder {
                     target_id: target_id.clone(),
                     task: task.clone(),
                     reason: reason.clone(),
+                    requested_at: event.created_at.clone(),
                     runtime_seed: runtime_seed.clone(),
                 });
             }
@@ -671,6 +689,7 @@ mod tests {
             tool_execution: None,
             session_name: None,
             parent_delegation_depth: 0,
+            delegation_lineage: Vec::new(),
         }
     }
 
@@ -721,6 +740,7 @@ mod tests {
         assert_eq!(pending.target_id.as_str(), "coder");
         assert_eq!(pending.task, "implement parser");
         assert_eq!(pending.reason, "delegation policy requires confirmation");
+        assert_eq!(pending.requested_at, "2026-06-29T00:00:00Z");
         assert_eq!(pending.runtime_seed.model.id, "test-model");
     }
 

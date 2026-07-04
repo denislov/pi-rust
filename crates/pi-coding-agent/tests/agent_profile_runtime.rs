@@ -1,6 +1,7 @@
-use std::ffi::OsString;
+mod support;
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
@@ -15,6 +16,7 @@ use pi_coding_agent::api::{
     CodingAgentSession, CodingAgentSessionOptions, CodingDiagnosticSeverity, PromptInvocation,
     PromptRunOptions, PromptTurnOptions, PromptTurnOutcome, SessionRunOptions,
 };
+use support::EnvGuard;
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -35,7 +37,7 @@ tools = ["echo", "missing_tool"]
 skills = ["missing_skill"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let profile_model = pi_ai::lookup_model("claude-haiku-4-5").unwrap();
     let fallback_api = "profile-runtime-fallback-api";
@@ -117,7 +119,7 @@ allowed_agents = ["coder"]
 allowed_teams = ["implementation"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "profile-runtime-delegation-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -277,31 +279,6 @@ impl Drop for ProviderGuard {
     fn drop(&mut self) {
         for api in &self.apis {
             registry::unregister(api);
-        }
-    }
-}
-
-struct EnvGuard {
-    previous: Option<OsString>,
-}
-
-impl EnvGuard {
-    fn set_pi_rust_dir(path: PathBuf) -> Self {
-        let previous = std::env::var_os("PI_RUST_DIR");
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", path);
-        }
-        Self { previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        unsafe {
-            match self.previous.take() {
-                Some(value) => std::env::set_var("PI_RUST_DIR", value),
-                None => std::env::remove_var("PI_RUST_DIR"),
-            }
         }
     }
 }

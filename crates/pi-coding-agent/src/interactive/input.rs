@@ -75,6 +75,27 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         return;
     }
 
+    if root.status == InteractiveStatus::Idle
+        && root.has_active_delegation_confirmation_menu()
+        && root.handle_delegation_confirmation_menu_input(event)
+    {
+        return;
+    }
+
+    if root.status == InteractiveStatus::Idle
+        && root.has_active_profile_menu()
+        && root.handle_profile_menu_input(event)
+    {
+        return;
+    }
+
+    if root.status == InteractiveStatus::Idle
+        && root.has_pending_profile_task()
+        && root.handle_pending_profile_task_input(event)
+    {
+        return;
+    }
+
     if matches_key(event, "ctrl+c") || matches_key(event, "escape") {
         match root.status {
             InteractiveStatus::Running => {

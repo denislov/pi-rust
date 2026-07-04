@@ -15,6 +15,9 @@ use super::manual_compaction_flow::{
 use super::plugin_load_flow::{PluginLoadContext, PluginLoadFlow, PluginLoadOutcome};
 use super::prompt::{PromptTurnContext, PromptTurnOutcome};
 use super::prompt_flow::PromptTurnFlow;
+use super::self_healing_edit_flow::{
+    SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOutcome,
+};
 
 #[derive(Debug, Default)]
 pub(crate) struct FlowService;
@@ -54,6 +57,10 @@ impl FlowService {
         ExportFlow::new()
     }
 
+    pub(crate) fn self_healing_edit_flow(&self) -> Result<SelfHealingEditFlow, CodingSessionError> {
+        SelfHealingEditFlow::new()
+    }
+
     pub(crate) fn run_export_graph(
         &self,
         ctx: &mut ExportContext,
@@ -66,6 +73,23 @@ impl FlowService {
         ctx: &mut ExportContext,
     ) -> Result<ExportOutcome, CodingSessionError> {
         match self.run_export_graph(ctx) {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
+    }
+
+    pub(crate) async fn run_self_healing_edit_graph(
+        &self,
+        ctx: &mut SelfHealingEditContext,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        self.self_healing_edit_flow()?.run(ctx).await
+    }
+
+    pub(crate) async fn run_self_healing_edit(
+        &self,
+        ctx: &mut SelfHealingEditContext,
+    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
+        match self.run_self_healing_edit_graph(ctx).await {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -184,9 +208,16 @@ impl FlowService {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, sync::Arc};
+    use std::{
+        collections::VecDeque,
+        fs,
+        sync::{Arc, Mutex},
+    };
 
-    use pi_agent_core::{AgentResources, AgentTool};
+    use futures::future::{BoxFuture, FutureExt};
+    use pi_agent_core::{
+        AgentResources, AgentTool, ExecutionOutput, FileSystem, InMemoryExecutionEnv,
+    };
     use pi_ai::providers::faux::FauxProvider;
     use pi_ai::registry;
     use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
@@ -198,6 +229,11 @@ mod tests {
         PluginLoadOutcome,
     };
     use crate::coding_session::prompt::{PromptTurnIds, PromptTurnOptions};
+    use crate::coding_session::self_healing_edit_flow::{
+        SelfHealingEditCheckOutput, SelfHealingEditCheckRunner, SelfHealingEditContext,
+        SelfHealingEditObserver, SelfHealingEditOptions, SelfHealingEditRepairAttempt,
+        SelfHealingEditRepairStrategy, SelfHealingEditReplacement,
+    };
     use crate::coding_session::session_log::replay::{SessionReplay, TranscriptItem};
     use crate::coding_session::session_log::store::{CreateSessionOptions, SessionLogStore};
     use crate::coding_session::{CodingAgentSessionExportItem, CodingAgentSessionSummary};
@@ -224,6 +260,130 @@ mod tests {
             max_tokens: 0,
             headers: None,
             compat: None,
+        }
+    }
+
+    #[derive(Debug)]
+    struct SequenceCheckRunner {
+        outputs: Mutex<VecDeque<SelfHealingEditCheckOutput>>,
+    }
+
+    impl SequenceCheckRunner {
+        fn new(outputs: Vec<SelfHealingEditCheckOutput>) -> Self {
+            Self {
+                outputs: Mutex::new(outputs.into()),
+            }
+        }
+    }
+
+    impl SelfHealingEditCheckRunner for SequenceCheckRunner {
+        fn run_check<'a>(
+            &'a self,
+            _cwd: &'a std::path::Path,
+            _command: &'a str,
+        ) -> BoxFuture<'a, Result<SelfHealingEditCheckOutput, String>> {
+            async move {
+                self.outputs
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .ok_or_else(|| "no check output queued".to_owned())
+            }
+            .boxed()
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct ObservedRepairAttempt {
+        path: String,
+        attempt: usize,
+        old_text: String,
+        new_text: String,
+        exit_code: Option<i32>,
+    }
+
+    #[derive(Debug)]
+    struct BlockingRepairObserver {
+        sender: tokio::sync::mpsc::UnboundedSender<ObservedRepairAttempt>,
+        release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    impl BlockingRepairObserver {
+        fn new(
+            sender: tokio::sync::mpsc::UnboundedSender<ObservedRepairAttempt>,
+            release: tokio::sync::oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                sender,
+                release: Mutex::new(Some(release)),
+            }
+        }
+    }
+
+    impl SelfHealingEditObserver for BlockingRepairObserver {
+        fn repair_attempted<'a>(
+            &'a self,
+            path: &'a str,
+            repair: &'a SelfHealingEditRepairAttempt,
+        ) -> BoxFuture<'a, ()> {
+            let replacement = repair
+                .replacements
+                .first()
+                .expect("repair observer test uses one replacement");
+            let observed = ObservedRepairAttempt {
+                path: path.to_owned(),
+                attempt: repair.attempt,
+                old_text: replacement.old_text.clone(),
+                new_text: replacement.new_text.clone(),
+                exit_code: repair.check_output.as_ref().map(|output| output.exit_code),
+            };
+            let release = self.release.lock().unwrap().take();
+            async move {
+                self.sender
+                    .send(observed)
+                    .expect("repair observer receiver should be alive");
+                if let Some(release) = release {
+                    let _ = release.await;
+                }
+            }
+            .boxed()
+        }
+    }
+
+    #[derive(Debug)]
+    struct FixedRepairStrategy {
+        replacements: Vec<SelfHealingEditReplacement>,
+    }
+
+    impl FixedRepairStrategy {
+        fn new(replacements: Vec<SelfHealingEditReplacement>) -> Self {
+            Self { replacements }
+        }
+    }
+
+    impl SelfHealingEditRepairStrategy for FixedRepairStrategy {
+        fn repair<'a>(
+            &'a self,
+            _attempt: usize,
+            _path: &'a str,
+            _replacements: &'a [SelfHealingEditReplacement],
+            _diagnostics: &'a [crate::coding_session::self_healing_edit_flow::SelfHealingEditDiagnostic],
+        ) -> BoxFuture<'a, Result<Vec<SelfHealingEditReplacement>, String>> {
+            async move { Ok(self.replacements.clone()) }.boxed()
+        }
+    }
+
+    fn check_output(
+        command: &str,
+        exit_code: i32,
+        stdout: &str,
+        stderr: &str,
+    ) -> SelfHealingEditCheckOutput {
+        SelfHealingEditCheckOutput {
+            command: command.to_owned(),
+            stdout: stdout.to_owned(),
+            stderr: stderr.to_owned(),
+            exit_code,
         }
     }
 
@@ -353,6 +513,323 @@ mod tests {
                 "emit_diagnostics",
                 "finalize_plugin_load",
             ]
+        );
+    }
+
+    #[test]
+    fn self_healing_edit_flow_node_ids_are_stable() {
+        let service = FlowService::new();
+
+        service.self_healing_edit_flow().unwrap();
+
+        assert_eq!(
+            crate::coding_session::self_healing_edit_flow::SelfHealingEditFlow::node_ids(),
+            &[
+                "start_edit_workflow",
+                "read_target",
+                "propose_patch",
+                "validate_patch",
+                "apply_patch",
+                "run_check",
+                "repair_patch",
+                "record_result",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn self_healing_edit_flow_applies_successful_edit() {
+        let service = FlowService::new();
+        let env = InMemoryExecutionEnv::new("/workspace");
+        env.write_file("src/app.txt", b"one\ntwo\n").await.unwrap();
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .with_execution_env(env.clone());
+        let mut context = SelfHealingEditContext::new(options);
+
+        let outcome = service.run_self_healing_edit(&mut context).await.unwrap();
+
+        assert_eq!(outcome.path, "src/app.txt");
+        assert_eq!(outcome.attempts, 1);
+        assert!(outcome.message.contains("Successfully replaced 1 block"));
+        assert!(outcome.diff.contains("-2 two"), "{}", outcome.diff);
+        assert!(outcome.diff.contains("+2 deux"), "{}", outcome.diff);
+        assert!(
+            outcome.patch.contains("--- src/app.txt"),
+            "{}",
+            outcome.patch
+        );
+        assert!(outcome.patch.contains("+deux"), "{}", outcome.patch);
+        assert_eq!(outcome.first_changed_line, Some(2));
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(
+            env.read_text_file("src/app.txt").await.unwrap(),
+            "one\ndeux\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn self_healing_edit_flow_runs_successful_check_command() {
+        let service = FlowService::new();
+        let env = InMemoryExecutionEnv::new("/workspace");
+        env.write_file("src/app.txt", b"one\ntwo\n").await.unwrap();
+        env.set_command(
+            "cargo test --quiet",
+            ExecutionOutput {
+                stdout: "tests passed".to_owned(),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+        );
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .with_execution_env(env.clone())
+        .with_check_command("cargo test --quiet");
+        let mut context = SelfHealingEditContext::new(options);
+
+        let outcome = service.run_self_healing_edit(&mut context).await.unwrap();
+
+        let check_output = outcome
+            .check_output
+            .as_ref()
+            .expect("check output should be recorded");
+        assert_eq!(check_output.command, "cargo test --quiet");
+        assert_eq!(check_output.exit_code, 0);
+        assert_eq!(check_output.stdout, "tests passed");
+        assert!(check_output.stderr.is_empty());
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(
+            env.read_text_file("src/app.txt").await.unwrap(),
+            "one\ndeux\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn self_healing_edit_flow_fails_when_check_command_fails_without_repair() {
+        let service = FlowService::new();
+        let env = InMemoryExecutionEnv::new("/workspace");
+        env.write_file("src/app.txt", b"one\ntwo\n").await.unwrap();
+        env.set_command(
+            "cargo check",
+            ExecutionOutput {
+                stdout: String::new(),
+                stderr: "compile error".to_owned(),
+                exit_code: 1,
+            },
+        );
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .with_execution_env(env.clone())
+        .with_check_command("cargo check");
+        let mut context = SelfHealingEditContext::new(options);
+
+        let error = service
+            .run_self_healing_edit(&mut context)
+            .await
+            .expect_err("failed check should fail without repair");
+
+        assert!(
+            error.to_string().contains("self-healing edit check failed"),
+            "{error}"
+        );
+        assert!(
+            context
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("compile error")),
+            "{:#?}",
+            context.diagnostics()
+        );
+        assert_eq!(
+            env.read_text_file("src/app.txt").await.unwrap(),
+            "one\ndeux\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn self_healing_edit_flow_repairs_after_failed_check() {
+        let service = FlowService::new();
+        let env = InMemoryExecutionEnv::new("/workspace");
+        env.write_file("src/app.txt", b"one\ntwo\n").await.unwrap();
+        let check_runner = Arc::new(SequenceCheckRunner::new(vec![
+            check_output("cargo check", 1, "", "compile error"),
+            check_output("cargo check", 0, "fixed", ""),
+        ]));
+        let repair_strategy = Arc::new(FixedRepairStrategy::new(vec![
+            SelfHealingEditReplacement::new("deux", "dos"),
+        ]));
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .with_execution_env(env.clone())
+        .with_check_command("cargo check")
+        .with_check_runner(check_runner)
+        .with_repair_strategy(repair_strategy)
+        .with_max_repair_attempts(1);
+        let mut context = SelfHealingEditContext::new(options);
+
+        let outcome = service.run_self_healing_edit(&mut context).await.unwrap();
+
+        assert_eq!(outcome.attempts, 2);
+        assert_eq!(outcome.repair_attempts.len(), 1);
+        let repair = &outcome.repair_attempts[0];
+        assert_eq!(repair.attempt, 1);
+        assert_eq!(repair.replacements.len(), 1);
+        assert_eq!(repair.replacements[0].old_text, "deux");
+        assert_eq!(repair.replacements[0].new_text, "dos");
+        assert_eq!(repair.check_output.as_ref().unwrap().exit_code, 0);
+        assert!(
+            repair
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("compile error")),
+            "{:#?}",
+            repair.diagnostics
+        );
+        assert_eq!(outcome.check_output.as_ref().unwrap().exit_code, 0);
+        assert_eq!(outcome.check_output.as_ref().unwrap().stdout, "fixed");
+        assert!(
+            outcome
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("compile error")),
+            "{:#?}",
+            outcome.diagnostics
+        );
+        assert_eq!(
+            env.read_text_file("src/app.txt").await.unwrap(),
+            "one\ndos\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn self_healing_edit_flow_notifies_repair_observer_before_completion() {
+        let service = FlowService::new();
+        let env = InMemoryExecutionEnv::new("/workspace");
+        env.write_file("src/app.txt", b"one\ntwo\n").await.unwrap();
+        let check_runner = Arc::new(SequenceCheckRunner::new(vec![
+            check_output("cargo check", 1, "", "compile error"),
+            check_output("cargo check", 0, "fixed", ""),
+        ]));
+        let repair_strategy = Arc::new(FixedRepairStrategy::new(vec![
+            SelfHealingEditReplacement::new("deux", "dos"),
+        ]));
+        let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let observer = Arc::new(BlockingRepairObserver::new(observed_tx, release_rx));
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .with_execution_env(env.clone())
+        .with_check_command("cargo check")
+        .with_check_runner(check_runner)
+        .with_repair_strategy(repair_strategy)
+        .with_max_repair_attempts(1)
+        .with_repair_observer(observer);
+        let mut context = SelfHealingEditContext::new(options);
+        let run = service.run_self_healing_edit(&mut context);
+        tokio::pin!(run);
+
+        let observed = tokio::select! {
+            observed = observed_rx.recv() => observed.expect("repair observer should emit before completion"),
+            result = &mut run => panic!("flow completed before live repair observer fired: {result:?}"),
+        };
+
+        assert_eq!(
+            observed,
+            ObservedRepairAttempt {
+                path: "src/app.txt".to_owned(),
+                attempt: 1,
+                old_text: "deux".to_owned(),
+                new_text: "dos".to_owned(),
+                exit_code: Some(0),
+            }
+        );
+        release_tx
+            .send(())
+            .expect("flow should still be waiting for observer release");
+        let outcome = run.await.unwrap();
+        assert_eq!(outcome.attempts, 2);
+        assert_eq!(outcome.repair_attempts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn self_healing_edit_flow_reports_validation_failure_without_write() {
+        let service = FlowService::new();
+        let env = InMemoryExecutionEnv::new("/workspace");
+        env.write_file("src/app.txt", b"one\ntwo\n").await.unwrap();
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("", "deux")],
+        )
+        .with_execution_env(env.clone());
+        let mut context = SelfHealingEditContext::new(options);
+
+        let error = service
+            .run_self_healing_edit(&mut context)
+            .await
+            .expect_err("empty old text should fail validation");
+
+        assert!(
+            error.to_string().contains("oldText must not be empty"),
+            "{error}"
+        );
+        assert_eq!(
+            env.read_text_file("src/app.txt").await.unwrap(),
+            "one\ntwo\n"
+        );
+        assert_eq!(context.diagnostics().len(), 1);
+        assert!(
+            context.diagnostics()[0]
+                .message
+                .contains("oldText must not be empty")
+        );
+    }
+
+    #[tokio::test]
+    async fn self_healing_edit_flow_uses_execution_env_operations() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let local_path = temp.path().join("src/app.txt");
+        std::fs::create_dir_all(local_path.parent().unwrap()).unwrap();
+        std::fs::write(&local_path, "local should not change\n").unwrap();
+
+        let env = InMemoryExecutionEnv::new(temp.path());
+        env.write_file("src/app.txt", b"env one\nenv two\n")
+            .await
+            .unwrap();
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("env two", "env deux")],
+        )
+        .with_execution_env(env.clone());
+        let mut context = SelfHealingEditContext::new(options);
+
+        let outcome = service.run_self_healing_edit(&mut context).await.unwrap();
+
+        assert_eq!(outcome.first_changed_line, Some(2));
+        assert_eq!(
+            env.read_text_file("src/app.txt").await.unwrap(),
+            "env one\nenv deux\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&local_path).unwrap(),
+            "local should not change\n"
         );
     }
 
@@ -815,6 +1292,179 @@ end
         assert_eq!(keybindings[0].key, "ctrl+shift+p");
         assert_eq!(keybindings[0].description, "opens the Lua panel");
         assert_eq!(keybindings[0].action_id, "lua.open_panel");
+    }
+
+    #[tokio::test]
+    async fn plugin_load_flow_lua_host_capabilities_metadata_is_feature_scoped() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp
+            .path()
+            .join("project/.pi-rust/plugins/lua-capabilities");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-capabilities"
+name = "Lua Capabilities"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+local function assert_feature_scoped(host, capabilities)
+  local expected = {
+    "api_version",
+    "plugin",
+    "workspace",
+    "capabilities",
+    "tool",
+    "command",
+    "hook",
+    "ui_action",
+    "dialog",
+    "keybind"
+  }
+  for _, name in ipairs(expected) do
+    if capabilities[name] ~= true then
+      error("missing Lua host capability " .. name)
+    end
+  end
+  local forbidden = {
+    "session",
+    "runtime",
+    "provider",
+    "filesystem",
+    "shell",
+    "operationContext",
+    "sessionService"
+  }
+  for _, name in ipairs(forbidden) do
+    if host[name] ~= nil or capabilities[name] ~= nil then
+      error("Lua host capabilities exposed privileged internal " .. name)
+    end
+  end
+end
+
+function register(host)
+  local capabilities = host:capabilities()
+  assert_feature_scoped(host, capabilities)
+  host:command({
+    id = "lua.capabilities_info",
+    description = "capabilities " .. tostring(capabilities.tool) .. " " .. tostring(capabilities.command),
+    run = function(input)
+      local live_capabilities = host:capabilities()
+      assert_feature_scoped(host, live_capabilities)
+      return { content = "capabilities " .. tostring(live_capabilities.tool) .. " " .. tostring(live_capabilities.command) }
+    end
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(
+            outcome.loaded_plugin_ids,
+            vec!["lua-capabilities"],
+            "{:#?}",
+            outcome.diagnostics
+        );
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.command_providers, 1);
+        let loaded_service = context.loaded_plugin_service().unwrap();
+        let commands = loaded_service.collect_commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].id, "lua.capabilities_info");
+        assert_eq!(commands[0].description, "capabilities true true");
+        assert_eq!(
+            loaded_service
+                .run_command("lua.capabilities_info", serde_json::json!({}))
+                .unwrap(),
+            "capabilities true true"
+        );
+    }
+
+    #[tokio::test]
+    async fn plugin_load_flow_lua_host_workspace_metadata_is_read_only_and_path_scoped() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-workspace");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-workspace"
+name = "Lua Workspace"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  local workspace = host:workspace()
+  if workspace.session ~= nil or workspace.runtime ~= nil or workspace.provider ~= nil or workspace.sessionService ~= nil then
+    error("workspace metadata exposed privileged internals")
+  end
+  host:command({
+    id = "lua.workspace_info",
+    description = "workspace " .. workspace.pluginRoot .. " entry " .. workspace.entryPath,
+    run = function(input)
+      local live_workspace = host:workspace()
+      if live_workspace.session ~= nil or live_workspace.runtime ~= nil or live_workspace.provider ~= nil or live_workspace.sessionService ~= nil then
+        error("workspace metadata exposed privileged internals at execution")
+      end
+      return { content = "workspace " .. live_workspace.pluginRoot .. " entry " .. live_workspace.entryPath }
+    end
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+        let plugin_root = plugin_dir.display().to_string();
+        let entry_path = plugin_dir.join("plugin.lua").display().to_string();
+        let expected = format!("workspace {plugin_root} entry {entry_path}");
+
+        let outcome = service.run_plugin_load(&mut context).await.unwrap();
+
+        assert_eq!(
+            outcome.loaded_plugin_ids,
+            vec!["lua-workspace"],
+            "{:#?}",
+            outcome.diagnostics
+        );
+        assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+        assert_eq!(outcome.capabilities.command_providers, 1);
+        let loaded_service = context.loaded_plugin_service().unwrap();
+        let commands = loaded_service.collect_commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].id, "lua.workspace_info");
+        assert_eq!(commands[0].description, expected);
+        assert_eq!(
+            loaded_service
+                .run_command("lua.workspace_info", serde_json::json!({}))
+                .unwrap(),
+            expected
+        );
     }
 
     #[tokio::test]

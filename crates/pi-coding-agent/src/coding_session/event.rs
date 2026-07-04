@@ -1,4 +1,7 @@
-use super::{CodingSessionError, ProfileId, ProfileKind};
+use super::{
+    CodingSessionError, ProfileId, ProfileKind, SelfHealingEditCheckOutput,
+    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodingAgentEvent {
@@ -65,6 +68,31 @@ pub enum CodingAgentEvent {
         operation_id: String,
         team_id: ProfileId,
         reason: String,
+    },
+    SelfHealingEditStarted {
+        operation_id: String,
+        path: String,
+        replacements: usize,
+    },
+    SelfHealingEditRepairAttempted {
+        operation_id: String,
+        path: String,
+        attempt: usize,
+        replacements: Vec<SelfHealingEditReplacement>,
+        diagnostics: Vec<SelfHealingEditDiagnostic>,
+        check_output: Option<SelfHealingEditCheckOutput>,
+    },
+    SelfHealingEditCompleted {
+        operation_id: String,
+        path: String,
+        attempts: usize,
+        first_changed_line: Option<usize>,
+        check_output: Option<SelfHealingEditCheckOutput>,
+    },
+    SelfHealingEditFailed {
+        operation_id: String,
+        path: String,
+        error: CodingSessionError,
     },
     DelegationRequested {
         operation_id: String,

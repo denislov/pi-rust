@@ -1,3 +1,4 @@
+use super::self_healing_edit_flow::{SelfHealingEditCheckOutput, SelfHealingEditDiagnostic};
 use crate::error::CliError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -12,6 +13,12 @@ pub enum CodingSessionError {
     Resource { message: String },
     #[error("session error: {message}")]
     Session { message: String },
+    #[error("self-healing edit failed: {message}")]
+    SelfHealingEditFailed {
+        message: String,
+        diagnostics: Vec<SelfHealingEditDiagnostic>,
+        check_output: Option<SelfHealingEditCheckOutput>,
+    },
     #[error("provider error: {message}")]
     Provider { message: String },
     #[error("tool error: {message}")]
@@ -36,6 +43,7 @@ impl CodingSessionError {
             Self::Input { .. } => "input",
             Self::Resource { .. } => "resource",
             Self::Session { .. } => "session",
+            Self::SelfHealingEditFailed { .. } => "self_healing_edit_failed",
             Self::Provider { .. } => "provider",
             Self::Tool { .. } => "tool",
             Self::Flow { .. } => "flow",
@@ -55,6 +63,7 @@ impl From<CodingSessionError> for CliError {
             | CodingSessionError::Input { message }
             | CodingSessionError::Resource { message }
             | CodingSessionError::Session { message }
+            | CodingSessionError::SelfHealingEditFailed { message, .. }
             | CodingSessionError::Provider { message }
             | CodingSessionError::Tool { message }
             | CodingSessionError::Flow { message }
@@ -106,6 +115,14 @@ mod tests {
                     message: "not open".into(),
                 },
                 "session",
+            ),
+            (
+                CodingSessionError::SelfHealingEditFailed {
+                    message: "check failed".into(),
+                    diagnostics: Vec::new(),
+                    check_output: None,
+                },
+                "self_healing_edit_failed",
             ),
             (
                 CodingSessionError::Provider {

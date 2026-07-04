@@ -1,3 +1,5 @@
+mod support;
+
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -11,6 +13,7 @@ use pi_ai::{
 };
 use pi_coding_agent::interactive::test_harness::run_scripted_idle_interactive;
 use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
+use support::EnvGuard;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -101,10 +104,8 @@ display_name = "Coder"
 "#,
     )
     .unwrap();
-    let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path());
-    }
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let provider = Arc::new(AbortAwareProvider::new(Arc::clone(&cancelled)));
@@ -112,23 +113,16 @@ display_name = "Coder"
         Duration::from_millis(500),
         run_scripted_interactive_with_provider_chunks(
             provider,
-            vec!["/agent coder please wait\r", "\x03", "\x03"],
+            vec!["/agent:coder please wait\r", "\x03", "\x03"],
         ),
     )
     .await
     .expect("interactive loop should not hang while aborting agent invocation");
 
-    unsafe {
-        match prior_pi_rust_dir {
-            Some(value) => std::env::set_var("PI_RUST_DIR", value),
-            None => std::env::remove_var("PI_RUST_DIR"),
-        }
-    }
-
     let output = output.expect("scripted interactive run should succeed");
     assert_eq!(output.exit_code, 0);
     assert!(output.terminal_restored);
-    assert!(output.contains("/agent coder please wait"), "{output:?}");
+    assert!(output.contains("/agent:coder please wait"), "{output:?}");
     assert!(
         output.contains("agent invocation aborted: user cancelled"),
         "{output:?}"

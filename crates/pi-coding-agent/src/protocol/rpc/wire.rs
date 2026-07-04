@@ -54,6 +54,7 @@ pub(super) fn is_supported_m5_command(command: &str) -> bool {
             | "get_state"
             | "reload"
             | "plugin_command"
+            | "self_healing_edit"
             | "list_agent_profiles"
             | "list_team_profiles"
             | "set_default_agent_profile"

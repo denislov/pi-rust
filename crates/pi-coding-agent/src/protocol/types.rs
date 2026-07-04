@@ -80,6 +80,42 @@ pub enum ProtocolEvent {
         #[serde(rename = "profileId")]
         profile_id: String,
     },
+    #[serde(rename = "self_healing_edit_start")]
+    SelfHealingEditStart {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        path: String,
+        replacements: usize,
+    },
+    #[serde(rename = "self_healing_edit_repair_attempt")]
+    SelfHealingEditRepairAttempt {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        path: String,
+        attempt: usize,
+        edits: Vec<ProtocolSelfHealingEditReplacement>,
+        diagnostics: Vec<String>,
+        #[serde(rename = "checkOutput", skip_serializing_if = "Option::is_none")]
+        check_output: Option<ProtocolSelfHealingEditCheckOutput>,
+    },
+    #[serde(rename = "self_healing_edit_end")]
+    SelfHealingEditEnd {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        path: String,
+        attempts: usize,
+        #[serde(rename = "firstChangedLine", skip_serializing_if = "Option::is_none")]
+        first_changed_line: Option<usize>,
+        #[serde(rename = "checkOutput", skip_serializing_if = "Option::is_none")]
+        check_output: Option<ProtocolSelfHealingEditCheckOutput>,
+    },
+    #[serde(rename = "self_healing_edit_error")]
+    SelfHealingEditError {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        path: String,
+        error: String,
+    },
     #[serde(rename = "delegation_requested")]
     DelegationRequested {
         #[serde(rename = "operationId")]
@@ -330,6 +366,37 @@ pub struct CompactionProtocolResult {
     pub details: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProtocolSelfHealingEditReplacement {
+    #[serde(rename = "oldText")]
+    pub old_text: String,
+    #[serde(rename = "newText")]
+    pub new_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProtocolSelfHealingEditCheckOutput {
+    pub command: String,
+    pub stdout: String,
+    pub stderr: String,
+    #[serde(rename = "exitCode")]
+    pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RpcSelfHealingEditReplacement {
+    #[serde(rename = "oldText")]
+    pub old_text: String,
+    #[serde(rename = "newText")]
+    pub new_text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RpcSelfHealingEditModelRepair {
+    #[serde(rename = "maxAttempts")]
+    pub max_attempts: Option<usize>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum RpcCommand {
@@ -372,6 +439,18 @@ pub enum RpcCommand {
         command_id: String,
         #[serde(default)]
         args: Option<serde_json::Value>,
+    },
+    #[serde(rename = "self_healing_edit")]
+    SelfHealingEdit {
+        id: Option<String>,
+        path: String,
+        edits: Vec<RpcSelfHealingEditReplacement>,
+        #[serde(rename = "checkCommand")]
+        check_command: Option<String>,
+        #[serde(rename = "repairAttempts")]
+        repair_attempts: Option<Vec<Vec<RpcSelfHealingEditReplacement>>>,
+        #[serde(rename = "modelRepair")]
+        model_repair: Option<RpcSelfHealingEditModelRepair>,
     },
     #[serde(rename = "list_agent_profiles")]
     ListAgentProfiles { id: Option<String> },
@@ -506,6 +585,8 @@ pub struct RpcCapabilities {
     pub export: RpcCapabilityStatus,
     #[serde(rename = "pluginReload")]
     pub plugin_reload: RpcCapabilityStatus,
+    #[serde(rename = "selfHealingEdit")]
+    pub self_healing_edit: RpcCapabilityStatus,
     #[serde(rename = "agentProfiles")]
     pub agent_profiles: RpcCapabilityStatus,
     #[serde(rename = "teamProfiles")]
@@ -539,6 +620,7 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             switch_session: capabilities.switch_session.into(),
             export: capabilities.export.into(),
             plugin_reload: capabilities.plugin_reload.into(),
+            self_healing_edit: capabilities.self_healing_edit.into(),
             agent_profiles: capabilities.agent_profiles.into(),
             team_profiles: capabilities.team_profiles.into(),
             delegation: capabilities.delegation.into(),
@@ -597,6 +679,22 @@ impl RpcResponse {
             command: command.into(),
             success: false,
             data: None,
+            error: Some(error.into()),
+        }
+    }
+
+    pub fn error_with_data(
+        id: Option<String>,
+        command: impl Into<String>,
+        error: impl Into<String>,
+        data: serde_json::Value,
+    ) -> Self {
+        Self {
+            response_type: "response",
+            id,
+            command: command.into(),
+            success: false,
+            data: Some(data),
             error: Some(error.into()),
         }
     }

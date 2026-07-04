@@ -1,9 +1,40 @@
 use pi_agent_core::session::StoredAgentMessage;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
-use pi_coding_agent::api::{CodingAgentEvent, CodingSessionError, ProfileKind};
+use pi_coding_agent::api::{
+    CodingAgentEvent, CodingSessionError, ProfileKind, SelfHealingEditCheckOutput,
+    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+};
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
 use pi_coding_agent::protocol::types::{CompactionReason, ProtocolEvent};
-use serde_json::json;
+use serde_json::{Value, json};
+
+const FLOW_NODE_FIELD_NAMES: &[&str] = &[
+    "flowNode",
+    "flowNodeId",
+    "flowNodeName",
+    "lastNode",
+    "nodeId",
+];
+
+fn assert_no_flow_node_fields(value: &Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, nested) in map {
+                assert!(
+                    !FLOW_NODE_FIELD_NAMES.contains(&key.as_str()),
+                    "protocol event exposed Flow node field `{key}` in {value}"
+                );
+                assert_no_flow_node_fields(nested);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                assert_no_flow_node_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
 
 #[test]
 fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
@@ -83,6 +114,107 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
             .iter()
             .any(|event| matches!(event, ProtocolEvent::AgentEnd { .. }))
     );
+}
+
+#[test]
+fn product_event_protocol_adapter_does_not_emit_flow_node_fields() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+    let check_output = SelfHealingEditCheckOutput {
+        command: "cargo check".into(),
+        stdout: "ok".into(),
+        stderr: String::new(),
+        exit_code: 0,
+    };
+
+    let events = [
+        CodingAgentEvent::AgentTurnStarted {
+            operation_id: "op_prompt".into(),
+            turn_id: "turn_prompt".into(),
+            agent_turn: 1,
+        },
+        CodingAgentEvent::AssistantMessageStarted {
+            operation_id: "op_prompt".into(),
+            turn_id: "turn_prompt".into(),
+            message_id: Some("msg_prompt".into()),
+        },
+        CodingAgentEvent::AssistantMessageDelta {
+            operation_id: "op_prompt".into(),
+            turn_id: "turn_prompt".into(),
+            message_id: Some("msg_prompt".into()),
+            text: "hello".into(),
+        },
+        CodingAgentEvent::AssistantMessageCompleted {
+            operation_id: "op_prompt".into(),
+            turn_id: "turn_prompt".into(),
+            message_id: Some("msg_prompt".into()),
+            final_text: "hello".into(),
+        },
+        CodingAgentEvent::PromptCompleted {
+            operation_id: "op_prompt".into(),
+            turn_id: "turn_prompt".into(),
+        },
+        CodingAgentEvent::RuntimeCompactionCompleted {
+            operation_id: "op_prompt".into(),
+            turn_id: "turn_prompt".into(),
+            summary: "runtime summary".into(),
+            first_kept_message_id: "msg_prompt".into(),
+            tokens_before: 120,
+        },
+        CodingAgentEvent::SessionCompactionCompleted {
+            operation_id: "op_compact".into(),
+            turn_id: "turn_compact".into(),
+            summary: "manual summary".into(),
+            first_kept_message_id: "msg_prompt".into(),
+            tokens_before: 100,
+        },
+        CodingAgentEvent::DefaultAgentProfileChanged {
+            profile_id: "coder".into(),
+        },
+        CodingAgentEvent::SelfHealingEditStarted {
+            operation_id: "op_edit".into(),
+            path: "src/app.txt".into(),
+            replacements: 1,
+        },
+        CodingAgentEvent::SelfHealingEditRepairAttempted {
+            operation_id: "op_edit".into(),
+            path: "src/app.txt".into(),
+            attempt: 1,
+            replacements: vec![SelfHealingEditReplacement::new("old", "new")],
+            diagnostics: vec![SelfHealingEditDiagnostic {
+                message: "fixed".into(),
+            }],
+            check_output: Some(check_output.clone()),
+        },
+        CodingAgentEvent::SelfHealingEditCompleted {
+            operation_id: "op_edit".into(),
+            path: "src/app.txt".into(),
+            attempts: 2,
+            first_changed_line: Some(2),
+            check_output: Some(check_output),
+        },
+        CodingAgentEvent::DelegationRequested {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+        },
+    ]
+    .into_iter()
+    .flat_map(|event| adapter.push(&event))
+    .map(|event| serde_json::to_value(event).unwrap())
+    .collect::<Vec<_>>();
+
+    assert!(!events.is_empty());
+    for event in events {
+        assert_no_flow_node_fields(&event);
+    }
 }
 
 #[test]
@@ -380,6 +512,102 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "task": "implement parser",
                 "childOperationId": "op_child_failed",
                 "error": "invalid input: Unknown agent profile: missing-coder"
+            })
+        ]
+    );
+}
+
+#[test]
+fn coding_event_adapter_maps_self_healing_edit_lifecycle_to_protocol_events() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let check_output = SelfHealingEditCheckOutput {
+        command: "cargo check".into(),
+        stdout: "fixed".into(),
+        stderr: String::new(),
+        exit_code: 0,
+    };
+    let events = [
+        CodingAgentEvent::SelfHealingEditStarted {
+            operation_id: "op_edit".into(),
+            path: "src/app.txt".into(),
+            replacements: 1,
+        },
+        CodingAgentEvent::SelfHealingEditRepairAttempted {
+            operation_id: "op_edit".into(),
+            path: "src/app.txt".into(),
+            attempt: 1,
+            replacements: vec![SelfHealingEditReplacement::new("deux", "dos")],
+            diagnostics: vec![SelfHealingEditDiagnostic {
+                message: "compile error".into(),
+            }],
+            check_output: Some(check_output.clone()),
+        },
+        CodingAgentEvent::SelfHealingEditCompleted {
+            operation_id: "op_edit".into(),
+            path: "src/app.txt".into(),
+            attempts: 2,
+            first_changed_line: Some(2),
+            check_output: Some(check_output),
+        },
+        CodingAgentEvent::SelfHealingEditFailed {
+            operation_id: "op_edit_failed".into(),
+            path: "src/bad.txt".into(),
+            error: CodingSessionError::Input {
+                message: "bad edit".into(),
+            },
+        },
+    ]
+    .into_iter()
+    .flat_map(|event| adapter.push(&event))
+    .map(|event| serde_json::to_value(event).unwrap())
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        events,
+        vec![
+            json!({
+                "type": "self_healing_edit_start",
+                "operationId": "op_edit",
+                "path": "src/app.txt",
+                "replacements": 1
+            }),
+            json!({
+                "type": "self_healing_edit_repair_attempt",
+                "operationId": "op_edit",
+                "path": "src/app.txt",
+                "attempt": 1,
+                "edits": [{"oldText": "deux", "newText": "dos"}],
+                "diagnostics": ["compile error"],
+                "checkOutput": {
+                    "command": "cargo check",
+                    "stdout": "fixed",
+                    "stderr": "",
+                    "exitCode": 0
+                }
+            }),
+            json!({
+                "type": "self_healing_edit_end",
+                "operationId": "op_edit",
+                "path": "src/app.txt",
+                "attempts": 2,
+                "firstChangedLine": 2,
+                "checkOutput": {
+                    "command": "cargo check",
+                    "stdout": "fixed",
+                    "stderr": "",
+                    "exitCode": 0
+                }
+            }),
+            json!({
+                "type": "self_healing_edit_error",
+                "operationId": "op_edit_failed",
+                "path": "src/bad.txt",
+                "error": "invalid input: bad edit"
             })
         ]
     );

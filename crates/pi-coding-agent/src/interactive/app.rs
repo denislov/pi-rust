@@ -29,8 +29,8 @@ use crate::interactive::render::{
 #[cfg(test)]
 use crate::interactive::root::{
     FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus,
-    PendingDelegationConfirmationCommand, PluginKeybinding, PluginSlashCommand, PluginUiAction,
-    PluginUiDialog,
+    PendingDelegationConfirmationCommand, PendingSelfHealingEditRequest, PluginKeybinding,
+    PluginSlashCommand, PluginUiAction, PluginUiDialog,
 };
 #[cfg(test)]
 use crate::interactive::session_actions::SessionChoiceKind;
@@ -348,6 +348,7 @@ pub(super) fn welcome_line(keybindings: &KeybindingsManager) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding_session::{PendingDelegationConfirmation, ProfileKind};
     use pi_tui::StdinBuffer;
 
     /// Build render options with no resolved theme (fallback palette) and
@@ -559,7 +560,7 @@ mod tests {
 
     #[test]
     fn build_prompt_context_uses_config_defaults_and_auth() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("settings.toml"),
@@ -580,23 +581,17 @@ mod tests {
             )
             .unwrap();
         }
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
-        }
+        env.set_pi_rust_dir(dir.path());
 
         let ctx = build_prompt_context(&CliArgs::default(), CliRunOptions::default()).unwrap();
 
         assert_eq!(ctx.model.id, "claude-haiku-4-5");
         assert_eq!(ctx.api_key.as_deref(), Some("from-auth"));
-
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]
     fn build_prompt_context_applies_selected_theme_to_editor_borders() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let dir = tempfile::tempdir().unwrap();
         let themes_dir = dir.path().join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
@@ -616,9 +611,7 @@ mod tests {
             }"##,
         )
         .unwrap();
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
-        }
+        env.set_pi_rust_dir(dir.path());
 
         let ctx = build_prompt_context(&CliArgs::default(), CliRunOptions::default()).unwrap();
 
@@ -630,10 +623,6 @@ mod tests {
             ctx.theme.editor.menu_border.fg,
             pi_tui::Color::Rgb(0x12, 0x34, 0xaa)
         );
-
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]
@@ -1186,6 +1175,7 @@ mod tests {
                 "new",
                 "compact",
                 "branch-summary",
+                "self-healing-edit",
                 "resume",
                 "reload",
                 "plugin-command",
@@ -1211,7 +1201,7 @@ mod tests {
         assert!(rendered.contains("/settings"), "{rendered}");
         assert!(rendered.contains("Open settings menu"), "{rendered}");
         assert!(rendered.contains("/model"), "{rendered}");
-        assert!(rendered.contains("(1/29)"), "{rendered}");
+        assert!(rendered.contains("(1/30)"), "{rendered}");
     }
 
     #[test]
@@ -1903,11 +1893,9 @@ mod tests {
 
     #[test]
     fn login_command_saves_provider_api_key_and_updates_auth_state() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let dir = tempfile::tempdir().unwrap();
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", dir.path());
-        }
+        env.set_pi_rust_dir(dir.path());
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "claude-haiku-4-5".to_string(),
@@ -1927,19 +1915,13 @@ mod tests {
         assert!(last_system_text(&root).contains("Saved API key for anthropic"));
         assert_ne!(root.action, InteractiveAction::Submit);
         assert!(root.pending_submit.is_none());
-
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]
     fn logout_command_removes_provider_auth_entry_and_updates_auth_state() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let dir = tempfile::tempdir().unwrap();
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", dir.path());
-        }
+        env.set_pi_rust_dir(dir.path());
         let auth_path = dir.path().join("auth.toml");
         std::fs::write(
             &auth_path,
@@ -1965,10 +1947,6 @@ mod tests {
         assert!(last_system_text(&root).contains("Removed stored auth for anthropic"));
         assert_ne!(root.action, InteractiveAction::Submit);
         assert!(root.pending_submit.is_none());
-
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]
@@ -2006,14 +1984,14 @@ mod tests {
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
-        assert!(moved.contains("(3/29)"), "{moved}");
+        assert!(moved.contains("(3/30)"), "{moved}");
 
         root.handle_input(&key_event("\t"));
 
         assert_eq!(root.editor.text(), "/model ");
         assert_eq!(root.take_action(), InteractiveAction::None);
         let rendered = root.render(80).join("\n");
-        assert!(!rendered.contains("(2/29)"), "{rendered}");
+        assert!(!rendered.contains("(2/30)"), "{rendered}");
     }
 
     #[test]
@@ -2781,6 +2759,135 @@ mod tests {
     }
 
     #[test]
+    fn self_healing_edit_command_queues_pending_request() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "self-healing-edit".to_string(),
+            args: "src/app.txt old value => new value".to_string(),
+            original: "/self-healing-edit src/app.txt old value => new value".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::SelfHealingEdit);
+        let request: PendingSelfHealingEditRequest = root
+            .take_pending_self_healing_edit_request()
+            .expect("self-healing edit request should be queued");
+        assert_eq!(request.path, "src/app.txt");
+        assert_eq!(request.replacements.len(), 1);
+        assert_eq!(request.replacements[0].old_text, "old value");
+        assert_eq!(request.replacements[0].new_text, "new value");
+        assert_eq!(request.check_command, None);
+        assert_eq!(request.model_repair, None);
+    }
+
+    #[test]
+    fn self_healing_edit_command_queues_check_command() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "self-healing-edit".to_string(),
+            args: "src/app.txt old value => new value --check cargo test --quiet".to_string(),
+            original:
+                "/self-healing-edit src/app.txt old value => new value --check cargo test --quiet"
+                    .to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::SelfHealingEdit);
+        let request = root
+            .take_pending_self_healing_edit_request()
+            .expect("self-healing edit request should be queued");
+        assert_eq!(request.path, "src/app.txt");
+        assert_eq!(request.replacements.len(), 1);
+        assert_eq!(request.replacements[0].old_text, "old value");
+        assert_eq!(request.replacements[0].new_text, "new value");
+        assert_eq!(request.check_command.as_deref(), Some("cargo test --quiet"));
+        assert_eq!(request.model_repair, None);
+    }
+
+    #[test]
+    fn self_healing_edit_command_queues_model_repair_policy() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "self-healing-edit".to_string(),
+            args: "src/app.txt old value => new value --model-repair-attempts 2 --check cargo test --quiet".to_string(),
+            original: "/self-healing-edit src/app.txt old value => new value --model-repair-attempts 2 --check cargo test --quiet".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::SelfHealingEdit);
+        let request = root
+            .take_pending_self_healing_edit_request()
+            .expect("self-healing edit request should be queued");
+        assert_eq!(request.path, "src/app.txt");
+        assert_eq!(request.replacements[0].old_text, "old value");
+        assert_eq!(request.replacements[0].new_text, "new value");
+        assert_eq!(request.check_command.as_deref(), Some("cargo test --quiet"));
+        let model_repair = request
+            .model_repair
+            .expect("model repair policy should be queued");
+        assert_eq!(model_repair.max_attempts, 2);
+    }
+
+    #[test]
+    fn self_healing_edit_command_rejects_invalid_model_repair_attempts() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "self-healing-edit".to_string(),
+            args: "src/app.txt old => new --model-repair-attempts nope".to_string(),
+            original: "/self-healing-edit src/app.txt old => new --model-repair-attempts nope"
+                .to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        assert!(root.take_pending_self_healing_edit_request().is_none());
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Usage: /self-healing-edit <path> <oldText> => <newText>"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn self_healing_edit_command_reports_usage_for_missing_delimiter() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "self-healing-edit".to_string(),
+            args: "src/app.txt old new".to_string(),
+            original: "/self-healing-edit src/app.txt old new".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        assert!(root.take_pending_self_healing_edit_request().is_none());
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Usage: /self-healing-edit <path> <oldText> => <newText>"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn handle_unknown_slash_command_reports_error_without_submit() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
@@ -2965,7 +3072,7 @@ mod tests {
 
     #[test]
     fn agents_command_lists_resolved_profiles_and_current_default() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("workspace");
         let global = temp.path().join("global");
@@ -2979,9 +3086,7 @@ display_name = "Coder"
 description = "Implementation profile"
 "#,
         );
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", &global);
-        }
+        env.set_pi_rust_dir(&global);
         let mut root =
             InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
 
@@ -2997,14 +3102,33 @@ description = "Implementation profile"
         assert!(text.contains("current"), "{text}");
         assert!(text.contains("coder"), "{text}");
         assert!(text.contains("Implementation profile"), "{text}");
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]
-    fn agent_use_command_selects_default_profile_for_next_prompt() {
-        let _guard = crate::test_support::env_lock();
+    fn agent_command_opens_agent_menu() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent".to_string(),
+            args: String::new(),
+            original: "/agent".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Agent"), "{rendered}");
+        assert!(rendered.contains("Info"), "{rendered}");
+        assert!(rendered.contains("Use"), "{rendered}");
+        assert!(rendered.contains("Run"), "{rendered}");
+    }
+
+    #[test]
+    fn agent_menu_use_selects_default_profile_for_next_prompt() {
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("workspace");
         let global = temp.path().join("global");
@@ -3017,33 +3141,30 @@ id = "coder"
 display_name = "Coder"
 "#,
         );
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", &global);
-        }
+        env.set_pi_rust_dir(&global);
         let mut root =
             InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "agent".to_string(),
-            args: "use coder".to_string(),
-            original: "/agent use coder".to_string(),
+            args: String::new(),
+            original: "/agent".to_string(),
         });
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\r"));
+        root.handle_input(&key_event("\r"));
 
         assert_eq!(root.take_action(), InteractiveAction::AgentProfileUse);
         let selected = root
             .take_selected_agent_profile_id()
-            .expect("agent profile switch should be queued");
+            .expect("selected profile should be queued");
         assert_eq!(selected.as_str(), "coder");
-        let text = last_system_text(&root);
-        assert!(text.contains("Default agent profile: coder"), "{text}");
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
+        assert_eq!(root.default_agent_profile_id.as_str(), "coder");
     }
 
     #[test]
-    fn agent_command_queues_one_off_invocation_without_switching_default_profile() {
-        let _guard = crate::test_support::env_lock();
+    fn agent_menu_run_queues_one_off_task_after_profile_selection() {
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("workspace");
         let global = temp.path().join("global");
@@ -3056,9 +3177,47 @@ id = "coder"
 display_name = "Coder"
 "#,
         );
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", &global);
-        }
+        env.set_pi_rust_dir(&global);
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent".to_string(),
+            args: String::new(),
+            original: "/agent".to_string(),
+        });
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\r"));
+        root.handle_input(&key_event("\r"));
+        root.editor.set_text("refactor module");
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.take_action(), InteractiveAction::AgentInvocation);
+        let request = root
+            .take_pending_agent_invocation_request()
+            .expect("agent invocation should be queued");
+        assert_eq!(request.profile_id.as_str(), "coder");
+        assert_eq!(request.task, "refactor module");
+        assert_eq!(root.default_agent_profile_id.as_str(), "default");
+    }
+
+    #[test]
+    fn agent_space_one_off_form_reports_menu_usage() {
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        env.set_pi_rust_dir(&global);
         let mut root =
             InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
 
@@ -3066,6 +3225,41 @@ display_name = "Coder"
             name: "agent".to_string(),
             args: "coder refactor module".to_string(),
             original: "/agent coder refactor module".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        assert!(root.take_pending_agent_invocation_request().is_none());
+        assert_eq!(root.default_agent_profile_id.as_str(), "default");
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Usage: /agent or /agent:<agent-id> <task>"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn agent_colon_command_queues_one_off_invocation_without_switching_default_profile() {
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        env.set_pi_rust_dir(&global);
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "agent:coder".to_string(),
+            args: "refactor module".to_string(),
+            original: "/agent:coder refactor module".to_string(),
         });
 
         assert_eq!(root.take_action(), InteractiveAction::AgentInvocation);
@@ -3076,14 +3270,32 @@ display_name = "Coder"
         assert_eq!(request.task, "refactor module");
         assert_eq!(root.default_agent_profile_id.as_str(), "default");
         assert!(!last_system_text(&root).contains("requires AgentInvocationFlow"));
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]
-    fn team_command_queues_one_off_team_invocation() {
-        let _guard = crate::test_support::env_lock();
+    fn team_command_opens_team_menu() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "team".to_string(),
+            args: String::new(),
+            original: "/team".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Team"), "{rendered}");
+        assert!(rendered.contains("Info"), "{rendered}");
+        assert!(rendered.contains("Run"), "{rendered}");
+    }
+
+    #[test]
+    fn team_menu_run_queues_one_off_task_after_team_selection() {
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("workspace");
         let global = temp.path().join("global");
@@ -3107,9 +3319,56 @@ strategy = "plan_execute_review"
 members = ["coder"]
 "#,
         );
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", &global);
-        }
+        env.set_pi_rust_dir(&global);
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "team".to_string(),
+            args: String::new(),
+            original: "/team".to_string(),
+        });
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\r"));
+        root.handle_input(&key_event("\r"));
+        root.editor.set_text("ship feature");
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.take_action(), InteractiveAction::AgentTeam);
+        let request = root
+            .take_pending_agent_team_request()
+            .expect("agent team should be queued");
+        assert_eq!(request.team_id.as_str(), "implementation");
+        assert_eq!(request.task, "ship feature");
+    }
+
+    #[test]
+    fn team_space_one_off_form_reports_menu_usage() {
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        write_profile_file(
+            cwd.join(".pi-rust/teams/implementation.toml"),
+            r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+supervisor = "deterministic"
+strategy = "plan_execute_review"
+members = ["coder"]
+"#,
+        );
+        env.set_pi_rust_dir(&global);
         let mut root =
             InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
 
@@ -3117,6 +3376,51 @@ members = ["coder"]
             name: "team".to_string(),
             args: "implementation refactor module".to_string(),
             original: "/team implementation refactor module".to_string(),
+        });
+
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        assert!(root.take_pending_agent_team_request().is_none());
+        let text = last_system_text(&root);
+        assert!(
+            text.contains("Usage: /team or /team:<team-id> <task>"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn team_colon_command_queues_one_off_team_invocation() {
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("workspace");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&global).unwrap();
+        write_profile_file(
+            cwd.join(".pi-rust/agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+        );
+        write_profile_file(
+            cwd.join(".pi-rust/teams/implementation.toml"),
+            r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+supervisor = "deterministic"
+strategy = "plan_execute_review"
+members = ["coder"]
+"#,
+        );
+        env.set_pi_rust_dir(&global);
+        let mut root =
+            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
+
+        root.handle_slash_command(ParsedSlashCommand {
+            name: "team:implementation".to_string(),
+            args: "refactor module".to_string(),
+            original: "/team:implementation refactor module".to_string(),
         });
 
         assert_eq!(root.take_action(), InteractiveAction::AgentTeam);
@@ -3127,9 +3431,6 @@ members = ["coder"]
         assert_eq!(request.task, "refactor module");
         assert_eq!(root.default_agent_profile_id.as_str(), "default");
         assert!(!last_system_text(&root).contains("requires AgentTeamFlow"));
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]
@@ -3154,6 +3455,71 @@ members = ["coder"]
             root.take_pending_delegation_confirmation_command(),
             Some(PendingDelegationConfirmationCommand::List)
         );
+    }
+
+    #[test]
+    fn delegation_confirmation_menu_approves_selected_pending_request() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.open_delegation_confirmation_menu(vec![pending_delegation_confirmation(
+            "op_1",
+            "tool_delegate_agent",
+            "implement parser",
+        )]);
+
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Delegation confirmations"), "{rendered}");
+        assert!(rendered.contains("agent coder"), "{rendered}");
+        assert!(rendered.contains("implement parser"), "{rendered}");
+        assert!(rendered.contains("Enter/a approve"), "{rendered}");
+
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        let command = root
+            .take_pending_delegation_confirmation_command()
+            .expect("delegation approval should be queued");
+        let PendingDelegationConfirmationCommand::Approve { selection } = command else {
+            panic!("expected approval command");
+        };
+        assert_eq!(selection.operation_id.as_deref(), Some("op_1"));
+        assert_eq!(selection.tool_call_id, "tool_delegate_agent");
+    }
+
+    #[test]
+    fn delegation_confirmation_menu_rejects_selected_pending_request() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.open_delegation_confirmation_menu(vec![pending_delegation_confirmation(
+            "op_2",
+            "tool_delegate_team",
+            "review design",
+        )]);
+
+        root.handle_input(&key_event("r"));
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        let command = root
+            .take_pending_delegation_confirmation_command()
+            .expect("delegation rejection should be queued");
+        let PendingDelegationConfirmationCommand::Reject { selection, reason } = command else {
+            panic!("expected rejection command");
+        };
+        assert_eq!(selection.operation_id.as_deref(), Some("op_2"));
+        assert_eq!(selection.tool_call_id, "tool_delegate_team");
+        assert_eq!(reason, None);
     }
 
     #[test]
@@ -3271,7 +3637,7 @@ members = ["coder"]
     }
 
     #[test]
-    fn agent_use_command_rejects_missing_or_unknown_profiles() {
+    fn agent_space_use_command_reports_menu_usage_without_selecting_profile() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
@@ -3283,7 +3649,13 @@ members = ["coder"]
             args: "use".to_string(),
             original: "/agent use".to_string(),
         });
-        assert!(last_system_text(&root).contains("Usage: /agent use <agent-id>"));
+        assert!(
+            last_system_text(&root).contains("Usage: /agent or /agent:<agent-id> <task>"),
+            "{}",
+            last_system_text(&root)
+        );
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        assert!(root.take_selected_agent_profile_id().is_none());
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "agent".to_string(),
@@ -3291,11 +3663,12 @@ members = ["coder"]
             original: "/agent use missing".to_string(),
         });
         assert!(
-            last_system_text(&root).contains("Unknown agent profile: missing"),
+            last_system_text(&root).contains("Usage: /agent or /agent:<agent-id> <task>"),
             "{}",
             last_system_text(&root)
         );
-        assert_ne!(root.action, InteractiveAction::AgentProfileUse);
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        assert!(root.take_selected_agent_profile_id().is_none());
     }
 
     // ── all_slash_commands ────────────────────────────────────────────
@@ -3382,7 +3755,7 @@ members = ["coder"]
 
     #[test]
     fn builtin_slash_command_wins_over_same_named_plugin_alias() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("workspace");
         let global = temp.path().join("global");
@@ -3395,9 +3768,7 @@ id = "coder"
 display_name = "Coder"
 "#,
         );
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", &global);
-        }
+        env.set_pi_rust_dir(&global);
         let mut root =
             InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
         root.set_plugin_commands(vec![PluginSlashCommand::new(
@@ -3407,20 +3778,13 @@ display_name = "Coder"
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "agent".to_string(),
-            args: "coder refactor module".to_string(),
-            original: "/agent coder refactor module".to_string(),
+            args: String::new(),
+            original: "/agent".to_string(),
         });
 
-        assert_eq!(root.take_action(), InteractiveAction::AgentInvocation);
+        assert_eq!(root.take_action(), InteractiveAction::None);
         assert!(root.take_pending_plugin_command_request().is_none());
-        let request = root
-            .take_pending_agent_invocation_request()
-            .expect("built-in /agent should handle the command");
-        assert_eq!(request.profile_id.as_str(), "coder");
-        assert_eq!(request.task, "refactor module");
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
+        assert!(root.take_pending_agent_invocation_request().is_none());
     }
 
     #[test]
@@ -3866,6 +4230,23 @@ display_name = "Coder"
         let path = path.as_ref();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
+    }
+
+    fn pending_delegation_confirmation(
+        operation_id: &str,
+        tool_call_id: &str,
+        task: &str,
+    ) -> PendingDelegationConfirmation {
+        PendingDelegationConfirmation {
+            operation_id: operation_id.to_string(),
+            turn_id: "turn_1".to_string(),
+            tool_call_id: tool_call_id.to_string(),
+            requesting_profile_id: ProfileId::from("delegating-planner"),
+            target_kind: ProfileKind::Agent,
+            target_id: ProfileId::from("coder"),
+            task: task.to_string(),
+            reason: "delegation policy requires confirmation".to_string(),
+        }
     }
 
     fn last_system_text(root: &InteractiveRoot) -> String {

@@ -18,6 +18,7 @@ mod profiles;
 mod prompt;
 mod prompt_flow;
 mod runtime_service;
+mod self_healing_edit_flow;
 mod session_log;
 mod session_service;
 
@@ -45,15 +46,25 @@ pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
 };
+pub use self_healing_edit_flow::{
+    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
+    SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
+    SelfHealingEditRequest,
+};
 
 use agent_invocation_flow::AgentInvocationContext;
 use agent_team_flow::AgentTeamContext;
 use branch_summary_flow::{BranchSummaryContext, BranchSummaryOptions, BranchSummaryOutcome};
 use capability_service::CapabilityService;
-use delegation::DelegationAuthorizationDecision;
+use delegation::{
+    DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
+    emit_delegation_approved, emit_delegation_completed, emit_delegation_confirmation_required,
+    emit_delegation_failed, emit_delegation_rejected, emit_delegation_started,
+};
 use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
+use futures::future::{BoxFuture, FutureExt};
 use manual_compaction_flow::{ManualCompactionContext, ManualCompactionOptions};
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
@@ -61,18 +72,63 @@ use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
 use prompt::{DelegationRequest, PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
 use runtime_service::RuntimeService;
+pub(crate) use self_healing_edit_flow::{
+    ModelSelfHealingEditRepairStrategy, PlannedSelfHealingEditRepairStrategy,
+    SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditObserver, SelfHealingEditOptions,
+    SelfHealingEditRepairStrategy,
+};
 use session_log::event::{PersistedDelegationRuntimeSeed, PersistedPluginDiagnostic};
-use session_log::id::{IdGenerator, SystemIdGenerator};
+use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use session_log::replay::{ReplayPendingDelegationConfirmation, TranscriptItem};
 use session_service::{FinalizedSessionWrite, SessionService};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::plugins::{
     CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::{PromptInvocation, SessionRunOptions};
+
+const DELEGATION_CONFIRMATION_TTL_HOURS: i64 = 24;
+
+#[derive(Debug, Clone)]
+struct SelfHealingEditEventObserver {
+    event_service: EventService,
+    operation_id: String,
+}
+
+impl SelfHealingEditEventObserver {
+    fn new(event_service: EventService, operation_id: impl Into<String>) -> Self {
+        Self {
+            event_service,
+            operation_id: operation_id.into(),
+        }
+    }
+}
+
+impl SelfHealingEditObserver for SelfHealingEditEventObserver {
+    fn repair_attempted<'a>(
+        &'a self,
+        path: &'a str,
+        repair: &'a SelfHealingEditRepairAttempt,
+    ) -> BoxFuture<'a, ()> {
+        async move {
+            self.event_service
+                .emit(CodingAgentEvent::SelfHealingEditRepairAttempted {
+                    operation_id: self.operation_id.clone(),
+                    path: path.to_owned(),
+                    attempt: repair.attempt,
+                    replacements: repair.replacements.clone(),
+                    diagnostics: repair.diagnostics.clone(),
+                    check_output: repair.check_output.clone(),
+                });
+        }
+        .boxed()
+    }
+}
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -101,13 +157,20 @@ pub struct PendingDelegationConfirmation {
 }
 
 #[derive(Debug, Clone)]
-struct PendingDelegationConfirmationState {
+pub(crate) struct PendingDelegationConfirmationState {
     request: DelegationRequest,
     prompt_options: PromptTurnOptions,
     reason: String,
+    requested_at: String,
+    child_delegation_depth: usize,
+    delegation_lineage: Vec<DelegationLineageEntry>,
 }
 
 impl PendingDelegationConfirmationState {
+    fn is_active_at(&self, now: &str) -> bool {
+        !delegation_confirmation_is_expired(&self.requested_at, now)
+    }
+
     fn view(&self) -> PendingDelegationConfirmation {
         PendingDelegationConfirmation {
             operation_id: self.request.operation_id.clone(),
@@ -120,6 +183,16 @@ impl PendingDelegationConfirmationState {
             reason: self.reason.clone(),
         }
     }
+}
+
+fn delegation_confirmation_is_expired(requested_at: &str, now: &str) -> bool {
+    let Ok(requested_at) = OffsetDateTime::parse(requested_at, &Rfc3339) else {
+        return false;
+    };
+    let Ok(now) = OffsetDateTime::parse(now, &Rfc3339) else {
+        return false;
+    };
+    now >= requested_at + TimeDuration::hours(DELEGATION_CONFIRMATION_TTL_HOURS)
 }
 
 #[derive(Debug)]
@@ -196,6 +269,11 @@ fn pending_state_from_replay(
     replay_pending: ReplayPendingDelegationConfirmation,
     cwd: &Path,
 ) -> Result<PendingDelegationConfirmationState, CodingSessionError> {
+    let child_delegation_depth = replay_pending
+        .runtime_seed
+        .parent_delegation_depth
+        .saturating_add(1);
+    let delegation_lineage = replay_pending.runtime_seed.delegation_lineage.clone();
     Ok(PendingDelegationConfirmationState {
         request: DelegationRequest {
             operation_id: replay_pending.source_operation_id,
@@ -211,6 +289,9 @@ fn pending_state_from_replay(
             cwd,
         )?,
         reason: replay_pending.reason,
+        requested_at: replay_pending.requested_at,
+        child_delegation_depth,
+        delegation_lineage,
     })
 }
 
@@ -307,6 +388,8 @@ fn persisted_delegation_model(model: &pi_ai::types::Model) -> pi_ai::types::Mode
 
 fn delegation_runtime_seed_from_prompt_options(
     options: &PromptTurnOptions,
+    child_delegation_depth: usize,
+    delegation_lineage: &[DelegationLineageEntry],
 ) -> Result<PersistedDelegationRuntimeSeed, CodingSessionError> {
     let runtime = options
         .runtime()
@@ -327,7 +410,8 @@ fn delegation_runtime_seed_from_prompt_options(
         thinking_level: runtime.thinking_level().map(|level| level.to_string()),
         tool_execution: runtime.tool_execution().map(|mode| mode.to_string()),
         session_name: options.session_name().map(str::to_owned),
-        parent_delegation_depth: 0,
+        parent_delegation_depth: child_delegation_depth.saturating_sub(1),
+        delegation_lineage: delegation_lineage.to_vec(),
     })
 }
 
@@ -549,8 +633,10 @@ impl CodingAgentSession {
     }
 
     pub fn pending_delegation_confirmations(&self) -> Vec<PendingDelegationConfirmation> {
+        let now = SystemClock.now_rfc3339();
         self.pending_delegation_confirmations
             .iter()
+            .filter(|pending| pending.is_active_at(&now))
             .map(PendingDelegationConfirmationState::view)
             .collect()
     }
@@ -576,12 +662,22 @@ impl CodingAgentSession {
         self.emit_delegation_approved(&pending.request);
         match pending.request.target_kind {
             ProfileKind::Agent => {
-                self.execute_approved_agent_delegation(&pending.request, pending.prompt_options)
-                    .await
+                self.execute_approved_agent_delegation(
+                    &pending.request,
+                    pending.prompt_options,
+                    pending.child_delegation_depth,
+                    pending.delegation_lineage,
+                )
+                .await
             }
             ProfileKind::Team => {
-                self.execute_approved_team_delegation(&pending.request, pending.prompt_options)
-                    .await
+                self.execute_approved_team_delegation(
+                    &pending.request,
+                    pending.prompt_options,
+                    pending.child_delegation_depth,
+                    pending.delegation_lineage,
+                )
+                .await
             }
         }
     }
@@ -622,6 +718,25 @@ impl CodingAgentSession {
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
         let _operation = self.operation_control.begin(OperationKind::Compact)?;
         self.compact_inner(options).await
+    }
+
+    pub async fn self_healing_edit(
+        &mut self,
+        path: impl Into<String>,
+        replacements: Vec<SelfHealingEditReplacement>,
+    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
+        self.self_healing_edit_with_options(SelfHealingEditRequest::new(path, replacements))
+            .await
+    }
+
+    pub async fn self_healing_edit_with_options(
+        &mut self,
+        request: SelfHealingEditRequest,
+    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
+        let _operation = self
+            .operation_control
+            .begin(OperationKind::SelfHealingEdit)?;
+        self.self_healing_edit_inner(request).await
     }
 
     pub async fn invoke_agent(
@@ -943,45 +1058,46 @@ impl CodingAgentSession {
     ) -> Result<(), CodingSessionError> {
         for decision in decisions {
             match decision {
-                DelegationAuthorizationDecision::Approved { request } => {
+                DelegationAuthorizationDecision::Approved {
+                    request,
+                    child_delegation_depth,
+                } => {
                     self.emit_delegation_approved(request);
                     match request.target_kind {
                         ProfileKind::Agent => {
-                            self.execute_approved_agent_delegation(request, prompt_options.clone())
-                                .await?;
+                            self.execute_approved_agent_delegation(
+                                request,
+                                prompt_options.clone(),
+                                *child_delegation_depth,
+                                delegation_lineage_for_request(&[], request),
+                            )
+                            .await?;
                         }
                         ProfileKind::Team => {
-                            self.execute_approved_team_delegation(request, prompt_options.clone())
-                                .await?;
+                            self.execute_approved_team_delegation(
+                                request,
+                                prompt_options.clone(),
+                                *child_delegation_depth,
+                                delegation_lineage_for_request(&[], request),
+                            )
+                            .await?;
                         }
                     }
                 }
-                DelegationAuthorizationDecision::RequiresConfirmation { request, reason } => {
+                DelegationAuthorizationDecision::RequiresConfirmation {
+                    request,
+                    reason,
+                    child_delegation_depth,
+                } => {
                     let pending = PendingDelegationConfirmationState {
                         request: request.clone(),
                         prompt_options: prompt_options.clone(),
                         reason: reason.clone(),
+                        requested_at: SystemClock.now_rfc3339(),
+                        child_delegation_depth: *child_delegation_depth,
+                        delegation_lineage: delegation_lineage_for_request(&[], request),
                     };
-                    if self
-                        .pending_delegation_confirmations
-                        .iter()
-                        .any(|existing| {
-                            existing.request.operation_id == pending.request.operation_id
-                                && existing.request.tool_call_id == pending.request.tool_call_id
-                        })
-                    {
-                        self.event_service.emit(CodingAgentEvent::Diagnostic {
-                            operation_id: Some(request.operation_id.clone()),
-                            message: format!(
-                                "duplicate pending delegation confirmation ignored: operation_id={}, tool_call_id={}",
-                                request.operation_id, request.tool_call_id
-                            ),
-                        });
-                        continue;
-                    }
-                    self.record_delegation_confirmation_requested(&pending)?;
-                    self.pending_delegation_confirmations.push(pending);
-                    self.emit_delegation_confirmation_required(request, reason);
+                    self.queue_pending_delegation_confirmation(pending, true)?;
                 }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
                     self.emit_delegation_rejected(request, reason);
@@ -991,15 +1107,57 @@ impl CodingAgentSession {
         Ok(())
     }
 
+    fn adopt_pending_delegation_confirmations(
+        &mut self,
+        pending_confirmations: Vec<PendingDelegationConfirmationState>,
+    ) -> Result<(), CodingSessionError> {
+        for pending in pending_confirmations {
+            self.queue_pending_delegation_confirmation(pending, false)?;
+        }
+        Ok(())
+    }
+
+    fn queue_pending_delegation_confirmation(
+        &mut self,
+        pending: PendingDelegationConfirmationState,
+        emit_confirmation_required: bool,
+    ) -> Result<(), CodingSessionError> {
+        if self
+            .pending_delegation_confirmations
+            .iter()
+            .any(|existing| {
+                existing.request.operation_id == pending.request.operation_id
+                    && existing.request.tool_call_id == pending.request.tool_call_id
+            })
+        {
+            self.event_service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: Some(pending.request.operation_id.clone()),
+                message: format!(
+                    "duplicate pending delegation confirmation ignored: operation_id={}, tool_call_id={}",
+                    pending.request.operation_id, pending.request.tool_call_id
+                ),
+            });
+            return Ok(());
+        }
+        self.record_delegation_confirmation_requested(&pending)?;
+        if emit_confirmation_required {
+            self.emit_delegation_confirmation_required(&pending.request, &pending.reason);
+        }
+        self.pending_delegation_confirmations.push(pending);
+        Ok(())
+    }
+
     fn pending_delegation_confirmation_index(
         &self,
         operation_id: &str,
         tool_call_id: &str,
     ) -> Result<usize, CodingSessionError> {
+        let now = SystemClock.now_rfc3339();
         self.pending_delegation_confirmations
             .iter()
             .position(|pending| {
-                pending.request.operation_id == operation_id
+                pending.is_active_at(&now)
+                    && pending.request.operation_id == operation_id
                     && pending.request.tool_call_id == tool_call_id
             })
             .ok_or_else(|| CodingSessionError::Input {
@@ -1013,7 +1171,11 @@ impl CodingAgentSession {
         &mut self,
         pending: &PendingDelegationConfirmationState,
     ) -> Result<(), CodingSessionError> {
-        let runtime_seed = delegation_runtime_seed_from_prompt_options(&pending.prompt_options)?;
+        let runtime_seed = delegation_runtime_seed_from_prompt_options(
+            &pending.prompt_options,
+            pending.child_delegation_depth,
+            &pending.delegation_lineage,
+        )?;
         if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
             session_service.record_delegation_confirmation_requested(
                 pending.request.operation_id.clone(),
@@ -1063,9 +1225,11 @@ impl CodingAgentSession {
     }
 
     async fn execute_approved_agent_delegation(
-        &self,
+        &mut self,
         request: &DelegationRequest,
         prompt_options: PromptTurnOptions,
+        child_delegation_depth: usize,
+        delegation_lineage: Vec<DelegationLineageEntry>,
     ) -> Result<(), CodingSessionError> {
         let mut context = AgentInvocationContext::new(
             AgentInvocationOptions::new(
@@ -1073,14 +1237,18 @@ impl CodingAgentSession {
                 request.task.clone(),
                 prompt_options,
             )
-            .with_delegation_depth(1),
+            .with_delegation_depth(child_delegation_depth)
+            .with_delegation_lineage(delegation_lineage),
             self.profile_registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
         self.emit_delegation_started(request, child_operation_id.clone());
-        let outcome = match self.flow_service.run_agent_invocation(&mut context).await {
+        let result = self.flow_service.run_agent_invocation(&mut context).await;
+        let pending_confirmations = context.take_pending_delegation_confirmations();
+        self.adopt_pending_delegation_confirmations(pending_confirmations)?;
+        let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.emit_delegation_failed(request, child_operation_id, error.clone());
@@ -1092,9 +1260,11 @@ impl CodingAgentSession {
     }
 
     async fn execute_approved_team_delegation(
-        &self,
+        &mut self,
         request: &DelegationRequest,
         prompt_options: PromptTurnOptions,
+        child_delegation_depth: usize,
+        delegation_lineage: Vec<DelegationLineageEntry>,
     ) -> Result<(), CodingSessionError> {
         let mut context = AgentTeamContext::new(
             AgentTeamOptions::new(
@@ -1102,14 +1272,18 @@ impl CodingAgentSession {
                 request.task.clone(),
                 prompt_options,
             )
-            .with_delegation_depth(1),
+            .with_delegation_depth(child_delegation_depth)
+            .with_delegation_lineage(delegation_lineage),
             self.profile_registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
         self.emit_delegation_started(request, child_operation_id.clone());
-        let outcome = match self.flow_service.run_agent_team(&mut context).await {
+        let result = self.flow_service.run_agent_team(&mut context).await;
+        let pending_confirmations = context.take_pending_delegation_confirmations();
+        self.adopt_pending_delegation_confirmations(pending_confirmations)?;
+        let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.emit_delegation_failed(request, child_operation_id, error.clone());
@@ -1121,58 +1295,19 @@ impl CodingAgentSession {
     }
 
     fn emit_delegation_approved(&self, request: &DelegationRequest) {
-        self.event_service
-            .emit(CodingAgentEvent::DelegationApproved {
-                operation_id: request.operation_id.clone(),
-                turn_id: request.turn_id.clone(),
-                tool_call_id: request.tool_call_id.clone(),
-                requesting_profile_id: request.requesting_profile_id.clone(),
-                target_kind: request.target_kind,
-                target_id: request.target_id.clone(),
-                task: request.task.clone(),
-            });
+        emit_delegation_approved(&self.event_service, request);
     }
 
     fn emit_delegation_rejected(&self, request: &DelegationRequest, reason: &str) {
-        self.event_service
-            .emit(CodingAgentEvent::DelegationRejected {
-                operation_id: request.operation_id.clone(),
-                turn_id: request.turn_id.clone(),
-                tool_call_id: request.tool_call_id.clone(),
-                requesting_profile_id: request.requesting_profile_id.clone(),
-                target_kind: request.target_kind,
-                target_id: request.target_id.clone(),
-                task: request.task.clone(),
-                reason: reason.to_owned(),
-            });
+        emit_delegation_rejected(&self.event_service, request, reason);
     }
 
     fn emit_delegation_confirmation_required(&self, request: &DelegationRequest, reason: &str) {
-        self.event_service
-            .emit(CodingAgentEvent::DelegationConfirmationRequired {
-                operation_id: request.operation_id.clone(),
-                turn_id: request.turn_id.clone(),
-                tool_call_id: request.tool_call_id.clone(),
-                requesting_profile_id: request.requesting_profile_id.clone(),
-                target_kind: request.target_kind,
-                target_id: request.target_id.clone(),
-                task: request.task.clone(),
-                reason: reason.to_owned(),
-            });
+        emit_delegation_confirmation_required(&self.event_service, request, reason);
     }
 
     fn emit_delegation_started(&self, request: &DelegationRequest, child_operation_id: String) {
-        self.event_service
-            .emit(CodingAgentEvent::DelegationStarted {
-                operation_id: request.operation_id.clone(),
-                turn_id: request.turn_id.clone(),
-                tool_call_id: request.tool_call_id.clone(),
-                requesting_profile_id: request.requesting_profile_id.clone(),
-                target_kind: request.target_kind,
-                target_id: request.target_id.clone(),
-                task: request.task.clone(),
-                child_operation_id,
-            });
+        emit_delegation_started(&self.event_service, request, child_operation_id);
     }
 
     fn emit_delegation_completed(
@@ -1181,18 +1316,7 @@ impl CodingAgentSession {
         child_operation_id: String,
         final_text: String,
     ) {
-        self.event_service
-            .emit(CodingAgentEvent::DelegationCompleted {
-                operation_id: request.operation_id.clone(),
-                turn_id: request.turn_id.clone(),
-                tool_call_id: request.tool_call_id.clone(),
-                requesting_profile_id: request.requesting_profile_id.clone(),
-                target_kind: request.target_kind,
-                target_id: request.target_id.clone(),
-                task: request.task.clone(),
-                child_operation_id,
-                final_text,
-            });
+        emit_delegation_completed(&self.event_service, request, child_operation_id, final_text);
     }
 
     fn emit_delegation_failed(
@@ -1201,17 +1325,137 @@ impl CodingAgentSession {
         child_operation_id: String,
         error: CodingSessionError,
     ) {
-        self.event_service.emit(CodingAgentEvent::DelegationFailed {
-            operation_id: request.operation_id.clone(),
-            turn_id: request.turn_id.clone(),
-            tool_call_id: request.tool_call_id.clone(),
-            requesting_profile_id: request.requesting_profile_id.clone(),
-            target_kind: request.target_kind,
-            target_id: request.target_id.clone(),
-            task: request.task.clone(),
-            child_operation_id,
-            error,
-        });
+        emit_delegation_failed(&self.event_service, request, child_operation_id, error);
+    }
+
+    fn self_healing_model_repair_policy(
+        &self,
+        model_repair: Option<SelfHealingEditModelRepairOptions>,
+    ) -> Result<Option<(Arc<dyn SelfHealingEditRepairStrategy>, usize)>, CodingSessionError> {
+        let Some(model_repair) = model_repair else {
+            return Ok(None);
+        };
+        let (prompt_options, max_attempts) = model_repair.into_parts();
+        let prompt_options = self.apply_default_agent_profile(prompt_options)?;
+        let runtime =
+            prompt_options
+                .runtime()
+                .cloned()
+                .ok_or_else(|| CodingSessionError::Config {
+                    message:
+                        "self-healing edit model repair options do not include a runtime snapshot"
+                            .into(),
+                })?;
+        Ok(Some((
+            Arc::new(ModelSelfHealingEditRepairStrategy::new(runtime)),
+            max_attempts,
+        )))
+    }
+
+    async fn self_healing_edit_inner(
+        &mut self,
+        request: SelfHealingEditRequest,
+    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
+        let (path, replacements, check_command, repair_attempts, model_repair) =
+            request.into_parts();
+        if !repair_attempts.is_empty() && model_repair.is_some() {
+            return Err(CodingSessionError::Input {
+                message: "configure either planned repair attempts or model repair, not both"
+                    .into(),
+            });
+        }
+        let model_repair_policy = self.self_healing_model_repair_policy(model_repair)?;
+        let replacement_count = replacements.len();
+        let event_path = path.clone();
+        let event_service = self.event_service.clone();
+        let (result, finalized) = {
+            let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+                return Err(CodingSessionError::UnsupportedCapability {
+                    capability: "self-healing edit requires a persistent Rust-native session"
+                        .into(),
+                });
+            };
+            let cwd = session_cwd(session_service).unwrap_or_else(default_cwd);
+            let mut transaction = session_service.begin_self_healing_edit_transaction();
+            let operation_id = transaction.operation_id().to_owned();
+            event_service.emit(CodingAgentEvent::SelfHealingEditStarted {
+                operation_id: operation_id.clone(),
+                path: event_path.clone(),
+                replacements: replacement_count,
+            });
+            SessionService::record_self_healing_edit_started(
+                &mut transaction,
+                path.clone(),
+                replacement_count,
+            )?;
+            let mut options = SelfHealingEditOptions::new(cwd, path, replacements)
+                .with_repair_observer(Arc::new(SelfHealingEditEventObserver::new(
+                    event_service.clone(),
+                    operation_id.clone(),
+                )));
+            if let Some(command) = check_command {
+                options = options.with_check_command(command).with_real_check_runner();
+            }
+            let repair_attempt_count = repair_attempts.len();
+            if repair_attempt_count > 0 {
+                options = options
+                    .with_repair_strategy(Arc::new(PlannedSelfHealingEditRepairStrategy::new(
+                        repair_attempts,
+                    )))
+                    .with_max_repair_attempts(repair_attempt_count);
+            } else if let Some((strategy, max_attempts)) = model_repair_policy {
+                options = options
+                    .with_repair_strategy(strategy)
+                    .with_max_repair_attempts(max_attempts);
+            }
+            let mut context = SelfHealingEditContext::new(options);
+
+            match self.flow_service.run_self_healing_edit(&mut context).await {
+                Ok(outcome) => {
+                    for repair in outcome.repair_attempts.iter() {
+                        SessionService::record_self_healing_edit_repair_attempted(
+                            &mut transaction,
+                            &outcome.path,
+                            repair,
+                        )?;
+                    }
+                    SessionService::record_self_healing_edit_completed(&mut transaction, &outcome)?;
+                    event_service.emit(CodingAgentEvent::SelfHealingEditCompleted {
+                        operation_id: operation_id.clone(),
+                        path: outcome.path.clone(),
+                        attempts: outcome.attempts,
+                        first_changed_line: outcome.first_changed_line,
+                        check_output: outcome.check_output.clone(),
+                    });
+                    let finalized = session_service
+                        .commit_self_healing_edit_transaction(Some(transaction), operation_id)?;
+                    (Ok(outcome), finalized)
+                }
+                Err(error) => {
+                    for repair in context.repair_attempts() {
+                        SessionService::record_self_healing_edit_repair_attempted(
+                            &mut transaction,
+                            &event_path,
+                            repair,
+                        )?;
+                    }
+                    event_service.emit(CodingAgentEvent::SelfHealingEditFailed {
+                        operation_id: operation_id.clone(),
+                        path: event_path.clone(),
+                        error: error.clone(),
+                    });
+                    let finalized = session_service.fail_self_healing_edit_transaction(
+                        Some(transaction),
+                        operation_id,
+                        error.code(),
+                        error.to_string(),
+                    )?;
+                    (Err(error), finalized)
+                }
+            }
+        };
+        self.emit_session_write_events(&finalized);
+        result
     }
 
     async fn compact_inner(
@@ -1731,6 +1975,87 @@ mod tests {
         })
     }
 
+    #[tokio::test]
+    async fn stale_persistent_delegation_confirmation_is_not_restored_as_pending() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = session_log::store::SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(session_log::store::CreateSessionOptions::new(
+                "sess_stale_delegation_confirmation",
+                "2026-01-01T00:00:00Z",
+            ))
+            .unwrap();
+        let runtime_seed = delegation_runtime_seed_from_prompt_options(
+            &prompt_options("stale-delegation-api", "plan feature"),
+            1,
+            &[],
+        )
+        .unwrap();
+        store
+            .append_events(
+                &handle,
+                &[
+                    SessionEventEnvelope::new(
+                        "sess_stale_delegation_confirmation",
+                        "evt_1",
+                        "2026-01-01T00:00:00Z",
+                        SessionEventData::SessionCreated {
+                            cwd: Some(".".to_string()),
+                        },
+                    ),
+                    SessionEventEnvelope::new(
+                        "sess_stale_delegation_confirmation",
+                        "evt_2",
+                        "2026-01-01T00:00:00Z",
+                        SessionEventData::DelegationConfirmationRequested {
+                            source_operation_id: "op_parent".to_string(),
+                            turn_id: "turn_parent".to_string(),
+                            tool_call_id: "tool_delegate_agent".to_string(),
+                            requesting_profile_id: ProfileId::from("delegating-planner"),
+                            target_kind: ProfileKind::Agent,
+                            target_id: ProfileId::from("coder"),
+                            task: "implement parser".to_string(),
+                            reason: "delegation policy requires confirmation".to_string(),
+                            runtime_seed,
+                        },
+                    )
+                    .with_operation_id("op_parent")
+                    .with_turn_id("turn_parent"),
+                    SessionEventEnvelope::new(
+                        "sess_stale_delegation_confirmation",
+                        "evt_3",
+                        "2026-01-01T00:00:01Z",
+                        SessionEventData::OperationCommitted { new_leaf_id: None },
+                    )
+                    .with_operation_id("op_parent")
+                    .with_turn_id("turn_parent"),
+                ],
+            )
+            .unwrap();
+        let replay = store.replay_session(&handle).unwrap();
+        assert_eq!(replay.pending_delegation_confirmations.len(), 1);
+
+        let mut session = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_stale_delegation_confirmation")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+
+        assert!(session.pending_delegation_confirmations().is_empty());
+        let error = session
+            .approve_delegation_confirmation("op_parent", "tool_delegate_agent")
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("pending delegation confirmation not found"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn delegation_runtime_seed_strips_model_headers() {
         let mut runtime_model = model("delegation-seed-api");
@@ -1756,7 +2081,7 @@ mod tests {
             invocation: PromptInvocation::Text("plan".into()),
         });
 
-        let seed = delegation_runtime_seed_from_prompt_options(&options).unwrap();
+        let seed = delegation_runtime_seed_from_prompt_options(&options, 1, &[]).unwrap();
 
         assert_eq!(seed.model.id, "test-model");
         assert!(seed.model.headers.is_none());
@@ -2079,11 +2404,10 @@ mod tests {
 
     #[tokio::test]
     async fn reload_plugins_discovers_default_project_and_user_roots() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("project");
         let global = temp.path().join("global");
-        let previous_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
         let project_plugin = cwd.join(".pi-rust/plugins/project-lua");
         let user_plugin = global.join("plugins/user-lua");
         fs::create_dir_all(&project_plugin).unwrap();
@@ -2108,9 +2432,7 @@ runtime = "lua"
 "#,
         )
         .unwrap();
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", &global);
-        }
+        env.set_pi_rust_dir(&global);
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
                 .with_cwd(&cwd)
@@ -2150,12 +2472,6 @@ runtime = "lua"
                 .iter()
                 .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged))
         );
-        unsafe {
-            match previous_pi_rust_dir {
-                Some(value) => std::env::set_var("PI_RUST_DIR", value),
-                None => std::env::remove_var("PI_RUST_DIR"),
-            }
-        }
     }
 
     #[tokio::test]
@@ -3204,6 +3520,12 @@ runtime = "lua"
             CodingAgentEvent::AgentTeamCompleted { .. } => "agent_team_completed",
             CodingAgentEvent::AgentTeamFailed { .. } => "agent_team_failed",
             CodingAgentEvent::AgentTeamAborted { .. } => "agent_team_aborted",
+            CodingAgentEvent::SelfHealingEditStarted { .. } => "self_healing_edit_started",
+            CodingAgentEvent::SelfHealingEditRepairAttempted { .. } => {
+                "self_healing_edit_repair_attempted"
+            }
+            CodingAgentEvent::SelfHealingEditCompleted { .. } => "self_healing_edit_completed",
+            CodingAgentEvent::SelfHealingEditFailed { .. } => "self_healing_edit_failed",
             CodingAgentEvent::DelegationRequested { .. } => "delegation_requested",
             CodingAgentEvent::DelegationRejected { .. } => "delegation_rejected",
             CodingAgentEvent::DelegationApproved { .. } => "delegation_approved",

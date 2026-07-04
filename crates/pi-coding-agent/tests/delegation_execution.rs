@@ -1,10 +1,11 @@
-use std::ffi::OsString;
+mod support;
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
-use pi_agent_core::AgentResources;
+use pi_agent_core::{AgentResources, AgentTool};
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
@@ -15,6 +16,7 @@ use pi_coding_agent::api::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, PromptInvocation,
     PromptRunOptions, PromptTurnOptions, SessionRunOptions,
 };
+use support::EnvGuard;
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -47,7 +49,7 @@ display_name = "Coder"
 system_prompt = "Coder child instructions."
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-execution-agent-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -129,6 +131,91 @@ system_prompt = "Coder child instructions."
 }
 
 #[tokio::test]
+async fn delegated_child_does_not_inherit_parent_runtime_tools_without_profile_allowlist() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-child-capability-release-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_coder",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::text("child result"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+
+    let outcome = session
+        .prompt(prompt_options_with_tools(
+            &cwd,
+            api,
+            "plan feature",
+            vec![parent_only_tool()],
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 3);
+    let parent_tools = tool_names(&calls[0].context);
+    assert!(
+        parent_tools.iter().any(|tool| tool == "parent_only"),
+        "parent should keep its explicitly configured runtime tool: {parent_tools:#?}"
+    );
+    assert!(
+        parent_tools.iter().any(|tool| tool == "delegate_agent"),
+        "parent should expose policy delegation tool: {parent_tools:#?}"
+    );
+    let child_tools = tool_names(&calls[2].context);
+    assert!(
+        !child_tools.iter().any(|tool| tool == "parent_only"),
+        "delegated child must not inherit parent runtime tools without an explicit profile allowlist: {child_tools:#?}"
+    );
+}
+
+#[tokio::test]
 async fn delegated_child_rejects_nested_delegation_when_depth_is_exhausted() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
@@ -174,7 +261,7 @@ display_name = "Reviewer"
 system_prompt = "Reviewer child instructions."
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-recursive-depth-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -273,6 +360,606 @@ system_prompt = "Reviewer child instructions."
 }
 
 #[tokio::test]
+async fn nested_confirmation_required_delegation_is_queued_at_session_owner() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 2
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 2
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["reviewer"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/reviewer.toml"),
+        r#"
+schema_version = 1
+id = "reviewer"
+display_name = "Reviewer"
+system_prompt = "Reviewer child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-nested-confirmation-queue-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_coder",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::tool_call(
+                "tool_delegate_reviewer",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
+            ),
+            ScriptedResponse::text("coder ready"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 4);
+    assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
+    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+    drop(calls);
+
+    let pending = session.pending_delegation_confirmations();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].requesting_profile_id.as_str(), "coder");
+    assert_eq!(pending[0].target_id.as_str(), "reviewer");
+    assert_eq!(pending[0].task, "review parser");
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationConfirmationRequired {
+                requesting_profile_id,
+                target_id,
+                reason,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+                && reason == "delegation policy requires confirmation"
+        )),
+        "expected nested confirmation-required delegation event, got {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRejected {
+                requesting_profile_id,
+                target_id,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+        )),
+        "nested confirmation-required delegation must not be rejected: {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationStarted {
+                requesting_profile_id,
+                target_id,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+        )),
+        "nested confirmation-required delegation must not start child work before approval: {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn persistent_session_reopens_nested_delegation_confirmation_and_approves() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 2
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 2
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["reviewer"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/reviewer.toml"),
+        r#"
+schema_version = 1
+id = "reviewer"
+display_name = "Reviewer"
+system_prompt = "Reviewer child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-persistent-nested-confirmation-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_coder",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::tool_call(
+                "tool_delegate_reviewer",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
+            ),
+            ScriptedResponse::text("coder ready"),
+            ScriptedResponse::text("reviewer result"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::create(persistent_confirmation_session_options(
+        &cwd,
+        &sessions,
+        "sess_nested_delegation_pending_approve",
+    ))
+    .await
+    .unwrap();
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let original_pending = session.pending_delegation_confirmations();
+    assert_eq!(original_pending.len(), 1);
+    assert_eq!(original_pending[0].requesting_profile_id.as_str(), "coder");
+    assert_eq!(original_pending[0].target_id.as_str(), "reviewer");
+    assert_eq!(original_pending[0].task, "review parser");
+    let operation_id = original_pending[0].operation_id.clone();
+    let tool_call_id = original_pending[0].tool_call_id.clone();
+    drop(session);
+
+    let mut reopened = CodingAgentSession::open(persistent_confirmation_session_options(
+        &cwd,
+        &sessions,
+        "sess_nested_delegation_pending_approve",
+    ))
+    .await
+    .unwrap();
+    let pending = reopened.pending_delegation_confirmations();
+    assert_eq!(pending, original_pending);
+    let mut events = reopened.subscribe();
+
+    reopened
+        .approve_delegation_confirmation(&operation_id, &tool_call_id)
+        .await
+        .unwrap();
+    assert!(reopened.pending_delegation_confirmations().is_empty());
+    drop(reopened);
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        5,
+        "nested approval should run reviewer exactly once after reopen"
+    );
+    assert_eq!(user_texts(&calls[4].context), vec!["review parser"]);
+    assert_eq!(
+        calls[4].context.system_prompt.as_deref(),
+        Some("Reviewer child instructions.")
+    );
+    drop(calls);
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved {
+                requesting_profile_id,
+                target_id,
+                task,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+                && task == "review parser"
+        )),
+        "expected restored nested approval event, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationCompleted {
+                requesting_profile_id,
+                target_id,
+                final_text,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+                && final_text == "reviewer result"
+        )),
+        "expected restored nested completion event, got {events:#?}"
+    );
+
+    let reopened_again = CodingAgentSession::open(persistent_confirmation_session_options(
+        &cwd,
+        &sessions,
+        "sess_nested_delegation_pending_approve",
+    ))
+    .await
+    .unwrap();
+    assert!(reopened_again.pending_delegation_confirmations().is_empty());
+}
+
+#[tokio::test]
+async fn recursive_agent_delegation_executes_until_depth_budget_is_exhausted() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 2
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 2
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["reviewer"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/reviewer.toml"),
+        r#"
+schema_version = 1
+id = "reviewer"
+display_name = "Reviewer"
+system_prompt = "Reviewer child instructions."
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 2
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["qa"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/qa.toml"),
+        r#"
+schema_version = 1
+id = "qa"
+display_name = "QA"
+system_prompt = "QA child instructions."
+"#,
+    );
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-recursive-budget-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_coder",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::tool_call(
+                "tool_delegate_reviewer",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
+            ),
+            ScriptedResponse::text("coder ready"),
+            ScriptedResponse::tool_call(
+                "tool_delegate_qa",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "qa", "task": "verify parser"}),
+            ),
+            ScriptedResponse::text("reviewer ready"),
+            ScriptedResponse::text("qa should not run"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        6,
+        "expected parent, coder, and reviewer tool/final calls without running qa"
+    );
+    assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
+    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+    assert_eq!(user_texts(&calls[4].context), vec!["review parser"]);
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved {
+                requesting_profile_id,
+                target_id,
+                task,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+                && task == "review parser"
+        )),
+        "expected nested reviewer delegation approval, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationCompleted {
+                requesting_profile_id,
+                target_id,
+                final_text,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "reviewer"
+                && final_text == "reviewer ready"
+        )),
+        "expected nested reviewer delegation completion, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRejected {
+                requesting_profile_id,
+                target_id,
+                reason,
+                ..
+            } if requesting_profile_id.as_str() == "reviewer"
+                && target_id.as_str() == "qa"
+                && reason.contains("max_depth")
+        )),
+        "expected qa delegation to be rejected by inherited depth budget, got {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved {
+                requesting_profile_id,
+                target_id,
+                ..
+            } if requesting_profile_id.as_str() == "reviewer"
+                && target_id.as_str() == "qa"
+        )),
+        "qa delegation must not be approved after depth budget is exhausted: {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn recursive_agent_delegation_rejects_cycle_to_ancestor_profile() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 3
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 3
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["delegating-planner"]
+"#,
+    );
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-cycle-rejection-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_coder",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::tool_call(
+                "tool_delegate_planner",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "delegating-planner", "task": "replan parser"}),
+            ),
+            ScriptedResponse::text("coder ready"),
+            ScriptedResponse::text("planner should not run"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        4,
+        "cycle rejection should run only parent and coder tool/final calls"
+    );
+    assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
+    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationRejected {
+                requesting_profile_id,
+                target_id,
+                reason,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "delegating-planner"
+                && reason.contains("cycle")
+        )),
+        "expected child delegation cycle rejection, got {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved {
+                requesting_profile_id,
+                target_id,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "delegating-planner"
+        )),
+        "cycle delegation must not be approved: {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationStarted {
+                requesting_profile_id,
+                target_id,
+                ..
+            } if requesting_profile_id.as_str() == "coder"
+                && target_id.as_str() == "delegating-planner"
+        )),
+        "cycle delegation must not start child work: {events:#?}"
+    );
+}
+
+#[tokio::test]
 async fn prompt_executes_approved_team_delegation_after_parent_success() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
@@ -313,7 +1000,7 @@ strategy = "plan_execute_review"
 members = ["coder"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-execution-team-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -412,7 +1099,7 @@ display_name = "Coder"
 system_prompt = "Coder child instructions."
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-confirmation-required-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -522,7 +1209,7 @@ display_name = "Coder"
 system_prompt = "Coder child instructions."
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-confirmation-approve-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -624,7 +1311,7 @@ display_name = "Coder"
 system_prompt = "Coder child instructions."
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-confirmation-reject-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -706,7 +1393,7 @@ async fn persistent_session_reopens_pending_delegation_confirmation() {
     let sessions = temp.path().join("sessions");
     fs::create_dir_all(&global).unwrap();
     write_confirmation_agent_profiles(&cwd);
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-persistent-pending-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -771,7 +1458,7 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     let sessions = temp.path().join("sessions");
     fs::create_dir_all(&global).unwrap();
     write_confirmation_agent_profiles(&cwd);
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-persistent-approve-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -873,7 +1560,7 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
     let sessions = temp.path().join("sessions");
     fs::create_dir_all(&global).unwrap();
     write_confirmation_agent_profiles(&cwd);
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-persistent-reject-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -986,7 +1673,7 @@ require_confirmation = "never"
 allowed_agents = ["missing-coder"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-child-failure-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -1078,13 +1765,22 @@ allowed_agents = ["missing-coder"]
 }
 
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
+    prompt_options_with_tools(cwd, api, prompt, Vec::new())
+}
+
+fn prompt_options_with_tools(
+    cwd: &Path,
+    api: &str,
+    prompt: &str,
+    tools: Vec<AgentTool>,
+) -> PromptTurnOptions {
     PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: prompt.into(),
         model: fallback_model(api),
         api_key: None,
         system_prompt: Some("Runtime fallback instructions.".into()),
         max_turns: Some(4),
-        tools: Vec::new(),
+        tools,
         register_builtins: false,
         session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
         session_target: None,
@@ -1169,6 +1865,15 @@ fn fallback_model(api: &str) -> Model {
     }
 }
 
+fn parent_only_tool() -> AgentTool {
+    AgentTool::new_text(
+        "parent_only",
+        "parent-only capability",
+        serde_json::json!({"type": "object"}),
+        |_args| async { Ok("parent-only".to_owned()) },
+    )
+}
+
 fn write_file(path: impl AsRef<Path>, content: &str) {
     let path = path.as_ref();
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1183,6 +1888,14 @@ fn drain_events(
         events.push(event);
     }
     events
+}
+
+fn tool_names(context: &Context) -> Vec<String> {
+    context
+        .tools
+        .as_ref()
+        .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
+        .unwrap_or_default()
 }
 
 fn user_texts(context: &Context) -> Vec<String> {
@@ -1308,30 +2021,5 @@ impl ProviderGuard {
 impl Drop for ProviderGuard {
     fn drop(&mut self) {
         registry::unregister(&self.api);
-    }
-}
-
-struct EnvGuard {
-    previous: Option<OsString>,
-}
-
-impl EnvGuard {
-    fn set_pi_rust_dir(path: PathBuf) -> Self {
-        let previous = std::env::var_os("PI_RUST_DIR");
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", path);
-        }
-        Self { previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        unsafe {
-            match &self.previous {
-                Some(previous) => std::env::set_var("PI_RUST_DIR", previous),
-                None => std::env::remove_var("PI_RUST_DIR"),
-            }
-        }
     }
 }

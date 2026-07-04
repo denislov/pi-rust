@@ -1,7 +1,8 @@
+mod support;
+
 use std::collections::VecDeque;
-use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
@@ -16,6 +17,7 @@ use pi_coding_agent::api::{
     AgentTeamOptions, CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions,
     PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
 };
+use support::EnvGuard;
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -37,7 +39,7 @@ strategy = "plan_execute_review"
 members = ["coder", "reviewer"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "agent-team-deterministic-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -132,7 +134,7 @@ strategy = "plan_execute_review"
 members = ["coder"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "agent-team-supervisor-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -191,7 +193,7 @@ strategy = "plan_execute_review"
 members = ["missing"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "agent-team-missing-member-api";
     let _provider_guard = ProviderGuard::register(api, Arc::new(Mutex::new(Vec::new())), vec![]);
@@ -243,7 +245,7 @@ strategy = "plan_execute_review"
 members = ["coder"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "agent-team-missing-supervisor-api";
     let _provider_guard = ProviderGuard::register(api, Arc::new(Mutex::new(Vec::new())), vec![]);
@@ -297,7 +299,7 @@ strategy = "plan_execute_review"
 members = ["coder"]
 "#,
     );
-    let _env_guard = EnvGuard::set_pi_rust_dir(global);
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "agent-team-child-failure-api";
     let _provider_guard = ProviderGuard::register_failing(api);
@@ -502,30 +504,5 @@ impl ProviderGuard {
 impl Drop for ProviderGuard {
     fn drop(&mut self) {
         registry::unregister(&self.api);
-    }
-}
-
-struct EnvGuard {
-    previous: Option<OsString>,
-}
-
-impl EnvGuard {
-    fn set_pi_rust_dir(path: PathBuf) -> Self {
-        let previous = std::env::var_os("PI_RUST_DIR");
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", path);
-        }
-        Self { previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        unsafe {
-            match &self.previous {
-                Some(previous) => std::env::set_var("PI_RUST_DIR", previous),
-                None => std::env::remove_var("PI_RUST_DIR"),
-            }
-        }
     }
 }

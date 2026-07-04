@@ -1,17 +1,23 @@
 use crate::CliError;
 use crate::coding_session::{
-    AgentProfile, CodingAgentSession, CodingAgentSessionOptions, DelegationConfirmationMode,
-    DelegationPolicy, PendingDelegationConfirmation, PluginLoadOutcome, ProfileDiagnostic,
-    ProfileId, ProfileKind, ProfileSource, SupervisionPolicy, TeamProfile, TeamStrategy,
-    TeamSupervisor,
+    AgentProfile, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
+    DelegationConfirmationMode, DelegationPolicy, PendingDelegationConfirmation, PluginLoadOutcome,
+    ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
+    SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
+    SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
+    SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
 };
+use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
-use crate::protocol::types::{RpcCommand, RpcResponse};
-use crate::runtime::SessionMode;
+use crate::protocol::types::{
+    RpcCommand, RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement,
+};
+use crate::runtime::{PromptInvocation, SessionMode};
 use crate::session::resolve_session_dir;
+use pi_agent_core::AgentResources;
 use tokio::io::AsyncWrite;
 
 impl RpcState {
@@ -237,6 +243,25 @@ impl RpcState {
                 )
                 .await
             }
+            RpcCommand::SelfHealingEdit {
+                id,
+                path,
+                edits,
+                check_command,
+                repair_attempts,
+                model_repair,
+            } => {
+                self.handle_self_healing_edit(
+                    id,
+                    path,
+                    edits,
+                    check_command,
+                    repair_attempts,
+                    model_repair,
+                    writer,
+                )
+                .await
+            }
             RpcCommand::ListAgentProfiles { id } => {
                 self.handle_list_agent_profiles(id, writer).await
             }
@@ -348,6 +373,148 @@ impl RpcState {
                     ),
                 )
                 .await
+            }
+        }
+    }
+
+    fn self_healing_model_repair_options(
+        &self,
+        policy: RpcSelfHealingEditModelRepair,
+    ) -> SelfHealingEditModelRepairOptions {
+        let prompt = "repair self-healing edit".to_owned();
+        let prompt_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: prompt.clone(),
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            system_prompt: Some("Return only self-healing edit repair JSON.".into()),
+            max_turns: Some(1),
+            tools: self.options.tools.clone(),
+            register_builtins: false,
+            session: Some(self.options.session.clone()),
+            session_target: None,
+            session_name: self.session_name.clone(),
+            thinking_level: Some(self.thinking_level),
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: Some(self.settings.clone()),
+            invocation: PromptInvocation::Text(prompt),
+        })
+        .with_mode(PromptTurnMode::Rpc);
+        SelfHealingEditModelRepairOptions::new(prompt_options)
+            .with_max_attempts(policy.max_attempts.unwrap_or(1))
+    }
+
+    async fn handle_self_healing_edit<W>(
+        &mut self,
+        id: Option<String>,
+        path: String,
+        edits: Vec<RpcSelfHealingEditReplacement>,
+        check_command: Option<String>,
+        repair_attempts: Option<Vec<Vec<RpcSelfHealingEditReplacement>>>,
+        model_repair: Option<RpcSelfHealingEditModelRepair>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.is_streaming() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "self_healing_edit",
+                    "cannot run self-healing edit while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let replacements = edits
+            .into_iter()
+            .map(rpc_self_healing_edit_replacement)
+            .collect::<Vec<_>>();
+        let repair_attempts = repair_attempts
+            .unwrap_or_default()
+            .into_iter()
+            .map(|attempt| {
+                attempt
+                    .into_iter()
+                    .map(rpc_self_healing_edit_replacement)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut session = match self.coding_session.take() {
+            Some(session) => session,
+            None => match self.open_reload_session().await {
+                Ok(session) => session,
+                Err(error) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(id, "self_healing_edit", error.to_string()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            },
+        };
+        let mut receiver = session.subscribe();
+        let mut adapter = RpcCodingEventAdapter::new_with_provider(
+            self.model.api.clone(),
+            self.model.provider.clone(),
+            self.model.id.clone(),
+        );
+
+        let mut request = SelfHealingEditRequest::new(path, replacements);
+        if let Some(command) = check_command {
+            request = request.with_check_command(command);
+        }
+        if !repair_attempts.is_empty() {
+            request = request.with_repair_attempts(repair_attempts);
+        }
+        if let Some(model_repair) = model_repair {
+            request =
+                request.with_model_repair(self.self_healing_model_repair_options(model_repair));
+        }
+
+        match session.self_healing_edit_with_options(request).await {
+            Ok(outcome) => {
+                let data = rpc_self_healing_edit_data(&outcome);
+                let mut protocol_events = Vec::new();
+                while let Ok(Some(event)) = receiver.try_recv() {
+                    protocol_events.extend(adapter.push(&event));
+                }
+                self.coding_session = Some(session);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(id, "self_healing_edit", Some(data)),
+                )
+                .await?;
+                for protocol_event in protocol_events {
+                    write_json_line(writer, &protocol_event).await?;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                let mut protocol_events = Vec::new();
+                while let Ok(Some(event)) = receiver.try_recv() {
+                    protocol_events.extend(adapter.push(&event));
+                }
+                let response = match rpc_self_healing_edit_error_data(&error) {
+                    Some(data) => RpcResponse::error_with_data(
+                        id,
+                        "self_healing_edit",
+                        error.to_string(),
+                        data,
+                    ),
+                    None => RpcResponse::error(id, "self_healing_edit", error.to_string()),
+                };
+                self.coding_session = Some(session);
+                write_rpc_response(writer, response).await?;
+                for protocol_event in protocol_events {
+                    write_json_line(writer, &protocol_event).await?;
+                }
+                Ok(())
             }
         }
     }
@@ -828,6 +995,90 @@ impl RpcState {
             .await?)
         }
     }
+}
+
+fn rpc_self_healing_edit_replacement(
+    edit: RpcSelfHealingEditReplacement,
+) -> SelfHealingEditReplacement {
+    SelfHealingEditReplacement::new(edit.old_text, edit.new_text)
+}
+
+fn rpc_self_healing_edit_data(outcome: &SelfHealingEditOutcome) -> serde_json::Value {
+    serde_json::json!({
+        "path": outcome.path,
+        "message": outcome.message,
+        "diff": outcome.diff,
+        "patch": outcome.patch,
+        "firstChangedLine": outcome.first_changed_line,
+        "attempts": outcome.attempts,
+        "diagnostics": outcome
+            .diagnostics
+            .iter()
+            .map(|diagnostic| serde_json::json!({ "message": diagnostic.message }))
+            .collect::<Vec<_>>(),
+        "checkOutput": outcome
+            .check_output
+            .as_ref()
+            .map(rpc_self_healing_check_output_data),
+        "repairAttempts": outcome
+            .repair_attempts
+            .iter()
+            .map(rpc_self_healing_repair_attempt_data)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn rpc_self_healing_repair_attempt_data(
+    repair: &SelfHealingEditRepairAttempt,
+) -> serde_json::Value {
+    serde_json::json!({
+        "attempt": repair.attempt,
+        "edits": repair
+            .replacements
+            .iter()
+            .map(|replacement| serde_json::json!({
+                "oldText": replacement.old_text,
+                "newText": replacement.new_text,
+            }))
+            .collect::<Vec<_>>(),
+        "diagnostics": repair
+            .diagnostics
+            .iter()
+            .map(|diagnostic| serde_json::json!({ "message": diagnostic.message }))
+            .collect::<Vec<_>>(),
+        "checkOutput": repair
+            .check_output
+            .as_ref()
+            .map(rpc_self_healing_check_output_data),
+    })
+}
+
+fn rpc_self_healing_edit_error_data(error: &CodingSessionError) -> Option<serde_json::Value> {
+    match error {
+        CodingSessionError::SelfHealingEditFailed {
+            diagnostics,
+            check_output,
+            ..
+        } => Some(serde_json::json!({
+            "diagnostics": diagnostics
+                .iter()
+                .map(|diagnostic| serde_json::json!({ "message": diagnostic.message }))
+                .collect::<Vec<_>>(),
+            "checkOutput": check_output
+                .as_ref()
+                .map(rpc_self_healing_check_output_data),
+        })),
+        _ => None,
+    }
+}
+
+fn rpc_self_healing_check_output_data(output: &SelfHealingEditCheckOutput) -> serde_json::Value {
+    serde_json::json!({
+        "command": output.command,
+        "stdout": output.stdout,
+        "stderr": output.stderr,
+        "exitCode": output.exit_code,
+    })
 }
 
 fn rpc_agent_profiles_data(session: &CodingAgentSession) -> serde_json::Value {

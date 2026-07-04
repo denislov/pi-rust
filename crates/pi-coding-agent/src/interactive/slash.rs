@@ -45,7 +45,7 @@ pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
         },
         BuiltinSlashCommand {
             name: "delegations".into(),
-            description: "List pending delegation confirmations".into(),
+            description: "Review pending delegation confirmations".into(),
         },
         BuiltinSlashCommand {
             name: "delegation".into(),
@@ -114,6 +114,10 @@ pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
         BuiltinSlashCommand {
             name: "branch-summary".into(),
             description: "Summarize an abandoned session branch".into(),
+        },
+        BuiltinSlashCommand {
+            name: "self-healing-edit".into(),
+            description: "Apply a checked edit through the session workflow".into(),
         },
         BuiltinSlashCommand {
             name: "resume".into(),

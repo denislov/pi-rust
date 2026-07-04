@@ -14,6 +14,8 @@ pub(crate) enum OperationKind {
     AgentInvocation,
     AgentTeam,
     Export,
+    #[allow(dead_code)]
+    SelfHealingEdit,
 }
 
 impl OperationKind {
@@ -27,6 +29,7 @@ impl OperationKind {
             Self::AgentInvocation => "agent_invocation",
             Self::AgentTeam => "agent_team",
             Self::Export => "export",
+            Self::SelfHealingEdit => "self_healing_edit",
         }
     }
 }

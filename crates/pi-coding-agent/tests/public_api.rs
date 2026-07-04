@@ -1,3 +1,6 @@
+use pi_agent_core::AgentResources;
+use pi_ai::providers::faux::FauxProvider;
+use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
     CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
@@ -6,8 +9,10 @@ use pi_coding_agent::api::{
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
     CodingDiagnosticSeverity, CodingSessionError, PendingDelegationConfirmation, PrintModeOptions,
     ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions,
-    PromptTurnOutcome, SessionMode, ToolFilter, builtin_tools, filter_tools, help_text, parse_args,
-    render_diagnostics,
+    PromptTurnOutcome, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
+    SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+    SelfHealingEditReplacement, SelfHealingEditRequest, SessionMode, ToolFilter, builtin_tools,
+    filter_tools, help_text, parse_args, render_diagnostics,
 };
 
 fn model(api: &str) -> Model {
@@ -137,6 +142,7 @@ async fn coding_session_public_api_symbols_are_importable() {
             },
             export: CapabilityStatus::Available,
             plugin_reload: CapabilityStatus::Available,
+            self_healing_edit: CapabilityStatus::Available,
             agent_profiles: CapabilityStatus::Available,
             team_profiles: CapabilityStatus::Available,
             delegation: CapabilityStatus::Available,
@@ -224,6 +230,456 @@ async fn coding_session_public_api_symbols_are_importable() {
         outcome,
         PromptTurnOutcome::Aborted { reason, .. } if reason == "test"
     ));
+
+    let _self_healing_check_output_type_name = std::any::type_name::<SelfHealingEditCheckOutput>();
+    let _self_healing_diagnostic_type_name = std::any::type_name::<SelfHealingEditDiagnostic>();
+    let _self_healing_outcome_type_name = std::any::type_name::<SelfHealingEditOutcome>();
+    let _self_healing_repair_attempt_type_name =
+        std::any::type_name::<SelfHealingEditRepairAttempt>();
+}
+
+#[tokio::test]
+async fn coding_session_self_healing_edit_persists_typed_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().join("workspace");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/app.txt"), "one\ntwo\n").unwrap();
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_self_healing_entrypoint")
+            .with_cwd(&workspace)
+            .with_session_log_root(&sessions),
+    )
+    .await
+    .unwrap();
+
+    let outcome = session
+        .self_healing_edit(
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.path, "src/app.txt");
+    assert_eq!(outcome.attempts, 1);
+    assert_eq!(outcome.first_changed_line, Some(2));
+    assert!(outcome.message.contains("Successfully replaced 1 block"));
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
+        "one\ndeux\n"
+    );
+    let event_log = std::fs::read_to_string(
+        sessions
+            .join("sess_self_healing_entrypoint")
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert!(
+        event_log.contains(r#""kind":"operation.started""#),
+        "{event_log}"
+    );
+    assert!(
+        event_log.contains(r#""operation":{"kind":"self_healing_edit"}"#),
+        "{event_log}"
+    );
+    assert!(
+        event_log.contains(r#""kind":"self_healing_edit.started""#),
+        "{event_log}"
+    );
+    assert!(
+        event_log.contains(r#""kind":"self_healing_edit.completed""#),
+        "{event_log}"
+    );
+    assert!(event_log.contains(r#""path":"src/app.txt""#), "{event_log}");
+    assert!(event_log.contains(r#""attempts":1"#), "{event_log}");
+    assert!(
+        event_log.contains(r#""kind":"operation.committed""#),
+        "{event_log}"
+    );
+    assert_eq!(
+        session.capabilities().self_healing_edit,
+        CapabilityStatus::Available
+    );
+}
+
+#[tokio::test]
+async fn coding_session_self_healing_edit_with_check_command_records_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().join("workspace");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/app.txt"), "one\ntwo\n").unwrap();
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_self_healing_check_command")
+            .with_cwd(&workspace)
+            .with_session_log_root(&sessions),
+    )
+    .await
+    .unwrap();
+
+    let outcome = session
+        .self_healing_edit_with_options(
+            SelfHealingEditRequest::new(
+                "src/app.txt",
+                vec![SelfHealingEditReplacement::new("two", "deux")],
+            )
+            .with_check_command("printf check-ok"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
+        "one\ndeux\n"
+    );
+    let check_output = outcome
+        .check_output
+        .as_ref()
+        .expect("check output should be recorded");
+    assert_eq!(check_output.command, "printf check-ok");
+    assert_eq!(check_output.exit_code, 0);
+    assert_eq!(check_output.stdout, "check-ok");
+    assert!(check_output.stderr.is_empty());
+
+    let event_log = std::fs::read_to_string(
+        sessions
+            .join("sess_self_healing_check_command")
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert!(
+        event_log.contains(r#""kind":"self_healing_edit.completed""#),
+        "{event_log}"
+    );
+}
+
+#[tokio::test]
+async fn coding_session_self_healing_edit_uses_planned_repair_attempts() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().join("workspace");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/app.txt"), "one\ntwo\n").unwrap();
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_self_healing_planned_repair")
+            .with_cwd(&workspace)
+            .with_session_log_root(&sessions),
+    )
+    .await
+    .unwrap();
+
+    let outcome = session
+        .self_healing_edit_with_options(
+            SelfHealingEditRequest::new(
+                "src/app.txt",
+                vec![SelfHealingEditReplacement::new("two", "deux")],
+            )
+            .with_check_command("grep -q dos src/app.txt")
+            .with_repair_attempts(vec![vec![SelfHealingEditReplacement::new("deux", "dos")]]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
+        "one\ndos\n"
+    );
+    assert_eq!(outcome.attempts, 2);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("grep -q dos src/app.txt")),
+        "{:#?}",
+        outcome.diagnostics
+    );
+    let check_output = outcome
+        .check_output
+        .as_ref()
+        .expect("final check output should be recorded");
+    assert_eq!(check_output.command, "grep -q dos src/app.txt");
+    assert_eq!(check_output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().join("workspace");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/app.txt"), "one\ntwo\n").unwrap();
+    let api = "public-api-self-healing-model-repair";
+    registry::register(
+        api,
+        std::sync::Arc::new(FauxProvider::simple_text(
+            r#"{"edits":[{"oldText":"deux","newText":"dos"}]}"#,
+        )),
+    );
+    let repair_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+        prompt: String::new(),
+        model: model(api),
+        api_key: None,
+        system_prompt: Some("Return only self-healing edit repair JSON.".into()),
+        max_turns: Some(1),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: Some(pi_coding_agent::api::SessionRunOptions::disabled(
+            workspace.clone(),
+        )),
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("repair self-healing edit".into()),
+    });
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_self_healing_model_repair")
+            .with_cwd(&workspace)
+            .with_session_log_root(&sessions),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .self_healing_edit_with_options(
+            SelfHealingEditRequest::new(
+                "src/app.txt",
+                vec![SelfHealingEditReplacement::new("two", "deux")],
+            )
+            .with_check_command("grep -q dos src/app.txt")
+            .with_model_repair(SelfHealingEditModelRepairOptions::new(repair_options)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
+        "one\ndos\n"
+    );
+    assert_eq!(outcome.attempts, 2);
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("grep -q dos src/app.txt")),
+        "{:#?}",
+        outcome.diagnostics
+    );
+    let check_output = outcome
+        .check_output
+        .as_ref()
+        .expect("final check output should be recorded");
+    assert_eq!(check_output.command, "grep -q dos src/app.txt");
+    assert_eq!(check_output.exit_code, 0);
+    assert_eq!(outcome.repair_attempts.len(), 1);
+    assert_eq!(outcome.repair_attempts[0].attempt, 1);
+    assert_eq!(outcome.repair_attempts[0].replacements[0].old_text, "deux");
+    assert_eq!(outcome.repair_attempts[0].replacements[0].new_text, "dos");
+
+    let event_log = std::fs::read_to_string(
+        sessions
+            .join("sess_self_healing_model_repair")
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert!(
+        event_log.contains(r#""kind":"self_healing_edit.repair_attempted""#),
+        "{event_log}"
+    );
+    assert!(event_log.contains(r#""attempt":1"#), "{event_log}");
+    assert!(event_log.contains(r#""old_text":"deux""#), "{event_log}");
+    assert!(event_log.contains(r#""new_text":"dos""#), "{event_log}");
+    assert!(event_log.contains(r#""exit_code":0"#), "{event_log}");
+
+    let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+    assert!(
+        emitted_events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::SelfHealingEditStarted {
+                path,
+                replacements: 1,
+                ..
+            } if path == "src/app.txt"
+        )),
+        "{emitted_events:#?}"
+    );
+    let repair_event_count = emitted_events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                CodingAgentEvent::SelfHealingEditRepairAttempted { .. }
+            )
+        })
+        .count();
+    assert_eq!(repair_event_count, 1, "{emitted_events:#?}");
+    assert!(
+        emitted_events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::SelfHealingEditRepairAttempted {
+                path,
+                attempt: 1,
+                replacements,
+                check_output: Some(check_output),
+                ..
+            } if path == "src/app.txt"
+                && replacements[0].old_text == "deux"
+                && replacements[0].new_text == "dos"
+                && check_output.exit_code == 0
+        )),
+        "{emitted_events:#?}"
+    );
+    assert!(
+        emitted_events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::SelfHealingEditCompleted {
+                path,
+                attempts: 2,
+                check_output: Some(check_output),
+                ..
+            } if path == "src/app.txt" && check_output.exit_code == 0
+        )),
+        "{emitted_events:#?}"
+    );
+    registry::unregister(api);
+}
+
+#[tokio::test]
+async fn coding_session_self_healing_edit_failed_check_exposes_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().join("workspace");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/app.txt"), "one\ntwo\n").unwrap();
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_self_healing_failed_check")
+            .with_cwd(&workspace)
+            .with_session_log_root(&sessions),
+    )
+    .await
+    .unwrap();
+
+    let error = session
+        .self_healing_edit_with_options(
+            SelfHealingEditRequest::new(
+                "src/app.txt",
+                vec![SelfHealingEditReplacement::new("two", "deux")],
+            )
+            .with_check_command("printf check-failed >&2; exit 7"),
+        )
+        .await
+        .unwrap_err();
+
+    let CodingSessionError::SelfHealingEditFailed {
+        message,
+        diagnostics,
+        check_output,
+    } = error
+    else {
+        panic!("expected self-healing edit failure, got {error:?}");
+    };
+    assert!(message.contains("self-healing edit check failed"));
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].message.contains("check-failed"));
+    let check_output = check_output.expect("check output should be preserved");
+    assert_eq!(check_output.command, "printf check-failed >&2; exit 7");
+    assert_eq!(check_output.stdout, "");
+    assert_eq!(check_output.stderr, "check-failed");
+    assert_eq!(check_output.exit_code, 7);
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
+        "one\ndeux\n"
+    );
+}
+
+#[tokio::test]
+async fn coding_session_self_healing_edit_requires_persistent_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut session =
+        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(temp.path()))
+            .await
+            .unwrap();
+
+    let error = session
+        .self_healing_edit(
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "unsupported_capability");
+    assert!(
+        error
+            .to_string()
+            .contains("self-healing edit requires a persistent Rust-native session"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn coding_session_self_healing_edit_failure_records_failed_operation() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().join("workspace");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/app.txt"), "one\ntwo\n").unwrap();
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_self_healing_failure")
+            .with_cwd(&workspace)
+            .with_session_log_root(&sessions),
+    )
+    .await
+    .unwrap();
+
+    let error = session
+        .self_healing_edit(
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("", "deux")],
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+    assert!(
+        error.to_string().contains("oldText must not be empty"),
+        "{error}"
+    );
+    let event_log = std::fs::read_to_string(
+        sessions
+            .join("sess_self_healing_failure")
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert!(
+        event_log.contains(r#""operation":{"kind":"self_healing_edit"}"#),
+        "{event_log}"
+    );
+    assert!(
+        event_log.contains(r#""kind":"self_healing_edit.started""#),
+        "{event_log}"
+    );
+    assert!(
+        event_log.contains(r#""kind":"operation.failed""#),
+        "{event_log}"
+    );
+    assert!(
+        !event_log.contains(r#""kind":"self_healing_edit.completed""#),
+        "{event_log}"
+    );
 }
 
 #[tokio::test]

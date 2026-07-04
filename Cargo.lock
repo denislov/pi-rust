@@ -1199,6 +1199,7 @@ dependencies = [
  "syntect",
  "tempfile",
  "thiserror",
+ "time",
  "tokio",
  "toml",
  "unicode-normalization",

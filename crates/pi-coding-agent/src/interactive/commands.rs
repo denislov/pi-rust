@@ -4,6 +4,7 @@ use pi_agent_core::resources::{parse_command_args, substitute_args};
 use pi_agent_core::{PromptTemplate, Skill};
 use pi_tui::{KeybindingsManager, TUI_KEYBINDINGS};
 
+use crate::coding_session::SelfHealingEditReplacement;
 use crate::config;
 use crate::interactive::app::welcome_line;
 use crate::interactive::key_hints::{app_key_hint, key_hint};
@@ -12,7 +13,7 @@ use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
     PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
     PendingDelegationConfirmationSelection, PendingPluginCommandRequest, PendingPluginUiDialog,
-    PluginUiDialogField,
+    PendingSelfHealingEditModelRepair, PendingSelfHealingEditRequest, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -95,8 +96,14 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "model" => handle_model_command(root, &command.args),
         "agents" => handle_agents_command(root),
         "agent" => handle_agent_command(root, &command.args),
+        _ if command.name.starts_with("agent:") => {
+            handle_agent_colon_command(root, &command.name, &command.args)
+        }
         "teams" => handle_teams_command(root),
         "team" => handle_team_command(root, &command.args),
+        _ if command.name.starts_with("team:") => {
+            handle_team_colon_command(root, &command.name, &command.args)
+        }
         "delegations" => handle_delegations_command(root, &command.args),
         "delegation" => handle_delegation_command(root, &command.args),
         "resume" => handle_resume_command(root, &command.args),
@@ -116,6 +123,7 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "fork" => handle_fork_command(root, &command.args),
         "compact" => handle_compact_command(root, &command.args),
         "branch-summary" => handle_branch_summary_command(root, &command.args),
+        "self-healing-edit" => handle_self_healing_edit_command(root, &command.args),
         "plugin-command" => handle_plugin_command(root, &command.args),
         "tree" => handle_tree_command(root),
         "scoped-models" | "share" => handle_pending_slash_command(root, &command),
@@ -177,58 +185,34 @@ fn handle_teams_command(root: &mut InteractiveRoot) {
 fn handle_agent_command(root: &mut InteractiveRoot, args: &str) {
     let args = args.trim();
     if args.is_empty() {
-        root.transcript.push(TranscriptItem::system(
-            "Usage: /agent use <agent-id> or /agent <agent-id> <task>",
-        ));
+        root.open_agent_menu();
         return;
     }
-    let mut parts = args.splitn(2, char::is_whitespace);
-    let first = parts.next().unwrap_or_default();
-    let rest = parts.next().unwrap_or_default().trim();
-    if first == "use" {
-        if rest.is_empty() {
-            root.transcript
-                .push(TranscriptItem::system("Usage: /agent use <agent-id>"));
-            return;
-        }
-        let mut rest_parts = rest.split_whitespace();
-        let profile_id = rest_parts.next().unwrap_or_default();
-        if rest_parts.next().is_some() {
-            root.transcript
-                .push(TranscriptItem::system("Usage: /agent use <agent-id>"));
-            return;
-        }
-        let Some(profile) = root.profile_registry.agent(profile_id) else {
-            root.transcript.push(TranscriptItem::system(format!(
-                "Unknown agent profile: {profile_id}"
-            )));
-            return;
-        };
-        let selected = profile.id.clone();
-        root.set_default_agent_profile_id(selected.clone());
-        root.selected_agent_profile_id = Some(selected.clone());
-        root.action = InteractiveAction::AgentProfileUse;
-        root.transcript.push(TranscriptItem::system(format!(
-            "Default agent profile: {selected}"
-        )));
-        return;
-    }
+    root.transcript
+        .push(TranscriptItem::system(agent_usage_text()));
+}
 
-    let profile_id = first;
+fn handle_agent_colon_command(root: &mut InteractiveRoot, command_name: &str, args: &str) {
+    let Some(profile_id) = command_name.strip_prefix("agent:") else {
+        root.transcript
+            .push(TranscriptItem::system(agent_usage_text()));
+        return;
+    };
+    let task = args.trim();
+    if profile_id.is_empty() || task.is_empty() {
+        root.transcript
+            .push(TranscriptItem::system(agent_usage_text()));
+        return;
+    }
     let Some(profile) = root.profile_registry.agent(profile_id) else {
         root.transcript.push(TranscriptItem::system(format!(
             "Unknown agent profile: {profile_id}"
         )));
         return;
     };
-    if rest.is_empty() {
-        root.transcript
-            .push(TranscriptItem::system("Usage: /agent <agent-id> <task>"));
-        return;
-    }
     root.pending_agent_invocation_request = Some(PendingAgentInvocationRequest {
         profile_id: profile.id.clone(),
-        task: rest.to_string(),
+        task: task.to_string(),
     });
     root.action = InteractiveAction::AgentInvocation;
 }
@@ -236,22 +220,29 @@ fn handle_agent_command(root: &mut InteractiveRoot, args: &str) {
 fn handle_team_command(root: &mut InteractiveRoot, args: &str) {
     let args = args.trim();
     if args.is_empty() {
-        root.transcript
-            .push(TranscriptItem::system("Usage: /team <team-id> <task>"));
+        root.open_team_menu();
         return;
     }
-    let mut parts = args.splitn(2, char::is_whitespace);
-    let team_id = parts.next().unwrap_or_default();
-    let task = parts.next().unwrap_or_default().trim();
+    root.transcript
+        .push(TranscriptItem::system(team_usage_text()));
+}
+
+fn handle_team_colon_command(root: &mut InteractiveRoot, command_name: &str, args: &str) {
+    let Some(team_id) = command_name.strip_prefix("team:") else {
+        root.transcript
+            .push(TranscriptItem::system(team_usage_text()));
+        return;
+    };
+    let task = args.trim();
+    if team_id.is_empty() || task.is_empty() {
+        root.transcript
+            .push(TranscriptItem::system(team_usage_text()));
+        return;
+    }
     if root.profile_registry.team(team_id).is_none() {
         root.transcript.push(TranscriptItem::system(format!(
             "Unknown team profile: {team_id}"
         )));
-        return;
-    }
-    if task.is_empty() {
-        root.transcript
-            .push(TranscriptItem::system("Usage: /team <team-id> <task>"));
         return;
     }
     root.pending_agent_team_request = Some(PendingAgentTeamRequest {
@@ -259,6 +250,14 @@ fn handle_team_command(root: &mut InteractiveRoot, args: &str) {
         task: task.to_string(),
     });
     root.action = InteractiveAction::AgentTeam;
+}
+
+fn agent_usage_text() -> &'static str {
+    "Usage: /agent or /agent:<agent-id> <task>"
+}
+
+fn team_usage_text() -> &'static str {
+    "Usage: /team or /team:<team-id> <task>"
 }
 
 fn handle_delegations_command(root: &mut InteractiveRoot, args: &str) {
@@ -471,6 +470,116 @@ fn handle_branch_summary_command(root: &mut InteractiveRoot, args: &str) {
         custom_instructions,
     });
     root.action = InteractiveAction::BranchSummary;
+}
+
+fn handle_self_healing_edit_command(root: &mut InteractiveRoot, args: &str) {
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before applying a self-healing edit.",
+        ));
+        return;
+    }
+
+    match parse_self_healing_edit_args(args) {
+        Ok(request) => {
+            root.pending_self_healing_edit_request = Some(request);
+            root.action = InteractiveAction::SelfHealingEdit;
+        }
+        Err(usage) => root.transcript.push(TranscriptItem::system(usage)),
+    }
+}
+
+fn parse_self_healing_edit_args(args: &str) -> Result<PendingSelfHealingEditRequest, String> {
+    let usage = "Usage: /self-healing-edit <path> <oldText> => <newText> [--model-repair] [--model-repair-attempts N] [--check <command>]";
+    let args = args.trim();
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let path = parts.next().unwrap_or_default().trim();
+    let rest = parts.next().unwrap_or_default().trim();
+    if path.is_empty() || rest.is_empty() {
+        return Err(usage.to_string());
+    }
+    let Some((old_text, new_text)) = rest.split_once("=>") else {
+        return Err(usage.to_string());
+    };
+    let old_text = old_text.trim();
+    let (new_text, model_repair_after_check) =
+        parse_self_healing_edit_model_repair_suffix(new_text.trim(), usage)?;
+    let (new_text, check_command) = parse_self_healing_edit_check_suffix(&new_text, usage)?;
+    let (new_text, model_repair_before_check) =
+        parse_self_healing_edit_model_repair_suffix(&new_text, usage)?;
+    let model_repair = model_repair_after_check.or(model_repair_before_check);
+    if old_text.is_empty() || new_text.is_empty() {
+        return Err(usage.to_string());
+    }
+    Ok(PendingSelfHealingEditRequest {
+        path: path.to_string(),
+        replacements: vec![SelfHealingEditReplacement::new(old_text, new_text)],
+        check_command,
+        model_repair,
+    })
+}
+
+fn parse_self_healing_edit_check_suffix(
+    new_text: &str,
+    usage: &str,
+) -> Result<(String, Option<String>), String> {
+    if let Some((text, command)) = new_text.rsplit_once(" --check ") {
+        let text = text.trim();
+        let command = command.trim();
+        if text.is_empty() || command.is_empty() {
+            return Err(usage.to_string());
+        }
+        return Ok((text.to_string(), Some(command.to_string())));
+    }
+    if new_text == "--check" || new_text.ends_with(" --check") {
+        return Err(usage.to_string());
+    }
+    Ok((new_text.to_string(), None))
+}
+
+fn parse_self_healing_edit_model_repair_suffix(
+    value: &str,
+    usage: &str,
+) -> Result<(String, Option<PendingSelfHealingEditModelRepair>), String> {
+    let mut value = value.trim().to_string();
+    let mut max_attempts = None;
+    let mut enabled = false;
+    loop {
+        if let Some(before) = value.strip_suffix(" --model-repair") {
+            enabled = true;
+            value = before.trim_end().to_string();
+            continue;
+        }
+        if let Some((before, attempts)) = value.rsplit_once(" --model-repair-attempts ") {
+            let attempts = attempts.trim();
+            if attempts.is_empty() {
+                return Err(usage.to_string());
+            }
+            if attempts.chars().any(char::is_whitespace) {
+                break;
+            }
+            let attempts = attempts
+                .parse::<usize>()
+                .ok()
+                .filter(|attempts| *attempts > 0)
+                .ok_or_else(|| usage.to_string())?;
+            enabled = true;
+            max_attempts = Some(attempts);
+            value = before.trim_end().to_string();
+            continue;
+        }
+        break;
+    }
+    if value == "--model-repair-attempts"
+        || value.ends_with(" --model-repair-attempts")
+        || value.ends_with(" --model-repair-attempts ")
+    {
+        return Err(usage.to_string());
+    }
+    let policy = enabled.then_some(PendingSelfHealingEditModelRepair {
+        max_attempts: max_attempts.unwrap_or(1),
+    });
+    Ok((value, policy))
 }
 
 fn handle_plugin_command(root: &mut InteractiveRoot, args: &str) {

@@ -67,21 +67,11 @@ mod tests {
 
     #[test]
     fn default_sessions_root_uses_pi_rust_dir() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
         let dir = tempfile::tempdir().unwrap();
-        let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", dir.path());
-        }
+        env.set_pi_rust_dir(dir.path());
 
         let root = default_sessions_root().unwrap();
-
-        unsafe {
-            match prior_pi_rust_dir {
-                Some(value) => std::env::set_var("PI_RUST_DIR", value),
-                None => std::env::remove_var("PI_RUST_DIR"),
-            }
-        }
 
         assert_eq!(root, dir.path().join("sessions"));
         assert!(
@@ -93,34 +83,15 @@ mod tests {
 
     #[test]
     fn resolve_session_dir_ignores_legacy_pi_agent_dir() {
-        let _guard = crate::test_support::env_lock();
+        let env =
+            crate::test_support::EnvGuard::new(&["PI_RUST_DIR", "PI_AGENT_DIR", "PI_SESSION_DIR"]);
         let global = tempfile::tempdir().unwrap();
         let legacy = tempfile::tempdir().unwrap();
-        let prior_pi_rust_dir = std::env::var_os("PI_RUST_DIR");
-        let prior_pi_agent_dir = std::env::var_os("PI_AGENT_DIR");
-        let prior_pi_session_dir = std::env::var_os("PI_SESSION_DIR");
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", global.path());
-            std::env::set_var("PI_AGENT_DIR", legacy.path());
-            std::env::remove_var("PI_SESSION_DIR");
-        }
+        env.set_pi_rust_dir(global.path());
+        env.set("PI_AGENT_DIR", legacy.path());
+        env.remove("PI_SESSION_DIR");
 
         let root = resolve_session_dir(Path::new("."), None, None).unwrap();
-
-        unsafe {
-            match prior_pi_rust_dir {
-                Some(value) => std::env::set_var("PI_RUST_DIR", value),
-                None => std::env::remove_var("PI_RUST_DIR"),
-            }
-            match prior_pi_agent_dir {
-                Some(value) => std::env::set_var("PI_AGENT_DIR", value),
-                None => std::env::remove_var("PI_AGENT_DIR"),
-            }
-            match prior_pi_session_dir {
-                Some(value) => std::env::set_var("PI_SESSION_DIR", value),
-                None => std::env::remove_var("PI_SESSION_DIR"),
-            }
-        }
 
         assert_eq!(root, global.path().join("sessions"));
     }

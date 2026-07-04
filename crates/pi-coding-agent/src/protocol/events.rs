@@ -1,6 +1,9 @@
-use crate::coding_session::{CodingAgentEvent, ProfileKind};
+use crate::coding_session::{
+    CodingAgentEvent, ProfileKind, SelfHealingEditCheckOutput, SelfHealingEditReplacement,
+};
 use crate::protocol::types::{
-    CompactionProtocolResult, CompactionReason, ProtocolEvent, ToolExecutionResult,
+    CompactionProtocolResult, CompactionReason, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
+    ProtocolSelfHealingEditReplacement, ToolExecutionResult,
 };
 use pi_agent_core::session::{StoredAgentMessage, StoredUsage, StoredUsageCost};
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
@@ -181,6 +184,59 @@ impl CodingProtocolEventAdapter {
                     profile_id: profile_id.as_str().to_string(),
                 }]
             }
+            CodingAgentEvent::SelfHealingEditStarted {
+                operation_id,
+                path,
+                replacements,
+            } => vec![ProtocolEvent::SelfHealingEditStart {
+                operation_id: operation_id.clone(),
+                path: path.clone(),
+                replacements: *replacements,
+            }],
+            CodingAgentEvent::SelfHealingEditRepairAttempted {
+                operation_id,
+                path,
+                attempt,
+                replacements,
+                diagnostics,
+                check_output,
+            } => vec![ProtocolEvent::SelfHealingEditRepairAttempt {
+                operation_id: operation_id.clone(),
+                path: path.clone(),
+                attempt: *attempt,
+                edits: protocol_self_healing_replacements(replacements),
+                diagnostics: diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.clone())
+                    .collect(),
+                check_output: check_output
+                    .as_ref()
+                    .map(protocol_self_healing_check_output),
+            }],
+            CodingAgentEvent::SelfHealingEditCompleted {
+                operation_id,
+                path,
+                attempts,
+                first_changed_line,
+                check_output,
+            } => vec![ProtocolEvent::SelfHealingEditEnd {
+                operation_id: operation_id.clone(),
+                path: path.clone(),
+                attempts: *attempts,
+                first_changed_line: *first_changed_line,
+                check_output: check_output
+                    .as_ref()
+                    .map(protocol_self_healing_check_output),
+            }],
+            CodingAgentEvent::SelfHealingEditFailed {
+                operation_id,
+                path,
+                error,
+            } => vec![ProtocolEvent::SelfHealingEditError {
+                operation_id: operation_id.clone(),
+                path: path.clone(),
+                error: error.to_string(),
+            }],
             CodingAgentEvent::DelegationRequested {
                 operation_id,
                 turn_id,
@@ -571,6 +627,29 @@ impl CodingProtocolEventAdapter {
         self.current_tool_results.clear();
         self.assistant_open = false;
         events
+    }
+}
+
+fn protocol_self_healing_replacements(
+    replacements: &[SelfHealingEditReplacement],
+) -> Vec<ProtocolSelfHealingEditReplacement> {
+    replacements
+        .iter()
+        .map(|replacement| ProtocolSelfHealingEditReplacement {
+            old_text: replacement.old_text.clone(),
+            new_text: replacement.new_text.clone(),
+        })
+        .collect()
+}
+
+fn protocol_self_healing_check_output(
+    output: &SelfHealingEditCheckOutput,
+) -> ProtocolSelfHealingEditCheckOutput {
+    ProtocolSelfHealingEditCheckOutput {
+        command: output.command.clone(),
+        stdout: output.stdout.clone(),
+        stderr: output.stderr.clone(),
+        exit_code: output.exit_code,
     }
 }
 

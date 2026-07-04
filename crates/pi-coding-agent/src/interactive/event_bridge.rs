@@ -214,6 +214,48 @@ impl CodingEventBridge {
                     error
                 ),
             }],
+            CodingAgentEvent::SelfHealingEditStarted {
+                path, replacements, ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Self-healing edit started for {} ({}).",
+                    path,
+                    replacement_count_label(*replacements)
+                ),
+            }],
+            CodingAgentEvent::SelfHealingEditRepairAttempted {
+                path,
+                attempt,
+                replacements,
+                check_output,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Self-healing edit repair attempt {} for {}: {}, {}.",
+                    attempt,
+                    path,
+                    replacement_count_label(replacements.len()),
+                    check_output_label(check_output.as_ref())
+                ),
+            }],
+            CodingAgentEvent::SelfHealingEditCompleted {
+                path,
+                attempts,
+                first_changed_line,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Self-healing edit completed for {} after {}{}.",
+                    path,
+                    attempt_count_label(*attempts),
+                    first_changed_line_label(*first_changed_line)
+                ),
+            }],
+            CodingAgentEvent::SelfHealingEditFailed { path, error, .. } => {
+                vec![UiEvent::SystemNotice {
+                    text: format!("Self-healing edit failed for {}: {}", path, error),
+                }]
+            }
             CodingAgentEvent::SessionOpened { .. }
             | CodingAgentEvent::DefaultAgentProfileChanged { .. }
             | CodingAgentEvent::AgentInvocationStarted { .. }
@@ -238,6 +280,34 @@ impl CodingEventBridge {
             | CodingAgentEvent::CapabilityChanged => Vec::new(),
         }
     }
+}
+
+fn replacement_count_label(replacements: usize) -> String {
+    match replacements {
+        1 => "1 replacement".to_string(),
+        count => format!("{count} replacements"),
+    }
+}
+
+fn attempt_count_label(attempts: usize) -> String {
+    match attempts {
+        1 => "1 attempt".to_string(),
+        count => format!("{count} attempts"),
+    }
+}
+
+fn first_changed_line_label(first_changed_line: Option<usize>) -> String {
+    first_changed_line
+        .map(|line| format!(", first changed line {line}"))
+        .unwrap_or_default()
+}
+
+fn check_output_label(
+    output: Option<&crate::coding_session::SelfHealingEditCheckOutput>,
+) -> String {
+    output
+        .map(|output| format!("check exit {}", output.exit_code))
+        .unwrap_or_else(|| "no check output".to_string())
 }
 
 fn parse_tool_arguments(arguments_json: &str) -> serde_json::Value {
