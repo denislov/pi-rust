@@ -40,19 +40,21 @@ Interactive slash commands:
 
 ```text
 /agents
-/agent use <agent-id>
-/agent <agent-id> <task>
+/agent
+/agent:<agent-id> <task>
 /teams
-/team <team-id> <task>
+/team
+/team:<team-id> <task>
 ```
 
 Semantics:
 
 - `/agents` lists resolved built-in, user, and project `AgentProfile` entries with default/current status.
-- `/agent use <agent-id>` changes the session default `AgentProfile` for subsequent ordinary prompts and records the change in session state.
-- `/agent <agent-id> <task>` runs one task with the selected profile without changing the session default.
+- `/agent` opens a menu with `Info`, `Use`, and `Run`. `Use` changes the session default `AgentProfile` for subsequent ordinary prompts and records the change in session state. `Run` selects an agent profile and asks for one task.
+- `/agent:<agent-id> <task>` runs one task with the selected profile without changing the session default.
 - `/teams` lists resolved `TeamProfile` entries and their supervisor mode.
-- `/team <team-id> <task>` runs one task through the selected team profile without changing the session default.
+- `/team` opens a menu with `Info` and `Run`. `Run` selects a team profile and asks for one task.
+- `/team:<team-id> <task>` runs one task through the selected team profile without changing the default profile.
 - Ordinary text prompts continue through the session default `AgentProfile`.
 - Session creation options can select the initial default profile, for example a future CLI/RPC field equivalent to `--agent <agent-id>`.
 
@@ -227,10 +229,11 @@ Tasks:
 
 - [x] Add built-in slash command definitions for `agents`, `agent`, `teams`, and `team`.
 - [x] Implement `/agents` and `/teams` list output from the session-owned profile registry.
-- [x] Implement `/agent use <agent-id>` as a session default profile switch.
-- [x] Implement `/agent <agent-id> <task>` as a one-off agent invocation operation.
-- [x] Implement `/team <team-id> <task>` as a one-off team invocation operation.
-- [x] Reject missing ids/tasks with usage text. `/agent use`, one-off `/agent`, and `/team` parser validation are covered.
+- [x] Implement `/agent` as a menu-driven session default profile switch and one-off agent invocation entrypoint.
+- [x] Implement `/agent:<agent-id> <task>` as a direct one-off agent invocation shortcut.
+- [x] Implement `/team` as a menu-driven one-off team invocation entrypoint.
+- [x] Implement `/team:<team-id> <task>` as a direct one-off team invocation shortcut.
+- [x] Reject missing ids/tasks with usage text. Removed `/agent use`, `/agent <id> <task>`, and `/team <id> <task>` interactive forms now report menu/colon usage instead of mutating state.
 - [x] Reject `@agent` and `@team` as normal prompt text; do not add mention parsing. Parser/root tests now keep both forms on the ordinary prompt submission path.
 - [x] Keep plugin command slash aliases working and avoid id conflicts with built-in slash command names. Built-in `/agent` wins over a same-named loaded plugin alias, while non-conflicting plugin aliases still dispatch through the plugin-command runner.
 - [x] Add completion/suggestion tests for the new slash commands.
@@ -252,25 +255,27 @@ source ~/.cargo/env && cargo test -p pi-coding-agent --test interactive_mode tea
 
 Design: [Agent and team menu invocation](../specs/2026-07-04-agent-team-menu-invocation-design.md)
 
-The space-argument interactive entrypoints implemented in Stage 4 were useful as the first wiring slice, but they are no longer the target TUI shape. The next interactive UX slice should remove:
+Status: complete for the accepted TUI surface.
+
+The space-argument interactive entrypoints implemented in the first Stage 4 wiring slice have been removed from the TUI:
 
 - `/agent use <agent-id>`
 - `/agent <agent-id> <task>`
 - `/team <team-id> <task>`
 
-and add menu entrypoints:
+The replacement entrypoints are:
 
 - `/agent`
 - `/team`
 
-The same slice should support colon run shortcuts:
+The supported direct run shortcuts are:
 
 - `/agent:<agent-id> <task>`
 - `/team:<team-id> <task>`
 
-The `/agent` menu should expose `Info`, `Use`, and `Run`. `Use` selects the default agent profile for later ordinary prompts. `Run` selects an agent profile and enters pending task mode; the next submitted editor text runs a one-off `AgentInvocationFlow`.
+The `/agent` menu exposes `Info`, `Use`, and `Run`. `Use` selects the default agent profile for later ordinary prompts. `Run` selects an agent profile and enters pending task mode; the next submitted editor text runs a one-off `AgentInvocationFlow`.
 
-The `/team` menu should expose `Info` and `Run`. `Run` selects a team profile and enters pending task mode; the next submitted editor text runs `AgentTeamFlow`.
+The `/team` menu exposes `Info` and `Run`. `Run` selects a team profile and enters pending task mode; the next submitted editor text runs `AgentTeamFlow`.
 
 The colon forms are direct equivalents of the `Run` actions for users who already know the profile id. They do not replace the menu and do not change the default agent profile.
 
@@ -288,7 +293,7 @@ Files:
 
 Tasks:
 
-- [x] Add an `AgentInvocationFlow` for one-off `/agent <id> <task>` execution.
+- [x] Add an `AgentInvocationFlow` for one-off `/agent` menu `Run` and `/agent:<id> <task>` execution.
 - [x] Resolve the target `AgentProfile` through the session registry.
 - [x] Create a child operation lineage id correlated with the parent session operation.
 - [x] Run the task through the same runtime service boundaries used by ordinary prompts. `AgentInvocationFlow` now normalizes the child prompt invocation from `AgentInvocationOptions::task`, so callers cannot accidentally execute a stale parent prompt from reused `PromptTurnOptions`.
@@ -298,7 +303,7 @@ Tasks:
 
 Acceptance:
 
-- `/agent <id> <task>` has a visible operation lifecycle and does not bypass `CodingAgentSession`.
+- `/agent` menu `Run` and `/agent:<id> <task>` have a visible operation lifecycle and do not bypass `CodingAgentSession`.
 - Child work cannot direct-commit arbitrary parent session state.
 - Invocation events are stable enough for RPC and interactive adapters.
 
@@ -331,7 +336,7 @@ Tasks:
 
 Acceptance:
 
-- `/team <id> <task>` is implemented as a team workflow, not as a direct adapter loop.
+- `/team` menu `Run` and `/team:<id> <task>` are implemented as team workflows, not as direct adapter loops.
 - Supervisor behavior is explicit for every team.
 - Member results become events/artifacts until the team flow decides the final session-visible result.
 
@@ -355,12 +360,12 @@ Files:
 Tasks:
 
 - [x] Add session-owned delegation request tools such as `delegate_agent` and `delegate_team` only when the active profile policy allows them.
-- [~] Make delegation tools return requests into `CodingAgentSession`; do not let the model instantiate child agents directly. Current tools return structured request/rejection envelopes through session-owned runtime construction, accepted `DelegationRequested` events are captured as typed `PromptTurnContext` delegation requests, prompt success computes typed authorization decisions for queued requests, auto-approved decisions execute through owner-created `AgentInvocationFlow`/`AgentTeamFlow` child operations, and confirmation-required decisions are held in an event-log-backed session-owned pending queue that RPC and interactive slash commands can approve or reject.
-- [~] Enforce delegation policy: allowed ids, maximum depth, maximum child count, confirmation mode, and write/tool permissions. Current request-tool plus authorization-decision boundary enforces allowed agent/team ids, zero-depth/depth exhaustion, `max_parallel_children`, and confirmation mode, with pending-confirmation approval/rejection respecting the same owner boundary; write/tool permissions and recursive budget accounting remain follow-up.
-- [~] Add a confirmation boundary for write-capable, team, or high-cost delegation when policy requires it. Current authorization decisions mark `Always` and team delegation under `Writes` as `RequiresConfirmation`, persist those requests/resolutions as typed session-log events for persistent sessions, rebuild unresolved requests on reopen, and expose RPC `list_delegation_confirmations`/`approve_delegation`/`reject_delegation` plus interactive `/delegations` and `/delegation approve|reject`; richer confirmation prompts plus expiry/stale-request policy remain follow-up.
+- [~] Make delegation tools return requests into `CodingAgentSession`; do not let the model instantiate child agents directly. Current tools return structured request/rejection envelopes through session-owned runtime construction, accepted `DelegationRequested` events are captured as typed `PromptTurnContext` delegation requests, prompt success computes typed authorization decisions for queued requests, auto-approved decisions execute through owner-created `AgentInvocationFlow`/`AgentTeamFlow` child operations, recursive auto-approved child requests inherit depth budget and are checked against typed agent/team lineage for cycle rejection, and confirmation-required decisions from top-level or nested child flows are held in an event-log-backed session-owned pending queue that RPC and interactive slash commands can approve or reject.
+- [~] Enforce delegation policy: allowed ids, maximum depth, maximum child count, confirmation mode, and write/tool permissions. Current request-tool plus authorization-decision boundary enforces allowed agent/team ids, zero-depth/depth exhaustion, inherited recursive depth budget, `max_parallel_children`, confirmation mode, and delegated child capability release for runtime/plugin tools and skills, with pending-confirmation approval/rejection respecting the same owner boundary; write-capability classification remains follow-up.
+- [x] Add a confirmation boundary for write-capable, team, or high-cost delegation when policy requires it. Current authorization decisions mark `Always` and team delegation under `Writes` as `RequiresConfirmation`, persist top-level and nested requests/resolutions as typed session-log events for persistent sessions, rebuild unresolved requests on reopen, expose RPC `list_delegation_confirmations`/`approve_delegation`/`reject_delegation`, expose interactive `/delegations` confirmation menu plus direct `/delegation approve|reject`, filter 24-hour stale pending requests from owner lookup, and preserve inherited depth plus typed lineage when approved nested requests execute.
 - [~] Record delegation requested/approved/rejected/started/completed events. Current event mapping records `DelegationRequested` and `DelegationRejected` from delegation tool envelopes while preserving ordinary tool lifecycle events, accepted requests are queued in typed prompt-turn state, prompt context stores authorization decisions, auto-approved and RPC-approved execution emit `DelegationApproved`/`DelegationStarted`/`DelegationCompleted`, held requests emit `DelegationConfirmationRequired`, rejected pending requests emit `DelegationRejected`, and child failures emit `DelegationFailed`.
-- [~] Prevent recursive or unbounded delegation loops. Current authorization rejects exhausted depth budget and child-count overflow; recursive lineage accounting and loop detection remain follow-up.
-- [~] Keep delegation tools capability-scoped and free of raw session/runtime/provider internals. Current request tools expose only target id/task schemas and structured envelopes; child execution must preserve the same boundary.
+- [x] Prevent recursive or unbounded delegation loops. Current authorization rejects exhausted depth budget, child-count overflow, and requests targeting an ancestor agent/team profile, while auto-approved child execution carries inherited depth and typed lineage through recursive agent/team flows.
+- [~] Keep delegation tools capability-scoped and free of raw session/runtime/provider internals. Current request tools and recursive child execution expose only target id/task schemas plus structured lifecycle events, and delegated child runtime/plugin tools plus skills are denied by default unless the target profile explicitly lists them.
 
 Acceptance:
 
@@ -391,7 +396,7 @@ Tasks:
 - [x] Add RPC command support for listing profiles, switching default profile, invoking one-off agent work, and invoking team work. `list_agent_profiles` and `list_team_profiles` now expose session-owned registry state, `set_default_agent_profile` updates the session-owned default profile, `invoke_agent` runs one-off `AgentInvocationFlow`, and `invoke_team` runs supervised `AgentTeamFlow` through the RPC event-streaming operation path.
 - [~] Add protocol event mappings for profile changes, agent invocation, team invocation, and delegation lifecycle events. Agent/team invocation now streams child prompt protocol events and emits semantic lifecycle protocol events through the existing adapter; default-profile changes and delegation requested/rejected plus confirmation-required/approved/started/completed/failed events now map to semantic protocol events as well.
 - [x] Keep RPC behavior on the same `CodingAgentSession` owner paths used by interactive slash commands. Profile list/default switch, `invoke_agent`, and `invoke_team` now use `CodingAgentSession`.
-- [~] Add serialization tests for all new capability and event fields. RPC coverage now includes profile/team list, default switch plus profile-change event streaming, agent/team invocation response/events, semantic agent/team lifecycle event serialization, semantic delegation requested/rejected/confirmation-required/approved/started/completed/failed event serialization, pending delegation confirmation list/approve/reject commands, unknown target rejection, and `agent_invocation`/`agent_team` busy capability reporting. Session-log coverage verifies durable confirmation request/approval/rejection event serialization and replay folding. Interactive coverage includes delegation confirmation slash-command queueing, event-bridge notices, and scripted approval execution through the owner queue.
+- [~] Add serialization tests for all new capability and event fields. RPC coverage now includes profile/team list, default switch plus profile-change event streaming, agent/team invocation response/events, semantic agent/team lifecycle event serialization, semantic delegation requested/rejected/confirmation-required/approved/started/completed/failed event serialization, pending delegation confirmation list/approve/reject commands, unknown target rejection, and `agent_invocation`/`agent_team` busy capability reporting. Session-log coverage verifies durable confirmation request/approval/rejection event serialization and replay folding, including confirmation events sourced from non-persistent child operations. Interactive coverage includes delegation confirmation slash-command queueing, event-bridge notices, and scripted approval execution through the owner queue.
 
 Acceptance:
 
@@ -432,12 +437,12 @@ source ~/.cargo/env && git diff --check
 - [x] Explicit user invocation uses `/agent` and `/team`, not `@agent` or `@team`.
 - [x] `default_agent_profile_id` is durable session configuration and resumes correctly.
 - [x] Ordinary prompts use the current default `AgentProfile`.
-- [x] `/agent use <id>` switches the default profile without running a task.
-- [x] `/agent <id> <task>` runs a one-off agent operation without changing the default profile.
-- [x] `/team <id> <task>` runs a supervised team operation without changing the default profile.
+- [x] `/agent` menu `Use` switches the default profile without running a task.
+- [x] `/agent` menu `Run` and `/agent:<id> <task>` run a one-off agent operation without changing the default profile.
+- [x] `/team` menu `Run` and `/team:<id> <task>` run a supervised team operation without changing the default profile.
 - [x] Single-agent sessions do not require a separate LLM supervisor.
 - [x] Team profiles always declare supervisor semantics.
-- [~] Model-requested delegation goes through session-owned authorization and bounded execution. Request tools are session-owned and policy-gated, accepted requests are queued as typed prompt-turn state, prompt success computes typed authorization decisions, auto-approved requests execute bounded child flows, and confirmation-held requests persist through the typed session event log and can be listed/approved/rejected after reopen through RPC or interactive slash commands; richer confirmation prompts, expiry/stale-request policy, and recursive budget accounting remain follow-up.
+- [~] Model-requested delegation goes through session-owned authorization and bounded execution. Request tools are session-owned and policy-gated, accepted requests are queued as typed prompt-turn state, prompt success computes typed authorization decisions, auto-approved requests execute bounded child flows recursively with inherited depth budget plus ancestor-cycle rejection, and top-level or nested confirmation-held requests persist through the typed session event log and can be listed/approved/rejected after reopen through RPC or the interactive confirmation menu/direct slash commands, while 24-hour stale requests are hidden from owner pending lookup.
 - [x] Child operations cannot direct-commit parent session state.
-- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events plus delegation requested/rejected/confirmation-required/approved/started/completed/failed events exist in `CodingAgentEvent`; `agentProfiles`, `teamProfiles`, and `delegation` exist in capabilities; RPC profile/team list, default-profile switch, one-off `invoke_agent`, one-off `invoke_team`, pending delegation confirmation list/approve/reject commands, and interactive pending delegation confirmation commands exist; agent/team lifecycle, default-profile-change, and delegation lifecycle semantic protocol events are mapped, and the interactive bridge renders delegation lifecycle notices. Richer interactive confirmation prompts remain follow-up.
-- [~] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools. Current delegation request tools preserve this; follow-up child execution must keep the same boundary.
+- [~] New product behavior is visible through `CodingAgentEvent` and `CodingAgentCapabilities`. Agent/team lifecycle events plus delegation requested/rejected/confirmation-required/approved/started/completed/failed events exist in `CodingAgentEvent`; `agentProfiles`, `teamProfiles`, and `delegation` exist in capabilities; RPC profile/team list, default-profile switch, one-off `invoke_agent`, one-off `invoke_team`, pending delegation confirmation list/approve/reject commands, and interactive pending delegation confirmation commands and menu UI exist; agent/team lifecycle, default-profile-change, and delegation lifecycle semantic protocol events are mapped, and the interactive bridge renders delegation lifecycle notices.
+- [~] No raw session/runtime/provider internals are exposed through profiles, plugins, or delegation tools. Current delegation request tools, recursive child execution, and delegated child capability release policy preserve this boundary.

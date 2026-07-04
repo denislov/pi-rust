@@ -2,7 +2,7 @@
 
 This document describes the current user-facing `AgentProfile` and `TeamProfile` surface in `pi-rust`.
 
-The implementation is session-owned. A selected agent profile is durable session configuration, not a hidden live supervisor agent. Explicit one-off work uses `/agent` and `/team` slash commands or the matching RPC commands. `@agent` and `@team` mention syntax is intentionally not part of the design.
+The implementation is session-owned. A selected agent profile is durable session configuration, not a hidden live supervisor agent. Interactive users can choose profiles through `/agent` and `/team` menus, or bypass the menu with `/agent:<id>` and `/team:<id>` direct run shortcuts. Automation should use the matching RPC commands. `@agent` and `@team` mention syntax is intentionally not part of the design.
 
 ## Discovery
 
@@ -88,10 +88,11 @@ Every team profile must declare supervisor semantics. Current execution supports
 
 ```text
 /agents
-/agent use <agent-id>
-/agent <agent-id> <task>
+/agent
+/agent:<agent-id> <task>
 /teams
-/team <team-id> <task>
+/team
+/team:<team-id> <task>
 /delegations
 /delegation list
 /delegation approve <tool-call-id>
@@ -102,13 +103,14 @@ Every team profile must declare supervisor semantics. Current execution supports
 Semantics:
 
 - `/agents` lists resolved agent profiles and marks the current session default.
-- `/agent use <agent-id>` changes the session default profile for later ordinary prompts.
-- `/agent <agent-id> <task>` runs one isolated one-off agent invocation without changing the default profile.
+- `/agent` opens an interactive agent menu. `Info` shows discovered profiles, `Use` changes the session default profile for later ordinary prompts, and `Run` selects an agent profile then asks for one task.
+- `/agent:<agent-id> <task>` runs one isolated one-off agent invocation without changing the default profile.
 - `/teams` lists resolved team profiles.
-- `/team <team-id> <task>` runs one supervised team invocation without changing the default profile.
-- `/delegations` and `/delegation list` show delegation requests currently waiting for confirmation on the in-memory session owner.
-- `/delegation approve <tool-call-id>` approves the unique pending request with that tool call id. Use `/delegation approve <operation-id> <tool-call-id>` when multiple pending requests share a tool call id.
-- `/delegation reject <tool-call-id> [reason]` rejects the unique pending request with that tool call id. A rejection emits a product event and does not run child work.
+- `/team` opens an interactive team menu. `Info` shows discovered teams and `Run` selects a team profile then asks for one task.
+- `/team:<team-id> <task>` runs one supervised team invocation without changing the default profile.
+- `/delegations` and `/delegation list` open an interactive confirmation menu for delegation requests currently waiting on the session owner. `Enter`/`a` approves the selected request; `r` rejects it with the default rejection reason.
+- `/delegation approve <tool-call-id>` approves the unique pending request with that tool call id without opening the menu. Use `/delegation approve <operation-id> <tool-call-id>` when multiple pending requests share a tool call id.
+- `/delegation reject <tool-call-id> [reason]` rejects the unique pending request with that tool call id without opening the menu. A rejection emits a product event and does not run child work.
 - Ordinary text prompts run with the current session default agent profile.
 
 One-off child work streams events but does not directly commit child transcript state into the parent session.
@@ -148,17 +150,16 @@ Current behavior:
 - Accepted requests return structured envelopes and emit `DelegationRequested` product events.
 - Rejected requests return structured rejection envelopes and emit `DelegationRejected` product events.
 - Auto-approved requests run through session-owned child agent/team flows and emit `DelegationApproved`, `DelegationStarted`, and either `DelegationCompleted` or `DelegationFailed` product events.
-- Delegated child prompts authorize their own queued delegation requests at child depth. Exhausted nested requests emit `DelegationRejected` instead of being silently dropped.
-- Requests that require confirmation emit `DelegationConfirmationRequired`, are held in the current session owner's pending confirmation queue, and can be listed, approved, or rejected through interactive slash commands or RPC. Persistent sessions rebuild unresolved pending confirmations from the typed session event log on reopen; non-persistent sessions keep only process-local pending state.
+- Auto-approved delegated child prompts execute their own approved delegation requests recursively, inheriting the depth budget from the parent request. Exhausted nested requests emit `DelegationRejected` instead of being silently dropped.
+- Delegation authorization tracks agent/team lineage and rejects requests that target an ancestor profile, so cyclic delegation emits `DelegationRejected` without starting child work.
+- Delegated child prompts do not inherit parent runtime/plugin tools or skills by default. A delegated target profile must list tools or skills explicitly to release those capabilities to the child; delegation request tools still come only from the target profile's delegation policy.
+- Requests that require confirmation emit `DelegationConfirmationRequired`, are held in the current session owner's pending confirmation queue, and can be reviewed through the interactive `/delegations` confirmation menu, direct interactive slash commands, or RPC. This includes nested confirmation-required requests raised by delegated child agent/team flows; approval preserves the inherited depth budget and lineage. Persistent sessions rebuild unresolved pending confirmations from the typed session event log on reopen; non-persistent sessions keep only process-local pending state. Requests older than 24 hours are treated as stale and are hidden from pending lists and rejected by approval lookup.
 - Pending-confirmation approval emits `DelegationApproved`, starts the child agent/team flow, and then emits `DelegationStarted` plus `DelegationCompleted` or `DelegationFailed`. Pending-confirmation rejection emits `DelegationRejected` and does not run child work.
 - The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_confirmation_required`, `delegation_approved`, `delegation_started`, `delegation_completed`, and `delegation_failed`.
-- The interactive event bridge renders confirmation-required, approval, rejection, start, completion, and failure delegation events as system notices in the transcript. Confirmation-required notices include the exact approve/reject slash commands.
+- The interactive event bridge renders confirmation-required, approval, rejection, start, completion, and failure delegation events as system notices in the transcript. Confirmation-required notices include the exact approve/reject slash commands, while `/delegations` provides the menu-driven approval path.
 
 Still follow-up:
 
-- Richer interactive confirmation prompts/approval UI for write-capable, team, or high-cost delegation beyond the current slash-command path.
-- Expiry and stale-request policy for durable pending confirmations.
-- Recursive child execution and inherited budget accounting beyond the current child-depth authorization boundary.
-- Capability release policy for delegated child work.
+- Optional custom rejection reason entry from the interactive confirmation menu.
 
 Profiles and delegation tools do not expose raw `CodingAgentSession`, session storage, runtime service, provider internals, filesystem handles, shell handles, or Flow graph mutation APIs.
