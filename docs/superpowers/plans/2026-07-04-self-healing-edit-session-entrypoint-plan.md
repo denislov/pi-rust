@@ -1,6 +1,6 @@
 # Self-Healing Edit Session Entrypoint Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Promote the internal `SelfHealingEditFlow` into a `CodingAgentSession`-owned workflow entrypoint with durable typed lifecycle events.
 

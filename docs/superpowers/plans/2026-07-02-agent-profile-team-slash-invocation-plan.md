@@ -1,6 +1,6 @@
 # Agent Profile And Team Slash Invocation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 ## Goal
 
@@ -110,14 +110,14 @@ Discovery roots:
 Tasks:
 
 - [x] Add this plan to `docs/TODO.md` source documents.
-- [x] Update the Phase 6 subagent/supervisor item so it points at profile/team slash invocation as the user-facing entrypoint.
+- [x] Update the Phase 6 child-agent orchestration item so it points at profile/team slash invocation plus delegation as the user-facing entrypoint.
 - [x] Record that explicit invocation uses `/agent` and `/team`, not `@agent` or `@team`.
 - [x] Record that the default `AgentProfile` is session configuration, not a hidden live agent.
 - [x] Record that model self-delegation must go through `CodingAgentSession` authorization.
 
 Acceptance:
 
-- Future subagent/supervisor work can start without reopening the invocation syntax and ownership decisions.
+- Future delegation-first child-agent work can start without reopening the invocation syntax and ownership decisions.
 
 ## Stage 1: Profile Data Model And Registry
 

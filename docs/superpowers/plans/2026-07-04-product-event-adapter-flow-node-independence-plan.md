@@ -1,6 +1,6 @@
 # Product Event Adapter Flow-Node Independence Audit Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Confirm and lock down that product event adapters translate `CodingAgentEvent` semantics without depending on concrete Flow node IDs or exposing Flow node fields in protocol payloads.
 

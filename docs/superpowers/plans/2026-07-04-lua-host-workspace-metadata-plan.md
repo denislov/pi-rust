@@ -1,6 +1,6 @@
 # Lua Host Workspace Metadata Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expose read-only Lua host workspace metadata through `host:workspace()` without exposing raw session, runtime, filesystem, shell, provider, or Flow internals.
 

@@ -86,7 +86,7 @@ pub struct Flow<C> {
 1. **可插拔**：插件系统 M12 不只是注册 hook，而是可以插入/替换节点或边。
 2. **可观测**：UI/RPC 可以展示“当前正在 provider request / executing tools / compacting / waiting approval”。
 3. **可测试**：每个节点用 faux provider/faux tools 测，flow 用 fixture 测，不必每次跑完整 agent loop。
-4. **可扩展**：Plan mode、subagent、approval、multi-agent、background job、self-healing edit 都能作为 flow/subflow 表达。
+4. **可扩展**：Plan mode、approval、multi-agent、delegation-first agent 协作、background job、self-healing edit 都能作为 flow/subflow 表达。
 5. **可视化**：能导出 Mermaid/JSON graph，调试复杂 agent 比读 loop 容易。
 
 关键是不要一次性重写整个 `agent_loop.rs`。可以先做一个 `FlowRunner`，用它重建一条小路径，例如 manual compaction 或 session prompt start，然后再逐步吃掉 loop。
@@ -115,7 +115,7 @@ TS `pi` 的优势是产品功能完整，但典型问题是 runtime/harness/sess
 2. **插件能力更自然**
    M12 计划里已经有 ToolProvider、CommandProvider、HookProvider、UiProvider、KeybindProvider。见 [M12-plugin-system.md](/home/whai/dev_wkspace/pi2rust/pi-rust/docs/roadmap/M12-plugin-system.md:12)。我建议加第六类：`FlowProvider` 或 `FlowExtension`，允许插件注册 node/subflow，而不是只能塞 hook。
 
-3. **多 agent/subagent 会更干净**
+3. **多 agent 和受控 delegation 会更干净**
    多 agent 本质上是 Flow 嵌套、并行节点、共享/隔离上下文的问题。PocketFlow 的 `Flow is Node` 很适合这点。
 
 4. **长期 session/tree/compaction 可以统一**
@@ -161,7 +161,7 @@ PocketFlow 的 Python 实现有几个点不适合直接进入 `pi-rust`：
    在 Rust trait 插件层加入 node/subflow 注册。Lua 层只开放受控能力，不让脚本直接拿裸 `AgentState`。
 
 6. **Phase 5：为复杂模式建 first-party flows**
-   例如 plan mode、supervisor、subagent、parallel research、self-healing edit、background task。这些会让 `pi-rust` 明显超过 TS parity。
+   例如 plan mode、显式 team workflow、delegation-first agent 协作、parallel research、self-healing edit、background task。这些会让 `pi-rust` 明显超过 TS parity。
 
 **我对方向的判断**
 

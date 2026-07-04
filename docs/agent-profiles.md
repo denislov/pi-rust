@@ -16,6 +16,27 @@ When two sources define the same id, the later source wins: built-in < user < pr
 
 If no profile is selected, the session uses the built-in `default` agent profile. If a session is created or opened with a selected default profile, that profile id is persisted in the Rust-native session manifest as `default_agent_profile_id` and restored on resume.
 
+## Default Helper Agents
+
+The top-level session remains an `AgentProfile`: users are interacting with one
+primary agent. Helper agents are exposed only through delegation tools owned by
+that active profile.
+
+The built-in `default` agent profile may expose a small read-only helper roster
+for common work such as exploration, review, and safe checks. These helpers are
+auto-approved by policy because they do not receive write tools by default.
+
+Custom `AgentProfile` files do not implicitly inherit the built-in helper
+roster. A custom profile must explicitly declare its `[delegation]` policy and
+allowed helper agent or team ids. This keeps specialist profiles predictable and
+prevents unexpected child work.
+
+Helper invocations receive a minimal task packet rather than the parent
+conversation transcript. The packet contains the requested task, operation
+correlation ids, depth/lineage metadata, cwd/workspace identity, and any
+explicitly selected evidence. The helper's tools and skills come from its target
+profile, not from the parent profile.
+
 ## Agent Profile TOML
 
 Example:
@@ -146,6 +167,8 @@ Delegation is model-requested, not model-authorized. A model can only ask throug
 Current behavior:
 
 - Delegation tools are only visible when the active profile policy allows them.
+- Built-in default helpers are read-only and auto-approved; custom profiles must opt into helper delegation explicitly.
+- Delegated child work receives a minimal task packet by default, not the full parent transcript.
 - Allowed target ids and zero-depth policy are enforced at the request boundary.
 - Accepted requests return structured envelopes and emit `DelegationRequested` product events.
 - Rejected requests return structured rejection envelopes and emit `DelegationRejected` product events.
@@ -156,7 +179,8 @@ Current behavior:
 - Requests that require confirmation emit `DelegationConfirmationRequired`, are held in the current session owner's pending confirmation queue, and can be reviewed through the interactive `/delegations` confirmation menu, direct interactive slash commands, or RPC. This includes nested confirmation-required requests raised by delegated child agent/team flows; approval preserves the inherited depth budget and lineage. Persistent sessions rebuild unresolved pending confirmations from the typed session event log on reopen; non-persistent sessions keep only process-local pending state. Requests older than 24 hours are treated as stale and are hidden from pending lists and rejected by approval lookup.
 - Pending-confirmation approval emits `DelegationApproved`, starts the child agent/team flow, and then emits `DelegationStarted` plus `DelegationCompleted` or `DelegationFailed`. Pending-confirmation rejection emits `DelegationRejected` and does not run child work.
 - The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_confirmation_required`, `delegation_approved`, `delegation_started`, `delegation_completed`, and `delegation_failed`.
-- The interactive event bridge renders confirmation-required, approval, rejection, start, completion, and failure delegation events as system notices in the transcript. Confirmation-required notices include the exact approve/reject slash commands, while `/delegations` provides the menu-driven approval path.
+- The interactive event bridge renders delegation as folded transcript blocks: requested/running/completed/failed/rejected states stay visible in the parent transcript, while detailed child work remains available through child operation correlation rather than being appended as ordinary parent conversation.
+- Confirmation-required notices include the exact approve/reject slash commands, while `/delegations` provides the menu-driven approval path.
 
 Still follow-up:
 

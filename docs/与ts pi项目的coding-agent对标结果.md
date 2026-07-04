@@ -10,7 +10,7 @@
 - 继续让 `CodingAgentSession` / `SessionService` / `RuntimeService` / `FlowService` 承接 TS `AgentSession` 的产品 owner 行为，而不是恢复旧 `session_runner` 或各 adapter 私有状态机；
 - 以 `CodingAgentCapabilities` / `CapabilityStatus` 和协议版本表达 RPC/TUI/JSON 可用能力，避免 adapter 命令面先声明、handler 再返回临时 unsupported 字符串；
 - 推进 plugin command/UI/keybind execution、`PluginLoadFlow`、trust/permission gating 和 scoped host API，借鉴 TS extension 体验但不暴露 raw session/auth/provider internals；
-- 把 manual compaction、branch summary、export、session switch、subagent/supervisor、自修复 edit 等产品能力落到 Phase 6 product Flows，而不是旧 JSONL runner 或低层 core；
+- 把 manual compaction、branch summary、export、session switch、delegation-first agent 协作、显式 team workflow、自修复 edit 等产品能力落到 Phase 6 product Flows，而不是旧 JSONL runner 或低层 core；
 - 保持配置/认证/session 格式 Rust-native，仅把 TS settings/commands/UX 字段作为产品需求参考。
 
 本文中不再作为目标推进的内容是：TS `coding-agent` 完整 port、TS session JSONL 兼容、TS settings/auth 文件兼容、TS root SDK export parity、unknown CLI flags 直接透传给 extension runtime、以及围绕旧 `session_runner` / M5 RPC 子集继续扩展。
@@ -109,7 +109,7 @@ Interactive 方面，Rust 有 slash handling，包含 `/model`、`/resume`、`/e
    根模块仍公开的 `interactive`、`protocol`、`request`、`resources`、`theme`、`runtime` 等应视为迁移期内部面。长期公共入口应优先通过 `api` facade 暴露；对 options 类型考虑 builder、constructor 或 `#[non_exhaustive]`，避免下游用结构体字面量固化迁移期字段。
 
 3. **继续把 shared product operations 上移到 `CodingAgentSession` services/flows。**
-   session stats、export、clone/fork/tree、manual compaction、model/thinking switching、session switch、branch summary、subagent/supervisor 和 self-healing edit 都应通过 shared service/Flow 暴露，再由 print/RPC/interactive 适配器复用。adapter 不应各自维护平行业务状态机。
+   session stats、export、clone/fork/tree、manual compaction、model/thinking switching、session switch、branch summary、delegation-first agent 协作、显式 team workflow 和 self-healing edit 都应通过 shared service/Flow 暴露，再由 print/RPC/interactive 适配器复用。adapter 不应各自维护平行业务状态机。
 
 4. **把 RPC/TUI/JSON 能力表达成 capability/version contract。**
    已有 `CodingAgentCapabilities` / `CapabilityStatus` 是正确方向。后续新增 TS 参考中的 retry、bash side-channel、export、switch session、plugin commands、extension UI 等能力时，应先进入 capability model 和协议版本规划，再接 handler。

@@ -56,7 +56,7 @@ Stable direction:
 - `pi_coding_agent::api` is the stable facade for embedding and scripting.
 - `CodingAgentSession`, `SessionService`, `RuntimeService`, `FlowService`, `EventService`, and `CapabilityService` are the product owner/service boundary.
 - `CodingAgentCapabilities` and protocol versions should describe available adapter features before commands are exposed through RPC/TUI/JSON.
-- Shared product operations such as manual compaction, branch summary, export, session switch, plugin command execution, UI/keybind dispatch, subagent/supervisor, and self-healing edits should be implemented as session-owned services or product Flows.
+- Shared product operations such as manual compaction, branch summary, export, session switch, plugin command execution, UI/keybind dispatch, delegation-first child-agent orchestration, explicit team workflows, and self-healing edits should be implemented as session-owned services or product Flows.
 
 Migration-private or constrained:
 

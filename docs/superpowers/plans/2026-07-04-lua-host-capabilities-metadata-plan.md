@@ -1,6 +1,6 @@
 # Lua Host Capabilities Metadata Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expose read-only Lua host API feature metadata through `host:capabilities()` so Lua plugins can feature-detect supported registration and metadata helpers without receiving raw session, runtime, provider, filesystem, shell, or operation-context access.
 

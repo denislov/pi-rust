@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`pi-rust` should absorb PocketFlow's core idea: agent behavior is a graph of small executable nodes, not a hard-coded monolithic loop. The Rust version should keep the existing strengths of `pi-agent-core` (`pi-ai` providers, `AgentTool`, hooks, sessions, resources, compaction, and harness events) while adding a first-class workflow runtime that can later host agent loops, product workflows, plugins, subagents, and multi-agent orchestration.
+`pi-rust` should absorb PocketFlow's core idea: agent behavior is a graph of small executable nodes, not a hard-coded monolithic loop. The Rust version should keep the existing strengths of `pi-agent-core` (`pi-ai` providers, `AgentTool`, hooks, sessions, resources, compaction, and harness events) while adding a first-class workflow runtime that can later host agent loops, product workflows, plugins, delegation-first agent collaboration, and multi-agent orchestration.
 
 This spec covers the first implementation step: add a minimal, typed `pi_agent_core::flow` module and tests. It does not migrate the existing agent loop.
 
@@ -267,7 +267,7 @@ This spec's implementation step only adds the module and tests. Later work shoul
 2. Extract internal agent-loop phases into nodes while preserving `Agent::prompt` and `Agent::run`.
 3. Add graph export for debugging and documentation, likely Mermaid and JSON.
 4. Extend the plugin system roadmap with a `FlowProvider` or `FlowExtension` trait.
-5. Model subagents and multi-agent flows as nested flows once the basic runtime has proven stable.
+5. Model delegation-first child-agent and multi-agent workflows as nested flows once the basic runtime has proven stable.
 
 ## Compatibility
 

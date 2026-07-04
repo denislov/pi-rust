@@ -1,6 +1,6 @@
 # pi-agent-core Product Boundary Audit Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Confirm and document that `pi-agent-core` remains a low-level agent/runtime crate and does not depend on `pi-coding-agent` product ownership types such as `CodingAgentSession`, `CodingAgentEvent`, protocol adapters, interactive adapters, or session-owner services.
 

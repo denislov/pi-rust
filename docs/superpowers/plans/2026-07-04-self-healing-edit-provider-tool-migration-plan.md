@@ -1,6 +1,6 @@
 # Self-Healing Edit Provider Tool Migration Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Route the provider-visible builtin `edit` tool through `SelfHealingEditFlow` while preserving the existing low-level edit algorithm and direct `edit_execute()` compatibility API.
 

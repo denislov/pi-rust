@@ -8,7 +8,7 @@ Use the new architecture for workflows that were hard to reason about in the old
 - branch summary;
 - export;
 - plugin load/reload;
-- subagent/supervisor flows;
+- delegation-first child-agent orchestration;
 - self-healing edit workflows.
 
 Phase 6 is where `pi-rust` should start gaining capabilities from the Flow-centered architecture rather than only matching previous behavior.
@@ -254,27 +254,35 @@ Tests:
 - invalid plugin emits diagnostic;
 - failed plugin does not block unrelated plugins if policy is fail-open.
 
-## Subagent/Supervisor Flow
+## Delegation-First Child-Agent Orchestration
 
 Purpose:
 
-- express multi-agent workflows as nested or coordinated flows.
+- let the current session `AgentProfile` request bounded help from other
+  `AgentProfile` or `TeamProfile` entries through session-owned delegation.
 
 Initial conservative model:
 
-- supervisor operation creates child operation contexts;
-- child agents get isolated resources/session views unless explicitly shared;
-- child outputs become events/artifacts, not direct session commits unless approved by parent flow.
+- top-level sessions remain owned by a single default `AgentProfile`;
+- standalone child-agent product concepts are not introduced;
+- built-in default profiles may expose read-only helper agents through
+  auto-approved delegation;
+- custom profiles must explicitly declare their delegation roster;
+- delegated child agents receive minimal task packets rather than the parent
+  transcript;
+- child outputs become structured delegation results and folded transcript
+  blocks, not direct parent session commits.
 
 Nodes:
 
 ```text
-start_supervisor
-plan_subtasks
-spawn_subagent
-collect_subagent_result
-merge_or_reject_result
-finalize_supervisor
+capture_delegation_request
+authorize_delegation
+build_delegation_task_packet
+run_child_agent_or_team
+collect_delegation_result
+record_delegation_events
+render_folded_delegation_block
 ```
 
 Rules:
@@ -282,12 +290,17 @@ Rules:
 - child flow cannot direct-commit parent session;
 - parent transaction decides committed facts;
 - IDs must correlate parent operation and child operation.
+- child capability scope comes from the target profile, not the parent profile;
+- child context defaults to the explicit task plus selected evidence only.
 
 Tests:
 
-- two faux subagents run deterministically;
+- default read-only helpers are auto-approved;
+- custom profiles expose no helpers unless explicitly configured;
+- delegated child agents run deterministically;
 - failed child records diagnostic and parent policy applies;
-- parent session log has coherent operation lineage.
+- parent session log has coherent operation lineage;
+- parent transcript records folded delegation results instead of child token streams.
 
 ## Self-Healing Edit Workflow
 
@@ -346,7 +359,7 @@ compact
 branch_summary
 export
 plugin_reload
-subagent
+delegation
 self_healing_edit
 ```
 
@@ -379,7 +392,9 @@ manual_compaction_flow.rs
 branch_summary_flow.rs
 export_flow.rs
 plugin_load_flow.rs
-subagent_flow.rs
+delegation_execution.rs
+agent_invocation_flow.rs
+agent_team_flow.rs
 self_healing_edit_flow.rs
 ```
 
@@ -404,7 +419,7 @@ Stop and redesign if:
 
 - advanced workflow bypasses `CodingAgentSession`;
 - advanced workflow writes storage directly;
-- child/subagent flow can mutate parent session without parent transaction;
+- delegated child flow can mutate parent session without parent transaction;
 - export becomes canonical state;
 - plugin load gives Lua raw Flow graph mutation.
 
