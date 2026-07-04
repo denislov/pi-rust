@@ -63,26 +63,60 @@ fn self_auth_present(provider: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard};
+
     use super::*;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard<'a> {
+        _lock: MutexGuard<'a, ()>,
+        saved: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl Drop for EnvGuard<'_> {
+        fn drop(&mut self) {
+            for (name, value) in self.saved.iter().rev() {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
+
+    fn env_guard(names: &[&'static str]) -> EnvGuard<'static> {
+        let lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = names
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect();
+        EnvGuard { _lock: lock, saved }
+    }
 
     #[test]
     fn returns_none_when_not_set() {
+        let _guard = env_guard(&["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_KEY"]);
         unsafe {
             std::env::remove_var("ANTHROPIC_API_KEY");
             std::env::remove_var("CLAUDE_API_KEY");
+            std::env::remove_var("ANTHROPIC_KEY");
         }
         assert_eq!(env_api_key("anthropic"), None);
     }
 
     #[test]
     fn returns_anthropic_key() {
+        let _guard = env_guard(&["ANTHROPIC_API_KEY"]);
         unsafe {
             std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
         }
         assert_eq!(env_api_key("anthropic"), Some("sk-ant-test".into()));
-        unsafe {
-            std::env::remove_var("ANTHROPIC_API_KEY");
-        }
     }
 
     #[test]
@@ -92,48 +126,46 @@ mod tests {
 
     #[test]
     fn returns_deepseek_key() {
+        let _guard = env_guard(&["DEEPSEEK_API_KEY"]);
         unsafe {
             std::env::set_var("DEEPSEEK_API_KEY", "sk-deepseek-test");
         }
         assert_eq!(env_api_key("deepseek"), Some("sk-deepseek-test".into()));
-        unsafe {
-            std::env::remove_var("DEEPSEEK_API_KEY");
-        }
     }
 
     #[test]
     fn returns_minimax_key() {
+        let _guard = env_guard(&["MINIMAX_API_KEY"]);
         unsafe {
             std::env::set_var("MINIMAX_API_KEY", "mm-test");
         }
         assert_eq!(env_api_key("minimax"), Some("mm-test".into()));
-        unsafe {
-            std::env::remove_var("MINIMAX_API_KEY");
-        }
     }
 
     #[test]
     fn returns_copilot_token() {
+        let _guard = env_guard(&["COPILOT_GITHUB_TOKEN"]);
         unsafe {
             std::env::set_var("COPILOT_GITHUB_TOKEN", "ghp-test");
         }
         assert_eq!(env_api_key("github-copilot"), Some("ghp-test".into()));
-        unsafe {
-            std::env::remove_var("COPILOT_GITHUB_TOKEN");
-        }
     }
 
     #[test]
     fn bedrock_returns_sentinel_when_aws_profile_set() {
+        let _guard = env_guard(&[
+            "AWS_PROFILE",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_BEARER_TOKEN_BEDROCK",
+        ]);
         unsafe {
             std::env::set_var("AWS_PROFILE", "default");
+            std::env::remove_var("AWS_ACCESS_KEY_ID");
+            std::env::remove_var("AWS_BEARER_TOKEN_BEDROCK");
         }
         assert_eq!(
             env_api_key("amazon-bedrock"),
             Some("<authenticated>".into())
         );
-        unsafe {
-            std::env::remove_var("AWS_PROFILE");
-        }
     }
 }

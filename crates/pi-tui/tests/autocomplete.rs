@@ -1,15 +1,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use pi_tui::{AutocompleteItem, AutocompleteOptions, CombinedAutocompleteProvider, SlashCommand};
 
+static TEMP_ROOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 fn temp_root() -> PathBuf {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("pi-tui-autocomplete-{suffix}"));
+    let suffix = TEMP_ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "pi-tui-autocomplete-{}-{suffix}",
+        std::process::id()
+    ));
     fs::create_dir_all(&root).expect("create temp root");
     root
 }

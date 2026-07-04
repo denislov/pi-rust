@@ -1,9 +1,12 @@
+mod support;
+
 use pi_ai::providers::bedrock;
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StopReason, StreamOptions, Tool,
 };
+use support::EnvGuard;
 
 fn test_model() -> Model {
     Model {
@@ -283,11 +286,16 @@ async fn bedrock_provider_missing_credentials_returns_error_event() {
         tools: None,
     };
 
-    unsafe {
-        std::env::remove_var("AWS_ACCESS_KEY_ID");
-        std::env::remove_var("AWS_SECRET_ACCESS_KEY");
-        std::env::remove_var("AWS_BEARER_TOKEN_BEDROCK");
-    }
+    let env = EnvGuard::new(&[
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    ]);
+    env.remove("AWS_ACCESS_KEY_ID");
+    env.remove("AWS_SECRET_ACCESS_KEY");
+    env.remove("AWS_SESSION_TOKEN");
+    env.remove("AWS_BEARER_TOKEN_BEDROCK");
 
     let event_stream = provider.stream(&model, ctx, None);
     use futures::StreamExt;

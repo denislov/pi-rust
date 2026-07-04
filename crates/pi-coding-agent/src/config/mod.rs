@@ -78,7 +78,6 @@ mod tests {
 
     #[test]
     fn load_config_reads_settings_and_auth_from_pi_rust_dir() {
-        let _guard = crate::test_support::env_lock();
         let dir = tempfile::tempdir().unwrap();
         let global = dir.path().join("global");
         std::fs::create_dir_all(&global).unwrap();
@@ -98,19 +97,14 @@ mod tests {
             )
             .unwrap();
         }
-        // SAFETY: single-threaded test.
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", global.to_str().unwrap());
-        }
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
+        env.set_pi_rust_dir(&global);
         let work = dir.path().join("work");
         std::fs::create_dir_all(&work).unwrap();
         let (config, diags) = load_config(&work);
         assert_eq!(config.settings.default_model.as_deref(), Some("m"));
         assert_eq!(config.auth.api_key_entry("anthropic"), Some("sk-x"));
         assert!(diags.is_empty());
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 
     #[test]

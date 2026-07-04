@@ -66,6 +66,7 @@ pub mod api {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    use std::ffi::{OsStr, OsString};
     use std::sync::{Mutex, MutexGuard};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -74,6 +75,55 @@ pub(crate) mod test_support {
         ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) struct EnvGuard<'a> {
+        _lock: MutexGuard<'a, ()>,
+        saved: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    #[allow(dead_code)]
+    impl EnvGuard<'static> {
+        pub(crate) fn new(names: &[&'static str]) -> Self {
+            let lock = env_lock();
+            let saved = names
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect();
+            Self { _lock: lock, saved }
+        }
+    }
+
+    #[allow(dead_code)]
+    impl EnvGuard<'_> {
+        pub(crate) fn set<V: AsRef<OsStr>>(&self, name: &str, value: V) {
+            unsafe {
+                std::env::set_var(name, value);
+            }
+        }
+
+        pub(crate) fn remove(&self, name: &str) {
+            unsafe {
+                std::env::remove_var(name);
+            }
+        }
+
+        pub(crate) fn set_pi_rust_dir<V: AsRef<OsStr>>(&self, value: V) {
+            self.set("PI_RUST_DIR", value);
+        }
+    }
+
+    impl Drop for EnvGuard<'_> {
+        fn drop(&mut self) {
+            for (name, value) in self.saved.iter().rev() {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
     }
 }
 

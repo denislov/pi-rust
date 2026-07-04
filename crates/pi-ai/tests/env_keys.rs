@@ -1,13 +1,13 @@
+mod support;
+
 use pi_ai::util::env_keys::env_api_key;
 
-fn with_env_var(name: &str, value: &str, f: impl FnOnce()) {
-    unsafe {
-        std::env::set_var(name, value);
-    }
+use support::EnvGuard;
+
+fn with_env_var(name: &'static str, value: &str, f: impl FnOnce()) {
+    let env = EnvGuard::new(&[name]);
+    env.set(name, value);
     f();
-    unsafe {
-        std::env::remove_var(name);
-    }
 }
 
 #[test]

@@ -284,10 +284,8 @@ mod tests {
 
     #[test]
     fn dollar_var_and_braced_var() {
-        let _guard = crate::test_support::env_lock();
-        unsafe {
-            std::env::set_var("PI_TEST_KEY", "secret");
-        }
+        let env = crate::test_support::EnvGuard::new(&["PI_TEST_KEY"]);
+        env.set("PI_TEST_KEY", "secret");
         let mut d = Vec::new();
         assert_eq!(
             resolve_config_value("$PI_TEST_KEY", &mut d),
@@ -297,9 +295,6 @@ mod tests {
             resolve_config_value("pre-${PI_TEST_KEY}-post", &mut d),
             Some("pre-secret-post".into())
         );
-        unsafe {
-            std::env::remove_var("PI_TEST_KEY");
-        }
     }
 
     #[test]
@@ -314,10 +309,8 @@ mod tests {
 
     #[test]
     fn unset_var_returns_none_with_diag() {
-        let _guard = crate::test_support::env_lock();
-        unsafe {
-            std::env::remove_var("PI_TEST_MISSING");
-        }
+        let env = crate::test_support::EnvGuard::new(&["PI_TEST_MISSING"]);
+        env.remove("PI_TEST_MISSING");
         let mut d = Vec::new();
         assert_eq!(resolve_config_value("$PI_TEST_MISSING", &mut d), None);
         assert_eq!(d.len(), 1);
@@ -374,49 +367,35 @@ mod tests {
 
     #[test]
     fn cli_key_wins() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["ANTHROPIC_API_KEY"]);
         let store = store_with("anthropic", "from-file");
-        unsafe {
-            std::env::set_var("ANTHROPIC_API_KEY", "from-env");
-        }
+        env.set("ANTHROPIC_API_KEY", "from-env");
         let mut d = Vec::new();
         let r = resolve_api_key("anthropic", Some("from-cli"), &store, &mut d).unwrap();
         assert_eq!(r.value, "from-cli");
         assert_eq!(r.source, KeySource::Cli);
-        unsafe {
-            std::env::remove_var("ANTHROPIC_API_KEY");
-        }
     }
 
     #[test]
     fn env_beats_auth_file() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["ANTHROPIC_API_KEY"]);
         let store = store_with("anthropic", "from-file");
-        unsafe {
-            std::env::set_var("ANTHROPIC_API_KEY", "from-env");
-        }
+        env.set("ANTHROPIC_API_KEY", "from-env");
         let mut d = Vec::new();
         let r = resolve_api_key("anthropic", None, &store, &mut d).unwrap();
         assert_eq!(r.value, "from-env");
         assert_eq!(r.source, KeySource::Env);
-        unsafe {
-            std::env::remove_var("ANTHROPIC_API_KEY");
-        }
     }
 
     #[test]
     fn falls_back_to_env_then_none() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["ANTHROPIC_API_KEY"]);
         let store = AuthStore::default();
-        unsafe {
-            std::env::set_var("ANTHROPIC_API_KEY", "from-env");
-        }
+        env.set("ANTHROPIC_API_KEY", "from-env");
         let mut d = Vec::new();
         let r = resolve_api_key("anthropic", None, &store, &mut d).unwrap();
         assert_eq!(r.source, KeySource::Env);
-        unsafe {
-            std::env::remove_var("ANTHROPIC_API_KEY");
-        }
+        env.remove("ANTHROPIC_API_KEY");
         assert!(resolve_api_key("anthropic", None, &store, &mut d).is_none());
     }
 
@@ -453,7 +432,7 @@ mod tests {
 
     #[test]
     fn oauth_access_token_is_used_as_auth_file_bearer_token() {
-        let _guard = crate::test_support::env_lock();
+        let env = crate::test_support::EnvGuard::new(&["OPENAI_CODEX_API_KEY"]);
         let text = r#"
 [openai-codex]
 type = "oauth"
@@ -463,9 +442,7 @@ expires = 4102444800000
 "#;
         let entries = toml::from_str::<BTreeMap<String, AuthEntry>>(text).unwrap();
         let store = AuthStore { entries };
-        unsafe {
-            std::env::remove_var("OPENAI_CODEX_API_KEY");
-        }
+        env.remove("OPENAI_CODEX_API_KEY");
 
         let mut d = Vec::new();
         let key = resolve_api_key("openai-codex", None, &store, &mut d).unwrap();
@@ -477,7 +454,8 @@ expires = 4102444800000
 
     #[test]
     fn oauth_access_token_field_alias_is_supported() {
-        let _guard = crate::test_support::env_lock();
+        let env =
+            crate::test_support::EnvGuard::new(&["COPILOT_TEST_TOKEN", "COPILOT_GITHUB_TOKEN"]);
         let text = r#"
 [github-copilot]
 type = "oauth"
@@ -485,10 +463,8 @@ access_token = "$COPILOT_TEST_TOKEN"
 "#;
         let entries = toml::from_str::<BTreeMap<String, AuthEntry>>(text).unwrap();
         let store = AuthStore { entries };
-        unsafe {
-            std::env::set_var("COPILOT_TEST_TOKEN", "oauth-from-env-ref");
-            std::env::remove_var("COPILOT_GITHUB_TOKEN");
-        }
+        env.set("COPILOT_TEST_TOKEN", "oauth-from-env-ref");
+        env.remove("COPILOT_GITHUB_TOKEN");
 
         let mut d = Vec::new();
         let key = resolve_api_key("github-copilot", None, &store, &mut d).unwrap();
@@ -496,10 +472,6 @@ access_token = "$COPILOT_TEST_TOKEN"
         assert_eq!(key.value, "oauth-from-env-ref");
         assert_eq!(key.source, KeySource::AuthFile);
         assert!(d.is_empty());
-
-        unsafe {
-            std::env::remove_var("COPILOT_TEST_TOKEN");
-        }
     }
 
     #[test]

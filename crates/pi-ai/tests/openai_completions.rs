@@ -1,3 +1,5 @@
+mod support;
+
 use bytes::Bytes;
 use futures::stream;
 use pi_ai::compat::{
@@ -9,6 +11,7 @@ use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StopReason, StreamOptions, ThinkingConfig, Tool,
 };
+use support::EnvGuard;
 
 fn test_model() -> Model {
     Model {
@@ -299,10 +302,10 @@ async fn completions_provider_missing_key_returns_error_event() {
         tools: None,
     };
 
-    // Ensure no env key is set
-    unsafe {
-        std::env::remove_var("OPENAI_API_KEY");
-    }
+    let env = EnvGuard::new(&["DEEPSEEK_API_KEY", "DEEPSEEK_KEY", "OPENAI_API_KEY"]);
+    env.remove("DEEPSEEK_API_KEY");
+    env.remove("DEEPSEEK_KEY");
+    env.remove("OPENAI_API_KEY");
 
     let event_stream = provider.stream(&model, ctx, None);
     use futures::StreamExt;

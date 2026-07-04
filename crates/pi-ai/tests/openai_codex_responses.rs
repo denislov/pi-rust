@@ -1,9 +1,12 @@
+mod support;
+
 use pi_ai::providers::openai_codex_responses as codex;
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StreamOptions, ThinkingConfig, Tool,
 };
+use support::EnvGuard;
 
 fn test_model() -> Model {
     Model {
@@ -141,9 +144,9 @@ async fn codex_provider_missing_key_returns_error_event() {
         tools: None,
     };
 
-    unsafe {
-        std::env::remove_var("OPENAI_CODEX_API_KEY");
-    }
+    let env = EnvGuard::new(&["OPENAI_CODEX_API_KEY", "OPENAI_API_KEY"]);
+    env.remove("OPENAI_CODEX_API_KEY");
+    env.remove("OPENAI_API_KEY");
 
     let event_stream = provider.stream(&model, ctx, None);
     use futures::StreamExt;

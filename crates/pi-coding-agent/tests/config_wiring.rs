@@ -1,13 +1,7 @@
+mod support;
+
 use pi_coding_agent::config;
-use std::sync::{Mutex, MutexGuard};
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-fn env_lock() -> MutexGuard<'static, ()> {
-    ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+use support::EnvGuard;
 
 #[test]
 fn select_model_uses_default_model_when_no_flag() {
@@ -20,31 +14,25 @@ fn select_model_uses_default_model_when_no_flag() {
 
 #[test]
 fn load_config_from_temp_pi_rust_dir() {
-    let _guard = env_lock();
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("settings.toml"),
         "default_model = \"claude-sonnet-4-5\"\n",
     )
     .unwrap();
-    // SAFETY: single-threaded integration test.
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
-    }
+    env.set_pi_rust_dir(dir.path());
     let (cfg, diags) = config::load_config(std::path::Path::new("."));
     assert_eq!(
         cfg.settings.default_model.as_deref(),
         Some("claude-sonnet-4-5")
     );
     assert!(diags.is_empty());
-    unsafe {
-        std::env::remove_var("PI_RUST_DIR");
-    }
 }
 
 #[test]
 fn config_auth_resolution_prefers_env_over_auth_file() {
-    let _guard = env_lock();
+    let env = EnvGuard::new(&["PI_RUST_DIR", "ANTHROPIC_API_KEY"]);
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("auth.toml"),
@@ -60,10 +48,8 @@ fn config_auth_resolution_prefers_env_over_auth_file() {
         )
         .unwrap();
     }
-    unsafe {
-        std::env::set_var("PI_RUST_DIR", dir.path().to_str().unwrap());
-        std::env::set_var("ANTHROPIC_API_KEY", "from-env");
-    }
+    env.set_pi_rust_dir(dir.path());
+    env.set("ANTHROPIC_API_KEY", "from-env");
 
     let (cfg, diags) = config::load_config(std::path::Path::new("."));
     let mut key_diags = Vec::new();
@@ -74,11 +60,6 @@ fn config_auth_resolution_prefers_env_over_auth_file() {
     assert_eq!(key.source, config::auth::KeySource::Env);
     assert!(diags.is_empty());
     assert!(key_diags.is_empty());
-
-    unsafe {
-        std::env::remove_var("PI_RUST_DIR");
-        std::env::remove_var("ANTHROPIC_API_KEY");
-    }
 }
 
 #[test]

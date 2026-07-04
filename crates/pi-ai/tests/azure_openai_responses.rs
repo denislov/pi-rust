@@ -1,3 +1,5 @@
+mod support;
+
 use bytes::Bytes;
 use futures::stream;
 use pi_ai::providers::azure_openai_responses;
@@ -6,6 +8,7 @@ use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StreamOptions,
 };
+use support::EnvGuard;
 
 fn test_model() -> Model {
     Model {
@@ -124,9 +127,18 @@ async fn azure_provider_missing_key_returns_error_event() {
         tools: None,
     };
 
-    unsafe {
-        std::env::remove_var("AZURE_OPENAI_API_KEY");
-    }
+    let env = EnvGuard::new(&[
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_BASE_URL",
+        "AZURE_OPENAI_RESOURCE_NAME",
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+    ]);
+    env.remove("AZURE_OPENAI_API_KEY");
+    env.remove("AZURE_OPENAI_API_VERSION");
+    env.remove("AZURE_OPENAI_BASE_URL");
+    env.remove("AZURE_OPENAI_RESOURCE_NAME");
+    env.remove("AZURE_OPENAI_DEPLOYMENT_NAME_MAP");
 
     let event_stream = provider.stream(&model, ctx, None);
     use futures::StreamExt;

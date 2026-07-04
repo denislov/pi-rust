@@ -1,3 +1,5 @@
+mod support;
+
 use bytes::Bytes;
 use futures::stream;
 use pi_ai::providers::mistral;
@@ -6,6 +8,7 @@ use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StopReason, StreamOptions, ThinkingConfig, Tool,
 };
+use support::EnvGuard;
 
 fn test_model() -> Model {
     Model {
@@ -215,9 +218,8 @@ async fn mistral_provider_missing_key_returns_error_event() {
         tools: None,
     };
 
-    unsafe {
-        std::env::remove_var("MISTRAL_API_KEY");
-    }
+    let env = EnvGuard::new(&["MISTRAL_API_KEY"]);
+    env.remove("MISTRAL_API_KEY");
 
     let event_stream = provider.stream(&model, ctx, None);
     use futures::StreamExt;

@@ -46,16 +46,10 @@ mod tests {
 
     #[test]
     fn pi_rust_dir_env_overrides_global() {
-        let _guard = crate::test_support::env_lock();
-        // SAFETY: single-threaded test; var removed at end.
-        unsafe {
-            std::env::set_var("PI_RUST_DIR", "/custom/cfg");
-        }
+        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
+        env.set_pi_rust_dir("/custom/cfg");
         let p = resolve(Path::new("/tmp/work"));
         assert_eq!(p.global_dir, PathBuf::from("/custom/cfg"));
         assert_eq!(p.global_auth(), PathBuf::from("/custom/cfg/auth.toml"));
-        unsafe {
-            std::env::remove_var("PI_RUST_DIR");
-        }
     }
 }

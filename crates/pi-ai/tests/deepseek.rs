@@ -1,3 +1,5 @@
+mod support;
+
 use pi_ai::models::lookup_model;
 use pi_ai::providers::deepseek::convert::build_request;
 use pi_ai::providers::deepseek::process::response_to_events;
@@ -6,6 +8,7 @@ use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, StopReason, StreamOptions,
 };
 use pi_ai::util::env_keys::env_api_key;
+use support::EnvGuard;
 
 #[test]
 fn deepseek_model_is_available() {
@@ -18,18 +21,13 @@ fn deepseek_model_is_available() {
 
 #[test]
 fn deepseek_api_key_uses_deepseek_env_var() {
-    unsafe {
-        std::env::set_var("DEEPSEEK_API_KEY", "sk-deepseek-test");
-    }
+    let env = EnvGuard::new(&["DEEPSEEK_API_KEY"]);
+    env.set("DEEPSEEK_API_KEY", "sk-deepseek-test");
 
     assert_eq!(
         env_api_key("deepseek"),
         Some("sk-deepseek-test".to_string())
     );
-
-    unsafe {
-        std::env::remove_var("DEEPSEEK_API_KEY");
-    }
 }
 
 #[test]
