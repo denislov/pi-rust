@@ -1,5 +1,7 @@
 # Phase 2 Guide: PromptTurnFlow on Headless and JSON Paths
 
+> Historical status, 2026-07-05: Phase 2 is complete. Primary print/json/RPC/interactive prompt paths now route through `CodingAgentSession` and `CodingAgentEvent`; the old product `session_runner` path has been removed or rejected for migrated session targets. This guide is retained as implementation history.
+
 ## Phase Goal
 
 Route a real prompt path through the new product runtime:

@@ -776,7 +776,7 @@ Use the architecture for higher-level workflows:
 - `BranchSummaryFlow`;
 - `ExportFlow`;
 - `PluginLoadFlow`;
-- delegation-first child-agent orchestration;
+- delegation-first helper orchestration;
 - self-healing edit workflows.
 
 ## Compatibility Invariants

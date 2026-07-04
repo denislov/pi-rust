@@ -1,6 +1,6 @@
 # pi-rust 架构图
 
-> 生成时间: 2026-06-30
+> 生成时间: 2026-07-05
 > 展示 `pi-agent-core` 与 `pi-coding-agent` 的内部结构及协作关系。
 
 ---
@@ -52,24 +52,25 @@ graph TB
         direction TB
 
         subgraph api["api 模块 (稳定对外接口)"]
-            CAS["CodingAgentSession<br/>• create / open / open_or_create<br/>• prompt()<br/>• non_persistent()<br/>• session_id() / tree()"]
+            CAS["CodingAgentSession<br/>• create / open / open_or_create<br/>• prompt()<br/>• compact / export / profiles<br/>• delegation / self-healing edit"]
             CAE["CodingAgentEvent<br/>• PromptStarted / AssistantDelta<br/>• ToolCallStarted / ToolCallFinished<br/>• SessionWriteCommitted<br/>• ..."]
             Opts["CodingAgentSessionOptions<br/>PromptTurnOptions<br/>PromptTurnOutcome<br/>CapabilityStatus"]
         end
 
         subgraph cs["coding_session 内部"]
-            FS["FlowService<br/>• 构建 PromptTurnFlow 图<br/>• run_prompt_turn()"]
+            FS["FlowService<br/>• PromptTurnFlow / ExportFlow<br/>• PluginLoadFlow<br/>• AgentInvocationFlow / AgentTeamFlow<br/>• SelfHealingEditFlow"]
             PTF["PromptTurnFlow<br/>11 节点流水线"]
             RS["RuntimeService<br/>• build_agent_runtime()<br/>• replay_hydration()"]
             SS["SessionService<br/>• 持久化 session 管理<br/>• TurnTransaction 最终化<br/>• SessionWrite* 事件"]
             ES["EventService<br/>• 事件订阅/分发<br/>• CodingAgentEventReceiver"]
             CapSvc["CapabilityService<br/>• 能力状态报告<br/>• idle/busy/disabled"]
-            PS["PluginService<br/>(预留插件边界)"]
+            PS["PluginService<br/>• tool/command/hook providers<br/>• UI/keybind/dialog providers<br/>• Lua host metadata<br/>• FlowExtension points"]
+            PR["ProfileRegistry<br/>• AgentProfile / TeamProfile<br/>• default_agent_profile_id<br/>• delegation policy"]
         end
 
         subgraph adapters["Adapter 层"]
             PM["print_mode<br/>• CLI 打印<br/>• 会话目标解析"]
-            JM["json_mode<br/>• JSONL 协议输出<br/>• 通过 CodingAgentEvent 渲染"]
+            JM["json_mode<br/>• protocol event output<br/>• 通过 CodingAgentEvent 渲染"]
             RPC["RPC (protocol)<br/>• RpcCodingEventAdapter<br/>• get_state 能力报告<br/>• prompt 命令路由"]
             INTR["interactive<br/>• CodingEventBridge<br/>• UiEvent → C.A.Session"]
         end
@@ -100,6 +101,7 @@ graph TB
     CAS --> ES
     CAS --> CapSvc
     CAS --> PS
+    CAS --> PR
 
     FS --> PTF
     PTF --> RS

@@ -33,7 +33,7 @@
 | 风险 | 说明 | 缓解 |
 |---|---|---|
 | Rust-native session schema 漂移 | `events.jsonl` 是当前产品会话事实来源，事件 kind/字段变更会影响 replay、resume、fork/clone/tree/compact | 保持 schema/version；新增字段优先后向兼容；用 replay fixture 和 focused tests 守护 |
-| 旧 TS parity 文档误导 | 早期 M7-M13 和对标报告包含“迁移 TS”等历史说法，可能与 Flow-centered 决策冲突 | `ROADMAP.md` 和 `docs/TODO.md` 作为当前索引；旧文档标记为背景而非约束 |
+| 旧 TS parity 文档误导 | 归档的 M7-M13、对标报告和早期架构想法包含“迁移 TS”等历史说法，可能与 Flow-centered 决策冲突 | `ROADMAP.md` 和 `docs/TODO.md` 作为当前索引；归档文档位于 `docs/archive/`，只作背景而非约束 |
 | 插件边界过早泄漏内部类型 | Phase 5 若直接暴露 `PromptTurnContext` / operation internals，会固化实现细节 | 先定义 capability-scoped provider traits 和 failure isolation，再接 RuntimeService/PromptTurnFlow |
 | Flow 与 owner 责任重叠 | 新 workflow 容易重复 session commit、active leaf、event emit 逻辑 | `SessionService` 继续拥有持久化 finalization；Flow 节点只通过明确服务边界操作 |
 | `pi-ai` runtime/auth 边界漂移 | 若全局 registry、provider auth、config/auth store、product runtime 各自扩张，会形成难以测试的多实例和插件边界问题 | 规划 Rust-native scoped `AiClient` / auth resolver；把 global `register()` / `stream_model()` 降为兼容或测试辅助；禁止 `pi-ai` 依赖 coding-agent 产品语义 |

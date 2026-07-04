@@ -1,5 +1,7 @@
 # Rust-Native Manual Compaction Design
 
+> Historical status, 2026-07-05: this design predates the final old-runner cleanup. Manual compaction now runs as a session-owned Rust-native workflow; old JSONL product paths are rejected rather than preserved as current compatibility behavior. The body below is kept as slice history.
+
 ## Context
 
 Phase 3 routes primary interactive prompts through `CodingAgentSession`, writes

@@ -912,7 +912,7 @@ Tests:
 
 Update docs as behavior changes:
 
-- `docs/roadmap/M12-plugin-system.md` when plugin kernel begins.
+- `docs/archive/roadmap/M12-plugin-system.md` when consulting the archived plugin-kernel background.
 - `docs/roadmap/cross-cutting.md` to remove TS session compatibility risk and add Rust-native session schema risk.
 - Possibly add `docs/session-format.md` once event schema stabilizes.
 - Update existing migration comparison docs only if they become materially stale.

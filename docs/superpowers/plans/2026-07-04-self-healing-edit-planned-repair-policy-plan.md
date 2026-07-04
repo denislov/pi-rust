@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Historical status, 2026-07-05: planned repair policy and RPC `repairAttempts` support are recorded as implemented in `docs/TODO.md`. The unchecked task list below is retained as execution history and is no longer authoritative.
+
 **Goal:** Expose a bounded, product-level self-healing edit repair policy using planned replacement attempts.
 
 **Architecture:** Keep model-driven repair as a later slice. Extend `SelfHealingEditRequest` with ordered repair attempts, where each attempt is a list of `SelfHealingEditReplacement`s to apply after a failed check. Session code adapts those attempts into the existing crate-private `SelfHealingEditRepairStrategy` so Flow behavior remains centralized and no raw runner, runtime, provider, or filesystem internals leak through public APIs.

@@ -1,5 +1,7 @@
 # Phase 3 Guide: CLI, RPC, and Interactive Adapter Convergence
 
+> Historical status, 2026-07-05: Phase 3 is complete. CLI, JSON, RPC, and interactive primary paths consume `CodingAgentSession`/`CodingAgentEvent`; old JSONL product paths are rejected instead of maintained as compatibility paths. This guide is retained as implementation history.
+
 ## Phase Goal
 
 Move frontends onto `CodingAgentSession` so CLI, JSON, RPC, and interactive mode consume the same product runtime and `CodingAgentEvent` stream.

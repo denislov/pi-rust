@@ -17,7 +17,7 @@ Close the gap between the completed low-level AgentTurnFlow runtime and the prod
 
 ## Non-Goals
 
-- Do not add delegation-first child-agent orchestration or self-healing edit workflows in this stabilization phase.
+- Do not add delegation-first helper orchestration or self-healing edit workflows in this stabilization phase.
 - Do not expose raw Agent, SessionService, RuntimeService, provider internals, filesystem handles, or Flow graph mutation to plugins.
 - Do not revive TypeScript session JSONL compatibility.
 - Do not make pi-agent-core own product session or adapter semantics.
@@ -38,7 +38,7 @@ Tasks:
 
 - Add this plan to docs/TODO.md source documents.
 - Mark Phase 6 as active rather than not started.
-- Split runtime control stabilization from future delegation-first child-agent and self-healing work.
+- Split runtime control stabilization from future delegation-first helper and self-healing work.
 - Replace stale await-AgentTurnFlow wording in planning docs with the real remaining gap: CodingAgentSession-owned running operation control.
 - Keep TODO entries precise enough that each later code slice can update one item.
 
@@ -203,7 +203,7 @@ Focused checks:
 
 ## Stage 8: Readiness Gate for New Advanced Workflows
 
-Only start delegation-first child-agent orchestration and self-healing edit after these gates pass:
+Only start delegation-first helper orchestration and self-healing edit after these gates pass:
 
 - Runtime prompt abort works through CodingAgentSession.
 - Runtime steer and follow-up work through CodingAgentSession.

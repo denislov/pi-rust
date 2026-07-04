@@ -8,7 +8,7 @@ Use the new architecture for workflows that were hard to reason about in the old
 - branch summary;
 - export;
 - plugin load/reload;
-- delegation-first child-agent orchestration;
+- delegation-first helper orchestration;
 - self-healing edit workflows.
 
 Phase 6 is where `pi-rust` should start gaining capabilities from the Flow-centered architecture rather than only matching previous behavior.
@@ -254,7 +254,7 @@ Tests:
 - invalid plugin emits diagnostic;
 - failed plugin does not block unrelated plugins if policy is fail-open.
 
-## Delegation-First Child-Agent Orchestration
+## Delegation-First Helper Orchestration
 
 Purpose:
 
@@ -264,13 +264,13 @@ Purpose:
 Initial conservative model:
 
 - top-level sessions remain owned by a single default `AgentProfile`;
-- standalone child-agent product concepts are not introduced;
+- standalone helper product concepts are not introduced;
 - built-in default profiles may expose read-only helper agents through
   auto-approved delegation;
 - custom profiles must explicitly declare their delegation roster;
-- delegated child agents receive minimal task packets rather than the parent
+- delegated helpers receive minimal task packets rather than the parent
   transcript;
-- child outputs become structured delegation results and folded transcript
+- delegation outputs become structured delegation results and folded transcript
   blocks, not direct parent session commits.
 
 Nodes:
@@ -279,7 +279,7 @@ Nodes:
 capture_delegation_request
 authorize_delegation
 build_delegation_task_packet
-run_child_agent_or_team
+run_delegated_agent_or_team
 collect_delegation_result
 record_delegation_events
 render_folded_delegation_block
@@ -287,20 +287,20 @@ render_folded_delegation_block
 
 Rules:
 
-- child flow cannot direct-commit parent session;
+- delegated flow cannot direct-commit parent session;
 - parent transaction decides committed facts;
-- IDs must correlate parent operation and child operation.
-- child capability scope comes from the target profile, not the parent profile;
-- child context defaults to the explicit task plus selected evidence only.
+- IDs must correlate parent operation and delegated operation;
+- delegated capability scope comes from the target profile, not the parent profile;
+- delegated context defaults to the explicit task plus selected evidence only.
 
 Tests:
 
 - default read-only helpers are auto-approved;
 - custom profiles expose no helpers unless explicitly configured;
-- delegated child agents run deterministically;
-- failed child records diagnostic and parent policy applies;
+- delegated helpers run deterministically;
+- failed delegated run records diagnostic and parent policy applies;
 - parent session log has coherent operation lineage;
-- parent transcript records folded delegation results instead of child token streams.
+- parent transcript records folded delegation results instead of delegated token streams.
 
 ## Self-Healing Edit Workflow
 
@@ -419,7 +419,7 @@ Stop and redesign if:
 
 - advanced workflow bypasses `CodingAgentSession`;
 - advanced workflow writes storage directly;
-- delegated child flow can mutate parent session without parent transaction;
+- delegated flow can mutate parent session without parent transaction;
 - export becomes canonical state;
 - plugin load gives Lua raw Flow graph mutation.
 

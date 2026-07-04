@@ -1,10 +1,10 @@
-# Delegation-First Child-Agent Design
+# Delegation-First Helper Design
 
 Date: 2026-07-04
 
 ## Decision
 
-`pi-rust` should not introduce a standalone child-agent product concept with its
+`pi-rust` should not introduce a standalone helper product concept with its
 own profile type, command namespace, Flow family, capability family, or protocol
 event family.
 
@@ -117,8 +117,8 @@ artifacts or references
 child_operation_id
 ```
 
-The parent receives this result summary. The full child token stream is not
-appended as ordinary parent transcript content.
+The parent receives this result summary. The full delegated-run token stream is
+not appended as ordinary parent transcript content.
 
 ## UI Behavior
 
@@ -159,14 +159,14 @@ Approve: /delegation approve <operation-id> <tool-call-id>
 Reject:  /delegation reject <operation-id> <tool-call-id> [reason]
 ```
 
-The parent transcript should show status and summary by default. Detailed child
-work can be exposed through child operation correlation or future expansion
-hooks. Multiple child runs must not stream raw nested token output into the main
-conversation.
+The parent transcript should show status and summary by default. Detailed
+delegated work can be exposed through delegated operation correlation or future
+expansion hooks. Multiple delegated runs must not stream raw nested token output
+into the main conversation.
 
 ## Protocol And API
 
-No new command, capability, or event family is introduced for child-agent work.
+No new command, capability, or event family is introduced for delegated helper work.
 The existing delegation event family remains canonical:
 
 ```text
@@ -200,20 +200,20 @@ to rebuild pending confirmations and folded transcript blocks:
 
 - request target and task;
 - authorization/confirmation status;
-- child operation id;
+- delegated operation id, serialized with the current protocol field name;
 - result summary;
 - diagnostics;
 - approval/rejection resolution.
 
-The parent session log should not treat the child transcript as ordinary parent
-messages. If detailed child traces are retained, they should be linked artifacts
-or child operation records.
+The parent session log should not treat the delegated transcript as ordinary
+parent messages. If detailed delegated traces are retained, they should be
+linked artifacts or delegated operation records.
 
 ## Non-Goals
 
-- Add a standalone child-agent profile type.
-- Add a `/child-agent` or equivalent command namespace.
-- Add a separate child-agent capability name.
+- Add a standalone helper profile type.
+- Add a `/helper` or equivalent command namespace.
+- Add a separate helper capability name.
 - Add protocol events outside the delegation family for model-requested helper
   work.
 - Make `TeamProfile` the default top-level session model.

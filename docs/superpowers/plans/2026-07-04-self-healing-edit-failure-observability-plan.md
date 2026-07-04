@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Historical status, 2026-07-05: structured self-healing edit check-failure output for Rust API and RPC is recorded as implemented in `docs/TODO.md`. The unchecked task list below is retained as execution history and is no longer authoritative.
+
 **Goal:** Preserve structured check-command output when a self-healing edit fails its configured check.
 
 **Architecture:** Keep `SelfHealingEditOutcome` for successful edits. Add a dedicated `CodingSessionError` variant for self-healing edit check failures that carries the failure message, diagnostics, and optional `SelfHealingEditCheckOutput`. RPC error responses can include optional `data` using the same shape already returned on successful self-healing edits, without exposing runner/runtime/provider internals.

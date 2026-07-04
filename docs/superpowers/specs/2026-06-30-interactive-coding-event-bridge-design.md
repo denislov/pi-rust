@@ -1,5 +1,7 @@
 # Interactive Coding Event Bridge Design
 
+> Historical status, 2026-07-05: this design describes the bridge slice before interactive prompt execution migrated to `CodingAgentSession`. Interactive prompt tasks now stream product events through `CodingEventBridge`; this document is retained as slice history.
+
 ## Purpose
 
 This design defines the Phase 3 adapter boundary that converts `CodingAgentEvent` into interactive `UiEvent` values.
@@ -166,4 +168,3 @@ This slice is complete when:
 - existing old `AgentEvent` interactive bridge behavior is unchanged;
 - interactive prompt execution still uses the old runner until a later migration slice;
 - Phase 3 TODO marks the bridge implementation complete after code lands.
-

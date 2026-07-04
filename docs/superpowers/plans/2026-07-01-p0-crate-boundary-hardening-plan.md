@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Historical status, 2026-07-05: multiple boundary-hardening slices from this plan have landed and are tracked in `docs/TODO.md`. The unchecked task list below is retained as execution history; use the cross-cutting TODO items for current status.
+
 **Goal:** Make the intended stable and migration-private boundaries for `pi-ai`, `pi-agent-core`, `pi-coding-agent`, and `pi-tui` explicit, testable, and ready for P1-P4 implementation.
 
 **Architecture:** Add lightweight stable facade modules where the crate does not yet have one, keep existing root exports as migration compatibility for now, and test the public symbols that downstream code should prefer. Documentation and TODO updates carry the policy; compile-time public API tests make accidental removal or expansion visible.

@@ -33,7 +33,7 @@ This design replaces the interactive space-argument forms with menu-driven `/age
   - `CodingAgentSession::invoke_team`
   - RPC `invoke_agent`
   - RPC `invoke_team`
-- Keep profile/team child work isolated behind `AgentInvocationFlow` and `AgentTeamFlow`.
+- Keep profile/team delegated work isolated behind `AgentInvocationFlow` and `AgentTeamFlow`.
 
 ## Non-Goals
 

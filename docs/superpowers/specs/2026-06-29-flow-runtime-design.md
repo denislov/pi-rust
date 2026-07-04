@@ -267,7 +267,7 @@ This spec's implementation step only adds the module and tests. Later work shoul
 2. Extract internal agent-loop phases into nodes while preserving `Agent::prompt` and `Agent::run`.
 3. Add graph export for debugging and documentation, likely Mermaid and JSON.
 4. Extend the plugin system roadmap with a `FlowProvider` or `FlowExtension` trait.
-5. Model delegation-first child-agent and multi-agent workflows as nested flows once the basic runtime has proven stable.
+5. Model delegation-first helper and multi-agent workflows as nested flows once the basic runtime has proven stable.
 
 ## Compatibility
 

@@ -22,12 +22,12 @@ This design makes pending delegation confirmations part of the Rust-native typed
   - `DelegationStarted`
   - `DelegationCompleted`
   - `DelegationFailed`
-- Keep confirmed child execution bounded by the same owner-created `AgentInvocationFlow` and `AgentTeamFlow` paths used today.
+- Keep confirmed delegated execution bounded by the same owner-created `AgentInvocationFlow` and `AgentTeamFlow` paths used today.
 
 ## Non-Goals
 
 - Do not add richer interactive confirmation prompts in this stage.
-- Do not implement recursive child budget accounting in this stage.
+- Do not implement recursive delegation budget accounting in this stage.
 - Do not add automatic expiry, policy migration, or user preference storage for confirmations.
 - Do not persist pending confirmation state in the session manifest or a sidecar JSON file.
 - Do not make TypeScript session JSONL compatible with delegation confirmations.
@@ -43,7 +43,7 @@ Before this slice, `CodingAgentSession` owned:
 - `approve_delegation_confirmation(operation_id, tool_call_id)`
 - `reject_delegation_confirmation(operation_id, tool_call_id, reason)`
 
-When `PromptTurnContext` authorized a queued request as `RequiresConfirmation`, the owner pushed an in-memory pending state and emitted `DelegationConfirmationRequired`. Approval removed the pending state, emitted `DelegationApproved`, and executed the held child flow. Rejection removed the pending state and emitted `DelegationRejected`.
+When `PromptTurnContext` authorized a queued request as `RequiresConfirmation`, the owner pushed an in-memory pending state and emitted `DelegationConfirmationRequired`. Approval removed the pending state, emitted `DelegationApproved`, and executed the held delegated flow. Rejection removed the pending state and emitted `DelegationRejected`.
 
 The Rust-native session log already persisted prompt transcript operations, branch summaries, manual compaction, plugin load results, and active leaf changes. It did not yet have durable delegation confirmation request or resolution events.
 
@@ -81,7 +81,7 @@ delegation.confirmation.rejected
 - `target_id`
 - `task`
 - `reason`
-- a non-sensitive child prompt runtime seed:
+- a non-sensitive delegated prompt runtime seed:
   - prompt mode;
   - model metadata with request headers stripped;
   - system prompt when present;
@@ -93,7 +93,7 @@ delegation.confirmation.rejected
   - session display name when present;
   - parent delegation depth.
 
-The durable event must not store `RuntimeSnapshot`, provider credentials, model request headers, resolved tool closures, plugin service internals, loaded runtime instances, or raw `CodingAgentSession` state. After reopen, approval rebuilds child `PromptTurnOptions` from the persisted runtime seed plus the current session owner configuration, settings, auth, plugin service, and profile registry. API keys are resolved from current auth at approval time, model headers are not restored from the session log, and built-in tools are restored by name when still available. This means restored approval uses the current available runtime configuration, while the delegated target and task remain the originally requested target and task.
+The durable event must not store `RuntimeSnapshot`, provider credentials, model request headers, resolved tool closures, plugin service internals, loaded runtime instances, or raw `CodingAgentSession` state. After reopen, approval rebuilds delegated `PromptTurnOptions` from the persisted runtime seed plus the current session owner configuration, settings, auth, plugin service, and profile registry. API keys are resolved from current auth at approval time, model headers are not restored from the session log, and built-in tools are restored by name when still available. This means restored approval uses the current available runtime configuration, while the delegated target and task remain the originally requested target and task.
 
 `delegation.confirmation.approved` stores:
 
@@ -129,7 +129,7 @@ For persistent sessions:
 
 - opening a session reconstructs `pending_delegation_confirmations` from replay;
 - creating a confirmation-held request appends a durable request event before exposing it through list/approve/reject APIs;
-- approving a pending confirmation appends a durable approved event before executing child work;
+- approving a pending confirmation appends a durable approved event before executing delegated work;
 - rejecting a pending confirmation appends a durable rejected event before emitting `DelegationRejected`;
 - if writing the durable request or resolution event fails, the owner must not mutate the in-memory pending queue as if the durable change succeeded.
 
@@ -139,7 +139,7 @@ For non-persistent sessions:
 - do not synthesize durable events;
 - keep public API behavior the same as today.
 
-### Approval and Child Execution
+### Approval And Delegated Execution
 
 Approval remains an owner operation:
 
@@ -148,10 +148,10 @@ Approval remains an owner operation:
 3. durably record the approval decision for persistent sessions;
 4. remove the pending item from memory;
 5. emit `DelegationApproved`;
-6. execute the child `AgentInvocationFlow` or `AgentTeamFlow`;
+6. execute the delegated `AgentInvocationFlow` or `AgentTeamFlow`;
 7. emit `DelegationStarted` and either `DelegationCompleted` or `DelegationFailed` through the existing path.
 
-If child execution fails after the approval is durably recorded, the approval remains recorded and the failure is represented by `DelegationFailed`. This reflects the real lifecycle: the user approved the request, and the execution failed.
+If delegated execution fails after the approval is durably recorded, the approval remains recorded and the failure is represented by `DelegationFailed`. This reflects the real lifecycle: the user approved the request, and the execution failed.
 
 ### Rejection
 
@@ -162,7 +162,7 @@ Rejection remains an owner mutation:
 3. durably record the rejection decision for persistent sessions;
 4. remove the pending item from memory;
 5. emit `DelegationRejected`;
-6. do not execute child work.
+6. do not execute delegated work.
 
 ### Error Handling
 
@@ -170,7 +170,7 @@ Rejection remains an owner mutation:
 - Duplicate unresolved request keys during live execution should be rejected or ignored before mutation. The implementation should prefer preserving the first pending request and recording a diagnostic for the duplicate.
 - Durable write failure must leave the pending queue unchanged.
 - Replay warnings should not prevent session open unless the event log is structurally unreadable.
-- If a restored pending item references a profile that no longer exists, it remains listable and rejectable. Approval should fail through the existing child flow validation and emit the current failure behavior.
+- If a restored pending item references a profile that no longer exists, it remains listable and rejectable. Approval should fail through the existing delegated flow validation and emit the current failure behavior.
 
 ### Adapter Behavior
 
@@ -200,8 +200,8 @@ Add focused deterministic tests:
 - replay removes pending confirmation after rejection;
 - replay reports duplicate unresolved requests without creating duplicate pending items;
 - persistent session prompt with confirmation-required delegation can be reopened and still lists the pending confirmation;
-- reopened persistent session can approve a restored pending confirmation and execute child work;
-- reopened persistent session can reject a restored pending confirmation without executing child work;
+- reopened persistent session can approve a restored pending confirmation and execute delegated work;
+- reopened persistent session can reject a restored pending confirmation without executing delegated work;
 - non-persistent session confirmation behavior remains in-memory and unchanged;
 - RPC and interactive list/approve/reject tests continue to pass through the owner API.
 
@@ -231,7 +231,7 @@ The docs should remove the current statement that pending confirmations are not 
 After this stage, the remaining delegation follow-ups are:
 
 - richer interactive confirmation prompts;
-- recursive child execution and inherited budget accounting;
+- recursive delegated execution and inherited budget accounting;
 - capability release and richer capability naming around delegation sub-operations;
 - policy migration or expiry semantics for old pending confirmations;
 - copied-session pending confirmation policy refinement.

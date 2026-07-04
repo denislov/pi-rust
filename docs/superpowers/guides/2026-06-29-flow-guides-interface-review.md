@@ -152,7 +152,7 @@ No guide allows:
 - Flow node direct storage append;
 - plugin direct commit;
 - adapter direct active leaf mutation for migrated paths;
-- delegated child direct parent session mutation.
+- delegated flow direct parent session mutation.
 
 Potential gap:
 
