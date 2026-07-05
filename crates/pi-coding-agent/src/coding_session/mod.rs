@@ -32,6 +32,7 @@ pub(crate) use context::{
     CodingAgentSessionDiagnostic, CodingAgentSessionHydration, CodingAgentSessionTranscriptItem,
     CodingAgentSessionTree,
 };
+pub use delegation::PendingDelegationConfirmation;
 pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
 pub use event_service::CodingAgentEventReceiver;
@@ -59,8 +60,9 @@ use branch_summary_flow::{
     branch_summary_outcome_text, branch_summary_success_outcome,
 };
 use capability_service::CapabilityService;
-use delegation::{
-    DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
+pub(crate) use delegation::{
+    DelegationAuthorizationDecision, DelegationLineageEntry, PendingDelegationConfirmationQueue,
+    PendingDelegationConfirmationState, delegation_lineage_for_request,
 };
 use event_service::{EventService, SelfHealingEditEventObserver};
 use export_flow::ExportOptions;
@@ -92,15 +94,12 @@ use session_service::{
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::plugins::{
     CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::{PromptInvocation, SessionRunOptions};
-
-const DELEGATION_CONFIRMATION_TTL_HOURS: i64 = 24;
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -113,64 +112,13 @@ pub struct CodingAgentSession {
     profile_registry: ProfileRegistry,
     default_plugin_load_options: PluginLoadOptions,
     operation_control: OperationControl,
-    pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingDelegationConfirmation {
-    pub operation_id: String,
-    pub turn_id: String,
-    pub tool_call_id: String,
-    pub requesting_profile_id: ProfileId,
-    pub target_kind: ProfileKind,
-    pub target_id: ProfileId,
-    pub task: String,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PendingDelegationConfirmationState {
-    request: DelegationRequest,
-    prompt_options: PromptTurnOptions,
-    reason: String,
-    requested_at: String,
-    child_delegation_depth: usize,
-    delegation_lineage: Vec<DelegationLineageEntry>,
+    pending_delegation_confirmations: PendingDelegationConfirmationQueue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ApprovedDelegationExecution {
     child_operation_id: String,
     final_text: String,
-}
-
-impl PendingDelegationConfirmationState {
-    fn is_active_at(&self, now: &str) -> bool {
-        !delegation_confirmation_is_expired(&self.requested_at, now)
-    }
-
-    fn view(&self) -> PendingDelegationConfirmation {
-        PendingDelegationConfirmation {
-            operation_id: self.request.operation_id.clone(),
-            turn_id: self.request.turn_id.clone(),
-            tool_call_id: self.request.tool_call_id.clone(),
-            requesting_profile_id: self.request.requesting_profile_id.clone(),
-            target_kind: self.request.target_kind,
-            target_id: self.request.target_id.clone(),
-            task: self.request.task.clone(),
-            reason: self.reason.clone(),
-        }
-    }
-}
-
-fn delegation_confirmation_is_expired(requested_at: &str, now: &str) -> bool {
-    let Ok(requested_at) = OffsetDateTime::parse(requested_at, &Rfc3339) else {
-        return false;
-    };
-    let Ok(now) = OffsetDateTime::parse(now, &Rfc3339) else {
-        return false;
-    };
-    now >= requested_at + TimeDuration::hours(DELEGATION_CONFIRMATION_TTL_HOURS)
 }
 
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
@@ -217,6 +165,17 @@ fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> Profi
 
 fn default_cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn pending_delegation_confirmation_not_found(
+    operation_id: &str,
+    tool_call_id: &str,
+) -> CodingSessionError {
+    CodingSessionError::Input {
+        message: format!(
+            "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
+        ),
+    }
 }
 
 fn pending_state_from_replay(
@@ -588,11 +547,7 @@ impl CodingAgentSession {
 
     pub fn pending_delegation_confirmations(&self) -> Vec<PendingDelegationConfirmation> {
         let now = SystemClock.now_rfc3339();
-        self.pending_delegation_confirmations
-            .iter()
-            .filter(|pending| pending.is_active_at(&now))
-            .map(PendingDelegationConfirmationState::view)
-            .collect()
+        self.pending_delegation_confirmations.active_views(&now)
     }
 
     pub async fn approve_delegation_confirmation(
@@ -600,19 +555,25 @@ impl CodingAgentSession {
         operation_id: impl AsRef<str>,
         tool_call_id: impl AsRef<str>,
     ) -> Result<(), CodingSessionError> {
-        let index = self
-            .pending_delegation_confirmation_index(operation_id.as_ref(), tool_call_id.as_ref())?;
-        let operation_kind = match self.pending_delegation_confirmations[index]
-            .request
-            .target_kind
-        {
+        let operation_id = operation_id.as_ref();
+        let tool_call_id = tool_call_id.as_ref();
+        let now = SystemClock.now_rfc3339();
+        let pending = self
+            .pending_delegation_confirmations
+            .active_pending(operation_id, tool_call_id, &now)
+            .cloned()
+            .ok_or_else(|| pending_delegation_confirmation_not_found(operation_id, tool_call_id))?;
+        let operation_kind = match pending.request.target_kind {
             ProfileKind::Agent => OperationKind::AgentInvocation,
             ProfileKind::Team => OperationKind::AgentTeam,
         };
         let _operation = self.operation_control.begin(operation_kind)?;
         let mut ids = SystemIdGenerator;
-        self.record_delegation_confirmation_approved(index, ids.next_operation_id())?;
-        let pending = self.pending_delegation_confirmations.remove(index);
+        self.record_delegation_confirmation_approved(&pending, ids.next_operation_id())?;
+        let pending = self
+            .pending_delegation_confirmations
+            .remove_active(operation_id, tool_call_id, &now)
+            .unwrap_or(pending);
         self.event_service
             .emit_delegation_approved(&pending.request);
         match pending.request.target_kind {
@@ -643,16 +604,25 @@ impl CodingAgentSession {
         tool_call_id: impl AsRef<str>,
         reason: impl Into<String>,
     ) -> Result<(), CodingSessionError> {
-        let index = self
-            .pending_delegation_confirmation_index(operation_id.as_ref(), tool_call_id.as_ref())?;
+        let operation_id = operation_id.as_ref();
+        let tool_call_id = tool_call_id.as_ref();
+        let now = SystemClock.now_rfc3339();
+        let pending = self
+            .pending_delegation_confirmations
+            .active_pending(operation_id, tool_call_id, &now)
+            .cloned()
+            .ok_or_else(|| pending_delegation_confirmation_not_found(operation_id, tool_call_id))?;
         let reason = reason.into();
         let reason = if reason.trim().is_empty() {
             "delegation rejected by user".to_string()
         } else {
             reason
         };
-        self.record_delegation_confirmation_rejected(index, reason.clone())?;
-        let pending = self.pending_delegation_confirmations.remove(index);
+        self.record_delegation_confirmation_rejected(&pending, reason.clone())?;
+        let pending = self
+            .pending_delegation_confirmations
+            .remove_active(operation_id, tool_call_id, &now)
+            .unwrap_or(pending);
         self.event_service
             .emit_delegation_rejected(&pending.request, &reason);
         Ok(())
@@ -803,11 +773,13 @@ impl CodingAgentSession {
             .as_deref()
             .map(PathBuf::from)
             .unwrap_or_else(default_cwd);
-        let pending_delegation_confirmations = replay
-            .pending_delegation_confirmations
-            .into_iter()
-            .map(|pending| pending_state_from_replay(pending, &cwd))
-            .collect::<Result<Vec<_>, _>>()?;
+        let pending_delegation_confirmations = PendingDelegationConfirmationQueue::from_pending(
+            replay
+                .pending_delegation_confirmations
+                .into_iter()
+                .map(|pending| pending_state_from_replay(pending, &cwd))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
         let event_service = EventService::new();
         event_service.emit_session_opened(session_service.session_id().to_owned());
 
@@ -840,7 +812,7 @@ impl CodingAgentSession {
             profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
-            pending_delegation_confirmations: Vec::new(),
+            pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
         })
     }
 
@@ -1098,14 +1070,7 @@ impl CodingAgentSession {
         pending: PendingDelegationConfirmationState,
         emit_confirmation_required: bool,
     ) -> Result<(), CodingSessionError> {
-        if self
-            .pending_delegation_confirmations
-            .iter()
-            .any(|existing| {
-                existing.request.operation_id == pending.request.operation_id
-                    && existing.request.tool_call_id == pending.request.tool_call_id
-            })
-        {
+        if self.pending_delegation_confirmations.is_duplicate(&pending) {
             self.event_service.emit_diagnostic(
                 Some(pending.request.operation_id.clone()),
                 format!(
@@ -1122,26 +1087,6 @@ impl CodingAgentSession {
         }
         self.pending_delegation_confirmations.push(pending);
         Ok(())
-    }
-
-    fn pending_delegation_confirmation_index(
-        &self,
-        operation_id: &str,
-        tool_call_id: &str,
-    ) -> Result<usize, CodingSessionError> {
-        let now = SystemClock.now_rfc3339();
-        self.pending_delegation_confirmations
-            .iter()
-            .position(|pending| {
-                pending.is_active_at(&now)
-                    && pending.request.operation_id == operation_id
-                    && pending.request.tool_call_id == tool_call_id
-            })
-            .ok_or_else(|| CodingSessionError::Input {
-                message: format!(
-                    "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
-                ),
-            })
     }
 
     fn record_delegation_confirmation_requested(
@@ -1171,10 +1116,9 @@ impl CodingAgentSession {
 
     fn record_delegation_confirmation_approved(
         &mut self,
-        index: usize,
+        pending: &PendingDelegationConfirmationState,
         approval_operation_id: String,
     ) -> Result<(), CodingSessionError> {
-        let pending = &self.pending_delegation_confirmations[index];
         if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
             session_service.record_delegation_confirmation_approved(
                 pending.request.operation_id.clone(),
@@ -1187,10 +1131,9 @@ impl CodingAgentSession {
 
     fn record_delegation_confirmation_rejected(
         &mut self,
-        index: usize,
+        pending: &PendingDelegationConfirmationState,
         reason: String,
     ) -> Result<(), CodingSessionError> {
-        let pending = &self.pending_delegation_confirmations[index];
         if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
             session_service.record_delegation_confirmation_rejected(
                 pending.request.operation_id.clone(),

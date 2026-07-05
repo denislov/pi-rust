@@ -1,8 +1,11 @@
 use pi_agent_core::AgentTool;
 use serde::{Deserialize, Serialize};
+use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::profiles::{DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind};
-use super::prompt::DelegationRequest;
+use super::prompt::{DelegationRequest, PromptTurnOptions};
+
+const DELEGATION_CONFIRMATION_TTL_HOURS: i64 = 24;
 
 pub(crate) fn delegation_tools(
     profile_id: Option<&ProfileId>,
@@ -58,6 +61,114 @@ impl DelegationLineageEntry {
     pub(crate) fn agent(id: impl Into<ProfileId>) -> Self {
         Self::new(ProfileKind::Agent, id)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDelegationConfirmation {
+    pub operation_id: String,
+    pub turn_id: String,
+    pub tool_call_id: String,
+    pub requesting_profile_id: ProfileId,
+    pub target_kind: ProfileKind,
+    pub target_id: ProfileId,
+    pub task: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingDelegationConfirmationState {
+    pub(crate) request: DelegationRequest,
+    pub(crate) prompt_options: PromptTurnOptions,
+    pub(crate) reason: String,
+    pub(crate) requested_at: String,
+    pub(crate) child_delegation_depth: usize,
+    pub(crate) delegation_lineage: Vec<DelegationLineageEntry>,
+}
+
+impl PendingDelegationConfirmationState {
+    pub(crate) fn is_active_at(&self, now: &str) -> bool {
+        !delegation_confirmation_is_expired(&self.requested_at, now)
+    }
+
+    pub(crate) fn view(&self) -> PendingDelegationConfirmation {
+        PendingDelegationConfirmation {
+            operation_id: self.request.operation_id.clone(),
+            turn_id: self.request.turn_id.clone(),
+            tool_call_id: self.request.tool_call_id.clone(),
+            requesting_profile_id: self.request.requesting_profile_id.clone(),
+            target_kind: self.request.target_kind,
+            target_id: self.request.target_id.clone(),
+            task: self.request.task.clone(),
+            reason: self.reason.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PendingDelegationConfirmationQueue {
+    pending: Vec<PendingDelegationConfirmationState>,
+}
+
+impl PendingDelegationConfirmationQueue {
+    pub(crate) fn from_pending(pending: Vec<PendingDelegationConfirmationState>) -> Self {
+        Self { pending }
+    }
+
+    pub(crate) fn is_duplicate(&self, pending: &PendingDelegationConfirmationState) -> bool {
+        self.pending.iter().any(|existing| {
+            existing.request.operation_id == pending.request.operation_id
+                && existing.request.tool_call_id == pending.request.tool_call_id
+        })
+    }
+
+    pub(crate) fn push(&mut self, pending: PendingDelegationConfirmationState) {
+        self.pending.push(pending);
+    }
+
+    pub(crate) fn active_views(&self, now: &str) -> Vec<PendingDelegationConfirmation> {
+        self.pending
+            .iter()
+            .filter(|pending| pending.is_active_at(now))
+            .map(PendingDelegationConfirmationState::view)
+            .collect()
+    }
+
+    pub(crate) fn active_pending(
+        &self,
+        operation_id: &str,
+        tool_call_id: &str,
+        now: &str,
+    ) -> Option<&PendingDelegationConfirmationState> {
+        self.pending.iter().find(|pending| {
+            pending.is_active_at(now)
+                && pending.request.operation_id == operation_id
+                && pending.request.tool_call_id == tool_call_id
+        })
+    }
+
+    pub(crate) fn remove_active(
+        &mut self,
+        operation_id: &str,
+        tool_call_id: &str,
+        now: &str,
+    ) -> Option<PendingDelegationConfirmationState> {
+        let index = self.pending.iter().position(|pending| {
+            pending.is_active_at(now)
+                && pending.request.operation_id == operation_id
+                && pending.request.tool_call_id == tool_call_id
+        })?;
+        Some(self.pending.remove(index))
+    }
+}
+
+fn delegation_confirmation_is_expired(requested_at: &str, now: &str) -> bool {
+    let Ok(requested_at) = OffsetDateTime::parse(requested_at, &Rfc3339) else {
+        return false;
+    };
+    let Ok(now) = OffsetDateTime::parse(now, &Rfc3339) else {
+        return false;
+    };
+    now >= requested_at + TimeDuration::hours(DELEGATION_CONFIRMATION_TTL_HOURS)
 }
 
 pub(crate) fn delegation_lineage_for_request(

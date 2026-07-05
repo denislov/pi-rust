@@ -91,6 +91,28 @@ fn coding_agent_session_owner_does_not_define_session_persistence_state() {
     );
 }
 
+#[test]
+fn coding_agent_session_owner_does_not_define_pending_delegation_queue_state() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let delegation_source = fs::read_to_string(crate_root.join("src/coding_session/delegation.rs"))
+        .expect("delegation source should be readable");
+
+    assert!(
+        !owner_source.contains("struct PendingDelegationConfirmationState")
+            && !owner_source.contains("fn delegation_confirmation_is_expired")
+            && !owner_source.contains("fn pending_delegation_confirmation_index"),
+        "CodingAgentSession owner should not define pending delegation queue state, TTL checks, or lookup helpers"
+    );
+    assert!(
+        delegation_source.contains("struct PendingDelegationConfirmationQueue")
+            && delegation_source.contains("struct PendingDelegationConfirmationState")
+            && delegation_source.contains("fn delegation_confirmation_is_expired"),
+        "delegation boundary should own pending delegation queue state and TTL checks"
+    );
+}
+
 fn collect_core_session_imports(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
     collect_core_session_imports_with_allowlist(repo_root, path, &[], violations);
 }
