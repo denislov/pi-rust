@@ -6,8 +6,8 @@ use pi_ai::types::Model;
 use pi_tui::{
     Component, ERROR, Editor, InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager,
     MarkdownTheme, STATUS_IDLE, STATUS_RUNNING, SYSTEM, SettingItem, SettingsList,
-    SettingsListOptions, Style, TUI_KEYBINDINGS, TuiTheme, color_enabled, dark_theme, light_theme,
-    matches_key, paint_with, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
+    SettingsListOptions, Style, TuiTheme, color_enabled, dark_theme, light_theme, matches_key,
+    paint_with, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
 };
 
 use crate::coding_session::{
@@ -24,6 +24,7 @@ use crate::interactive::delegation_confirmation_menu::{
 };
 use crate::interactive::git_branch::GitBranchProvider;
 use crate::interactive::input;
+use crate::interactive::keybindings;
 use crate::interactive::model_selector;
 use crate::interactive::profile_menu::{
     PendingProfileTask, ProfileMenuOutcome, ProfileMenuRenderState, ProfileMenuState,
@@ -705,7 +706,8 @@ impl InteractiveRoot {
         let scroll_command = Arc::new(Mutex::new(None));
         let page_up_command = Arc::clone(&scroll_command);
         let page_down_command = Arc::clone(&scroll_command);
-        let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
+        let keybindings =
+            KeybindingsManager::new(keybindings::default_keybindings(), Default::default());
         let mut editor = Editor::new(keybindings.clone());
         editor.set_on_submit(Box::new(move |text| {
             *submitted_for_callback.lock().unwrap() = Some(text.to_string());

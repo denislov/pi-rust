@@ -2,12 +2,13 @@ use std::path::PathBuf;
 
 use pi_agent_core::resources::{parse_command_args, substitute_args};
 use pi_agent_core::{PromptTemplate, Skill};
-use pi_tui::{KeybindingsManager, TUI_KEYBINDINGS};
+use pi_tui::KeybindingsManager;
 
 use crate::coding_session::SelfHealingEditReplacement;
 use crate::config;
 use crate::interactive::app::welcome_line;
 use crate::interactive::key_hints::{app_key_hint, key_hint};
+use crate::interactive::keybindings;
 use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
@@ -886,8 +887,9 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
                     .push(TranscriptItem::system("No entries in session"));
                 return;
             }
-            let filter_mode =
-                pi_agent_core::session::TreeFilterMode::from_str(&root.settings.tree_filter_mode);
+            let filter_mode = pi_agent_core::transcript::TreeFilterMode::from_str(
+                &root.settings.tree_filter_mode,
+            );
             let selector = crate::interactive::tree_selector::TreeSelectorState::new(
                 tree,
                 leaf_id,
@@ -1028,7 +1030,8 @@ fn handle_session_command(root: &mut InteractiveRoot) {
 }
 
 fn handle_hotkeys_command(root: &mut InteractiveRoot) {
-    let keybindings = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
+    let keybindings =
+        KeybindingsManager::new(keybindings::default_keybindings(), Default::default());
     let submit = key_hint(&keybindings, "tui.input.submit", "submit");
     let newline = key_hint(&keybindings, "tui.input.newLine", "newline");
     let interrupt = app_key_hint(&keybindings, "app.interrupt", "interrupt/exit");

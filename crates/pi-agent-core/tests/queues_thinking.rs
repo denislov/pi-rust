@@ -1,9 +1,8 @@
 mod common;
-use common::faux_model;
+use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
 use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage, QueueMode, ThinkingLevel};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{Model, StopReason, StreamOptions};
 use std::sync::Arc;
 
@@ -29,7 +28,7 @@ async fn steer_injects_user_message_before_next_model_call() {
     // Queue a steer message before prompt
     agent.steer("steered message");
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("I see the steered message.", StopReason::Stop),
@@ -60,8 +59,6 @@ async fn steer_injects_user_message_before_next_model_call() {
         |m| matches!(m, AgentMessage::UserText { text, .. } if text == "steered message"),
     );
     assert!(steer_pos.is_some(), "steered message should be in messages");
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -73,7 +70,7 @@ async fn follow_up_continues_after_stop() {
 
     let agent = Agent::new(config);
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("First response.", StopReason::Stop),
@@ -105,8 +102,6 @@ async fn follow_up_continues_after_stop() {
         texts.contains(&"Follow-up response.".to_string()),
         "should have follow-up response"
     );
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -118,7 +113,7 @@ async fn one_at_a_time_drains_one_steering_message() {
 
     let agent = Agent::new(config);
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("seen steer 1", StopReason::Stop),
@@ -145,8 +140,6 @@ async fn one_at_a_time_drains_one_steering_message() {
     assert!(texts.contains(&"seen steer 1".to_string()));
     assert!(texts.contains(&"seen steer 2".to_string()));
     assert_eq!(texts.len(), 2);
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -157,7 +150,7 @@ async fn clear_queues_removes_all_queued_messages() {
 
     let agent = Agent::new(config);
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("response", StopReason::Stop),
@@ -181,8 +174,6 @@ async fn clear_queues_removes_all_queued_messages() {
 
     assert!(!has_steer, "steer msg should have been cleared");
     assert!(!has_followup, "followup msg should have been cleared");
-
-    registry::unregister(api);
 }
 
 #[test]

@@ -5,6 +5,14 @@ use pi_tui::{
     VirtualTerminal,
 };
 
+const RENDER_SCHEDULER_MIN_INTERVAL: Duration = Duration::from_millis(16);
+const RENDER_SCHEDULER_BEFORE_INTERVAL: Duration = Duration::from_millis(8);
+const RENDER_SCHEDULER_PENDING_OFFSET: Duration = Duration::from_millis(5);
+
+fn render_scheduler_clock_anchor() -> Instant {
+    Instant::now()
+}
+
 #[derive(Default)]
 struct RecordingComponent {
     focused: bool,
@@ -47,21 +55,21 @@ fn focused_component_receives_input() {
 
 #[test]
 fn render_scheduler_coalesces_requests_until_interval_elapses() {
-    let mut scheduler = RenderScheduler::new(Duration::from_millis(16));
-    let start = Instant::now();
+    let mut scheduler = RenderScheduler::new(RENDER_SCHEDULER_MIN_INTERVAL);
+    let start = render_scheduler_clock_anchor();
     scheduler.request(false);
     assert!(scheduler.should_render_now(start));
     assert!(scheduler.mark_rendered(start));
 
     scheduler.request(false);
-    assert!(!scheduler.should_render_now(start + Duration::from_millis(8)));
-    assert!(scheduler.should_render_now(start + Duration::from_millis(16)));
+    assert!(!scheduler.should_render_now(start + RENDER_SCHEDULER_BEFORE_INTERVAL));
+    assert!(scheduler.should_render_now(start + RENDER_SCHEDULER_MIN_INTERVAL));
 }
 
 #[test]
 fn render_scheduler_reports_next_pending_deadline() {
-    let mut scheduler = RenderScheduler::new(Duration::from_millis(16));
-    let start = Instant::now();
+    let mut scheduler = RenderScheduler::new(RENDER_SCHEDULER_MIN_INTERVAL);
+    let start = render_scheduler_clock_anchor();
 
     assert!(!scheduler.has_pending());
     assert_eq!(scheduler.next_render_at(start), None);
@@ -73,13 +81,13 @@ fn render_scheduler_reports_next_pending_deadline() {
 
     scheduler.request(false);
     assert_eq!(
-        scheduler.next_render_at(start + Duration::from_millis(5)),
-        Some(start + Duration::from_millis(16))
+        scheduler.next_render_at(start + RENDER_SCHEDULER_PENDING_OFFSET),
+        Some(start + RENDER_SCHEDULER_MIN_INTERVAL)
     );
 
     scheduler.request(true);
     assert_eq!(
-        scheduler.next_render_at(start + Duration::from_millis(5)),
-        Some(start + Duration::from_millis(5))
+        scheduler.next_render_at(start + RENDER_SCHEDULER_PENDING_OFFSET),
+        Some(start + RENDER_SCHEDULER_PENDING_OFFSET)
     );
 }

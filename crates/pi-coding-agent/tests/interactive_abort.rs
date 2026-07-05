@@ -11,11 +11,14 @@ use pi_ai::registry::ApiProvider;
 use pi_ai::{
     AssistantMessage, AssistantMessageEvent, Context, EventStream, Model, StopReason, StreamOptions,
 };
-use pi_coding_agent::interactive::test_harness::run_scripted_idle_interactive;
-use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
+use pi_coding_agent::interactive::test_harness::{
+    ScriptedInteractiveOutput, run_scripted_idle_interactive,
+    run_scripted_interactive_with_provider_chunks,
+};
 use support::EnvGuard;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const INTERACTIVE_ABORT_HARNESS_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 struct AbortAwareProvider {
@@ -26,6 +29,20 @@ impl AbortAwareProvider {
     fn new(cancelled: Arc<AtomicBool>) -> Self {
         Self { cancelled }
     }
+}
+
+async fn run_abort_harness_with_timeout(
+    provider: Arc<dyn ApiProvider>,
+    input_chunks: Vec<&'static str>,
+    context: &str,
+) -> ScriptedInteractiveOutput {
+    tokio::time::timeout(
+        INTERACTIVE_ABORT_HARNESS_TIMEOUT,
+        run_scripted_interactive_with_provider_chunks(provider, input_chunks),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("interactive loop timed out while {context}"))
+    .unwrap_or_else(|error| panic!("scripted interactive run failed while {context}: {error}"))
 }
 
 impl ApiProvider for AbortAwareProvider {
@@ -71,16 +88,12 @@ async fn ctrl_c_cancels_running_prompt_on_coding_session_path() {
     let cancelled = Arc::new(AtomicBool::new(false));
     let provider = Arc::new(AbortAwareProvider::new(Arc::clone(&cancelled)));
 
-    let output = tokio::time::timeout(
-        Duration::from_millis(500),
-        run_scripted_interactive_with_provider_chunks(
-            provider,
-            vec!["please wait\r", "\x03", "\x03"],
-        ),
+    let output = run_abort_harness_with_timeout(
+        provider,
+        vec!["please wait\r", "\x03", "\x03"],
+        "aborting a running prompt",
     )
-    .await
-    .expect("interactive loop should not hang while aborting")
-    .expect("scripted interactive run should succeed");
+    .await;
 
     assert_eq!(output.exit_code, 0);
     assert!(output.terminal_restored);
@@ -109,17 +122,12 @@ display_name = "Coder"
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let provider = Arc::new(AbortAwareProvider::new(Arc::clone(&cancelled)));
-    let output = tokio::time::timeout(
-        Duration::from_millis(500),
-        run_scripted_interactive_with_provider_chunks(
-            provider,
-            vec!["/agent:coder please wait\r", "\x03", "\x03"],
-        ),
+    let output = run_abort_harness_with_timeout(
+        provider,
+        vec!["/agent:coder please wait\r", "\x03", "\x03"],
+        "aborting an agent invocation child prompt",
     )
-    .await
-    .expect("interactive loop should not hang while aborting agent invocation");
-
-    let output = output.expect("scripted interactive run should succeed");
+    .await;
     assert_eq!(output.exit_code, 0);
     assert!(output.terminal_restored);
     assert!(output.contains("/agent:coder please wait"), "{output:?}");

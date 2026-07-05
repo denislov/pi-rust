@@ -1,6 +1,10 @@
 pub mod agent;
+#[deprecated(
+    note = "use Agent::run() for the public low-level stream or AgentTurnFlow for the internal flow runtime"
+)]
 pub mod agent_loop;
 pub mod agent_turn_flow;
+mod ai_runtime;
 pub mod branch_summary;
 pub mod compaction;
 pub mod convert;
@@ -13,8 +17,9 @@ mod loop_runtime;
 pub mod proxy;
 pub mod queues;
 pub mod resources;
-pub mod session;
+pub mod session_context;
 pub mod shell_output;
+pub mod transcript;
 pub mod truncate;
 pub mod types;
 
@@ -44,9 +49,9 @@ pub use resources::{parse_command_args, substitute_args};
 pub use types::{
     AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
     AgentToolDefinitionError, AgentToolOutput, AgentToolResult, CompactionConfig,
-    CompactionSettings, PromptTemplate, ProviderRequestSnapshot, QueueMode, ResourceDiagnostic,
-    Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill,
-    ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
+    CompactionSettings, DiagnosticSeverity, PromptTemplate, ProviderRequestSnapshot, QueueMode,
+    ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic,
+    SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
 };
 
 /// Stable low-level runtime facade for `pi-agent-core`.
@@ -60,17 +65,32 @@ pub mod api {
         ExecOptions, ExecutionEnv, ExecutionOutput, FileInfo, FileKind, FileSystem,
         InMemoryExecutionEnv, Shell,
     };
-    pub use crate::errors::{ExecutionError, FileError};
+    pub use crate::errors::{ExecutionError, ExecutionErrorCode, FileError, FileErrorCode};
     pub use crate::hooks::{
         AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
-        BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ConvertToLlmHook,
-        ShouldStopAfterTurnHook, TransformContextHook,
+        AgentLoopTurnUpdate, BeforeProviderRequestContext, BeforeProviderRequestHook,
+        BeforeProviderRequestResult, BeforeToolCallContext, BeforeToolCallHook,
+        BeforeToolCallResult, ConvertToLlmHook, HookFuture, PrepareNextTurnContext,
+        PrepareNextTurnHook, ShouldStopAfterTurnContext, ShouldStopAfterTurnHook,
+        TransformContextHook,
+    };
+    pub use crate::resources::{
+        format_prompt_template_invocation, format_skill_invocation,
+        format_skills_for_system_prompt, load_prompt_templates, load_skills,
+        load_sourced_prompt_templates, load_sourced_skills, parse_command_args, parse_frontmatter,
+        substitute_args,
+    };
+    pub use crate::shell_output::{
+        ShellCaptureOptions, ShellCaptureResult, sanitize_binary_output,
+    };
+    pub use crate::truncate::{
+        TruncationLimit, TruncationResult, format_size, truncate_head, truncate_line, truncate_tail,
     };
     pub use crate::types::{
         AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
         AgentToolDefinitionError, AgentToolOutput, AgentToolResult, CompactionConfig,
-        CompactionSettings, PromptTemplate, ProviderRequestSnapshot, QueueMode, ResourceDiagnostic,
-        Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill,
-        ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
+        CompactionSettings, DiagnosticSeverity, PromptTemplate, ProviderRequestSnapshot, QueueMode,
+        ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic,
+        SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
     };
 }

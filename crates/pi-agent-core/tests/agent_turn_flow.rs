@@ -1,5 +1,6 @@
 mod common;
 
+use common::ProviderGuard;
 use pi_agent_core::agent_turn_flow::{
     AgentTurnContext, DecideStopOrToolsNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
     PrepareContextNode, ProviderStreamNode,
@@ -11,7 +12,6 @@ use pi_agent_core::{
     Skill, ToolExecutionMode,
 };
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, StreamOptions,
 };
@@ -20,6 +20,34 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+
+const AGENT_TURN_FLOW_SLOW_TOOL_DELAY_MS: u64 = 100;
+const AGENT_TURN_FLOW_FAST_TOOL_DELAY_MS: u64 = 10;
+const AGENT_TURN_FLOW_FAST_TOOL_ADVANCE: Duration =
+    Duration::from_millis(AGENT_TURN_FLOW_FAST_TOOL_DELAY_MS);
+const AGENT_TURN_FLOW_REMAINING_TOOL_ADVANCE: Duration =
+    Duration::from_millis(AGENT_TURN_FLOW_SLOW_TOOL_DELAY_MS - AGENT_TURN_FLOW_FAST_TOOL_DELAY_MS);
+
+#[derive(Clone)]
+struct ToolProbe {
+    started: UnboundedSender<String>,
+    finished: UnboundedSender<String>,
+}
+
+fn tool_probe() -> (
+    ToolProbe,
+    UnboundedReceiver<String>,
+    UnboundedReceiver<String>,
+) {
+    let (started, started_rx) = mpsc::unbounded_channel();
+    let (finished, finished_rx) = mpsc::unbounded_channel();
+    (ToolProbe { started, finished }, started_rx, finished_rx)
+}
+
+async fn recv_tool_signal(rx: &mut UnboundedReceiver<String>) -> String {
+    rx.recv().await.expect("tool signal should be sent")
+}
 
 fn user_msg(id: &str, text: &str) -> AgentMessage {
     AgentMessage::UserText {
@@ -39,9 +67,15 @@ fn text_content(content: &[ContentBlock]) -> String {
         .join("")
 }
 
-fn delayed_tool(name: &str, delay_ms: u64, output_text: &str) -> AgentTool {
+fn probed_delayed_tool(
+    name: &str,
+    delay_ms: u64,
+    output_text: &str,
+    probe: ToolProbe,
+) -> AgentTool {
     let name = name.to_string();
     let text = output_text.to_string();
+    let tool_name = name.clone();
     AgentTool {
         name,
         description: format!("delayed {}ms", delay_ms),
@@ -49,8 +83,12 @@ fn delayed_tool(name: &str, delay_ms: u64, output_text: &str) -> AgentTool {
         execution_mode: None,
         execute: Arc::new(move |_, _on_update| {
             let text = text.clone();
+            let probe = probe.clone();
+            let tool_name = tool_name.clone();
             Box::pin(async move {
+                let _ = probe.started.send(tool_name.clone());
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                let _ = probe.finished.send(tool_name);
                 Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text,
                     text_signature: None,
@@ -224,7 +262,7 @@ async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
     agent.add_message(user_msg("old_1", &"old context ".repeat(40)));
     agent.add_message(user_msg("old_2", &"more old context ".repeat(40)));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("summary of old context", StopReason::Stop),
@@ -265,8 +303,6 @@ async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
         AgentEvent::SessionCompacted { summary, first_kept_message_id, .. }
             if summary == "summary of old context" && first_kept_message_id == "old_2"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -289,7 +325,7 @@ async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
         },
     ));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
             "call_1",
@@ -341,8 +377,6 @@ async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
         AgentMessage::ToolResult { tool_call_id, tool_name, is_error: false, content, .. }
             if tool_call_id == "call_1" && tool_name == "echo" && text_content(content) == "hello"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -379,7 +413,7 @@ async fn execute_tools_node_honors_before_hook_block() {
         }),
     });
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
             "call_1",
@@ -424,8 +458,6 @@ async fn execute_tools_node_honors_before_hook_block() {
         AgentMessage::ToolResult { tool_call_id, is_error: true, content, .. }
             if tool_call_id == "call_1" && text_content(content) == "blocked by flow hook"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -457,7 +489,7 @@ async fn execute_tools_node_honors_after_hook_result_update() {
         |_| async { Ok("original".to_string()) },
     ));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
             "call_1",
@@ -506,8 +538,6 @@ async fn execute_tools_node_honors_after_hook_result_update() {
         AgentMessage::ToolResult { is_error: true, content, .. }
             if text_content(content) == "rewritten by flow hook"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -538,7 +568,7 @@ async fn execute_tools_node_emits_tool_update_events_before_end() {
         }),
     });
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
             "call_1",
@@ -588,8 +618,6 @@ async fn execute_tools_node_emits_tool_update_events_before_end() {
             ("end", "final".to_string())
         ]
     );
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -615,7 +643,7 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
         |_| async { Ok("ok".to_string()) },
     ));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
             "call_1",
@@ -655,21 +683,30 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
             .iter()
             .any(|event| matches!(event, AgentEvent::AgentDone { .. }))
     );
-
-    registry::unregister(api);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant_order() {
     let api = "agent-turn-flow-execute-parallel-tools";
     let mut config = AgentConfig::new(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use both tools"));
-    agent.add_tool(delayed_tool("slow", 100, "slow_result"));
-    agent.add_tool(delayed_tool("fast", 10, "fast_result"));
+    let (probe, mut started, mut finished) = tool_probe();
+    agent.add_tool(probed_delayed_tool(
+        "slow",
+        AGENT_TURN_FLOW_SLOW_TOOL_DELAY_MS,
+        "slow_result",
+        probe.clone(),
+    ));
+    agent.add_tool(probed_delayed_tool(
+        "fast",
+        AGENT_TURN_FLOW_FAST_TOOL_DELAY_MS,
+        "fast_result",
+        probe,
+    ));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![two_tool_use_turn(
             "call_slow",
@@ -702,7 +739,23 @@ async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant
         )
         .unwrap();
 
-    let outcome = flow.run(&mut context).await.unwrap();
+    let flow_task = tokio::spawn(async move {
+        let outcome = flow.run(&mut context).await.unwrap();
+        (outcome, context)
+    });
+    let mut started_tools = vec![
+        recv_tool_signal(&mut started).await,
+        recv_tool_signal(&mut started).await,
+    ];
+    started_tools.sort();
+    assert_eq!(started_tools, vec!["fast", "slow"]);
+
+    tokio::time::advance(AGENT_TURN_FLOW_FAST_TOOL_ADVANCE).await;
+    assert_eq!(recv_tool_signal(&mut finished).await, "fast");
+    tokio::time::advance(AGENT_TURN_FLOW_REMAINING_TOOL_ADVANCE).await;
+    assert_eq!(recv_tool_signal(&mut finished).await, "slow");
+
+    let (outcome, context) = flow_task.await.unwrap();
 
     assert_eq!(outcome.last_action.as_str(), "continue");
     let end_events: Vec<_> = context
@@ -732,8 +785,6 @@ async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant
             ("fast", "fast_result".to_string())
         ]
     );
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -744,7 +795,7 @@ async fn execute_tools_node_records_unknown_tool_as_error_result() {
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
             "call_1",
@@ -798,8 +849,6 @@ async fn execute_tools_node_records_unknown_tool_as_error_result() {
                 && tool_name == "missing_tool"
                 && text_content(content) == "unknown tool: missing_tool"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -809,7 +858,7 @@ async fn provider_stream_node_records_llm_events_and_final_assistant_message() {
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("final answer", StopReason::Stop),
@@ -840,8 +889,6 @@ async fn provider_stream_node_records_llm_events_and_final_assistant_message() {
         block,
         ContentBlock::Text { text, .. } if text == "final answer"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -851,7 +898,7 @@ async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
 
-    registry::register(api, Arc::new(common::TestProvider::new(vec![])));
+    let _provider_guard = ProviderGuard::register(api, Arc::new(common::TestProvider::new(vec![])));
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -874,8 +921,6 @@ async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
         event,
         AgentEvent::AgentError { error } if error == "no more scripted turns"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -885,7 +930,7 @@ async fn decide_node_finishes_text_response_and_appends_assistant_message() {
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("final answer", StopReason::Stop),
@@ -925,8 +970,6 @@ async fn decide_node_finishes_text_response_and_appends_assistant_message() {
                 ContentBlock::Text { text, .. } if text == "final answer"
             ))
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -936,7 +979,7 @@ async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
             "call_1",
@@ -984,6 +1027,4 @@ async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
                 ContentBlock::ToolCall { id, name, .. } if id == "call_1" && name == "echo"
             ))
     )));
-
-    registry::unregister(api);
 }

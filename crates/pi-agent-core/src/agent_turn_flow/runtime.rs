@@ -5,6 +5,7 @@ use futures::{FutureExt, StreamExt};
 use std::sync::{Arc, RwLock};
 
 use crate::agent::AgentState;
+use crate::ai_runtime::stream_model_with_global_runtime;
 use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
 use crate::compaction::summarize::summarize;
@@ -349,8 +350,11 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 },
             };
 
-            let mut llm_stream =
-                pi_ai::stream_model(&request.model, request.context, Some(request.stream_options));
+            let mut llm_stream = stream_model_with_global_runtime(
+                &request.model,
+                request.context,
+                Some(request.stream_options),
+            );
             let mut assistant_message: Option<pi_ai::types::AssistantMessage> = None;
             let mut stream_error: Option<String> = None;
 

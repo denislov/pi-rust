@@ -1,3 +1,6 @@
+mod common;
+
+use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::{
     AgentConfig, AgentEvent, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentMessage,
@@ -6,7 +9,6 @@ use pi_agent_core::{
     ProviderAuth, ProviderResponse, Shell, StreamOptionsPatch,
 };
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
-use pi_ai::registry;
 use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
@@ -79,18 +81,18 @@ fn custom_messages_convert_to_context_and_session_wire_shape() {
     assert!(text.contains("Ran `cargo test`"));
     assert!(text.contains("Output truncated"));
 
-    let stored = pi_agent_core::session::agent_message_to_stored(&messages[0], 999).unwrap();
+    let stored = pi_agent_core::transcript::agent_message_to_stored(&messages[0], 999).unwrap();
     let json = serde_json::to_value(stored).unwrap();
     assert_eq!(json["role"], "bashExecution");
     assert_eq!(json["command"], "cargo test");
     assert_eq!(json["timestamp"], 123);
 
-    let stored = pi_agent_core::session::agent_message_to_stored(&messages[1], 999).unwrap();
+    let stored = pi_agent_core::transcript::agent_message_to_stored(&messages[1], 999).unwrap();
     let json = serde_json::to_value(stored).unwrap();
     assert_eq!(json["role"], "custom");
     assert_eq!(json["customType"], "note");
 
-    let stored = pi_agent_core::session::agent_message_to_stored(&messages[2], 999).unwrap();
+    let stored = pi_agent_core::transcript::agent_message_to_stored(&messages[2], 999).unwrap();
     let json = serde_json::to_value(stored).unwrap();
     assert_eq!(json["role"], "branchSummary");
     assert_eq!(json["fromId"], "entry_7");
@@ -144,8 +146,7 @@ async fn in_memory_execution_env_supports_file_and_shell_traits() {
 #[tokio::test]
 async fn agent_harness_emits_events_and_hooks_patch_start_messages() {
     let api = "m9-harness-faux";
-    registry::unregister(api);
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
             responses: vec![FauxResponse {
@@ -249,9 +250,8 @@ impl ApiProvider for RecordingProvider {
 #[tokio::test]
 async fn before_provider_request_hook_patches_actual_provider_request() {
     let api = "m9-harness-recording";
-    registry::unregister(api);
     let captured = Arc::new(Mutex::new(CapturedProviderRequest::default()));
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(RecordingProvider {
             captured: captured.clone(),
@@ -318,14 +318,7 @@ async fn before_provider_request_hook_patches_actual_provider_request() {
 #[tokio::test]
 async fn provider_request_auth_and_patch_merge_delete_apply_to_each_provider_call() {
     let api = "m9-harness-auth-patch";
-    registry::unregister(api);
     let captured = Arc::new(Mutex::new(Vec::<StreamOptions>::new()));
-    registry::register(
-        api,
-        Arc::new(RecordingProvider {
-            captured: Arc::new(Mutex::new(CapturedProviderRequest::default())),
-        }),
-    );
 
     struct MultiCaptureProvider {
         captured: Arc<Mutex<Vec<StreamOptions>>>,
@@ -364,8 +357,7 @@ async fn provider_request_auth_and_patch_merge_delete_apply_to_each_provider_cal
         }
     }
 
-    registry::unregister(api);
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(MultiCaptureProvider {
             captured: captured.clone(),
@@ -458,7 +450,6 @@ async fn provider_request_auth_and_patch_merge_delete_apply_to_each_provider_cal
 #[tokio::test]
 async fn provider_payload_and_response_hooks_are_forwarded_through_stream_options() {
     let api = "m9-harness-payload-response";
-    registry::unregister(api);
     let final_payload = Arc::new(Mutex::new(None::<serde_json::Value>));
     let final_payload_provider = final_payload.clone();
 
@@ -496,7 +487,7 @@ async fn provider_payload_and_response_hooks_are_forwarded_through_stream_option
         }
     }
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PayloadProvider {
             final_payload: final_payload_provider,

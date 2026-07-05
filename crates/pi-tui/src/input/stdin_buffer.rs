@@ -310,10 +310,20 @@ mod tests {
     use super::*;
     use crate::input::{Key, KeyEvent, KeyEventKind, KeyModifiers};
 
+    const STDIN_BUFFER_PENDING_TIMEOUT: Duration = Duration::from_millis(10);
+    const STDIN_BUFFER_PARTIAL_WAIT: Duration = Duration::from_millis(5);
+    const STDIN_BUFFER_FOLLOWUP_OFFSET: Duration = Duration::from_millis(2);
+    const STDIN_BUFFER_ELAPSED_BEFORE_TIMEOUT: Duration = Duration::from_millis(3);
+    const STDIN_BUFFER_REMAINING_TIMEOUT: Duration = Duration::from_millis(7);
+
+    fn stdin_buffer_clock_anchor() -> Instant {
+        Instant::now()
+    }
+
     #[test]
     fn lone_escape_is_held_until_timeout_elapses() {
-        let start = Instant::now();
-        let mut buffer = StdinBuffer::with_pending_timeout(Duration::from_millis(10));
+        let start = stdin_buffer_clock_anchor();
+        let mut buffer = StdinBuffer::with_pending_timeout(STDIN_BUFFER_PENDING_TIMEOUT);
         let immediate = buffer.process_at("\x1b", start);
         assert!(
             immediate.is_empty(),
@@ -321,11 +331,11 @@ mod tests {
         );
         assert!(buffer.has_pending_residual());
 
-        let still_pending = buffer.tick(start + Duration::from_millis(5));
+        let still_pending = buffer.tick(start + STDIN_BUFFER_PARTIAL_WAIT);
         assert!(still_pending.is_empty());
         assert!(buffer.has_pending_residual());
 
-        let flushed = buffer.tick(start + Duration::from_millis(10));
+        let flushed = buffer.tick(start + STDIN_BUFFER_PENDING_TIMEOUT);
         assert_eq!(flushed.len(), 1);
         match &flushed[0] {
             InputEvent::Key(event) => {
@@ -340,13 +350,13 @@ mod tests {
 
     #[test]
     fn split_csi_sequence_is_combined_when_followup_arrives_before_timeout() {
-        let start = Instant::now();
-        let mut buffer = StdinBuffer::with_pending_timeout(Duration::from_millis(10));
+        let start = stdin_buffer_clock_anchor();
+        let mut buffer = StdinBuffer::with_pending_timeout(STDIN_BUFFER_PENDING_TIMEOUT);
         let first = buffer.process_at("\x1b", start);
         assert!(first.is_empty());
         assert!(buffer.has_pending_residual());
 
-        let second = buffer.process_at("[A", start + Duration::from_millis(2));
+        let second = buffer.process_at("[A", start + STDIN_BUFFER_FOLLOWUP_OFFSET);
         assert_eq!(second.len(), 1);
         match &second[0] {
             InputEvent::Key(event) => assert_eq!(event.key, Key::Up),
@@ -357,26 +367,26 @@ mod tests {
 
     #[test]
     fn pending_timeout_at_reports_remaining_time() {
-        let start = Instant::now();
-        let mut buffer = StdinBuffer::with_pending_timeout(Duration::from_millis(10));
+        let start = stdin_buffer_clock_anchor();
+        let mut buffer = StdinBuffer::with_pending_timeout(STDIN_BUFFER_PENDING_TIMEOUT);
         assert!(buffer.pending_timeout_at(start).is_none());
         buffer.process_at("\x1b", start);
 
         let remaining = buffer
-            .pending_timeout_at(start + Duration::from_millis(3))
+            .pending_timeout_at(start + STDIN_BUFFER_ELAPSED_BEFORE_TIMEOUT)
             .expect("residual is pending");
-        assert_eq!(remaining, Duration::from_millis(7));
+        assert_eq!(remaining, STDIN_BUFFER_REMAINING_TIMEOUT);
 
         let due = buffer
-            .pending_timeout_at(start + Duration::from_millis(10))
+            .pending_timeout_at(start + STDIN_BUFFER_PENDING_TIMEOUT)
             .expect("residual is pending");
         assert_eq!(due, Duration::ZERO);
     }
 
     #[test]
     fn flush_drains_residual_immediately() {
-        let start = Instant::now();
-        let mut buffer = StdinBuffer::with_pending_timeout(Duration::from_millis(10));
+        let start = stdin_buffer_clock_anchor();
+        let mut buffer = StdinBuffer::with_pending_timeout(STDIN_BUFFER_PENDING_TIMEOUT);
         buffer.process_at("\x1b", start);
         let flushed = buffer.flush();
         assert_eq!(flushed.len(), 1);
@@ -389,8 +399,8 @@ mod tests {
 
     #[test]
     fn paste_in_progress_does_not_set_pending_residual() {
-        let start = Instant::now();
-        let mut buffer = StdinBuffer::with_pending_timeout(Duration::from_millis(10));
+        let start = stdin_buffer_clock_anchor();
+        let mut buffer = StdinBuffer::with_pending_timeout(STDIN_BUFFER_PENDING_TIMEOUT);
         let events = buffer.process_at("\x1b[200~hello", start);
         assert!(events.is_empty());
         assert!(
@@ -401,8 +411,8 @@ mod tests {
 
     #[test]
     fn complete_inputs_clear_pending_state() {
-        let start = Instant::now();
-        let mut buffer = StdinBuffer::with_pending_timeout(Duration::from_millis(10));
+        let start = stdin_buffer_clock_anchor();
+        let mut buffer = StdinBuffer::with_pending_timeout(STDIN_BUFFER_PENDING_TIMEOUT);
         let events = buffer.process_at("abc", start);
         assert_eq!(events.len(), 3);
         assert!(!buffer.has_pending_residual());

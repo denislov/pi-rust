@@ -1,13 +1,16 @@
+mod support;
+
 use futures::stream;
 use pi_ai::EventStream;
 use pi_ai::providers::faux::{FauxCall, FauxResponse, FauxToolCall};
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::{PrintModeOptions, builtin_tools, run_print_mode};
 use std::sync::{Arc, Mutex};
+use support::ProviderGuard;
 use tempfile::tempdir;
 
 fn faux_model(api: &str) -> Model {
@@ -121,7 +124,7 @@ async fn run_scripted_read(
     cwd: std::path::PathBuf,
     contexts: Arc<Mutex<Vec<Context>>>,
 ) -> String {
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(RecordingProvider::new(
             vec![
@@ -156,7 +159,6 @@ async fn run_scripted_read(
     })
     .await
     .unwrap();
-    registry::unregister(api);
     out
 }
 
@@ -240,7 +242,7 @@ async fn grep_builtin_tool_success_is_sent_back_to_model() {
     let contexts = Arc::new(Mutex::new(Vec::new()));
     let api = "pi-coding-tools-e2e-grep";
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(RecordingProvider::new(
             vec![
@@ -276,7 +278,6 @@ async fn grep_builtin_tool_success_is_sent_back_to_model() {
     })
     .await
     .unwrap();
-    registry::unregister(api);
 
     assert_eq!(out, "done");
     let contexts = contexts.lock().unwrap();

@@ -1,7 +1,10 @@
 use std::ffi::{OsStr, OsString};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use pi_ai::registry::{self, ApiProvider};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+static PROVIDER_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct EnvGuard<'a> {
     _lock: MutexGuard<'a, ()>,
@@ -55,6 +58,45 @@ impl Drop for EnvGuard<'_> {
                     Some(value) => std::env::set_var(name, value),
                     None => std::env::remove_var(name),
                 }
+            }
+        }
+    }
+}
+
+pub struct ProviderGuard<'a> {
+    _lock: MutexGuard<'a, ()>,
+    previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+}
+
+#[allow(dead_code)]
+impl ProviderGuard<'static> {
+    pub fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
+        Self::register_many(vec![(api.into(), provider)])
+    }
+
+    pub fn register_many(providers: Vec<(String, Arc<dyn ApiProvider>)>) -> Self {
+        let lock = PROVIDER_REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut previous = Vec::with_capacity(providers.len());
+        for (api, provider) in providers {
+            let prior = registry::lookup(&api);
+            registry::register(&api, provider);
+            previous.push((api, prior));
+        }
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+impl Drop for ProviderGuard<'_> {
+    fn drop(&mut self) {
+        for (api, previous) in self.previous.drain(..).rev() {
+            match previous {
+                Some(provider) => registry::register(&api, provider),
+                None => registry::unregister(&api),
             }
         }
     }

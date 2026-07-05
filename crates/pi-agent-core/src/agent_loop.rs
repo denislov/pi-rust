@@ -1,3 +1,8 @@
+//! Compatibility wrapper for the legacy agent loop entrypoint.
+//!
+//! Use `Agent::run()` for the public low-level event stream and `AgentTurnFlow`
+//! for the internal Flow runtime entrypoint.
+
 use std::sync::{Arc, RwLock};
 
 use crate::agent::AgentState;

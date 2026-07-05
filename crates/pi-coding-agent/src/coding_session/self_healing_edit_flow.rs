@@ -22,6 +22,7 @@ use crate::tools::edit::{EditOperations, RealEditOperations, edit_execute_with_o
 
 use super::CodingSessionError;
 use super::prompt::{PromptTurnOptions, RuntimeSnapshot};
+use super::runtime_service::stream_model_for_global_runtime;
 
 const DEFAULT_ACTION: &str = "default";
 
@@ -543,7 +544,7 @@ impl SelfHealingEditContext {
 
         while self.check_failed && self.repair_attempts < self.options.max_repair_attempts {
             self.repair_attempts += 1;
-            let replacements = strategy
+            let replacements = match strategy
                 .repair(
                     self.repair_attempts,
                     &self.options.path,
@@ -551,9 +552,10 @@ impl SelfHealingEditContext {
                     &self.diagnostics,
                 )
                 .await
-                .map_err(|error| {
-                    session_error(format!("self-healing edit repair failed: {error}"))
-                })?;
+            {
+                Ok(replacements) => replacements,
+                Err(error) => return Err(self.repair_failure_error(error)),
+            };
             if replacements.is_empty() {
                 return Err(session_error(
                     "self-healing edit repair produced no replacements",
@@ -592,6 +594,21 @@ impl SelfHealingEditContext {
             message: self.latest_check_failure_message(),
             diagnostics: self.diagnostics.clone(),
             check_output: self.check_output.clone(),
+            repair_attempts: self.repair_attempt_records.clone(),
+        }
+    }
+
+    fn repair_failure_error(&self, error: impl std::fmt::Display) -> CodingSessionError {
+        let message = format!("self-healing edit repair failed: {error}");
+        let mut diagnostics = self.diagnostics.clone();
+        diagnostics.push(SelfHealingEditDiagnostic {
+            message: message.clone(),
+        });
+        CodingSessionError::SelfHealingEditFailed {
+            message,
+            diagnostics,
+            check_output: self.check_output.clone(),
+            repair_attempts: self.repair_attempt_records.clone(),
         }
     }
 
@@ -948,11 +965,8 @@ async fn stream_model_repair(runtime: &RuntimeSnapshot, prompt: String) -> Resul
         }],
         tools: None,
     };
-    let mut stream = pi_ai::registry::stream_model(
-        runtime.model(),
-        context,
-        model_repair_stream_options(runtime),
-    );
+    let mut stream =
+        stream_model_for_global_runtime(runtime, context, model_repair_stream_options(runtime));
     let mut final_text = None;
     while let Some(event) = stream.next().await {
         match event {

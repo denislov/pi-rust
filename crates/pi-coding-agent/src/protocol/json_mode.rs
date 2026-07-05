@@ -9,7 +9,7 @@ use crate::protocol::jsonl::serialize_json_line;
 use crate::protocol::types::ProtocolEvent;
 use crate::runtime::{SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
-use pi_agent_core::session::{SessionHeader, create_session_id, create_timestamp};
+use pi_agent_core::transcript::{SessionHeader, create_session_id, create_timestamp};
 use std::path::PathBuf;
 
 pub async fn run_json_mode(options: PromptRunOptions) -> CliOutput {

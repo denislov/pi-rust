@@ -1,4 +1,4 @@
-use pi_agent_core::session::{
+use pi_agent_core::transcript::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, StoredUsageCost,
 };
 use pi_ai::types::{ContentBlock, StopReason};

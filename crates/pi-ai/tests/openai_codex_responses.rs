@@ -1,7 +1,7 @@
 mod support;
 
 use pi_ai::providers::openai_codex_responses as codex;
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StreamOptions, ThinkingConfig, Tool,
@@ -157,7 +157,7 @@ async fn codex_provider_missing_key_returns_error_event() {
 
 #[test]
 fn builtins_register_codex_api() {
-    registry::unregister("openai-codex-responses");
-    pi_ai::providers::register_builtins();
-    assert!(registry::lookup("openai-codex-responses").is_some());
+    let registry = pi_ai::registry::ProviderRegistry::new();
+    pi_ai::providers::register_builtins_into(&registry);
+    assert!(registry.lookup("openai-codex-responses").is_some());
 }

@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 
 use super::context::CodingAgentSessionSummary;
 use super::error::CodingSessionError;
-use super::session_log::event::{DiagnosticLevel, PersistedContentBlock};
+use super::profiles::{ProfileId, ProfileKind};
+use super::session_log::event::{
+    DiagnosticLevel, PersistedContentBlock, PersistedDelegationStatus,
+};
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +32,16 @@ pub enum CodingAgentSessionExportItem {
         args: serde_json::Value,
         result: Option<String>,
         is_error: bool,
+    },
+    Delegation {
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        status: String,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
     },
     CompactionSummary {
         summary: String,
@@ -111,6 +124,25 @@ fn export_item_from_replay(item: TranscriptItem) -> CodingAgentSessionExportItem
             },
             is_error: matches!(status, ToolCallStatus::Failed),
         },
+        TranscriptItem::DelegationBlock {
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            status,
+            child_operation_id,
+            summary,
+        } => CodingAgentSessionExportItem::Delegation {
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            status: delegation_status_label(status).into(),
+            child_operation_id,
+            summary,
+        },
         TranscriptItem::CompactionSummary { summary, .. } => {
             CodingAgentSessionExportItem::CompactionSummary { summary }
         }
@@ -160,6 +192,21 @@ pub(crate) fn render_export_html(export: &CodingAgentSessionExport) -> String {
                     html_escape(result.as_deref().unwrap_or(""))
                 ));
             }
+            CodingAgentSessionExportItem::Delegation {
+                target_kind,
+                target_id,
+                task,
+                status,
+                summary,
+                ..
+            } => body.push_str(&format!(
+                "<section class=\"message delegation\"><h2>Delegation: {} {}</h2><h3>Status</h3><pre>{}</pre><h3>Task</h3><pre>{}</pre><h3>Summary</h3><pre>{}</pre></section>",
+                html_escape(profile_kind_label(*target_kind)),
+                html_escape(target_id.as_str()),
+                html_escape(status),
+                html_escape(task),
+                html_escape(summary.as_deref().unwrap_or(""))
+            )),
             CodingAgentSessionExportItem::CompactionSummary { summary } => body.push_str(&format!(
                 "<section class=\"message compaction\"><h2>Compaction Summary</h2><pre>{}</pre></section>",
                 html_escape(summary)
@@ -184,7 +231,7 @@ pub(crate) fn render_export_html(export: &CodingAgentSessionExport) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>{}</style></head><body><main><h1>{}</h1>{}</main></body></html>",
         html_escape(&export.summary.session_id),
-        "body{font-family:system-ui,sans-serif;margin:2rem;background:#101010;color:#f4f4f4}main{max-width:900px;margin:auto}.meta,.message{border:1px solid #444;padding:1rem;margin:1rem 0;border-radius:6px}pre{white-space:pre-wrap;font-family:ui-monospace,monospace}.user{border-color:#3b82f6}.assistant{border-color:#10b981}.tool{border-color:#a78bfa}.error{border-color:#ef4444;color:#fecaca}.diagnostic{border-color:#f59e0b}.compaction{border-color:#14b8a6}.branch-summary{border-color:#f97316}.incomplete{opacity:.75}",
+        "body{font-family:system-ui,sans-serif;margin:2rem;background:#101010;color:#f4f4f4}main{max-width:900px;margin:auto}.meta,.message{border:1px solid #444;padding:1rem;margin:1rem 0;border-radius:6px}pre{white-space:pre-wrap;font-family:ui-monospace,monospace}.user{border-color:#3b82f6}.assistant{border-color:#10b981}.tool{border-color:#a78bfa}.delegation{border-color:#38bdf8}.error{border-color:#ef4444;color:#fecaca}.diagnostic{border-color:#f59e0b}.compaction{border-color:#14b8a6}.branch-summary{border-color:#f97316}.incomplete{opacity:.75}",
         html_escape(&export.summary.session_id),
         body
     )
@@ -204,6 +251,24 @@ fn persisted_content_blocks_text(content: &[PersistedContentBlock]) -> String {
 
 fn format_diagnostic(level: DiagnosticLevel, message: &str) -> String {
     format!("{level:?}: {message}")
+}
+
+fn delegation_status_label(status: PersistedDelegationStatus) -> &'static str {
+    match status {
+        PersistedDelegationStatus::Requested => "requested",
+        PersistedDelegationStatus::Running => "running",
+        PersistedDelegationStatus::Completed => "completed",
+        PersistedDelegationStatus::Failed => "failed",
+        PersistedDelegationStatus::Rejected => "rejected",
+        PersistedDelegationStatus::ConfirmationRequired => "confirmation_required",
+    }
+}
+
+fn profile_kind_label(kind: ProfileKind) -> &'static str {
+    match kind {
+        ProfileKind::Agent => "agent",
+        ProfileKind::Team => "team",
+    }
 }
 
 fn html_escape(text: &str) -> String {

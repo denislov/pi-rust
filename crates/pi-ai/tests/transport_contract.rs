@@ -9,7 +9,6 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::Duration;
 
 fn test_model() -> Model {
     Model {
@@ -264,7 +263,7 @@ async fn response_hook_receives_actual_headers() {
     );
 
     complete(stream).await.unwrap();
-    let info = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let info = rx.try_recv().unwrap();
     assert_eq!(info.status, Some(200));
     assert_eq!(
         info.headers
@@ -301,8 +300,8 @@ async fn retry_after_above_cap_errors_without_retrying() {
 
     let err = complete(stream).await.unwrap_err();
     assert!(err.contains("Retry-After 5000ms exceeds max_retry_delay_ms 1000"));
-    requests.recv_timeout(Duration::from_secs(1)).unwrap();
-    assert!(requests.recv_timeout(Duration::from_millis(100)).is_err());
+    requests.try_recv().unwrap();
+    assert!(requests.try_recv().is_err());
 }
 
 #[tokio::test]
@@ -329,8 +328,8 @@ async fn explicit_retry_retries_retryable_status_once() {
     );
 
     complete(stream).await.unwrap();
-    requests.recv_timeout(Duration::from_secs(1)).unwrap();
-    requests.recv_timeout(Duration::from_secs(1)).unwrap();
+    requests.try_recv().unwrap();
+    requests.try_recv().unwrap();
 }
 
 #[tokio::test]
@@ -367,7 +366,7 @@ async fn payload_hook_mutates_actual_request_body() {
     );
 
     complete(stream).await.unwrap();
-    let request = requests.recv_timeout(Duration::from_secs(1)).unwrap();
+    let request = requests.try_recv().unwrap();
     assert!(request.contains(r#""message":"hooked""#), "{request}");
     assert!(!request.contains(r#""message":"original""#), "{request}");
 }

@@ -1,6 +1,6 @@
 mod common;
 
-use common::faux_model_with_window;
+use common::{ProviderGuard, faux_model_with_window};
 use futures::StreamExt;
 use pi_agent_core::compaction::estimate::estimate_tokens;
 use pi_agent_core::compaction::prepare::{prepare_compaction, should_compact};
@@ -8,7 +8,6 @@ use pi_agent_core::{
     Agent, AgentConfig, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings,
 };
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{ContentBlock, StopReason, StreamOptions};
 use std::sync::Arc;
 
@@ -165,7 +164,7 @@ async fn runtime_compaction_summarizes_before_provider_request() {
     agent.add_message(user_msg(&"old context ".repeat(40)));
     agent.add_message(user_msg(&"more old context ".repeat(40)));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("summary of old context", StopReason::Stop),
@@ -191,8 +190,6 @@ async fn runtime_compaction_summarizes_before_provider_request() {
         message,
         AgentMessage::CompactionSummary { summary, .. } if summary == "summary of old context"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -223,7 +220,7 @@ async fn runtime_compaction_forwards_stream_options_to_summarization() {
         common::text_turn("summary with key"),
         common::text_turn("final answer with key"),
     ]));
-    registry::register(api, provider.clone());
+    let _provider_guard = ProviderGuard::register(api, provider.clone());
 
     let events: Vec<_> = agent.prompt("new prompt").collect().await;
 
@@ -248,8 +245,6 @@ async fn runtime_compaction_forwards_stream_options_to_summarization() {
         .map(|opts| opts.as_ref().and_then(|opts| opts.max_retries))
         .collect::<Vec<_>>();
     assert_eq!(retries, vec![Some(2), Some(2)]);
-
-    registry::unregister(api);
 }
 
 // ---- Context-window-gated trigger (TS parity) ----
@@ -272,7 +267,7 @@ async fn runtime_compaction_does_not_trigger_on_large_context_model() {
     agent.add_message(assistant_with_usage(50_000));
     agent.add_message(user_msg("continue the work"));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("final answer", StopReason::Stop),
@@ -295,8 +290,6 @@ async fn runtime_compaction_does_not_trigger_on_large_context_model() {
                 ContentBlock::Text { text, .. } if text == "final answer"
             ))
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -316,7 +309,7 @@ async fn runtime_compaction_triggers_near_context_limit() {
     agent.add_message(assistant_with_usage(95_000));
     agent.add_message(user_msg("continue the work"));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("summary of old context", StopReason::Stop),
@@ -330,8 +323,6 @@ async fn runtime_compaction_triggers_near_context_limit() {
         event,
         AgentEvent::SessionCompacted { summary, .. } if summary == "summary of old context"
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -351,7 +342,7 @@ async fn runtime_compaction_zero_context_window_never_compacts() {
     agent.add_message(assistant_with_usage(50_000));
     agent.add_message(user_msg("continue the work"));
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("final answer", StopReason::Stop),
@@ -366,6 +357,4 @@ async fn runtime_compaction_zero_context_window_never_compacts() {
             .any(|event| matches!(event, AgentEvent::SessionCompacted { .. })),
         "context_window == 0 must never auto compact: {events:?}"
     );
-
-    registry::unregister(api);
 }

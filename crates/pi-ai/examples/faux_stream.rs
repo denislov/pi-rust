@@ -1,6 +1,6 @@
 use futures::StreamExt;
+use pi_ai::api::ProviderRegistry;
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
-use pi_ai::registry;
 use pi_ai::types::*;
 use std::sync::Arc;
 
@@ -15,7 +15,8 @@ async fn main() {
         thinking_deltas: vec![],
         tool_calls: vec![],
     }]));
-    registry::register("faux-api", provider);
+    let registry = ProviderRegistry::new();
+    registry.register("faux-api", provider);
 
     let model = Model {
         id: "faux-model".into(),
@@ -49,7 +50,7 @@ async fn main() {
         tools: None,
     };
 
-    let mut stream = registry::stream_model(&model, ctx, None);
+    let mut stream = registry.stream_model(&model, ctx, None);
 
     println!("=== faux provider streaming demo ===\n");
     while let Some(event) = stream.next().await {

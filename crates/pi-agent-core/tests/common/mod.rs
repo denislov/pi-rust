@@ -8,7 +8,7 @@ use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A scripted LLM response for one turn.
 pub struct ScriptedTurn {
@@ -29,6 +29,46 @@ impl TestProvider {
         Self {
             turns: Mutex::new(turns),
             stream_options: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+static PROVIDER_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
+
+pub struct ProviderGuard<'a> {
+    _lock: MutexGuard<'a, ()>,
+    previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+}
+
+impl ProviderGuard<'static> {
+    pub fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
+        Self::register_many(vec![(api.into(), provider)])
+    }
+
+    pub fn register_many(providers: Vec<(String, Arc<dyn ApiProvider>)>) -> Self {
+        let lock = PROVIDER_REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut previous = Vec::with_capacity(providers.len());
+        for (api, provider) in providers {
+            let prior = pi_ai::registry::lookup(&api);
+            pi_ai::registry::register(&api, provider);
+            previous.push((api, prior));
+        }
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+impl Drop for ProviderGuard<'_> {
+    fn drop(&mut self) {
+        for (api, previous) in self.previous.drain(..).rev() {
+            match previous {
+                Some(provider) => pi_ai::registry::register(&api, provider),
+                None => pi_ai::registry::unregister(&api),
+            }
         }
     }
 }

@@ -1,6 +1,5 @@
-use pi_agent_core::session::{
-    JsonlSessionRepo, JsonlSessionStorage, SessionEntry, StoredAgentMessage, StoredUsage,
-    create_timestamp,
+use pi_agent_core::transcript::{
+    SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, create_timestamp,
 };
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
 use pi_ai::types::StopReason;
@@ -1401,23 +1400,13 @@ end
 #[tokio::test]
 async fn interactive_resume_ignores_legacy_jsonl_sessions() {
     let temp = tempfile::tempdir().unwrap();
-    let legacy = write_legacy_session(
+    write_legacy_session(
         temp.path(),
         temp.path(),
         "previous prompt",
         "previous answer",
-        None,
+        Some("Resume Target"),
     );
-    let mut storage = JsonlSessionStorage::open(&legacy).unwrap();
-    let leaf_id = storage.get_leaf_id().unwrap();
-    storage
-        .append_entry(SessionEntry::session_info(
-            "session-name-entry".to_string(),
-            leaf_id,
-            "2026-06-25T00:00:00.000Z".to_string(),
-            "Resume Target".to_string(),
-        ))
-        .unwrap();
 
     let mut args = CliArgs::default();
     args.resume = true;
@@ -1466,23 +1455,13 @@ async fn interactive_resume_loads_existing_rust_native_session_messages() {
 #[tokio::test]
 async fn interactive_resume_command_ignores_legacy_jsonl_sessions() {
     let temp = tempfile::tempdir().unwrap();
-    let legacy = write_legacy_session(
+    write_legacy_session(
         temp.path(),
         temp.path(),
         "selected prompt",
         "selected answer",
-        None,
+        Some("Picked"),
     );
-    let mut storage = JsonlSessionStorage::open(&legacy).unwrap();
-    let leaf_id = storage.get_leaf_id().unwrap();
-    storage
-        .append_entry(SessionEntry::session_info(
-            "session-name-entry".to_string(),
-            leaf_id,
-            "2026-06-25T00:00:00.000Z".to_string(),
-            "Picked".to_string(),
-        ))
-        .unwrap();
 
     let provider = FauxProvider::new(Vec::new());
     let result = run_scripted_interactive_with_session_dir(provider, temp.path(), "/resume\r\r")
@@ -1569,10 +1548,18 @@ fn write_legacy_session(
     name: Option<&str>,
 ) -> std::path::PathBuf {
     let timestamp = create_timestamp();
-    let repo = JsonlSessionRepo::new(root);
-    let mut storage = repo.create(&cwd.display().to_string(), None).unwrap();
-    storage
-        .append_entry(SessionEntry::message(
+    let file = root.join("legacy-session.jsonl");
+    let mut entries = vec![
+        serde_json::to_string(&SessionHeader {
+            entry_type: "session".into(),
+            version: 3,
+            id: "legacy-session".into(),
+            timestamp: timestamp.clone(),
+            cwd: cwd.display().to_string(),
+            parent_session: None,
+        })
+        .unwrap(),
+        serde_json::to_string(&SessionEntry::message(
             "entry-user".to_string(),
             None,
             timestamp.clone(),
@@ -1584,9 +1571,8 @@ fn write_legacy_session(
                 timestamp: 0,
             },
         ))
-        .unwrap();
-    storage
-        .append_entry(SessionEntry::message(
+        .unwrap(),
+        serde_json::to_string(&SessionEntry::message(
             "entry-assistant".to_string(),
             Some("entry-user".to_string()),
             timestamp.clone(),
@@ -1606,19 +1592,21 @@ fn write_legacy_session(
                 timestamp: 0,
             },
         ))
-        .unwrap();
+        .unwrap(),
+    ];
     if let Some(name) = name {
-        let leaf_id = storage.get_leaf_id().unwrap();
-        storage
-            .append_entry(SessionEntry::session_info(
+        entries.push(
+            serde_json::to_string(&SessionEntry::session_info(
                 "entry-name".to_string(),
-                leaf_id,
+                Some("entry-assistant".to_string()),
                 timestamp,
                 name.to_string(),
             ))
-            .unwrap();
+            .unwrap(),
+        );
     }
-    storage.path().to_path_buf()
+    std::fs::write(&file, entries.join("\n") + "\n").unwrap();
+    file
 }
 
 fn collect_jsonl_files(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

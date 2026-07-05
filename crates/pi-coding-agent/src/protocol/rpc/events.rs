@@ -22,7 +22,7 @@ impl RpcCodingEventAdapter {
 mod tests {
     use super::*;
     use crate::coding_session::{CodingAgentEvent, CodingSessionError};
-    use pi_agent_core::session::StoredAgentMessage;
+    use pi_agent_core::transcript::StoredAgentMessage;
     use pi_ai::types::StopReason;
 
     fn adapter() -> RpcCodingEventAdapter {

@@ -6,6 +6,10 @@ fn key(input: &str) -> InputEvent {
 
 #[test]
 fn default_keybindings_match_editor_actions() {
+    assert!(
+        !TUI_KEYBINDINGS.keys().any(|id| id.starts_with("app.")),
+        "pi-tui default keybindings must stay product-free"
+    );
     let manager = KeybindingsManager::new(TUI_KEYBINDINGS.clone(), Default::default());
     assert!(manager.matches(&key("\x1b[A"), "tui.editor.cursorUp"));
     assert!(manager.matches(&key("\x1b[B"), "tui.editor.cursorDown"));

@@ -485,12 +485,13 @@ fn flow_error(error: FlowError) -> CodingSessionError {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Mutex};
 
     use pi_agent_core::flow::{FlowEvent, NodeId};
     use pi_agent_core::{Agent, AgentConfig, AgentResources, AgentTool, AgentToolOutput};
     use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
-    use pi_ai::registry::{self, ApiProvider};
+    use pi_ai::registry::ApiProvider;
     use pi_ai::stream::EventStream;
     use pi_ai::types::{
         AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
@@ -545,12 +546,37 @@ mod tests {
         )
     }
 
-    fn context_with_agent(api: &str, response: &str) -> PromptTurnContext {
-        registry::register(api, Arc::new(FauxProvider::simple_text(response)));
+    struct PromptTurnFixture {
+        context: PromptTurnContext,
+        _provider_guard: crate::test_support::ProviderGuard<'static>,
+    }
+
+    impl Deref for PromptTurnFixture {
+        type Target = PromptTurnContext;
+
+        fn deref(&self) -> &Self::Target {
+            &self.context
+        }
+    }
+
+    impl DerefMut for PromptTurnFixture {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.context
+        }
+    }
+
+    fn context_with_agent(api: &str, response: &str) -> PromptTurnFixture {
+        let provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text(response)),
+        );
         let agent = Agent::new(AgentConfig::new(model(api)));
         let mut context = context();
         context.set_agent(agent);
-        context
+        PromptTurnFixture {
+            context,
+            _provider_guard: provider_guard,
+        }
     }
 
     struct BlockingTwoTurnProvider {
@@ -608,7 +634,7 @@ mod tests {
         }
     }
 
-    fn context_with_runtime(api: &str, response: &str) -> PromptTurnContext {
+    fn context_with_runtime(api: &str, response: &str) -> PromptTurnFixture {
         context_with_runtime_invocation(api, response, PromptInvocation::Text("hello".into()))
     }
 
@@ -616,8 +642,11 @@ mod tests {
         api: &str,
         response: &str,
         invocation: PromptInvocation,
-    ) -> PromptTurnContext {
-        registry::register(api, Arc::new(FauxProvider::simple_text(response)));
+    ) -> PromptTurnFixture {
+        let provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text(response)),
+        );
         let options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: "hello".into(),
             model: model(api),
@@ -635,7 +664,10 @@ mod tests {
             settings: None,
             invocation,
         });
-        PromptTurnContext::new(PromptTurnIds::new("op_1", "turn_1"), options)
+        PromptTurnFixture {
+            context: PromptTurnContext::new(PromptTurnIds::new("op_1", "turn_1"), options),
+            _provider_guard: provider_guard,
+        }
     }
 
     fn path_strings(path: &[NodeId]) -> Vec<&str> {
@@ -775,6 +807,7 @@ mod tests {
                 }
                 SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
                 SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
+                SessionEventData::DelegationFoldedUpdated { .. } => "delegation.folded.updated",
                 SessionEventData::SelfHealingEditStarted { .. } => "self_healing_edit.started",
                 SessionEventData::SelfHealingEditRepairAttempted { .. } => {
                     "self_healing_edit.repair_attempted"
@@ -919,7 +952,6 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("hook before agent turn"))
         );
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -943,7 +975,6 @@ mod tests {
             diagnostic.message.contains("plugin hook failed")
                 && diagnostic.code.as_deref() == Some("plugin_hook")
         }));
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -960,7 +991,6 @@ mod tests {
         let error = flow.run(&mut context).await.unwrap_err();
 
         assert!(error.to_string().contains("plugin hook"));
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -983,7 +1013,6 @@ mod tests {
                 turn_id,
             }) if operation_id == "op_1" && turn_id == "turn_1"
         ));
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1014,7 +1043,6 @@ mod tests {
             .map(|spec| (spec.id.to_owned(), spec.name.to_owned()))
             .collect::<Vec<_>>();
         assert_eq!(observed, expected);
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1034,7 +1062,6 @@ mod tests {
             serde_json::to_value(prepared).unwrap()[0]["data"]["text"],
             "hello"
         );
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1049,7 +1076,6 @@ mod tests {
         flow.run(&mut context).await.unwrap();
 
         assert!(context.request_is_resolved());
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1076,7 +1102,6 @@ mod tests {
         assert!(matches!(error, FlowError::NodeFailed { .. }));
         assert!(error.to_string().contains("non-empty text input"));
         assert!(!context.request_is_resolved());
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1091,7 +1116,6 @@ mod tests {
         assert!(matches!(error, FlowError::NodeFailed { .. }));
         assert!(error.to_string().contains("non-empty content input"));
         assert!(!context.request_is_resolved());
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1111,7 +1135,6 @@ mod tests {
         assert!(matches!(error, FlowError::NodeFailed { .. }));
         assert!(error.to_string().contains("manual compaction"));
         assert!(!context.request_is_resolved());
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1170,7 +1193,6 @@ mod tests {
                 .loaded_resources()
                 .is_some_and(|resources| resources.is_empty())
         );
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1264,7 +1286,7 @@ mod tests {
         let contexts = Arc::new(Mutex::new(Vec::new()));
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(BlockingTwoTurnProvider::new(
                 contexts.clone(),
@@ -1307,7 +1329,6 @@ mod tests {
             "{:#?}",
             contexts[1].messages
         );
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1338,7 +1359,6 @@ mod tests {
             CodingAgentEvent::AssistantMessageCompleted { final_text, .. }
                 if final_text == "flow answer"
         )));
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1380,7 +1400,6 @@ mod tests {
             }) if reason == "stop"
         ));
         assert!(store.read_events(&handle).unwrap().is_empty());
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1413,7 +1432,6 @@ mod tests {
                 ))
         );
         assert!(store.read_events(&handle).unwrap().is_empty());
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1497,7 +1515,6 @@ mod tests {
                     text_signature: None,
                 }]
         ));
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -1524,13 +1541,12 @@ mod tests {
         assert!(matches!(error, FlowError::NodeFailed { .. }));
         assert!(error.to_string().contains("resources are loaded"));
         assert!(context.agent().is_none());
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn run_agent_turn_records_tool_lifecycle_session_events() {
         let api = "prompt-flow-session-tool-events";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::single_call(
@@ -1599,7 +1615,6 @@ mod tests {
                 ))
         );
         assert!(store.read_events(&handle).unwrap().is_empty());
-        registry::unregister(api);
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pi_agent_core::session::{SessionTreeNode, TreeFilterMode};
+use pi_agent_core::transcript::{SessionTreeNode, TreeFilterMode};
 use pi_tui::{
     InputEvent, Key, KeybindingsManager, SYSTEM, USER, color_enabled, paint_with,
     truncate_to_width_with_ellipsis, visible_width,
@@ -1017,7 +1017,7 @@ fn folded_descendant_ids(
     skipped
 }
 
-fn message_role(entry: &pi_agent_core::session::SessionEntry) -> Option<&str> {
+fn message_role(entry: &pi_agent_core::transcript::SessionEntry) -> Option<&str> {
     if entry.entry_type != "message" {
         return None;
     }
@@ -1069,7 +1069,7 @@ fn collect_tool_call_map(tree: &[SessionTreeNode]) -> BTreeMap<String, ToolCallI
     result
 }
 
-fn assistant_has_text_content(entry: &pi_agent_core::session::SessionEntry) -> bool {
+fn assistant_has_text_content(entry: &pi_agent_core::transcript::SessionEntry) -> bool {
     if message_role(entry) != Some("assistant") {
         return false;
     }
@@ -1079,7 +1079,7 @@ fn assistant_has_text_content(entry: &pi_agent_core::session::SessionEntry) -> b
         .is_some_and(content_has_text)
 }
 
-fn assistant_stop_reason(entry: &pi_agent_core::session::SessionEntry) -> Option<String> {
+fn assistant_stop_reason(entry: &pi_agent_core::transcript::SessionEntry) -> Option<String> {
     if message_role(entry) != Some("assistant") {
         return None;
     }
@@ -1090,7 +1090,7 @@ fn assistant_stop_reason(entry: &pi_agent_core::session::SessionEntry) -> Option
         .map(str::to_string)
 }
 
-fn assistant_error_message(entry: &pi_agent_core::session::SessionEntry) -> Option<String> {
+fn assistant_error_message(entry: &pi_agent_core::transcript::SessionEntry) -> Option<String> {
     if message_role(entry) != Some("assistant") {
         return None;
     }
@@ -1533,7 +1533,7 @@ fn format_label_timestamp(timestamp: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_agent_core::session::{SessionEntry, StoredAgentMessage};
+    use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage};
     use pi_ai::types::{ContentBlock, StopReason};
 
     fn user_node(id: &str, parent: Option<&str>, text: &str) -> SessionTreeNode {
@@ -1917,7 +1917,10 @@ mod tests {
         let tree = vec![parent];
         let mut state =
             TreeSelectorState::new(tree, Some("a1".into()), TreeFilterMode::Default, 80);
-        let kbm = KeybindingsManager::new(pi_tui::TUI_KEYBINDINGS.clone(), Default::default());
+        let kbm = KeybindingsManager::new(
+            crate::interactive::keybindings::default_keybindings(),
+            Default::default(),
+        );
         let event = key_event(Key::Left, pi_tui::KeyModifiers::CTRL);
 
         state.handle_input(&kbm, &event);
@@ -1960,7 +1963,10 @@ mod tests {
             TreeFilterMode::Default,
             80,
         );
-        let kbm = KeybindingsManager::new(pi_tui::TUI_KEYBINDINGS.clone(), Default::default());
+        let kbm = KeybindingsManager::new(
+            crate::interactive::keybindings::default_keybindings(),
+            Default::default(),
+        );
         let ctrl_left = key_event(Key::Left, pi_tui::KeyModifiers::CTRL);
         let ctrl_right = key_event(Key::Right, pi_tui::KeyModifiers::CTRL);
         let down = key_event(Key::Down, pi_tui::KeyModifiers::empty());
@@ -1992,7 +1998,10 @@ mod tests {
         u1.children.push(hidden);
         let mut state =
             TreeSelectorState::new(vec![u1], Some("a2".into()), TreeFilterMode::Default, 80);
-        let kbm = KeybindingsManager::new(pi_tui::TUI_KEYBINDINGS.clone(), Default::default());
+        let kbm = KeybindingsManager::new(
+            crate::interactive::keybindings::default_keybindings(),
+            Default::default(),
+        );
         let ctrl_left = key_event(Key::Left, pi_tui::KeyModifiers::CTRL);
         let down = key_event(Key::Down, pi_tui::KeyModifiers::empty());
 
@@ -2050,7 +2059,10 @@ mod tests {
         let tree = vec![parent];
         let mut state =
             TreeSelectorState::new(tree, Some("u1".into()), TreeFilterMode::Default, 80);
-        let kbm = KeybindingsManager::new(pi_tui::TUI_KEYBINDINGS.clone(), Default::default());
+        let kbm = KeybindingsManager::new(
+            crate::interactive::keybindings::default_keybindings(),
+            Default::default(),
+        );
         let event = InputEvent::Key(pi_tui::KeyEvent {
             key: Key::Down,
             modifiers: pi_tui::KeyModifiers::empty(),

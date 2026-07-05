@@ -219,7 +219,6 @@ mod tests {
         AgentResources, AgentTool, ExecutionOutput, FileSystem, InMemoryExecutionEnv,
     };
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::registry;
     use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
 
     use super::*;
@@ -390,7 +389,10 @@ mod tests {
     #[tokio::test]
     async fn flow_service_builds_and_runs_prompt_turn_graph() {
         let api = "flow-service-prompt-turn";
-        registry::register(api, Arc::new(FauxProvider::simple_text("done")));
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("done")),
+        );
         let service = FlowService::new();
         let mut context = PromptTurnContext::new(
             PromptTurnIds::new("op_1", "turn_1"),
@@ -435,7 +437,6 @@ mod tests {
 
         assert_eq!(outcome.last_node.as_str(), "emit_completion");
         assert!(context.final_message().is_some());
-        registry::unregister(api);
     }
 
     #[test]
@@ -1336,18 +1337,39 @@ local function assert_feature_scoped(host, capabilities)
   end
   local forbidden = {
     "session",
+    "sessionService",
+    "sessionStore",
+    "sessionLog",
+    "eventLog",
     "runtime",
+    "runtimeService",
     "provider",
+    "providerKey",
+    "apiKey",
+    "auth",
+    "model",
     "filesystem",
+    "fs",
     "shell",
+    "bash",
+    "operation",
     "operationContext",
-    "sessionService"
+    "operation_context",
+    "flow",
+    "flowGraph",
+    "graph"
   }
-  for _, name in ipairs(forbidden) do
-    if host[name] ~= nil or capabilities[name] ~= nil then
-      error("Lua host capabilities exposed privileged internal " .. name)
+  local function assert_no_privileged_internals(value, label)
+    for _, name in ipairs(forbidden) do
+      if value[name] ~= nil then
+        error(label .. " exposed privileged internal " .. name)
+      end
     end
   end
+  assert_no_privileged_internals(host, "Lua host")
+  assert_no_privileged_internals(capabilities, "Lua host capabilities")
+  assert_no_privileged_internals(host:plugin(), "Lua plugin metadata")
+  assert_no_privileged_internals(host:workspace(), "Lua workspace metadata")
 end
 
 function register(host)

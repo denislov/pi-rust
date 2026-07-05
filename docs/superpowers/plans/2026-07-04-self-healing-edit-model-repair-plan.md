@@ -56,7 +56,7 @@ Re-export `SelfHealingEditModelRepairOptions` from `coding_session` and `api`.
 
 - [x] **Step 1: Add crate-private strategy**
 
-Implement `ModelSelfHealingEditRepairStrategy` with a `RuntimeSnapshot` field. In `repair(...)`, build a user prompt from the path, previous replacement JSON, attempt number, and diagnostic messages. Stream through `pi_ai::registry::stream_model` using the runtime model and stream options derived from the runtime settings.
+Implement `ModelSelfHealingEditRepairStrategy` with a `RuntimeSnapshot` field. In `repair(...)`, build a user prompt from the path, previous replacement JSON, attempt number, and diagnostic messages. Stream through the `RuntimeService` global-runtime compatibility boundary using the runtime model and stream options derived from the runtime settings; do not call `pi_ai::registry::stream_model` directly from the workflow.
 
 - [x] **Step 2: Parse constrained JSON**
 

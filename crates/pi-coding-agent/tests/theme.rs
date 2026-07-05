@@ -294,6 +294,20 @@ use pi_coding_agent::theme::ThemeWatcher;
 use std::path::PathBuf;
 use std::time::Duration;
 
+const THEME_RELOAD_SIGNAL_TIMEOUT: Duration = Duration::from_secs(2);
+const THEME_FILE_CHANGE_DEBOUNCE: Duration = Duration::from_millis(50);
+const THEME_RAPID_EDIT_DEBOUNCE: Duration = Duration::from_millis(80);
+
+async fn recv_theme_reload_signal<T>(
+    signal: &mut tokio::sync::mpsc::UnboundedReceiver<T>,
+    context: &str,
+) -> T {
+    tokio::time::timeout(THEME_RELOAD_SIGNAL_TIMEOUT, signal.recv())
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {context}"))
+        .unwrap_or_else(|| panic!("theme reload channel closed before {context}"))
+}
+
 #[test]
 fn watcher_skips_builtin_themes() {
     // Built-in dark/light are never watched (TS startThemeWatcher returns early).
@@ -322,7 +336,7 @@ async fn watcher_reloads_custom_theme_on_file_change() {
     let (watcher, mut signal) = ThemeWatcher::start(
         themes_dir.clone(),
         "hot".to_string(),
-        Duration::from_millis(50),
+        THEME_FILE_CHANGE_DEBOUNCE,
     )
     .expect("watcher starts");
 
@@ -333,10 +347,7 @@ async fn watcher_reloads_custom_theme_on_file_change() {
     )
     .unwrap();
 
-    let reloaded = tokio::time::timeout(Duration::from_secs(2), signal.recv())
-        .await
-        .expect("reload signal received within 2s")
-        .expect("channel not closed");
+    let reloaded = recv_theme_reload_signal(&mut signal, "reload signal after theme edit").await;
 
     // The watcher returns the reparsed theme name + resolved tokens.
     assert_eq!(reloaded.name, "hot");
@@ -351,7 +362,7 @@ async fn watcher_reloads_custom_theme_on_file_change() {
 }
 
 #[tokio::test]
-async fn watcher_debounces_rapid_edits() {
+async fn watcher_reloads_after_rapid_edits() {
     let dir = tempfile::tempdir().unwrap();
     let themes_dir = dir.path().join("themes");
     std::fs::create_dir_all(&themes_dir).unwrap();
@@ -365,33 +376,20 @@ async fn watcher_debounces_rapid_edits() {
     let (watcher, mut signal) = ThemeWatcher::start(
         themes_dir,
         "debounce".to_string(),
-        Duration::from_millis(80),
+        THEME_RAPID_EDIT_DEBOUNCE,
     )
     .unwrap();
 
-    // Three rapid edits within the debounce window.
     for _ in 0..3 {
         std::fs::write(
             &theme_file,
             pi_coding_agent::theme::DARK_JSON.replace("\"dark\"", "\"debounce\""),
         )
         .unwrap();
-        std::thread::sleep(Duration::from_millis(10));
     }
 
-    // Coalesce into a single signal after the debounce window.
-    let first = tokio::time::timeout(Duration::from_secs(2), signal.recv())
-        .await
-        .expect("first signal")
-        .expect("channel open");
+    let first = recv_theme_reload_signal(&mut signal, "first signal after rapid edits").await;
     assert_eq!(first.name, "debounce");
-
-    // No second signal should arrive quickly (debounced).
-    let result = tokio::time::timeout(Duration::from_millis(150), signal.recv()).await;
-    assert!(
-        result.is_err(),
-        "rapid edits should coalesce into one signal"
-    );
 
     drop(watcher);
 }

@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pi_agent_core::{AgentResources, session::create_session_id};
+use pi_agent_core::AgentResources;
+use pi_agent_core::transcript::create_session_id;
 use pi_ai::types::Usage;
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
@@ -140,12 +141,72 @@ enum LoopControl {
     Exit,
 }
 
+pub(super) trait InteractiveClock {
+    fn now(&self) -> Instant;
+}
+
+struct SystemInteractiveClock;
+
+impl InteractiveClock for SystemInteractiveClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+#[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[derive(Clone)]
+pub(super) struct ManualInteractiveClock {
+    now: std::sync::Arc<std::sync::Mutex<Instant>>,
+}
+
+#[cfg(any(test, feature = "test-harness", debug_assertions))]
+impl ManualInteractiveClock {
+    pub(super) fn new(now: Instant) -> Self {
+        Self {
+            now: std::sync::Arc::new(std::sync::Mutex::new(now)),
+        }
+    }
+
+    pub(super) fn advance(&self, delay: Duration) {
+        let mut now = self
+            .now
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *now += delay;
+    }
+}
+
+#[cfg(any(test, feature = "test-harness", debug_assertions))]
+impl InteractiveClock for ManualInteractiveClock {
+    fn now(&self) -> Instant {
+        *self
+            .now
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 pub(super) async fn run_interactive_loop<T: Terminal>(
+    parsed: CliArgs,
+    options: CliRunOptions,
+    terminal: T,
+    input: &mut InputPump,
+) -> Result<LoopResult<T>, CliError> {
+    let clock = SystemInteractiveClock;
+    run_interactive_loop_with_clock(parsed, options, terminal, input, &clock).await
+}
+
+pub(super) async fn run_interactive_loop_with_clock<T, C>(
     parsed: CliArgs,
     options: CliRunOptions,
     mut terminal: T,
     input: &mut InputPump,
-) -> Result<LoopResult<T>, CliError> {
+    clock: &C,
+) -> Result<LoopResult<T>, CliError>
+where
+    T: Terminal,
+    C: InteractiveClock + ?Sized,
+{
     let prompt_context = build_prompt_context(&parsed, options.clone())?;
 
     print_startup_banner(&prompt_context);
@@ -153,9 +214,16 @@ pub(super) async fn run_interactive_loop<T: Terminal>(
     terminal.start().map_err(to_cli_error)?;
     let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
 
-    let loop_result =
-        run_started_interactive_loop(&mut tui, root_id, input, prompt_context, &parsed, &options)
-            .await;
+    let loop_result = run_started_interactive_loop(
+        &mut tui,
+        root_id,
+        input,
+        prompt_context,
+        &parsed,
+        &options,
+        clock,
+    )
+    .await;
     // Drain in-flight Kitty key release events before stopping, matching TS `drainInput(1000)`.
     let _ = tui
         .terminal_mut()
@@ -192,6 +260,7 @@ where
     let mut input = make_input();
     let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
 
+    let clock = SystemInteractiveClock;
     let loop_result = run_started_interactive_loop(
         &mut tui,
         root_id,
@@ -199,6 +268,7 @@ where
         prompt_context,
         &parsed,
         &options,
+        &clock,
     )
     .await;
     // Drain in-flight Kitty key release events before stopping.
@@ -262,14 +332,19 @@ fn initialize_started_tui<T: Terminal>(
     Ok((tui, root_id))
 }
 
-async fn run_started_interactive_loop<T: Terminal>(
+async fn run_started_interactive_loop<T, C>(
     tui: &mut Tui<T>,
     root_id: usize,
     input: &mut InputPump,
     mut prompt_context: PromptContext,
     parsed: &CliArgs,
     options: &CliRunOptions,
-) -> Result<i32, CliError> {
+    clock: &C,
+) -> Result<i32, CliError>
+where
+    T: Terminal,
+    C: InteractiveClock + ?Sized,
+{
     let mut stdin_buffer = StdinBuffer::new();
     let mut running: Option<PromptTask> = None;
     let mut coding_session: Option<CodingAgentSession> = None;
@@ -277,7 +352,7 @@ async fn run_started_interactive_loop<T: Terminal>(
     let mut input_open = true;
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
     render_scheduler.request(true);
-    flush_render_if_ready(tui, &mut render_scheduler)?;
+    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
 
     // Start the theme hot-reload watcher. Only custom themes (a name other
     // than dark/light) are watched; built-in themes return an idle watcher.
@@ -290,18 +365,18 @@ async fn run_started_interactive_loop<T: Terminal>(
     .map_err(to_cli_error)?;
 
     loop {
-        flush_render_if_ready(tui, &mut render_scheduler)?;
+        flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
         if let Some(mut task) = running.take() {
-            let render_delay = pending_render_delay(&render_scheduler);
-            let stdin_delay = stdin_pending_delay(&stdin_buffer);
+            let render_delay = pending_render_delay(&render_scheduler, clock.now());
+            let stdin_delay = stdin_pending_delay(&stdin_buffer, clock.now());
             tokio::select! {
                 _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
-                    flush_render_if_ready(tui, &mut render_scheduler)?;
+                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
                     running = Some(task);
                 }
                 _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
                     running = Some(task);
-                    let events = stdin_buffer.tick(Instant::now());
+                    let events = stdin_buffer.tick(clock.now());
                     if !events.is_empty() {
                         match process_input_events(
                             tui,
@@ -313,6 +388,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                             &mut render_scheduler,
                             parsed,
                             options,
+                            clock.now(),
                         )? {
                             LoopControl::Continue(_) => {}
                             LoopControl::Exit => return Ok(0),
@@ -326,15 +402,18 @@ async fn run_started_interactive_loop<T: Terminal>(
                             match process_input_events(
                                 tui,
                                 root_id,
-                                stdin_buffer.process(&chunk),
+                                stdin_buffer.process_at(&chunk, clock.now()),
                                 &mut prompt_context,
                                 &mut running,
                                 &mut coding_session,
                                 &mut render_scheduler,
                                 parsed,
                                 options,
+                                clock.now(),
                             )? {
-                                LoopControl::Continue(_) => {}
+                                LoopControl::Continue(_) => {
+                                    input.mark_processed(&chunk);
+                                }
                                 LoopControl::Exit => return Ok(0),
                             }
                         }
@@ -389,8 +468,9 @@ async fn run_started_interactive_loop<T: Terminal>(
                     }
                     finish_prompt(tui, root_id, result, &mut coding_session)?;
                     schedule_render(&mut render_scheduler, RenderRequest::FORCE);
-                    flush_render_if_ready(tui, &mut render_scheduler)?;
+                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
                     running = None;
+                    input.mark_idle();
                 }
                 Some(reload) = theme_reload.recv() => {
                     apply_theme_reload(tui, root_id, reload);
@@ -400,18 +480,18 @@ async fn run_started_interactive_loop<T: Terminal>(
             }
         } else {
             if !input_open {
-                flush_pending_render(tui, &mut render_scheduler)?;
+                flush_pending_render(tui, &mut render_scheduler, clock.now())?;
                 return Ok(0);
             }
 
-            let render_delay = pending_render_delay(&render_scheduler);
-            let stdin_delay = stdin_pending_delay(&stdin_buffer);
+            let render_delay = pending_render_delay(&render_scheduler, clock.now());
+            let stdin_delay = stdin_pending_delay(&stdin_buffer, clock.now());
             tokio::select! {
                 _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
-                    flush_render_if_ready(tui, &mut render_scheduler)?;
+                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
                 }
                 _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
-                    let events = stdin_buffer.tick(Instant::now());
+                    let events = stdin_buffer.tick(clock.now());
                     if !events.is_empty() {
                         match process_input_events(
                             tui,
@@ -423,6 +503,7 @@ async fn run_started_interactive_loop<T: Terminal>(
                             &mut render_scheduler,
                             parsed,
                             options,
+                            clock.now(),
                         )? {
                             LoopControl::Continue(_) => {}
                             LoopControl::Exit => return Ok(0),
@@ -442,12 +523,13 @@ async fn run_started_interactive_loop<T: Terminal>(
                             &mut render_scheduler,
                             parsed,
                             options,
+                            clock.now(),
                         )? {
                             LoopControl::Continue(_) => {}
                             LoopControl::Exit => return Ok(0),
                         }
                         if running.is_none() {
-                            flush_pending_render(tui, &mut render_scheduler)?;
+                            flush_pending_render(tui, &mut render_scheduler, clock.now())?;
                             return Ok(0);
                         }
                         tokio::task::yield_now().await;
@@ -457,15 +539,18 @@ async fn run_started_interactive_loop<T: Terminal>(
                     match process_input_events(
                         tui,
                         root_id,
-                        stdin_buffer.process(&chunk),
+                        stdin_buffer.process_at(&chunk, clock.now()),
                         &mut prompt_context,
                         &mut running,
                         &mut coding_session,
                         &mut render_scheduler,
                         parsed,
                         options,
+                        clock.now(),
                     )? {
-                        LoopControl::Continue(_) => {}
+                        LoopControl::Continue(_) => {
+                            input.mark_processed(&chunk);
+                        }
                         LoopControl::Exit => return Ok(0),
                     }
                     if running.is_some() {
@@ -491,6 +576,7 @@ fn process_input_events<T: Terminal>(
     render_scheduler: &mut RenderScheduler,
     parsed: &CliArgs,
     options: &CliRunOptions,
+    now: Instant,
 ) -> Result<LoopControl, CliError> {
     for event in events {
         let was_running = running.is_some();
@@ -506,7 +592,7 @@ fn process_input_events<T: Terminal>(
         )? {
             LoopControl::Continue(request) => {
                 schedule_render(render_scheduler, request);
-                flush_render_if_ready(tui, render_scheduler)?;
+                flush_render_if_ready(tui, render_scheduler, now)?;
             }
             LoopControl::Exit => return Ok(LoopControl::Exit),
         }
@@ -523,8 +609,7 @@ fn schedule_render(render_scheduler: &mut RenderScheduler, request: RenderReques
     }
 }
 
-fn pending_render_delay(render_scheduler: &RenderScheduler) -> Option<Duration> {
-    let now = Instant::now();
+fn pending_render_delay(render_scheduler: &RenderScheduler, now: Instant) -> Option<Duration> {
     render_scheduler
         .next_render_at(now)
         .map(|deadline| deadline.saturating_duration_since(now))
@@ -536,8 +621,8 @@ async fn sleep_render_delay(delay: Option<Duration>) {
     }
 }
 
-fn stdin_pending_delay(stdin_buffer: &StdinBuffer) -> Option<Duration> {
-    stdin_buffer.pending_timeout_at(Instant::now())
+fn stdin_pending_delay(stdin_buffer: &StdinBuffer, now: Instant) -> Option<Duration> {
+    stdin_buffer.pending_timeout_at(now)
 }
 
 async fn sleep_stdin_pending(delay: Option<Duration>) {
@@ -549,8 +634,8 @@ async fn sleep_stdin_pending(delay: Option<Duration>) {
 fn flush_render_if_ready<T: Terminal>(
     tui: &mut Tui<T>,
     render_scheduler: &mut RenderScheduler,
+    now: Instant,
 ) -> Result<(), CliError> {
-    let now = Instant::now();
     if render_scheduler.should_render_now(now) {
         render_tui(tui)?;
         render_scheduler.mark_rendered(now);
@@ -561,10 +646,11 @@ fn flush_render_if_ready<T: Terminal>(
 fn flush_pending_render<T: Terminal>(
     tui: &mut Tui<T>,
     render_scheduler: &mut RenderScheduler,
+    now: Instant,
 ) -> Result<(), CliError> {
     if render_scheduler.has_pending() {
         render_scheduler.request(true);
-        flush_render_if_ready(tui, render_scheduler)?;
+        flush_render_if_ready(tui, render_scheduler, now)?;
     }
     Ok(())
 }

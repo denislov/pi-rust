@@ -8,6 +8,8 @@ use crate::interactive::{TranscriptItem, root::TranscriptScrollCommand};
 
 pub(super) struct InputPump {
     rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    consumed_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    idle_tx: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     _reader: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -32,6 +34,8 @@ impl InputPump {
         });
         Self {
             rx,
+            consumed_tx: None,
+            idle_tx: None,
             _reader: Some(reader),
         }
     }
@@ -42,15 +46,50 @@ impl InputPump {
             let _ = tx.send(chunk);
         }
         drop(tx);
-        Self { rx, _reader: None }
+        Self {
+            rx,
+            consumed_tx: None,
+            idle_tx: None,
+            _reader: None,
+        }
     }
 
     pub(super) fn from_receiver(rx: tokio::sync::mpsc::UnboundedReceiver<String>) -> Self {
-        Self { rx, _reader: None }
+        Self {
+            rx,
+            consumed_tx: None,
+            idle_tx: None,
+            _reader: None,
+        }
+    }
+
+    pub(super) fn from_receiver_with_observers(
+        rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+        consumed_tx: tokio::sync::mpsc::UnboundedSender<String>,
+        idle_tx: tokio::sync::mpsc::UnboundedSender<()>,
+    ) -> Self {
+        Self {
+            rx,
+            consumed_tx: Some(consumed_tx),
+            idle_tx: Some(idle_tx),
+            _reader: None,
+        }
     }
 
     pub(super) async fn recv(&mut self) -> Option<String> {
         self.rx.recv().await
+    }
+
+    pub(super) fn mark_processed(&self, chunk: &str) {
+        if let Some(consumed_tx) = &self.consumed_tx {
+            let _ = consumed_tx.send(chunk.to_string());
+        }
+    }
+
+    pub(super) fn mark_idle(&self) {
+        if let Some(idle_tx) = &self.idle_tx {
+            let _ = idle_tx.send(());
+        }
     }
 }
 

@@ -584,6 +584,9 @@ fn is_negotiation_prefix(sequence: &str) -> bool {
 mod tests {
     use super::*;
 
+    const TERMINAL_DRAIN_INPUT_MAX: Duration = Duration::from_millis(100);
+    const TERMINAL_DRAIN_INPUT_IDLE: Duration = Duration::from_millis(10);
+
     #[test]
     fn kitty_flags_response_enables_protocol() {
         let mut term = ProcessTerminal::new();
@@ -671,7 +674,7 @@ mod tests {
         let mut term = ProcessTerminal::new();
         term.keyboard_protocol_pushed = true;
         term.kitty_protocol_active = true;
-        term.drain_input(Duration::from_millis(100), Duration::from_millis(10))
+        term.drain_input(TERMINAL_DRAIN_INPUT_MAX, TERMINAL_DRAIN_INPUT_IDLE)
             .unwrap();
         assert!(!term.kitty_protocol_active);
         assert!(!term.keyboard_protocol_pushed);

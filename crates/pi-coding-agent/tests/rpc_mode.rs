@@ -1,7 +1,6 @@
 mod support;
 
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_ai::registry;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
@@ -11,12 +10,16 @@ use pi_coding_agent::{CliRunOptions, SessionRunOptions, protocol::rpc::run_rpc_m
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use support::EnvGuard;
+use support::{EnvGuard, ProviderGuard};
 use tokio::io::AsyncBufReadExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, oneshot};
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const RPC_LINE_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const RPC_RAW_OUTPUT_READ_TIMEOUT: Duration = Duration::from_millis(250);
+const RPC_TASK_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+const RPC_PROVIDER_START_TIMEOUT: Duration = Duration::from_millis(250);
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -47,6 +50,72 @@ fn parse_lines(bytes: &[u8]) -> Vec<serde_json::Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+async fn read_rpc_line<R>(lines: &mut tokio::io::Lines<R>, context: &str) -> String
+where
+    R: AsyncBufRead + Unpin,
+{
+    tokio::time::timeout(RPC_LINE_READ_TIMEOUT, lines.next_line())
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {context}"))
+        .unwrap_or_else(|error| panic!("failed reading {context}: {error}"))
+        .unwrap_or_else(|| panic!("rpc output closed before {context}"))
+}
+
+async fn read_rpc_output_bytes<R>(output_reader: &mut R, buf: &mut [u8], context: &str) -> usize
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    tokio::time::timeout(RPC_RAW_OUTPUT_READ_TIMEOUT, output_reader.read(buf))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {context}"))
+        .unwrap_or_else(|error| panic!("failed reading {context}: {error}"))
+}
+
+async fn await_rpc_task_completion(
+    task: tokio::task::JoinHandle<()>,
+    release_on_timeout: &Notify,
+    context: &str,
+) {
+    let task_result = tokio::time::timeout(RPC_TASK_SHUTDOWN_TIMEOUT, task).await;
+    if task_result.is_err() {
+        release_on_timeout.notify_one();
+        panic!("timed out waiting for {context}");
+    }
+    task_result.unwrap().unwrap();
+}
+
+async fn wait_for_rpc_provider_start(started_rx: oneshot::Receiver<()>, context: &str) {
+    tokio::time::timeout(RPC_PROVIDER_START_TIMEOUT, started_rx)
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {context}"))
+        .unwrap_or_else(|_| panic!("provider start channel closed before {context}"));
+}
+
+async fn read_rpc_json_line<R>(lines: &mut tokio::io::Lines<R>, context: &str) -> serde_json::Value
+where
+    R: AsyncBufRead + Unpin,
+{
+    let line = read_rpc_line(lines, context).await;
+    serde_json::from_str(&line)
+        .unwrap_or_else(|error| panic!("invalid JSON for {context}: {error}"))
+}
+
+async fn read_rpc_json_matching<R>(
+    lines: &mut tokio::io::Lines<R>,
+    context: &str,
+    mut matches: impl FnMut(&serde_json::Value) -> bool,
+) -> serde_json::Value
+where
+    R: AsyncBufRead + Unpin,
+{
+    loop {
+        let value = read_rpc_json_line(lines, context).await;
+        if matches(&value) {
+            return value;
+        }
+    }
 }
 
 fn text_response(text: &str) -> FauxResponse {
@@ -222,7 +291,8 @@ impl pi_ai::registry::ApiProvider for BlockingTwoTurnProvider {
 #[tokio::test]
 async fn rpc_processes_command_before_stdin_eof() {
     let api = "pi-coding-rpc-streaming";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
 
     let (mut input_writer, input_reader) = tokio::io::duplex(128);
     let (output_writer, mut output_reader) = tokio::io::duplex(4096);
@@ -248,10 +318,12 @@ async fn rpc_processes_command_before_stdin_eof() {
         .unwrap();
 
     let mut buf = vec![0; 4096];
-    let bytes_read = tokio::time::timeout(Duration::from_millis(250), output_reader.read(&mut buf))
-        .await
-        .expect("rpc response before stdin EOF")
-        .unwrap();
+    let bytes_read = read_rpc_output_bytes(
+        &mut output_reader,
+        &mut buf,
+        "rpc response before stdin EOF",
+    )
+    .await;
 
     let lines = parse_lines(&buf[..bytes_read]);
     assert_eq!(lines[0]["id"], "s1");
@@ -260,13 +332,13 @@ async fn rpc_processes_command_before_stdin_eof() {
 
     drop(input_writer);
     task.await.unwrap();
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_state_reports_capabilities_when_idle() {
     let api = "pi-coding-rpc-capabilities-idle";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
 
     let input = b"{\"id\":\"s1\",\"type\":\"get_state\"}\n";
     let mut output = Vec::new();
@@ -294,6 +366,34 @@ async fn rpc_state_reports_capabilities_when_idle() {
     assert_eq!(capabilities["agentProfiles"]["status"], "available");
     assert_eq!(capabilities["teamProfiles"]["status"], "available");
     assert_eq!(capabilities["delegation"]["status"], "available");
+    assert_eq!(
+        capabilities["delegation"]["rendering"]["mode"],
+        "folded_block"
+    );
+    assert_eq!(
+        capabilities["delegation"]["rendering"]["eventFamily"],
+        "delegation"
+    );
+    assert_eq!(
+        capabilities["delegation"]["rendering"]["payloadField"],
+        "foldedBlock"
+    );
+    assert_eq!(
+        capabilities["delegation"]["rendering"]["upsertKey"],
+        "toolCallId"
+    );
+    assert_eq!(
+        capabilities["delegation"]["rendering"]["lifecycleEvents"],
+        serde_json::json!([
+            "delegation_requested",
+            "delegation_rejected",
+            "delegation_approved",
+            "delegation_confirmation_required",
+            "delegation_started",
+            "delegation_completed",
+            "delegation_failed"
+        ])
+    );
     for capability in [
         "compact",
         "fork",
@@ -309,7 +409,6 @@ async fn rpc_state_reports_capabilities_when_idle() {
             "requires persistent Rust-native session"
         );
     }
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -529,6 +628,64 @@ async fn rpc_self_healing_edit_uses_planned_repair_attempts() {
 }
 
 #[tokio::test]
+async fn rpc_self_healing_edit_repair_exhaustion_returns_repair_attempts() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    let target = cwd.join("src/app.txt");
+    write_file(&target, "one\ntwo\nthree\n");
+
+    let input = br#"{"id":"e-repair-exhausted","type":"self_healing_edit","path":"src/app.txt","edits":[{"oldText":"two","newText":"deux"}],"checkCommand":"grep -q trois src/app.txt","repairAttempts":[[{"oldText":"deux","newText":"dos"}]]}
+"#;
+    let mut output = Vec::new();
+    let mut session_options = SessionRunOptions::enabled(cwd.clone());
+    session_options.session_dir = Some(sessions);
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(
+                "pi-coding-rpc-self-healing-edit-repair-exhausted",
+            )),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: session_options,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "one\ndos\nthree\n"
+    );
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["id"], "e-repair-exhausted");
+    assert_eq!(lines[0]["command"], "self_healing_edit");
+    assert_eq!(lines[0]["success"], false);
+    assert!(
+        lines[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("self-healing edit check failed")
+    );
+    let data = &lines[0]["data"];
+    assert_eq!(data["checkOutput"]["command"], "grep -q trois src/app.txt");
+    assert_ne!(data["checkOutput"]["exitCode"], 0);
+    let repair_attempts = data["repairAttempts"].as_array().unwrap();
+    assert_eq!(repair_attempts.len(), 1);
+    let repair = &repair_attempts[0];
+    assert_eq!(repair["attempt"], 1);
+    assert_eq!(repair["edits"][0]["oldText"], "deux");
+    assert_eq!(repair["edits"][0]["newText"], "dos");
+    assert_eq!(
+        repair["checkOutput"]["command"],
+        "grep -q trois src/app.txt"
+    );
+    assert_ne!(repair["checkOutput"]["exitCode"], 0);
+}
+
+#[tokio::test]
 async fn rpc_self_healing_edit_uses_model_repair_policy() {
     let temp = tempfile::tempdir().unwrap();
     let cwd = temp.path().join("project");
@@ -536,7 +693,7 @@ async fn rpc_self_healing_edit_uses_model_repair_policy() {
     let target = cwd.join("src/app.txt");
     write_file(&target, "one\ntwo\nthree\n");
     let api = "pi-coding-rpc-self-healing-edit-model-repair";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::simple_text(
             r#"{"edits":[{"oldText":"deux","newText":"dos"}]}"#,
@@ -580,7 +737,6 @@ async fn rpc_self_healing_edit_uses_model_repair_policy() {
             .unwrap()
             .contains("grep -q dos src/app.txt")
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -752,7 +908,8 @@ display_name = "Coder"
     );
 
     let api = "pi-coding-rpc-invoke-agent";
-    registry::register(api, Arc::new(FauxProvider::simple_text("from agent")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("from agent")));
     let input = br#"{"id":"a1","type":"invoke_agent","profileId":"coder","task":"do work"}
 "#;
     let mut output = Vec::new();
@@ -788,7 +945,6 @@ display_name = "Coder"
     );
     assert!(lines.iter().any(|line| line["type"] == "agent_end"));
     assert!(String::from_utf8_lossy(&output).contains("from agent"));
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -846,7 +1002,7 @@ system_prompt = "Coder child instructions."
     );
 
     let api = "pi-coding-rpc-delegation-approve";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxCall {
@@ -893,32 +1049,21 @@ system_prompt = "Coder child instructions."
         )
         .await
         .unwrap();
-    let set_default_response = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before set_default_agent_profile response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "set_default_agent_profile" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("set_default_agent_profile response");
+    let set_default_response =
+        read_rpc_json_matching(&mut lines, "set_default_agent_profile response", |value| {
+            value["type"] == "response" && value["command"] == "set_default_agent_profile"
+        })
+        .await;
     assert_eq!(set_default_response["success"], true);
 
     input_writer
         .write_all(b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
         .await
         .unwrap();
-    let confirmation = tokio::time::timeout(Duration::from_secs(2), async {
+    let confirmation = {
         let mut seen = Vec::new();
         loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before delegation confirmation event: {seen:?}");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let value = read_rpc_json_line(&mut lines, "delegation confirmation event").await;
             let event_type = value["type"].as_str().unwrap_or("<missing-type>");
             let summary = if event_type == "response" {
                 format!(
@@ -938,47 +1083,38 @@ system_prompt = "Coder child instructions."
                 panic!("prompt ended before delegation confirmation event: {seen:?}");
             }
         }
-    })
-    .await
-    .expect("delegation confirmation event");
+    };
     let operation_id = confirmation["operationId"].as_str().unwrap().to_string();
     let tool_call_id = confirmation["toolCallId"].as_str().unwrap().to_string();
     assert_eq!(confirmation["requestingProfileId"], "delegating-planner");
     assert_eq!(confirmation["targetKind"], "agent");
     assert_eq!(confirmation["targetId"], "coder");
     assert_eq!(confirmation["task"], "implement parser");
+    assert_eq!(confirmation["foldedBlock"]["toolCallId"], tool_call_id);
+    assert_eq!(
+        confirmation["foldedBlock"]["status"],
+        "confirmation_required"
+    );
+    assert_eq!(confirmation["foldedBlock"]["targetKind"], "agent");
+    assert_eq!(confirmation["foldedBlock"]["targetId"], "coder");
+    assert_eq!(confirmation["foldedBlock"]["task"], "implement parser");
+    assert_eq!(confirmation["foldedBlock"]["isError"], false);
 
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before prompt completion");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "agent_end" {
-                break;
-            }
-        }
+    read_rpc_json_matching(&mut lines, "prompt completion", |value| {
+        value["type"] == "agent_end"
     })
-    .await
-    .expect("prompt completion");
+    .await;
 
     input_writer
         .write_all(b"{\"id\":\"l1\",\"type\":\"list_delegation_confirmations\"}\n")
         .await
         .unwrap();
-    let list_response = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before list_delegation_confirmations response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "list_delegation_confirmations" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("list_delegation_confirmations response");
+    let list_response = read_rpc_json_matching(
+        &mut lines,
+        "list_delegation_confirmations response",
+        |value| value["type"] == "response" && value["command"] == "list_delegation_confirmations",
+    )
+    .await;
     assert_eq!(list_response["success"], true);
     assert_eq!(
         list_response["data"]["confirmations"][0]["operationId"],
@@ -1002,19 +1138,11 @@ system_prompt = "Coder child instructions."
         .await
         .unwrap();
 
-    let approve_response = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before approve_delegation response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "approve_delegation" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("approve_delegation response");
+    let approve_response =
+        read_rpc_json_matching(&mut lines, "approve_delegation response", |value| {
+            value["type"] == "response" && value["command"] == "approve_delegation"
+        })
+        .await;
     assert_eq!(approve_response["success"], true);
     assert_eq!(approve_response["data"]["delegation"]["targetId"], "coder");
 
@@ -1023,18 +1151,10 @@ system_prompt = "Coder child instructions."
     {
         let mut seen = Vec::new();
         loop {
-            let line = tokio::time::timeout(Duration::from_secs(2), lines.next_line())
-                .await
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "timed out before delegation approval completion: saw_approved={saw_approved}, saw_completed={saw_completed}, seen={seen:?}"
-                    )
-                })
-                .unwrap();
-            let Some(line) = line else {
-                panic!("rpc output closed before delegation approval completion: {seen:?}");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let context = format!(
+                "delegation approval completion: saw_approved={saw_approved}, saw_completed={saw_completed}, seen={seen:?}"
+            );
+            let value = read_rpc_json_line(&mut lines, &context).await;
             seen.push(if value["type"] == "delegation_completed" {
                 format!(
                     "delegation_completed target={} finalText={}",
@@ -1048,12 +1168,23 @@ system_prompt = "Coder child instructions."
                     .to_string()
             });
             if value["type"] == "delegation_approved" {
+                assert_eq!(value["foldedBlock"]["toolCallId"], tool_call_id);
+                assert_eq!(value["foldedBlock"]["status"], "approved");
+                assert_eq!(value["foldedBlock"]["targetId"], "coder");
                 saw_approved = true;
             }
             if value["type"] == "delegation_completed"
                 && value["targetId"] == "coder"
                 && value["finalText"] == "child result"
             {
+                assert_eq!(value["foldedBlock"]["toolCallId"], tool_call_id);
+                assert_eq!(value["foldedBlock"]["status"], "completed");
+                assert_eq!(
+                    value["foldedBlock"]["childOperationId"],
+                    value["childOperationId"]
+                );
+                assert_eq!(value["foldedBlock"]["summary"], "completed: child result");
+                assert_eq!(value["foldedBlock"]["isError"], false);
                 saw_completed = true;
             }
             if saw_approved && saw_completed {
@@ -1064,7 +1195,6 @@ system_prompt = "Coder child instructions."
 
     drop(input_writer);
     task.await.unwrap();
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -1096,7 +1226,7 @@ display_name = "Coder"
     );
 
     let api = "pi-coding-rpc-delegation-reject";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxCall {
@@ -1139,54 +1269,29 @@ display_name = "Coder"
         )
         .await
         .unwrap();
-    let set_default_response = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before set_default_agent_profile response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "set_default_agent_profile" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("set_default_agent_profile response");
+    let set_default_response =
+        read_rpc_json_matching(&mut lines, "set_default_agent_profile response", |value| {
+            value["type"] == "response" && value["command"] == "set_default_agent_profile"
+        })
+        .await;
     assert_eq!(set_default_response["success"], true);
 
     input_writer
         .write_all(b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
         .await
         .unwrap();
-    let confirmation = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before delegation confirmation event");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "delegation_confirmation_required" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("delegation confirmation event");
+    let confirmation =
+        read_rpc_json_matching(&mut lines, "delegation confirmation event", |value| {
+            value["type"] == "delegation_confirmation_required"
+        })
+        .await;
     let operation_id = confirmation["operationId"].as_str().unwrap().to_string();
     let tool_call_id = confirmation["toolCallId"].as_str().unwrap().to_string();
 
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before prompt completion");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "agent_end" {
-                break;
-            }
-        }
+    read_rpc_json_matching(&mut lines, "prompt completion", |value| {
+        value["type"] == "agent_end"
     })
-    .await
-    .expect("prompt completion");
+    .await;
 
     let reject_command = serde_json::json!({
         "id": "r1",
@@ -1202,41 +1307,23 @@ display_name = "Coder"
         .await
         .unwrap();
 
-    let reject_response = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before reject_delegation response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "reject_delegation" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("reject_delegation response");
+    let reject_response =
+        read_rpc_json_matching(&mut lines, "reject_delegation response", |value| {
+            value["type"] == "response" && value["command"] == "reject_delegation"
+        })
+        .await;
     assert_eq!(reject_response["success"], true);
     assert_eq!(reject_response["data"]["reason"], "not now");
 
-    let rejected_event = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before delegation_rejected event");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "delegation_rejected" {
-                break value;
-            }
-        }
+    let rejected_event = read_rpc_json_matching(&mut lines, "delegation_rejected event", |value| {
+        value["type"] == "delegation_rejected"
     })
-    .await
-    .expect("delegation_rejected event");
+    .await;
     assert_eq!(rejected_event["targetId"], "coder");
     assert_eq!(rejected_event["reason"], "not now");
 
     drop(input_writer);
     task.await.unwrap();
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -1268,7 +1355,7 @@ async fn rpc_approve_delegation_rejects_unknown_pending_request() {
 async fn rpc_state_reports_agent_invocation_busy_while_running() {
     let api = "pi-coding-rpc-invoke-agent-busy";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -1302,12 +1389,11 @@ async fn rpc_state_reports_agent_invocation_busy_while_running() {
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let invoke_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
-        .await
-        .expect("invoke_agent response before provider completes")
-        .unwrap()
-        .unwrap();
-    let invoke_response: serde_json::Value = serde_json::from_str(&invoke_response).unwrap();
+    let invoke_response = read_rpc_json_line(
+        &mut lines,
+        "invoke_agent response before provider completes",
+    )
+    .await;
     assert_eq!(invoke_response["success"], true);
 
     input_writer
@@ -1315,19 +1401,12 @@ async fn rpc_state_reports_agent_invocation_busy_while_running() {
         .await
         .unwrap();
 
-    let state = tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before get_state response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "get_state" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("state response while agent invocation is running");
+    let state = read_rpc_json_matching(
+        &mut lines,
+        "state response while agent invocation is running",
+        |value| value["type"] == "response" && value["command"] == "get_state",
+    )
+    .await;
 
     release.notify_one();
     drop(input_writer);
@@ -1355,7 +1434,6 @@ async fn rpc_state_reports_agent_invocation_busy_while_running() {
         capabilities["selfHealingEdit"]["reason"],
         "requires persistent Rust-native session"
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -1382,7 +1460,8 @@ members = ["coder"]
     );
 
     let api = "pi-coding-rpc-invoke-team";
-    registry::register(api, Arc::new(FauxProvider::simple_text("member result")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("member result")));
     let input =
         br#"{"id":"t1","type":"invoke_team","teamId":"implementation","task":"ship feature"}
 "#;
@@ -1421,7 +1500,6 @@ members = ["coder"]
     assert!(lines.iter().any(|line| line["type"] == "agent_team_end"));
     assert!(lines.iter().any(|line| line["type"] == "agent_end"));
     assert!(String::from_utf8_lossy(&output).contains("member result"));
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -1466,7 +1544,7 @@ members = ["default"]
 
     let api = "pi-coding-rpc-invoke-team-busy";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -1500,12 +1578,8 @@ members = ["default"]
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let invoke_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
-        .await
-        .expect("invoke_team response before provider completes")
-        .unwrap()
-        .unwrap();
-    let invoke_response: serde_json::Value = serde_json::from_str(&invoke_response).unwrap();
+    let invoke_response =
+        read_rpc_json_line(&mut lines, "invoke_team response before provider completes").await;
     assert_eq!(invoke_response["success"], true);
 
     input_writer
@@ -1513,19 +1587,12 @@ members = ["default"]
         .await
         .unwrap();
 
-    let state = tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before get_state response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "get_state" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("state response while agent team is running");
+    let state = read_rpc_json_matching(
+        &mut lines,
+        "state response while agent team is running",
+        |value| value["type"] == "response" && value["command"] == "get_state",
+    )
+    .await;
 
     release.notify_one();
     drop(input_writer);
@@ -1542,7 +1609,6 @@ members = ["default"]
     assert_eq!(capabilities["teamProfiles"]["operation"], "agent_team");
     assert_eq!(capabilities["delegation"]["status"], "busy");
     assert_eq!(capabilities["delegation"]["operation"], "agent_team");
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -1647,7 +1713,7 @@ async fn rpc_set_default_agent_profile_rejects_unknown_profile() {
 async fn rpc_set_default_agent_profile_rejects_while_prompt_running() {
     let api = "pi-coding-rpc-set-default-agent-busy";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -1679,12 +1745,8 @@ async fn rpc_set_default_agent_profile_rejects_while_prompt_running() {
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let prompt_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
-        .await
-        .expect("prompt response before provider completes")
-        .unwrap()
-        .unwrap();
-    let prompt_response: serde_json::Value = serde_json::from_str(&prompt_response).unwrap();
+    let prompt_response =
+        read_rpc_json_line(&mut lines, "prompt response before provider completes").await;
     assert_eq!(prompt_response["success"], true);
 
     input_writer
@@ -1694,19 +1756,12 @@ async fn rpc_set_default_agent_profile_rejects_while_prompt_running() {
         .await
         .unwrap();
 
-    let response = tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before set_default_agent_profile response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "set_default_agent_profile" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("set_default_agent_profile rejection while prompt is running");
+    let response = read_rpc_json_matching(
+        &mut lines,
+        "set_default_agent_profile rejection while prompt is running",
+        |value| value["type"] == "response" && value["command"] == "set_default_agent_profile",
+    )
+    .await;
 
     release.notify_one();
     drop(input_writer);
@@ -1718,14 +1773,13 @@ async fn rpc_set_default_agent_profile_rejects_while_prompt_running() {
         response["error"],
         "cannot set default agent profile while agent is streaming"
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_list_agent_profiles_rejects_while_prompt_running() {
     let api = "pi-coding-rpc-list-agents-busy";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -1757,12 +1811,8 @@ async fn rpc_list_agent_profiles_rejects_while_prompt_running() {
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let prompt_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
-        .await
-        .expect("prompt response before provider completes")
-        .unwrap()
-        .unwrap();
-    let prompt_response: serde_json::Value = serde_json::from_str(&prompt_response).unwrap();
+    let prompt_response =
+        read_rpc_json_line(&mut lines, "prompt response before provider completes").await;
     assert_eq!(prompt_response["success"], true);
 
     input_writer
@@ -1770,19 +1820,12 @@ async fn rpc_list_agent_profiles_rejects_while_prompt_running() {
         .await
         .unwrap();
 
-    let response = tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before list_agent_profiles response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "list_agent_profiles" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("list_agent_profiles rejection while prompt is running");
+    let response = read_rpc_json_matching(
+        &mut lines,
+        "list_agent_profiles rejection while prompt is running",
+        |value| value["type"] == "response" && value["command"] == "list_agent_profiles",
+    )
+    .await;
 
     release.notify_one();
     drop(input_writer);
@@ -1794,14 +1837,13 @@ async fn rpc_list_agent_profiles_rejects_while_prompt_running() {
         response["error"],
         "cannot list agent profiles while agent is streaming"
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_state_reports_prompt_busy_while_running() {
     let api = "pi-coding-rpc-capabilities-busy";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -1833,12 +1875,8 @@ async fn rpc_state_reports_prompt_busy_while_running() {
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let prompt_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
-        .await
-        .expect("prompt response before provider completes")
-        .unwrap()
-        .unwrap();
-    let prompt_response: serde_json::Value = serde_json::from_str(&prompt_response).unwrap();
+    let prompt_response =
+        read_rpc_json_line(&mut lines, "prompt response before provider completes").await;
     assert_eq!(prompt_response["success"], true);
 
     input_writer
@@ -1846,19 +1884,10 @@ async fn rpc_state_reports_prompt_busy_while_running() {
         .await
         .unwrap();
 
-    let state = tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before get_state response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "get_state" {
-                break value;
-            }
-        }
+    let state = read_rpc_json_matching(&mut lines, "get_state response", |value| {
+        value["type"] == "response" && value["command"] == "get_state"
     })
-    .await
-    .expect("state response while prompt is running");
+    .await;
 
     release.notify_one();
     drop(input_writer);
@@ -1882,13 +1911,13 @@ async fn rpc_state_reports_prompt_busy_while_running() {
         capabilities["selfHealingEdit"]["reason"],
         "requires persistent Rust-native session"
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_parse_error_keeps_process_alive_for_next_command() {
     let api = "pi-coding-rpc-parse";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
 
     let input = b"{bad json}\n{\"id\":\"s1\",\"type\":\"get_state\"}\n";
     let mut output = Vec::new();
@@ -1912,7 +1941,6 @@ async fn rpc_parse_error_keeps_process_alive_for_next_command() {
     assert_eq!(lines[1]["id"], "s1");
     assert_eq!(lines[1]["command"], "get_state");
     assert_eq!(lines[1]["success"], true);
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -1948,7 +1976,8 @@ async fn rpc_uses_settings_default_model_when_no_override_is_provided() {
 #[tokio::test]
 async fn rpc_unsupported_command_returns_error_response() {
     let api = "pi-coding-rpc-unsupported";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
 
     let input = b"{\"id\":\"m1\",\"type\":\"set_model\",\"provider\":\"faux\",\"modelId\":\"x\"}\n";
     let mut output = Vec::new();
@@ -1973,7 +2002,6 @@ async fn rpc_unsupported_command_returns_error_response() {
         lines[0]["error"],
         "unsupported command in Rust M5: set_model"
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -1997,7 +2025,8 @@ runtime = "lua"
     session_options.session_dir = Some(sessions);
 
     let api = "pi-coding-rpc-reload";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
     let input = br#"{"id":"r1","type":"reload"}
 "#;
     let mut output = Vec::new();
@@ -2023,7 +2052,6 @@ runtime = "lua"
         diagnostic["pluginId"] == "project-lua"
             && diagnostic["message"] == "Lua plugin entry is required"
     }));
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -2063,7 +2091,8 @@ end
     session_options.session_dir = Some(sessions);
 
     let api = "pi-coding-rpc-plugin-command";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
     let input = br#"{"id":"r1","type":"reload"}
 {"id":"c1","type":"plugin_command","commandId":"lua.say_hello","args":{"name":"rpc"}}
 "#;
@@ -2090,13 +2119,13 @@ end
     assert_eq!(lines[1]["success"], true);
     assert_eq!(lines[1]["data"]["commandId"], "lua.say_hello");
     assert_eq!(lines[1]["data"]["output"], "hello rpc");
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_prompt_returns_response_then_agent_events() {
     let api = "pi-coding-rpc-prompt";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello")));
 
     let input = b"{\"id\":\"p1\",\"type\":\"prompt\",\"message\":\"hello\"}\n";
     let mut output = Vec::new();
@@ -2119,14 +2148,13 @@ async fn rpc_prompt_returns_response_then_agent_events() {
     assert_eq!(lines[0]["success"], true);
     assert!(lines.iter().any(|line| line["type"] == "agent_start"));
     assert!(lines.iter().any(|line| line["type"] == "agent_end"));
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_streams_agent_events_before_prompt_finishes() {
     let api = "pi-coding-rpc-live-events";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -2158,28 +2186,17 @@ async fn rpc_streams_agent_events_before_prompt_finishes() {
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let response_line = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
-        .await
-        .expect("prompt response before provider completes")
-        .unwrap()
-        .unwrap();
-    let response: serde_json::Value = serde_json::from_str(&response_line).unwrap();
+    let response =
+        read_rpc_json_line(&mut lines, "prompt response before provider completes").await;
     assert_eq!(response["id"], "p1");
     assert_eq!(response["command"], "prompt");
     assert_eq!(response["success"], true);
 
-    let event_line = tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await;
+    let event = read_rpc_json_line(&mut lines, "agent event before prompt finishes").await;
     release.notify_one();
     drop(input_writer);
     task.await.unwrap();
-
-    let event_line = event_line
-        .expect("agent event before prompt finishes")
-        .unwrap()
-        .unwrap();
-    let event: serde_json::Value = serde_json::from_str(&event_line).unwrap();
     assert_eq!(event["type"], "agent_start");
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -2187,7 +2204,7 @@ async fn rpc_abort_cancels_running_prompt() {
     let api = "pi-coding-rpc-abort";
     let cancelled = Arc::new(AtomicBool::new(false));
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(AbortAwareProvider {
             cancelled: Arc::clone(&cancelled),
@@ -2219,12 +2236,8 @@ async fn rpc_abort_cancels_running_prompt() {
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let prompt_response = tokio::time::timeout(Duration::from_millis(250), lines.next_line())
-        .await
-        .expect("prompt response before provider completes")
-        .unwrap()
-        .unwrap();
-    let prompt_response: serde_json::Value = serde_json::from_str(&prompt_response).unwrap();
+    let prompt_response =
+        read_rpc_json_line(&mut lines, "prompt response before provider completes").await;
     assert_eq!(prompt_response["success"], true);
 
     input_writer
@@ -2232,40 +2245,27 @@ async fn rpc_abort_cancels_running_prompt() {
         .await
         .unwrap();
 
-    let abort_response = tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before abort response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "abort" {
-                break value;
-            }
-        }
-    })
+    let abort_response = read_rpc_json_matching(
+        &mut lines,
+        "abort response while prompt is running",
+        |value| value["type"] == "response" && value["command"] == "abort",
+    )
     .await;
 
     drop(input_writer);
-    let task_result = tokio::time::timeout(Duration::from_millis(500), task).await;
-    if task_result.is_err() {
-        release.notify_one();
-        panic!("rpc task did not finish after abort");
-    }
-    task_result.unwrap().unwrap();
+    await_rpc_task_completion(task, &release, "rpc task to finish after abort").await;
 
-    let abort_response = abort_response.expect("abort response while prompt is running");
     assert_eq!(abort_response["id"], "a1");
     assert_eq!(abort_response["success"], true);
     assert_eq!(abort_response["data"]["cancelled"], true);
     assert!(cancelled.load(Ordering::SeqCst));
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_steer_while_coding_prompt_running_sends_control() {
     let api = "pi-coding-rpc-steer-live";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -2296,46 +2296,31 @@ async fn rpc_steer_while_coding_prompt_running_sends_control() {
         .await
         .unwrap();
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let _ = lines.next_line().await.unwrap().unwrap();
-    let _ = lines.next_line().await.unwrap().unwrap();
+    let _ = read_rpc_line(&mut lines, "initial prompt response").await;
+    let _ = read_rpc_line(&mut lines, "initial agent_start event").await;
 
     input_writer
         .write_all(b"{\"id\":\"s1\",\"type\":\"steer\",\"message\":\"look here\"}\n")
         .await
         .unwrap();
 
-    let response = tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before steer response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "steer" {
-                break value;
-            }
-        }
-    })
+    let response = read_rpc_json_matching(
+        &mut lines,
+        "steer response while prompt is running",
+        |value| value["type"] == "response" && value["command"] == "steer",
+    )
     .await;
 
-    let response = response.expect("steer response while prompt is running");
     assert_eq!(response["success"], true);
     release.notify_one();
     drop(input_writer);
-    tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before agent_end");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "agent_end" {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("agent_end after releasing paused provider");
+    read_rpc_json_matching(
+        &mut lines,
+        "agent_end after releasing paused provider",
+        |value| value["type"] == "agent_end",
+    )
+    .await;
     task.await.unwrap();
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -2344,7 +2329,7 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
     let contexts = Arc::new(Mutex::new(Vec::new()));
     let (started_tx, started_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(BlockingTwoTurnProvider::new(
             Arc::clone(&contexts),
@@ -2376,12 +2361,9 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
         .await
         .unwrap();
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let _ = lines.next_line().await.unwrap().unwrap();
-    let _ = lines.next_line().await.unwrap().unwrap();
-    tokio::time::timeout(Duration::from_millis(250), started_rx)
-        .await
-        .expect("provider first turn started")
-        .unwrap();
+    let _ = read_rpc_line(&mut lines, "initial prompt response").await;
+    let _ = read_rpc_line(&mut lines, "initial agent_start event").await;
+    wait_for_rpc_provider_start(started_rx, "provider first turn to start").await;
 
     input_writer
         .write_all(
@@ -2390,36 +2372,22 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
         .await
         .unwrap();
 
-    let response = tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before follow-up response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["id"] == "f1" {
-                break value;
-            }
-        }
-    })
+    let response = read_rpc_json_matching(
+        &mut lines,
+        "follow-up response while prompt is running",
+        |value| value["type"] == "response" && value["id"] == "f1",
+    )
     .await;
 
-    let response = response.expect("follow-up response while prompt is running");
     assert_eq!(response["success"], true);
     release_tx.send(()).unwrap();
     drop(input_writer);
-    tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before agent_end");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "agent_end" {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("agent_end after releasing paused provider");
+    read_rpc_json_matching(
+        &mut lines,
+        "agent_end after releasing paused provider",
+        |value| value["type"] == "agent_end",
+    )
+    .await;
     task.await.unwrap();
 
     let contexts = contexts.lock().unwrap();
@@ -2436,14 +2404,13 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
         "{:#?}",
         contexts[1].messages
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_plain_prompt_while_running_returns_error() {
     let api = "pi-coding-rpc-running-prompt-error";
     let release = Arc::new(Notify::new());
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(PausingProvider {
             release: Arc::clone(&release),
@@ -2474,44 +2441,37 @@ async fn rpc_plain_prompt_while_running_returns_error() {
         .await
         .unwrap();
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    let _ = lines.next_line().await.unwrap().unwrap();
-    let _ = lines.next_line().await.unwrap().unwrap();
+    let _ = read_rpc_line(&mut lines, "initial prompt response").await;
+    let _ = read_rpc_line(&mut lines, "initial agent_start event").await;
 
     input_writer
         .write_all(b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"second\"}\n")
         .await
         .unwrap();
 
-    let response = tokio::time::timeout(Duration::from_millis(250), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before second prompt response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["id"] == "p2" {
-                break value;
-            }
-        }
-    })
+    let response = read_rpc_json_matching(
+        &mut lines,
+        "plain prompt rejection while prompt is running",
+        |value| value["type"] == "response" && value["id"] == "p2",
+    )
     .await;
 
     release.notify_one();
     drop(input_writer);
     task.await.unwrap();
 
-    let response = response.expect("plain prompt rejection while prompt is running");
     assert_eq!(response["success"], false);
     assert_eq!(
         response["error"],
         "agent is streaming; prompt requires streamingBehavior steer or followUp"
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn rpc_state_commands_update_get_state() {
     let api = "pi-coding-rpc-state";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
 
     let input = b"{\"id\":\"t1\",\"type\":\"set_thinking_level\",\"level\":\"high\"}\n\
                   {\"id\":\"q1\",\"type\":\"set_steering_mode\",\"mode\":\"one-at-a-time\"}\n\
@@ -2537,5 +2497,4 @@ async fn rpc_state_commands_update_get_state() {
         .unwrap();
     assert_eq!(state["data"]["thinkingLevel"], "high");
     assert_eq!(state["data"]["steeringMode"], "one-at-a-time");
-    registry::unregister(api);
 }

@@ -1,6 +1,8 @@
+mod support;
+
 use pi_agent_core::ThinkingLevel;
 use pi_ai::EventStream;
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
@@ -19,6 +21,7 @@ use pi_coding_agent::runtime::select_model;
 use pi_coding_agent::tools::{ToolFilter, builtin_tools, filter_tools};
 use pi_coding_agent::{PrintModeOptions, PromptInvocation, run_print_mode};
 use std::sync::{Arc, Mutex};
+use support::ProviderGuard;
 
 #[test]
 fn discovers_global_and_ancestor_context_files_in_priority_order() {
@@ -387,9 +390,8 @@ impl ApiProvider for RecordingProvider {
 #[tokio::test]
 async fn multimodal_prompt_content_reaches_provider_context() {
     let api = "m10-multimodal-provider";
-    registry::unregister(api);
     let contexts = Arc::new(Mutex::new(Vec::new()));
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(RecordingProvider {
             contexts: contexts.clone(),
@@ -424,7 +426,6 @@ async fn multimodal_prompt_content_reaches_provider_context() {
     })
     .await
     .unwrap();
-    registry::unregister(api);
 
     assert_eq!(output, "ok");
     let contexts = contexts.lock().unwrap();

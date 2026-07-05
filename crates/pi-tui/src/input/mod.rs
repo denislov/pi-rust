@@ -7,8 +7,8 @@ pub use key::{
     matches_key, parse_key, set_kitty_protocol_active,
 };
 pub use keybindings::{
-    KeybindingConflict, KeybindingDefinition, KeybindingsConfig, KeybindingsManager,
-    TUI_KEYBINDINGS,
+    GENERIC_TUI_KEYBINDINGS, KeybindingConflict, KeybindingDefinition, KeybindingsConfig,
+    KeybindingsManager, TUI_KEYBINDINGS,
 };
 pub use stdin_buffer::StdinBuffer;
 

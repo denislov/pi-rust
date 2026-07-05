@@ -1,5 +1,9 @@
+// global provider runtime compatibility example.
 // Manual test: run pi-coding-agent with a faux provider.
 // No API key needed — uses scripted responses.
+// This example exercises run_print_mode(), which currently reaches providers
+// through pi-coding-agent's runtime compatibility boundary. Direct
+// provider-facing examples should prefer scoped pi_ai::api::ProviderRegistry/AiClient.
 //
 // Usage:
 //   cargo run -p pi-coding-agent --example manual_test
@@ -13,6 +17,7 @@ use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::{PrintModeOptions, run_print_mode};
 use std::sync::Arc;
 
+#[allow(deprecated)]
 #[tokio::main]
 async fn main() {
     let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");

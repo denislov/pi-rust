@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use pi_agent_core::session::SessionTreeNode;
+use pi_agent_core::transcript::SessionTreeNode;
 
 use crate::coding_session::operation_control::OperationKind;
-use crate::coding_session::profiles::ProfileId;
+use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use crate::plugins::PluginCapabilities;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -111,6 +111,16 @@ pub(crate) enum CodingAgentSessionTranscriptItem {
         args: serde_json::Value,
         result: Option<String>,
         is_error: bool,
+    },
+    Delegation {
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        status: String,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
     },
     CompactionSummary {
         summary: String,

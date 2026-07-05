@@ -1,4 +1,5 @@
-use crate::session::{SessionEntry, SessionError, SessionErrorCode, StoredAgentMessage};
+use crate::session_context::{SessionError, SessionErrorCode};
+use crate::transcript::{SessionEntry, StoredAgentMessage};
 use crate::types::AgentMessage;
 use pi_ai::types::{AssistantMessage, ContentBlock, Cost, Usage};
 use std::collections::HashMap;
@@ -330,7 +331,7 @@ pub fn build_session_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::SessionEntry;
+    use crate::transcript::{SessionEntry, StoredUsage, StoredUsageCost};
     use pi_ai::types::ContentBlock;
     use serde_json::Map;
 
@@ -373,13 +374,13 @@ mod tests {
                 model: "faux-model".into(),
                 response_model: None,
                 response_id: None,
-                usage: crate::session::StoredUsage {
+                usage: StoredUsage {
                     input: total_tokens,
                     output: 0,
                     cache_read: 0,
                     cache_write: 0,
                     total: total_tokens,
-                    cost: crate::session::StoredUsageCost::default(),
+                    cost: StoredUsageCost::default(),
                 },
                 stop_reason: pi_ai::types::StopReason::Stop,
                 error_message: None,

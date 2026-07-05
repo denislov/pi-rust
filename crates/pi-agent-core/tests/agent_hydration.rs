@@ -1,16 +1,15 @@
 mod common;
 
-use common::faux_model;
+use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
 use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn prompt_starts_after_hydrated_messages() {
     let api = "agent-hydration-history";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::new(vec![common::faux_text_turn(
             "second answer",
@@ -37,5 +36,4 @@ async fn prompt_starts_after_hydrated_messages() {
     assert_eq!(baseline, 1);
     assert!(matches!(messages[0], AgentMessage::UserText { .. }));
     assert!(messages.len() >= 3);
-    registry::unregister(api);
 }

@@ -1,7 +1,8 @@
+use crate::ai_runtime::stream_model_with_global_runtime;
 use crate::compaction::estimate::estimate_tokens;
 use crate::convert::convert_to_context;
 use crate::errors::{BranchSummaryError, BranchSummaryErrorCode};
-use crate::session::{SessionEntry, StoredAgentMessage};
+use crate::transcript::{SessionEntry, StoredAgentMessage};
 use crate::types::{AgentMessage, AgentResources};
 use pi_ai::types::{ContentBlock, Model, StopReason, StreamOptions};
 use std::collections::{BTreeSet, HashMap};
@@ -200,7 +201,7 @@ pub async fn generate_branch_summary(
         &[],
         &AgentResources::default(),
     );
-    let mut stream = pi_ai::stream_model(
+    let mut stream = stream_model_with_global_runtime(
         &options.model,
         context,
         Some(StreamOptions {

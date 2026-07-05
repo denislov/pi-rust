@@ -1,9 +1,15 @@
 use futures::StreamExt;
+use pi_ai::api::{ApiProvider, ProviderRegistry};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_ai::registry;
 use pi_ai::stream::complete;
 use pi_ai::types::*;
 use std::sync::Arc;
+
+fn faux_registry(api: &str, provider: Arc<dyn ApiProvider>) -> ProviderRegistry {
+    let registry = ProviderRegistry::new();
+    registry.register(api, provider);
+    registry
+}
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -31,11 +37,10 @@ fn faux_model(api: &str) -> Model {
 #[tokio::test]
 async fn faux_simple_text() {
     let api = "faux-api-simple-text";
-    let provider = Arc::new(FauxProvider::simple_text("Hello from faux!"));
-    registry::register(api, provider);
+    let registry = faux_registry(api, Arc::new(FauxProvider::simple_text("Hello from faux!")));
 
     let model = faux_model(api);
-    let stream = registry::stream_model(
+    let stream = registry.stream_model(
         &model,
         Context {
             system_prompt: None,
@@ -64,27 +69,27 @@ async fn faux_simple_text() {
         }
         other => panic!("expected Done, got {:?}", other),
     }
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn faux_with_tool_call() {
     let api = "faux-api-tool-call";
-    let provider = Arc::new(FauxProvider::new(vec![FauxResponse {
-        text_deltas: vec![],
-        thinking_deltas: vec![],
-        tool_calls: vec![FauxToolCall {
-            id: "call_1".into(),
-            name: "read_file".into(),
-            deltas: vec!["{\"path\":".into(), "\"/x\"}".into()],
-            final_arguments: serde_json::json!({"path": "/x"}),
-        }],
-    }]));
-    registry::register(api, provider);
+    let registry = faux_registry(
+        api,
+        Arc::new(FauxProvider::new(vec![FauxResponse {
+            text_deltas: vec![],
+            thinking_deltas: vec![],
+            tool_calls: vec![FauxToolCall {
+                id: "call_1".into(),
+                name: "read_file".into(),
+                deltas: vec!["{\"path\":".into(), "\"/x\"}".into()],
+                final_arguments: serde_json::json!({"path": "/x"}),
+            }],
+        }])),
+    );
 
     let model = faux_model(api);
-    let stream = registry::stream_model(
+    let stream = registry.stream_model(
         &model,
         Context {
             system_prompt: None,
@@ -109,17 +114,15 @@ async fn faux_with_tool_call() {
             .iter()
             .any(|e| matches!(e, AssistantMessageEvent::ToolcallEnd { .. }))
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn complete_with_faux() {
     let api = "faux-api-complete";
-    let provider = Arc::new(FauxProvider::simple_text("complete test"));
-    registry::register(api, provider);
+    let registry = faux_registry(api, Arc::new(FauxProvider::simple_text("complete test")));
 
     let model = faux_model(api);
-    let stream = registry::stream_model(
+    let stream = registry.stream_model(
         &model,
         Context {
             system_prompt: None,
@@ -131,30 +134,32 @@ async fn complete_with_faux() {
     let result = complete(stream).await.unwrap();
     assert_eq!(result.stop_reason, StopReason::Stop);
     assert!(!result.content.is_empty());
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn faux_call_queue_with_tool_use() {
-    let provider = Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
-        responses: vec![FauxResponse {
-            text_deltas: vec![],
-            thinking_deltas: vec![],
-            tool_calls: vec![FauxToolCall {
-                id: "toolu_01".into(),
-                name: "search".into(),
-                deltas: vec!["{\"q\":".into(), "\"rust\"}".into()],
-                final_arguments: serde_json::json!({"q": "rust"}),
+    let api = "faux-call-queue";
+    let registry = faux_registry(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
+            responses: vec![FauxResponse {
+                text_deltas: vec![],
+                thinking_deltas: vec![],
+                tool_calls: vec![FauxToolCall {
+                    id: "toolu_01".into(),
+                    name: "search".into(),
+                    deltas: vec!["{\"q\":".into(), "\"rust\"}".into()],
+                    final_arguments: serde_json::json!({"q": "rust"}),
+                }],
             }],
-        }],
-        stop_reason: StopReason::ToolUse,
-    }]));
-    registry::register("faux-call-queue", provider);
+            stop_reason: StopReason::ToolUse,
+        }])),
+    );
 
     let model = Model {
         id: "faux-model".into(),
         name: "Faux".into(),
-        api: "faux-call-queue".into(),
+        api: api.into(),
         provider: "faux".into(),
         base_url: "".into(),
         reasoning: false,
@@ -177,7 +182,7 @@ async fn faux_call_queue_with_tool_use() {
         tools: None,
     };
 
-    let stream = registry::stream_model(&model, ctx, None);
+    let stream = registry.stream_model(&model, ctx, None);
     let events: Vec<_> = stream.collect().await;
 
     let last = events.last().unwrap();
@@ -187,6 +192,4 @@ async fn faux_call_queue_with_tool_use() {
         }
         other => panic!("expected Done with ToolUse, got {:?}", other),
     }
-
-    registry::unregister("faux-call-queue");
 }

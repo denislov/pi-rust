@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use pi_agent_core::session::{SessionEntry, SessionTreeNode, StoredAgentMessage};
+use pi_agent_core::transcript::{SessionEntry, SessionTreeNode, StoredAgentMessage};
 use pi_ai::types::ContentBlock;
 
+use super::event_service::EventService;
 use super::export_flow::{ExportContext, ExportOptions};
-use super::prompt::PromptTurnTransaction;
+use super::prompt::{PromptTurnOutcome, PromptTurnTransaction};
 use super::session_log::event::{
     OperationKind, PersistedContentBlock, PersistedDelegationRuntimeSeed,
-    PersistedPluginDiagnostic, SessionEventData, SessionEventEnvelope,
+    PersistedDelegationStatus, PersistedPluginDiagnostic, SessionEventData, SessionEventEnvelope,
 };
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
@@ -359,6 +360,29 @@ impl SessionService {
         )
     }
 
+    pub(crate) fn finalize_prompt_transaction(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        outcome: &PromptTurnOutcome,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let operation_id = operation_id.into();
+        match outcome {
+            PromptTurnOutcome::Success { .. } => {
+                self.commit_prompt_transaction(transaction, operation_id)
+            }
+            PromptTurnOutcome::Aborted { reason, .. } => {
+                self.abort_prompt_transaction(transaction, operation_id, reason.clone())
+            }
+            PromptTurnOutcome::Failed { error, .. } => self.fail_prompt_transaction(
+                transaction,
+                operation_id,
+                error.code(),
+                error.to_string(),
+            ),
+        }
+    }
+
     pub(crate) fn commit_prompt_transaction(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -375,15 +399,15 @@ impl SessionService {
         let operation_id = transaction.operation_id().to_owned();
         let session_id = self.session_id().to_owned();
         let new_leaf_id = Some(Self::next_leaf_id());
-        let mut events = vec![CodingAgentEvent::SessionWritePending {
-            operation_id: operation_id.clone(),
-        }];
+        let mut events = vec![EventService::session_write_pending_event(
+            operation_id.clone(),
+        )];
         transaction.commit(new_leaf_id.clone())?;
         self.handle = self.store.open_session_id(&session_id)?;
-        events.push(CodingAgentEvent::SessionWriteCommitted {
+        events.push(EventService::session_write_committed_event(
             operation_id,
-            session_id: session_id.clone(),
-        });
+            session_id.clone(),
+        ));
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -408,14 +432,14 @@ impl SessionService {
 
         let operation_id = transaction.operation_id().to_owned();
         let session_id = self.session_id().to_owned();
-        let mut events = vec![CodingAgentEvent::SessionWritePending {
-            operation_id: operation_id.clone(),
-        }];
+        let mut events = vec![EventService::session_write_pending_event(
+            operation_id.clone(),
+        )];
         transaction.fail(error_code, message)?;
-        events.push(CodingAgentEvent::SessionWriteCommitted {
+        events.push(EventService::session_write_committed_event(
             operation_id,
-            session_id: session_id.clone(),
-        });
+            session_id.clone(),
+        ));
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -519,19 +543,19 @@ impl SessionService {
 
         let operation_id = transaction.operation_id().to_owned();
         let session_id = self.session_id().to_owned();
-        let mut events = vec![CodingAgentEvent::SessionWritePending {
-            operation_id: operation_id.clone(),
-        }];
+        let mut events = vec![EventService::session_write_pending_event(
+            operation_id.clone(),
+        )];
         transaction.commit(None)?;
         self.store.update_manifest(
             &self.handle,
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
         )?;
         self.handle = self.store.open_session_id(&session_id)?;
-        events.push(CodingAgentEvent::SessionWriteCommitted {
+        events.push(EventService::session_write_committed_event(
             operation_id,
-            session_id: session_id.clone(),
-        });
+            session_id.clone(),
+        ));
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -557,19 +581,19 @@ impl SessionService {
 
         let operation_id = transaction.operation_id().to_owned();
         let session_id = self.session_id().to_owned();
-        let mut events = vec![CodingAgentEvent::SessionWritePending {
-            operation_id: operation_id.clone(),
-        }];
+        let mut events = vec![EventService::session_write_pending_event(
+            operation_id.clone(),
+        )];
         transaction.fail(error_code, message)?;
         self.store.update_manifest(
             &self.handle,
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
         )?;
         self.handle = self.store.open_session_id(&session_id)?;
-        events.push(CodingAgentEvent::SessionWriteCommitted {
+        events.push(EventService::session_write_committed_event(
             operation_id,
-            session_id: session_id.clone(),
-        });
+            session_id.clone(),
+        ));
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -626,14 +650,14 @@ impl SessionService {
 
         let operation_id = transaction.operation_id().to_owned();
         let session_id = self.session_id().to_owned();
-        let mut events = vec![CodingAgentEvent::SessionWritePending {
-            operation_id: operation_id.clone(),
-        }];
+        let mut events = vec![EventService::session_write_pending_event(
+            operation_id.clone(),
+        )];
         transaction.abort(reason)?;
-        events.push(CodingAgentEvent::SessionWriteCommitted {
+        events.push(EventService::session_write_committed_event(
             operation_id,
-            session_id: session_id.clone(),
-        });
+            session_id.clone(),
+        ));
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -817,10 +841,10 @@ impl SessionService {
         reason: impl Into<String>,
     ) -> FinalizedSessionWrite {
         FinalizedSessionWrite {
-            events: vec![CodingAgentEvent::SessionWriteSkipped {
-                operation_id: operation_id.into(),
-                reason: reason.into(),
-            }],
+            events: vec![EventService::session_write_skipped_event(
+                operation_id,
+                reason,
+            )],
             session_id: None,
             leaf_id: None,
         }
@@ -1109,6 +1133,25 @@ fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessio
             },
             is_error: matches!(status, ToolCallStatus::Failed),
         },
+        TranscriptItem::DelegationBlock {
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            status,
+            child_operation_id,
+            summary,
+        } => CodingAgentSessionTranscriptItem::Delegation {
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            status: delegation_status_label(status).into(),
+            child_operation_id,
+            summary,
+        },
         TranscriptItem::CompactionSummary { summary, .. } => {
             CodingAgentSessionTranscriptItem::CompactionSummary { summary }
         }
@@ -1118,6 +1161,17 @@ fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessio
         TranscriptItem::Diagnostic { message, .. } => {
             CodingAgentSessionTranscriptItem::Diagnostic { message }
         }
+    }
+}
+
+fn delegation_status_label(status: PersistedDelegationStatus) -> &'static str {
+    match status {
+        PersistedDelegationStatus::Requested => "requested",
+        PersistedDelegationStatus::Running => "running",
+        PersistedDelegationStatus::Completed => "completed",
+        PersistedDelegationStatus::Failed => "failed",
+        PersistedDelegationStatus::Rejected => "rejected",
+        PersistedDelegationStatus::ConfirmationRequired => "confirmation_required",
     }
 }
 

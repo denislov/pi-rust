@@ -1,12 +1,14 @@
+mod support;
+
 use pi_agent_core::{AgentResources, ThinkingLevel, ToolExecutionMode};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::{
     CliRunOptions, PrintModeOptions, PromptInvocation, build_agent_config, run_cli_with_options,
     run_print_mode,
 };
 use std::sync::Arc;
+use support::ProviderGuard;
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -110,7 +112,7 @@ fn prompt_invocation_template_variant_holds_name_and_args() {
 #[tokio::test]
 async fn print_mode_runs_with_thinking_flag() {
     let api = "pi-coding-harness-thinking";
-    registry::register(api, Arc::new(FauxProvider::simple_text("ok")));
+    let _provider_guard = ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("ok")));
 
     let output = run_print_mode(PrintModeOptions {
         prompt: "hi".into(),
@@ -133,13 +135,12 @@ async fn print_mode_runs_with_thinking_flag() {
     .unwrap();
 
     assert_eq!(output, "ok");
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn cli_accepts_thinking_flag() {
     let api = "pi-coding-harness-cli-thinking";
-    registry::register(api, Arc::new(FauxProvider::simple_text("done")));
+    let _provider_guard = ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("done")));
 
     let output = run_cli_with_options(
         ["-p", "hello", "--thinking", "high"]
@@ -156,13 +157,12 @@ async fn cli_accepts_thinking_flag() {
 
     assert_eq!(output.exit_code, 0);
     assert_eq!(output.stdout.trim(), "done");
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn cli_accepts_tool_execution_flag() {
     let api = "pi-coding-harness-cli-tool-exec";
-    registry::register(api, Arc::new(FauxProvider::simple_text("done")));
+    let _provider_guard = ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("done")));
 
     let output = run_cli_with_options(
         ["-p", "hello", "--tool-execution", "sequential"]
@@ -178,13 +178,12 @@ async fn cli_accepts_tool_execution_flag() {
     .await;
 
     assert_eq!(output.exit_code, 0);
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn cli_rejects_invalid_thinking_level() {
     let api = "pi-coding-harness-cli-bad-thinking";
-    registry::register(api, Arc::new(FauxProvider::simple_text("nope")));
+    let _provider_guard = ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("nope")));
 
     let output = run_cli_with_options(
         ["-p", "hello", "--thinking", "extreme"]
@@ -201,5 +200,4 @@ async fn cli_rejects_invalid_thinking_level() {
 
     assert_eq!(output.exit_code, 1);
     assert!(!output.stderr.is_empty());
-    registry::unregister(api);
 }

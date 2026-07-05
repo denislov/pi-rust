@@ -3,9 +3,10 @@ use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
     coding_session::AgentTeamOutcome, coding_session::CodingAgentEvent,
     coding_session::CodingAgentSession, coding_session::OperationKind,
-    coding_session::PromptControlHandle, coding_session::PromptTurnOutcome, config, select_model,
+    coding_session::PromptControlHandle, coding_session::PromptTurnOutcome,
+    coding_session::register_builtin_providers_for_global_runtime, config, select_model,
 };
-use pi_agent_core::session::StoredAgentMessage;
+use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
 use pi_ai::types::Model;
 use std::path::PathBuf;
@@ -60,7 +61,7 @@ pub(super) enum CodingOperationOutcome {
 impl RpcState {
     pub(super) fn new(options: CliRunOptions) -> Result<Self, CliError> {
         if options.register_builtins {
-            pi_ai::providers::register_builtins();
+            register_builtin_providers_for_global_runtime();
         }
         let cwd = options.session.cwd.clone();
         let (config, config_diags) = config::load_config(&cwd);

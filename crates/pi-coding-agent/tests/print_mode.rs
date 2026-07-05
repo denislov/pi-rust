@@ -1,6 +1,7 @@
+mod support;
+
 use pi_agent_core::{AgentTool, AgentToolOutput};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_ai::registry;
 use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
@@ -12,6 +13,7 @@ use pi_coding_agent::{
     SessionRunOptions, run_print_mode,
 };
 use std::sync::{Arc, Mutex};
+use support::ProviderGuard;
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -101,7 +103,7 @@ impl ApiProvider for RecordingProvider {
 #[tokio::test]
 async fn prints_single_turn_text_response() {
     let api = "pi-coding-print-text";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::new(vec![text_response("Hello")])),
     );
@@ -127,13 +129,13 @@ async fn prints_single_turn_text_response() {
     .unwrap();
 
     assert_eq!(output, "Hello");
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn disabled_session_print_uses_non_persistent_runtime_without_session_files() {
     let api = "pi-coding-print-disabled-session";
-    registry::register(api, Arc::new(FauxProvider::simple_text("No files")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("No files")));
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
@@ -165,13 +167,12 @@ async fn disabled_session_print_uses_non_persistent_runtime_without_session_file
 
     assert_eq!(output, "No files");
     assert!(!sessions_dir.exists());
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn treats_length_as_successful_final_text() {
     let api = "pi-coding-print-length";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
             responses: vec![text_response("Partial final text")],
@@ -200,13 +201,12 @@ async fn treats_length_as_successful_final_text() {
     .unwrap();
 
     assert_eq!(output, "Partial final text");
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn returns_agent_failure_on_error_stop_reason() {
     let api = "pi-coding-print-error";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
             responses: vec![FauxResponse {
@@ -239,13 +239,12 @@ async fn returns_agent_failure_on_error_stop_reason() {
     .unwrap_err();
 
     assert_eq!(error, CliError::AgentFailure("LLM error".into()));
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn supports_tool_call_loop_with_injected_tool() {
     let api = "pi-coding-print-tool-loop";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxCall {
@@ -289,13 +288,13 @@ async fn supports_tool_call_loop_with_injected_tool() {
     .unwrap();
 
     assert_eq!(output, "Tool completed");
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn explicit_new_session_writes_rust_native_session_events() {
     let api = "pi-coding-print-rust-native-new-session";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Generated")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Generated")));
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
@@ -339,13 +338,24 @@ async fn explicit_new_session_writes_rust_native_session_events() {
     assert!(events.contains(r#""kind":"operation.committed""#));
     assert!(events.contains(r#""kind":"message.completed""#));
     assert!(!events.contains(r#""type":"session""#));
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn open_or_create_session_target_reopens_rust_native_session() {
     let first_api = "pi-coding-print-open-or-create-first";
-    registry::register(first_api, Arc::new(FauxProvider::simple_text("first")));
+    let second_api = "pi-coding-print-open-or-create-second";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            first_api.to_string(),
+            Arc::new(FauxProvider::simple_text("first")) as Arc<dyn ApiProvider>,
+        ),
+        (
+            second_api.to_string(),
+            Arc::new(RecordingProvider::new(Arc::clone(&contexts), "second"))
+                as Arc<dyn ApiProvider>,
+        ),
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
@@ -375,14 +385,6 @@ async fn open_or_create_session_target_reopens_rust_native_session() {
     .await
     .unwrap();
     assert_eq!(first, "first");
-    registry::unregister(first_api);
-
-    let second_api = "pi-coding-print-open-or-create-second";
-    let contexts = Arc::new(Mutex::new(Vec::new()));
-    registry::register(
-        second_api,
-        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "second")),
-    );
 
     let second = run_print_mode(PrintModeOptions {
         prompt: "second question".into(),
@@ -437,13 +439,24 @@ async fn open_or_create_session_target_reopens_rust_native_session() {
             }]
     ));
     assert!(sessions_dir.join("shared").join("session.json").is_file());
-    registry::unregister(second_api);
 }
 
 #[tokio::test]
 async fn open_target_reuses_existing_rust_native_session() {
     let first_api = "pi-coding-print-open-target-first";
-    registry::register(first_api, Arc::new(FauxProvider::simple_text("stored")));
+    let second_api = "pi-coding-print-open-target-second";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            first_api.to_string(),
+            Arc::new(FauxProvider::simple_text("stored")) as Arc<dyn ApiProvider>,
+        ),
+        (
+            second_api.to_string(),
+            Arc::new(RecordingProvider::new(Arc::clone(&contexts), "opened"))
+                as Arc<dyn ApiProvider>,
+        ),
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
@@ -472,14 +485,6 @@ async fn open_target_reuses_existing_rust_native_session() {
     })
     .await
     .unwrap();
-    registry::unregister(first_api);
-
-    let second_api = "pi-coding-print-open-target-second";
-    let contexts = Arc::new(Mutex::new(Vec::new()));
-    registry::register(
-        second_api,
-        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "opened")),
-    );
 
     let output = run_print_mode(PrintModeOptions {
         prompt: "continue".into(),
@@ -508,13 +513,24 @@ async fn open_target_reuses_existing_rust_native_session() {
     assert_eq!(output, "opened");
     let contexts = contexts.lock().unwrap();
     assert_eq!(contexts[0].messages.len(), 3);
-    registry::unregister(second_api);
 }
 
 #[tokio::test]
 async fn continue_most_recent_uses_rust_native_session() {
     let first_api = "pi-coding-print-continue-first";
-    registry::register(first_api, Arc::new(FauxProvider::simple_text("prior")));
+    let second_api = "pi-coding-print-continue-second";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            first_api.to_string(),
+            Arc::new(FauxProvider::simple_text("prior")) as Arc<dyn ApiProvider>,
+        ),
+        (
+            second_api.to_string(),
+            Arc::new(RecordingProvider::new(Arc::clone(&contexts), "continued"))
+                as Arc<dyn ApiProvider>,
+        ),
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
@@ -543,14 +559,6 @@ async fn continue_most_recent_uses_rust_native_session() {
     })
     .await
     .unwrap();
-    registry::unregister(first_api);
-
-    let second_api = "pi-coding-print-continue-second";
-    let contexts = Arc::new(Mutex::new(Vec::new()));
-    registry::register(
-        second_api,
-        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "continued")),
-    );
 
     let output = run_print_mode(PrintModeOptions {
         prompt: "next".into(),
@@ -579,13 +587,13 @@ async fn continue_most_recent_uses_rust_native_session() {
     assert_eq!(output, "continued");
     let contexts = contexts.lock().unwrap();
     assert_eq!(contexts[0].messages.len(), 3);
-    registry::unregister(second_api);
 }
 
 #[tokio::test]
 async fn continue_most_recent_reports_missing_rust_native_session() {
     let api = "pi-coding-print-continue-missing";
-    registry::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
@@ -619,16 +627,24 @@ async fn continue_most_recent_reports_missing_rust_native_session() {
         error,
         CliError::SessionFailure("no previous session to continue".into())
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn fork_target_routes_through_rust_native_session() {
     let first_api = "pi-coding-print-fork-source";
-    registry::register(
-        first_api,
-        Arc::new(FauxProvider::simple_text("source answer")),
-    );
+    let second_api = "pi-coding-print-fork-followup";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            first_api.to_string(),
+            Arc::new(FauxProvider::simple_text("source answer")) as Arc<dyn ApiProvider>,
+        ),
+        (
+            second_api.to_string(),
+            Arc::new(RecordingProvider::new(Arc::clone(&contexts), "fork answer"))
+                as Arc<dyn ApiProvider>,
+        ),
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
     let sessions_dir = dir.path().join("sessions");
@@ -658,14 +674,6 @@ async fn fork_target_routes_through_rust_native_session() {
     .await
     .unwrap();
     assert_eq!(first, "source answer");
-    registry::unregister(first_api);
-
-    let second_api = "pi-coding-print-fork-followup";
-    let contexts = Arc::new(Mutex::new(Vec::new()));
-    registry::register(
-        second_api,
-        Arc::new(RecordingProvider::new(Arc::clone(&contexts), "fork answer")),
-    );
 
     let second = run_print_mode(PrintModeOptions {
         prompt: "fork question".into(),
@@ -734,5 +742,4 @@ async fn fork_target_routes_through_rust_native_session() {
     assert!(fork_events.contains("fork question"));
     let source_events = std::fs::read_to_string(sessions_dir.join("source/events.jsonl")).unwrap();
     assert!(!source_events.contains("fork question"));
-    registry::unregister(second_api);
 }

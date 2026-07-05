@@ -1,9 +1,6 @@
 use pi_agent_core::AgentTool;
 use serde::{Deserialize, Serialize};
 
-use super::CodingSessionError;
-use super::event::CodingAgentEvent;
-use super::event_service::EventService;
 use super::profiles::{DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind};
 use super::prompt::DelegationRequest;
 
@@ -140,107 +137,6 @@ pub(crate) fn authorize_delegation_requests_with_lineage(
             }
         })
         .collect()
-}
-
-pub(crate) fn emit_delegation_approved(event_service: &EventService, request: &DelegationRequest) {
-    event_service.emit(CodingAgentEvent::DelegationApproved {
-        operation_id: request.operation_id.clone(),
-        turn_id: request.turn_id.clone(),
-        tool_call_id: request.tool_call_id.clone(),
-        requesting_profile_id: request.requesting_profile_id.clone(),
-        target_kind: request.target_kind,
-        target_id: request.target_id.clone(),
-        task: request.task.clone(),
-    });
-}
-
-pub(crate) fn emit_delegation_rejected(
-    event_service: &EventService,
-    request: &DelegationRequest,
-    reason: &str,
-) {
-    event_service.emit(CodingAgentEvent::DelegationRejected {
-        operation_id: request.operation_id.clone(),
-        turn_id: request.turn_id.clone(),
-        tool_call_id: request.tool_call_id.clone(),
-        requesting_profile_id: request.requesting_profile_id.clone(),
-        target_kind: request.target_kind,
-        target_id: request.target_id.clone(),
-        task: request.task.clone(),
-        reason: reason.to_owned(),
-    });
-}
-
-pub(crate) fn emit_delegation_confirmation_required(
-    event_service: &EventService,
-    request: &DelegationRequest,
-    reason: &str,
-) {
-    event_service.emit(CodingAgentEvent::DelegationConfirmationRequired {
-        operation_id: request.operation_id.clone(),
-        turn_id: request.turn_id.clone(),
-        tool_call_id: request.tool_call_id.clone(),
-        requesting_profile_id: request.requesting_profile_id.clone(),
-        target_kind: request.target_kind,
-        target_id: request.target_id.clone(),
-        task: request.task.clone(),
-        reason: reason.to_owned(),
-    });
-}
-
-pub(crate) fn emit_delegation_started(
-    event_service: &EventService,
-    request: &DelegationRequest,
-    child_operation_id: String,
-) {
-    event_service.emit(CodingAgentEvent::DelegationStarted {
-        operation_id: request.operation_id.clone(),
-        turn_id: request.turn_id.clone(),
-        tool_call_id: request.tool_call_id.clone(),
-        requesting_profile_id: request.requesting_profile_id.clone(),
-        target_kind: request.target_kind,
-        target_id: request.target_id.clone(),
-        task: request.task.clone(),
-        child_operation_id,
-    });
-}
-
-pub(crate) fn emit_delegation_completed(
-    event_service: &EventService,
-    request: &DelegationRequest,
-    child_operation_id: String,
-    final_text: String,
-) {
-    event_service.emit(CodingAgentEvent::DelegationCompleted {
-        operation_id: request.operation_id.clone(),
-        turn_id: request.turn_id.clone(),
-        tool_call_id: request.tool_call_id.clone(),
-        requesting_profile_id: request.requesting_profile_id.clone(),
-        target_kind: request.target_kind,
-        target_id: request.target_id.clone(),
-        task: request.task.clone(),
-        child_operation_id,
-        final_text,
-    });
-}
-
-pub(crate) fn emit_delegation_failed(
-    event_service: &EventService,
-    request: &DelegationRequest,
-    child_operation_id: String,
-    error: CodingSessionError,
-) {
-    event_service.emit(CodingAgentEvent::DelegationFailed {
-        operation_id: request.operation_id.clone(),
-        turn_id: request.turn_id.clone(),
-        tool_call_id: request.tool_call_id.clone(),
-        requesting_profile_id: request.requesting_profile_id.clone(),
-        target_kind: request.target_kind,
-        target_id: request.target_id.clone(),
-        task: request.task.clone(),
-        child_operation_id,
-        error,
-    });
 }
 
 fn rejection_reason(

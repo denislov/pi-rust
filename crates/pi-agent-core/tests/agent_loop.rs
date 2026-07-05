@@ -1,10 +1,9 @@
 mod common;
-use common::{ScriptedTurn, TestProvider, text_turn, tool_use_turn};
+use common::{ProviderGuard, ScriptedTurn, TestProvider, text_turn, tool_use_turn};
 use futures::StreamExt;
 use pi_agent_core::{
     Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput, ToolExecutionMode,
 };
-use pi_ai::registry;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Model, ModelCost, ModelInput, StopReason,
 };
@@ -47,7 +46,7 @@ fn test_config(api_key: &str) -> AgentConfig {
 async fn single_turn_text_response() {
     let api_key = "test-api-1";
     let provider = Arc::new(TestProvider::new(vec![text_turn("Hello, world!")]));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let agent = Agent::new(test_config(api_key));
 
@@ -71,8 +70,6 @@ async fn single_turn_text_response() {
     assert_eq!(msgs.len(), 2); // UserText + Assistant
     assert!(matches!(&msgs[0], AgentMessage::UserText { .. }));
     assert!(matches!(&msgs[1], AgentMessage::Assistant { .. }));
-
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
@@ -82,7 +79,7 @@ async fn tool_use_turn_executes_tool() {
         tool_use_turn("tool_1", "echo", serde_json::json!({"text": "hi"})),
         text_turn("Tool executed successfully."),
     ]));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let agent = Agent::new(test_config(api_key));
 
@@ -125,18 +122,16 @@ async fn tool_use_turn_executes_tool() {
     let msgs = agent.messages();
     assert_eq!(msgs.len(), 4); // UserText, Assistant(tool_use), ToolResult, Assistant(text)
     assert!(matches!(&msgs[2], AgentMessage::ToolResult { .. }));
-
-    registry::unregister(api_key);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn tool_update_events_stream_before_tool_end() {
     let api_key = "test-api-tool-updates";
     let provider = Arc::new(TestProvider::new(vec![
         tool_use_turn("tool_1", "streaming", serde_json::json!({})),
         text_turn("done"),
     ]));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let mut config = test_config(api_key);
     config.tool_execution = ToolExecutionMode::Sequential;
@@ -154,7 +149,6 @@ async fn tool_update_events_stream_before_tool_end() {
                         text_signature: None,
                     }]));
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text: "final".into(),
                     text_signature: None,
@@ -187,7 +181,6 @@ async fn tool_update_events_stream_before_tool_end() {
         .expect("expected tool end event");
 
     assert!(update_index < end_index);
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
@@ -197,7 +190,7 @@ async fn unknown_tool_yields_error_content_and_continues() {
         tool_use_turn("tool_1", "nonexistent", serde_json::json!({})),
         text_turn("I tried but the tool was not found."),
     ]));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let agent = Agent::new(test_config(api_key));
 
@@ -223,8 +216,6 @@ async fn unknown_tool_yields_error_content_and_continues() {
         .iter()
         .any(|e| matches!(e, AgentEvent::AgentDone { .. }));
     assert!(has_done);
-
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
@@ -239,7 +230,7 @@ async fn max_turns_exceeded_yields_error() {
         ));
     }
     let provider = Arc::new(TestProvider::new(turns));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let mut config = test_config(api_key);
     config.max_turns = Some(2);
@@ -268,8 +259,6 @@ async fn max_turns_exceeded_yields_error() {
         .iter()
         .any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("max turns")));
     assert!(has_error, "should have max turns error");
-
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
@@ -288,7 +277,7 @@ async fn unlimited_max_turns_runs_to_natural_completion() {
     }
     turns.push(text_turn("Done after many tool calls."));
     let provider = Arc::new(TestProvider::new(turns));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let mut config = test_config(api_key);
     config.max_turns = None;
@@ -327,15 +316,13 @@ async fn unlimited_max_turns_runs_to_natural_completion() {
         !has_max_turns_error,
         "max_turns: None must not yield a max-turns error"
     );
-
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
 async fn abort_mid_turn_yields_error() {
     let api_key = "test-api-5";
     let provider = Arc::new(TestProvider::new(vec![text_turn("Hello")]));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let agent = Agent::new(test_config(api_key));
 
@@ -347,8 +334,6 @@ async fn abort_mid_turn_yields_error() {
         .iter()
         .any(|e| matches!(e, AgentEvent::AgentError { error } if error.contains("aborted")));
     assert!(has_abort_error, "should have aborted error");
-
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
@@ -366,7 +351,7 @@ async fn provider_error_event_preserves_error_message() {
         response_id: "resp_error".into(),
         model_name: "test-model".into(),
     }]));
-    registry::register(api_key, provider);
+    let _provider_guard = ProviderGuard::register(api_key, provider);
 
     let agent = Agent::new(test_config(api_key));
 
@@ -379,26 +364,23 @@ async fn provider_error_event_preserves_error_message() {
         )
     });
     assert!(has_provider_error, "should preserve provider error");
-
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
 async fn run_returns_error_when_no_messages() {
     let api_key = "test-run-empty";
-    registry::register(api_key, Arc::new(TestProvider::new(vec![])));
+    let _provider_guard = ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![])));
     let agent = Agent::new(test_config(api_key));
     let result = agent.run();
     assert!(result.is_err());
     let err = result.err().unwrap();
     assert!(err.contains("no messages"), "got: {}", err);
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
 async fn run_returns_error_when_last_message_is_assistant() {
     let api_key = "test-run-assistant-tail";
-    registry::register(api_key, Arc::new(TestProvider::new(vec![])));
+    let _provider_guard = ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![])));
     let agent = Agent::new(test_config(api_key));
     agent.add_message(AgentMessage::UserText {
         message_id: "u".into(),
@@ -412,13 +394,13 @@ async fn run_returns_error_when_last_message_is_assistant() {
     assert!(result.is_err());
     let err = result.err().unwrap();
     assert!(err.contains("assistant"), "got: {}", err);
-    registry::unregister(api_key);
 }
 
 #[tokio::test]
 async fn run_succeeds_when_last_message_is_user() {
     let api_key = "test-run-user-tail";
-    registry::register(api_key, Arc::new(TestProvider::new(vec![text_turn("ok")])));
+    let _provider_guard =
+        ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![text_turn("ok")])));
     let agent = Agent::new(test_config(api_key));
     agent.add_message(AgentMessage::UserText {
         message_id: "u".into(),
@@ -428,5 +410,4 @@ async fn run_succeeds_when_last_message_is_user() {
     assert!(stream.is_ok());
     let mut s = stream.unwrap();
     while s.next().await.is_some() {}
-    registry::unregister(api_key);
 }

@@ -316,6 +316,25 @@ impl Transcript {
                 ));
                 mutation
             }
+            UiEvent::DelegationBlock {
+                call_id,
+                target_kind,
+                target_id,
+                task,
+                status,
+                child_operation_id,
+                summary,
+                is_error,
+            } => self.upsert_delegation_block(
+                call_id,
+                target_kind,
+                target_id,
+                task,
+                status,
+                child_operation_id,
+                summary,
+                is_error,
+            ),
             UiEvent::CompactionNotice { summary } => {
                 TranscriptMutation::single(self.push_with_index(TranscriptItem::Assistant {
                     id: format!("compaction_{}", self.items.len()),
@@ -326,6 +345,57 @@ impl Transcript {
             }
             UiEvent::UsageUpdate { .. } => TranscriptMutation::none(),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn upsert_delegation_block(
+        &mut self,
+        call_id: String,
+        target_kind: String,
+        target_id: String,
+        task: String,
+        status: String,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
+        is_error: bool,
+    ) -> TranscriptMutation {
+        let args = delegation_args(target_kind, target_id, task, status, child_operation_id);
+        if let Some(index) = self.items.iter().position(|item| {
+            matches!(item, TranscriptItem::Tool { call_id: existing, .. } if existing == &call_id)
+        }) {
+            let TranscriptItem::Tool {
+                name,
+                args: existing_args,
+                result,
+                is_error: existing_error,
+                ..
+            } = &mut self.items[index]
+            else {
+                unreachable!("position matched tool item");
+            };
+            *name = "delegation".to_string();
+            *existing_args = args;
+            if summary.is_some() {
+                *result = summary;
+            }
+            *existing_error = is_error;
+            self.record_output_below();
+            self.bump_item_revision(index);
+            self.bump_content_revision();
+            return TranscriptMutation::single(index);
+        }
+
+        let mut mutation = self.close_open_assistant();
+        mutation.extend(TranscriptMutation::single(self.push_with_index(
+            TranscriptItem::Tool {
+                call_id,
+                name: "delegation".to_string(),
+                args,
+                result: summary,
+                is_error,
+            },
+        )));
+        mutation
     }
 
     fn append_assistant_delta(&mut self, text: &str) -> TranscriptMutation {
@@ -498,4 +568,29 @@ impl Transcript {
         }
     }
 }
+
+fn delegation_args(
+    target_kind: String,
+    target_id: String,
+    task: String,
+    status: String,
+    child_operation_id: Option<String>,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "targetKind": target_kind,
+        "targetId": target_id,
+        "task": task,
+        "status": status,
+    });
+    if let Some(child_operation_id) = child_operation_id {
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "childOperationId".to_string(),
+                serde_json::Value::String(child_operation_id),
+            );
+        }
+    }
+    value
+}
+
 use super::UiEvent;

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
 use pi_agent_core::AgentResources;
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
@@ -17,7 +17,7 @@ use pi_coding_agent::api::{
     AgentTeamOptions, CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions,
     PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
 };
-use support::EnvGuard;
+use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -478,12 +478,12 @@ impl ApiProvider for FailingProvider {
 }
 
 struct ProviderGuard {
-    api: String,
+    _guard: RegistryProviderGuard<'static>,
 }
 
 impl ProviderGuard {
     fn register(api: &str, calls: Arc<Mutex<Vec<RecordedCall>>>, responses: Vec<&str>) -> Self {
-        registry::register(
+        let guard = RegistryProviderGuard::register(
             api,
             Arc::new(QueueProvider {
                 calls,
@@ -492,17 +492,11 @@ impl ProviderGuard {
                 )),
             }),
         );
-        Self { api: api.into() }
+        Self { _guard: guard }
     }
 
     fn register_failing(api: &str) -> Self {
-        registry::register(api, Arc::new(FailingProvider));
-        Self { api: api.into() }
-    }
-}
-
-impl Drop for ProviderGuard {
-    fn drop(&mut self) {
-        registry::unregister(&self.api);
+        let guard = RegistryProviderGuard::register(api, Arc::new(FailingProvider));
+        Self { _guard: guard }
     }
 }

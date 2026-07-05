@@ -146,24 +146,14 @@ fn generated_registry_is_loaded_from_json_asset() {
 }
 
 #[test]
-fn all_builtin_apis_registered() {
-    pi_ai::providers::register_builtins();
-    let apis = [
-        "anthropic-messages",
-        "deepseek-chat-completions",
-        "openai-completions",
-        "openai-responses",
-        "openai-codex-responses",
-        "azure-openai-responses",
-        "bedrock-converse-stream",
-        "google-generative-ai",
-        "mistral-conversations",
-    ];
-    for api in apis {
+fn all_builtin_apis_register_into_scoped_registry() {
+    let registry = pi_ai::ProviderRegistry::new();
+    pi_ai::register_builtins_into(&registry);
+
+    for api in pi_ai::builtin_provider_apis() {
         assert!(
-            pi_ai::registry::lookup(api).is_some(),
-            "expected built-in api {} to be registered",
-            api
+            registry.lookup(api).is_some(),
+            "expected built-in api {api} to be registered into scoped registry"
         );
     }
 }

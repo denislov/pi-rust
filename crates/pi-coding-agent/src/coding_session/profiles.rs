@@ -10,6 +10,7 @@ const PROFILE_SCHEMA_VERSION: u32 = 1;
 const AGENT_PROFILE_DIR: &str = "agents";
 const TEAM_PROFILE_DIR: &str = "teams";
 const PROFILE_FILE_EXTENSION: &str = "toml";
+const BUILT_IN_HELPER_AGENT_IDS: [&str; 3] = ["explore", "review", "check"];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProfileId(String);
@@ -279,7 +280,9 @@ pub struct ProfileRegistry {
 impl ProfileRegistry {
     pub fn load(options: ProfileRegistryOptions) -> Result<Self, CodingSessionError> {
         let mut registry = Self::default();
-        registry.insert_agent(built_in_default_agent_profile());
+        for profile in built_in_agent_profiles() {
+            registry.insert_agent(profile);
+        }
         for root in options.user_roots() {
             registry.load_root(root, ProfileSource::User);
         }
@@ -462,6 +465,31 @@ impl TeamProfileFile {
     }
 }
 
+fn built_in_agent_profiles() -> Vec<AgentProfile> {
+    let mut profiles = vec![built_in_default_agent_profile()];
+    profiles.extend([
+        built_in_helper_agent_profile(
+            "explore",
+            "Explore",
+            "Read-only helper for context gathering and codebase exploration",
+            "You are a read-only exploration helper. Gather context and summarize findings without making changes.",
+        ),
+        built_in_helper_agent_profile(
+            "review",
+            "Review",
+            "Read-only helper for review and risk analysis",
+            "You are a read-only review helper. Inspect the requested work and report findings without making changes.",
+        ),
+        built_in_helper_agent_profile(
+            "check",
+            "Check",
+            "Read-only helper for safe verification planning and diagnostics",
+            "You are a read-only check helper. Run only safe verification reasoning and report diagnostics without making changes.",
+        ),
+    ]);
+    profiles
+}
+
 fn built_in_default_agent_profile() -> AgentProfile {
     AgentProfile {
         schema_version: PROFILE_SCHEMA_VERSION,
@@ -470,6 +498,39 @@ fn built_in_default_agent_profile() -> AgentProfile {
         description: Some("Built-in default coding agent profile".into()),
         model: None,
         system_prompt: None,
+        tools: Vec::new(),
+        skills: Vec::new(),
+        supervision: SupervisionPolicy::Session,
+        delegation: DelegationPolicy {
+            allow_delegate_agent: true,
+            allow_delegate_team: false,
+            max_depth: 1,
+            max_parallel_children: 1,
+            require_confirmation: DelegationConfirmationMode::Never,
+            allowed_agents: BUILT_IN_HELPER_AGENT_IDS
+                .iter()
+                .map(|id| ProfileId::from(*id))
+                .collect(),
+            allowed_teams: Vec::new(),
+        },
+        source: ProfileSource::BuiltIn,
+        path: None,
+    }
+}
+
+fn built_in_helper_agent_profile(
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    system_prompt: &'static str,
+) -> AgentProfile {
+    AgentProfile {
+        schema_version: PROFILE_SCHEMA_VERSION,
+        id: ProfileId::from(id),
+        display_name: display_name.into(),
+        description: Some(description.into()),
+        model: None,
+        system_prompt: Some(system_prompt.into()),
         tools: Vec::new(),
         skills: Vec::new(),
         supervision: SupervisionPolicy::Session,

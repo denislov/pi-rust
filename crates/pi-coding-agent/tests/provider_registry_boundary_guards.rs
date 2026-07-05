@@ -1,0 +1,274 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+const ALLOWED_DIRECT_MUTATION_FILES: &[&str] = &[
+    "crates/pi-coding-agent/src/lib.rs",
+    "crates/pi-coding-agent/tests/support/mod.rs",
+    "crates/pi-coding-agent/tests/support_guards.rs",
+    "crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs",
+];
+
+const ALLOWED_GLOBAL_BUILTIN_REGISTRATION_FILES: &[&str] = &[
+    "crates/pi-coding-agent/src/coding_session/runtime_service.rs",
+    "crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs",
+];
+
+const ALLOWED_GLOBAL_STREAM_MODEL_FILES: &[&str] = &[
+    "crates/pi-coding-agent/src/coding_session/runtime_service.rs",
+    "crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs",
+];
+const GLOBAL_PROVIDER_COMPATIBILITY_MARKER: &str = "global provider runtime compatibility example";
+
+#[test]
+fn pi_coding_agent_tests_use_provider_guard_for_global_registry_mutation() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    for root in scan.roots() {
+        collect_direct_registry_mutations(scan.repo_root(), &root, &mut violations);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "direct pi_ai::registry mutation must stay behind ProviderGuard:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn global_builtin_provider_registration_stays_at_runtime_boundary() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    for root in scan.roots() {
+        collect_global_builtin_registration(scan.repo_root(), &root, &mut violations);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "global built-in provider registration must stay behind the runtime compatibility boundary:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn global_stream_model_calls_stay_at_runtime_boundary() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    for root in scan.roots() {
+        collect_global_stream_model_calls(scan.repo_root(), &root, &mut violations);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "global stream_model calls must stay behind the runtime compatibility boundary:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn examples_using_global_provider_runtime_are_explicit_compatibility_examples() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    collect_undocumented_global_provider_examples(
+        scan.repo_root(),
+        &scan.crate_root.join("examples"),
+        &mut violations,
+    );
+
+    assert!(
+        violations.is_empty(),
+        "examples that use the pi-ai global provider runtime must be explicit compatibility examples:\n{}",
+        violations.join("\n")
+    );
+}
+
+struct SourceScan {
+    crate_root: PathBuf,
+    repo_root: PathBuf,
+}
+
+impl SourceScan {
+    fn new() -> Self {
+        let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = crate_root
+            .parent()
+            .and_then(Path::parent)
+            .expect("crate should live under crates/pi-coding-agent")
+            .to_path_buf();
+        Self {
+            crate_root,
+            repo_root,
+        }
+    }
+
+    fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    fn roots(&self) -> [PathBuf; 2] {
+        [self.crate_root.join("src"), self.crate_root.join("tests")]
+    }
+}
+
+fn collect_direct_registry_mutations(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
+    collect_source_violations(
+        repo_root,
+        path,
+        ALLOWED_DIRECT_MUTATION_FILES,
+        violations,
+        |line| line.contains("registry::register(") || line.contains("registry::unregister("),
+    );
+}
+
+fn collect_global_builtin_registration(
+    repo_root: &Path,
+    path: &Path,
+    violations: &mut Vec<String>,
+) {
+    collect_source_violations(
+        repo_root,
+        path,
+        ALLOWED_GLOBAL_BUILTIN_REGISTRATION_FILES,
+        violations,
+        |line| line.contains("pi_ai::providers::register_builtins()"),
+    );
+}
+
+fn collect_global_stream_model_calls(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
+    collect_source_violations(
+        repo_root,
+        path,
+        ALLOWED_GLOBAL_STREAM_MODEL_FILES,
+        violations,
+        |line| {
+            line.contains("pi_ai::stream_model(")
+                || line.contains("pi_ai::registry::stream_model(")
+                || line.contains("registry::stream_model(")
+        },
+    );
+}
+
+fn collect_source_violations(
+    repo_root: &Path,
+    path: &Path,
+    allowed_files: &[&str],
+    violations: &mut Vec<String>,
+    is_violation: impl Copy + Fn(&str) -> bool,
+) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+
+    if metadata.is_dir() {
+        let mut entries = fs::read_dir(path)
+            .expect("read source/test directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read source/test entries");
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries {
+            collect_source_violations(
+                repo_root,
+                &entry.path(),
+                allowed_files,
+                violations,
+                is_violation,
+            );
+        }
+        return;
+    }
+
+    if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+        return;
+    }
+
+    let relative = path
+        .strip_prefix(repo_root)
+        .expect("scanned file should be under repo root")
+        .to_string_lossy()
+        .replace('\\', "/");
+    if allowed_files.contains(&relative.as_str()) {
+        return;
+    }
+
+    let content = fs::read_to_string(path).expect("read source/test file");
+    for (line_index, line) in content.lines().enumerate() {
+        if is_violation(line) {
+            violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
+        }
+    }
+}
+
+#[test]
+fn runtime_global_builtin_registration_boundary_acknowledges_deprecated_helper() {
+    let scan = SourceScan::new();
+    let runtime_service = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/runtime_service.rs"),
+    )
+    .expect("read runtime service source");
+
+    let function_index = runtime_service
+        .find("fn register_builtin_providers_for_global_runtime()")
+        .expect("runtime compatibility boundary should exist");
+    let preceding = &runtime_service[function_index.saturating_sub(180)..function_index];
+    assert!(
+        preceding.contains("#[allow(deprecated)]"),
+        "the only allowed global built-in registration boundary should explicitly acknowledge the deprecated pi-ai global helper"
+    );
+}
+
+fn collect_undocumented_global_provider_examples(
+    repo_root: &Path,
+    path: &Path,
+    violations: &mut Vec<String>,
+) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+
+    if metadata.is_dir() {
+        let mut entries = fs::read_dir(path)
+            .expect("read examples directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read examples entries");
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries {
+            collect_undocumented_global_provider_examples(repo_root, &entry.path(), violations);
+        }
+        return;
+    }
+
+    if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+        return;
+    }
+
+    let relative = path
+        .strip_prefix(repo_root)
+        .expect("scanned file should be under repo root")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let content = fs::read_to_string(path).expect("read example file");
+    if uses_global_provider_runtime(&content)
+        && (!content.contains(GLOBAL_PROVIDER_COMPATIBILITY_MARKER)
+            || !content.contains("#[allow(deprecated)]"))
+    {
+        violations.push(format!(
+            "{relative}: add `{GLOBAL_PROVIDER_COMPATIBILITY_MARKER}` docs and #[allow(deprecated)]"
+        ));
+    }
+}
+
+fn uses_global_provider_runtime(content: &str) -> bool {
+    content.lines().any(|line| {
+        line.contains("registry::register(")
+            || line.contains("registry::unregister(")
+            || line.contains("registry::stream_model(")
+            || line.contains("pi_ai::registry::register(")
+            || line.contains("pi_ai::registry::unregister(")
+            || line.contains("pi_ai::registry::stream_model(")
+            || line.contains("pi_ai::stream_model(")
+    })
+}

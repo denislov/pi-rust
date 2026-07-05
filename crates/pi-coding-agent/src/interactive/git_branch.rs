@@ -125,16 +125,20 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_path(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 
     fn init_repo() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "pi-footer-git-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = temp_path("pi-footer-git");
         fs::create_dir_all(dir.join(".git/refs/heads")).unwrap();
         fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
         dir
@@ -150,14 +154,7 @@ mod tests {
 
     #[test]
     fn returns_none_outside_repo() {
-        let dir = std::env::temp_dir().join(format!(
-            "pi-footer-none-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = temp_path("pi-footer-none");
         fs::create_dir_all(&dir).unwrap();
         let provider = GitBranchProvider::new(&dir);
         assert_eq!(provider.branch(), None);
@@ -176,13 +173,7 @@ mod tests {
     #[test]
     fn set_cwd_recomputes_paths() {
         let dir = init_repo();
-        let outside = std::env::temp_dir().join(format!(
-            "pi-footer-outside-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let outside = temp_path("pi-footer-outside");
         fs::create_dir_all(&outside).unwrap();
         let mut provider = GitBranchProvider::new(&outside);
         assert_eq!(provider.branch(), None);

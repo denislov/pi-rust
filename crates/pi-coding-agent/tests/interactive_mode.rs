@@ -1,27 +1,54 @@
 mod support;
 
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::stream;
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, StopReason,
     StreamOptions,
 };
 use pi_coding_agent::interactive::test_harness::{
-    run_scripted_idle_interactive, run_scripted_idle_interactive_with_delays,
-    run_scripted_idle_interactive_with_size, run_scripted_interactive,
-    run_scripted_interactive_with_provider_driver,
+    ScriptedInputDriver, ScriptedInteractiveOutput, run_scripted_idle_interactive,
+    run_scripted_idle_interactive_with_delays, run_scripted_idle_interactive_with_size,
+    run_scripted_interactive, run_scripted_interactive_with_observed_provider_driver,
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
-use support::EnvGuard;
+use support::{EnvGuard, ProviderGuard};
 use tokio::sync::Notify;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const RUNNING_CONTROL_OBSERVED_DRIVER_TIMEOUT: Duration = Duration::from_secs(1);
+const DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT: Duration = Duration::from_secs(2);
+const SETTINGS_COMMAND_INPUT_DELAY: Duration = Duration::from_millis(20);
+const SETTINGS_ESCAPE_INPUT_DELAY: Duration = Duration::from_millis(40);
+const SETTINGS_HELP_COMMAND_INPUT_DELAY: Duration = Duration::from_millis(20);
+
+async fn run_observed_interactive_with_timeout<F, Fut>(
+    provider: Arc<dyn ApiProvider>,
+    driver: F,
+    timeout: Duration,
+    context: &str,
+) -> ScriptedInteractiveOutput
+where
+    F: FnOnce(ScriptedInputDriver) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    tokio::time::timeout(
+        timeout,
+        run_scripted_interactive_with_observed_provider_driver(provider, driver),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("interactive observed-driver run timed out while {context}"))
+    .unwrap_or_else(|error| {
+        panic!("interactive observed-driver run failed while {context}: {error}")
+    })
+}
 
 fn text_response(text: &str) -> FauxResponse {
     FauxResponse {
@@ -38,6 +65,7 @@ fn six_line_markdown() -> &'static str {
 struct PausingTwoTurnProvider {
     contexts: Arc<Mutex<Vec<Context>>>,
     first_started: Arc<Notify>,
+    release_first: Arc<Notify>,
 }
 
 impl ApiProvider for PausingTwoTurnProvider {
@@ -48,11 +76,12 @@ impl ApiProvider for PausingTwoTurnProvider {
             contexts.len()
         };
         let first_started = Arc::clone(&self.first_started);
+        let release_first = Arc::clone(&self.release_first);
         let model_id = model.id.clone();
         Box::pin(async_stream::stream! {
             if call_index == 1 {
                 first_started.notify_waiters();
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                release_first.notified().await;
             }
             let text = if call_index == 1 { "first" } else { "second" };
             let mut message = AssistantMessage::empty("interactive-steer", &model_id);
@@ -149,23 +178,27 @@ impl ApiProvider for DelegationConfirmationProvider {
 async fn scripted_interactive_submit_while_running_sends_steer_control() {
     let contexts = Arc::new(Mutex::new(Vec::new()));
     let first_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Notify::new());
     let provider = Arc::new(PausingTwoTurnProvider {
         contexts: Arc::clone(&contexts),
         first_started: Arc::clone(&first_started),
+        release_first: Arc::clone(&release_first),
     });
 
-    let output = tokio::time::timeout(
-        Duration::from_secs(1),
-        run_scripted_interactive_with_provider_driver(provider, move |tx| async move {
-            tx.send("first prompt\r".to_string()).unwrap();
+    let output = run_observed_interactive_with_timeout(
+        provider,
+        move |mut input| async move {
+            input.send("first prompt\r").unwrap();
             first_started.notified().await;
-            tx.send("steer now\r".to_string()).unwrap();
-            drop(tx);
-        }),
+            input.send("steer now\r").unwrap();
+            input.wait_for_consumed("steer now\r").await;
+            release_first.notify_waiters();
+            drop(input);
+        },
+        RUNNING_CONTROL_OBSERVED_DRIVER_TIMEOUT,
+        "sending steer control while a prompt is running",
     )
-    .await
-    .expect("interactive run should finish")
-    .unwrap();
+    .await;
 
     let contexts = contexts.lock().unwrap();
     assert_eq!(contexts.len(), 2, "{}", output.rendered);
@@ -187,23 +220,27 @@ async fn scripted_interactive_submit_while_running_sends_steer_control() {
 async fn scripted_interactive_shift_enter_while_running_sends_follow_up_control() {
     let contexts = Arc::new(Mutex::new(Vec::new()));
     let first_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Notify::new());
     let provider = Arc::new(PausingTwoTurnProvider {
         contexts: Arc::clone(&contexts),
         first_started: Arc::clone(&first_started),
+        release_first: Arc::clone(&release_first),
     });
 
-    let output = tokio::time::timeout(
-        Duration::from_secs(1),
-        run_scripted_interactive_with_provider_driver(provider, move |tx| async move {
-            tx.send("first prompt\r".to_string()).unwrap();
+    let output = run_observed_interactive_with_timeout(
+        provider,
+        move |mut input| async move {
+            input.send("first prompt\r").unwrap();
             first_started.notified().await;
-            tx.send("follow up now\x1b[13;2u".to_string()).unwrap();
-            drop(tx);
-        }),
+            input.send("follow up now\x1b[13;2u").unwrap();
+            input.wait_for_consumed("follow up now\x1b[13;2u").await;
+            release_first.notify_waiters();
+            drop(input);
+        },
+        RUNNING_CONTROL_OBSERVED_DRIVER_TIMEOUT,
+        "sending follow-up control while a prompt is running",
     )
-    .await
-    .expect("interactive run should finish")
-    .unwrap();
+    .await;
 
     let contexts = contexts.lock().unwrap();
     assert_eq!(contexts.len(), 2, "{}", output.rendered);
@@ -392,30 +429,40 @@ system_prompt = "Coder child instructions."
         parent_ready: Arc::clone(&parent_ready),
         child_started: Arc::clone(&child_started),
     });
-    let output = tokio::time::timeout(
-        Duration::from_secs(2),
-        run_scripted_interactive_with_provider_driver(provider, move |tx| async move {
-            tx.send("/agent\r\x1b[B\rdelegating\rplan feature\r".to_string())
+    let output = run_observed_interactive_with_timeout(
+        provider,
+        move |mut input| async move {
+            let parent_ready = parent_ready.notified();
+            tokio::pin!(parent_ready);
+            input
+                .send("/agent\r\x1b[B\rdelegating\rplan feature\r")
                 .unwrap();
-            parent_ready.notified().await;
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            tx.send("/delegations\r".to_string()).unwrap();
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            tx.send("\r".to_string()).unwrap();
-            child_started.notified().await;
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            drop(tx);
-        }),
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut parent_ready => break,
+                    _ = input.wait_for_idle() => {}
+                }
+            }
+            input.wait_for_idle().await;
+            input.send("/delegations\r").unwrap();
+            input.wait_for_consumed("/delegations\r").await;
+            let child_started = child_started.notified();
+            tokio::pin!(child_started);
+            input.send("\r").unwrap();
+            child_started.await;
+            input.wait_for_idle().await;
+            drop(input);
+        },
+        DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT,
+        "approving a pending delegation confirmation",
     )
-    .await
-    .expect("interactive delegation approval should finish");
-
-    let output = output.unwrap();
+    .await;
     assert_eq!(*calls.lock().unwrap(), 3, "{output:?}");
-    assert!(
-        output.contains("Delegation confirmation required"),
-        "{output:?}"
-    );
+    assert!(output.contains("delegation"), "{output:?}");
+    assert!(output.contains("confirmation required"), "{output:?}");
+    assert!(output.contains("completed: child result"), "{output:?}");
+    assert!(!output.contains("Delegation completed for"), "{output:?}");
     assert!(output.contains("/delegation approve op_"), "{output:?}");
     assert!(output.contains("Approving delegation"), "{output:?}");
     assert!(output.contains("child result"), "{output:?}");
@@ -953,9 +1000,8 @@ async fn scripted_interactive_model_command_switches_footer_model() {
 async fn scripted_interactive_model_command_changes_next_prompt_model() {
     let _guard = ENV_LOCK.lock().await;
     let target_model = pi_ai::lookup_model("claude-haiku-4-5").expect("known model");
-    let previous_provider = registry::lookup(&target_model.api);
     let model_ids = Arc::new(Mutex::new(Vec::new()));
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         &target_model.api,
         Arc::new(RecordingModelProvider {
             model_ids: Arc::clone(&model_ids),
@@ -964,11 +1010,6 @@ async fn scripted_interactive_model_command_changes_next_prompt_model() {
     );
 
     let output = run_scripted_idle_interactive("/model claude-haiku-4-5\rhi\r").await;
-
-    match previous_provider {
-        Some(provider) => registry::register(&target_model.api, provider),
-        None => registry::unregister(&target_model.api),
-    }
 
     output.unwrap();
     assert_eq!(
@@ -981,8 +1022,7 @@ async fn scripted_interactive_model_command_changes_next_prompt_model() {
 async fn scripted_interactive_model_selector_confirms_filtered_model() {
     let _guard = ENV_LOCK.lock().await;
     let default_model = pi_ai::lookup_model("claude-sonnet-4-5").expect("known default model");
-    let previous_provider = registry::lookup(&default_model.api);
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         &default_model.api,
         Arc::new(RecordingModelProvider {
             model_ids: Arc::new(Mutex::new(Vec::new())),
@@ -1008,11 +1048,6 @@ async fn scripted_interactive_model_selector_confirms_filtered_model() {
     env.set_pi_rust_dir(dir.path());
 
     let output = run_scripted_idle_interactive("/model\rclaude-haiku-4-5\r").await;
-
-    match previous_provider {
-        Some(provider) => registry::register(&default_model.api, provider),
-        None => registry::unregister(&default_model.api),
-    }
 
     let output = output.unwrap();
     assert!(output.contains("Model set: claude-haiku-4-5"), "{output:?}");
@@ -1068,10 +1103,9 @@ async fn scripted_interactive_model_selector_lists_configured_provider_models() 
 async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider() {
     let _guard = ENV_LOCK.lock().await;
     let target_model = pi_ai::lookup_model("gpt-5").expect("known model");
-    let previous_provider = registry::lookup(&target_model.api);
     let model_ids = Arc::new(Mutex::new(Vec::new()));
     let api_keys = Arc::new(Mutex::new(Vec::new()));
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         &target_model.api,
         Arc::new(RecordingModelProvider {
             model_ids: Arc::clone(&model_ids),
@@ -1100,11 +1134,6 @@ async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider()
     env.remove("ANTHROPIC_API_KEY");
 
     let output = run_scripted_idle_interactive("/model gpt-5\rhi\r").await;
-
-    match previous_provider {
-        Some(provider) => registry::register(&target_model.api, provider),
-        None => registry::unregister(&target_model.api),
-    }
 
     output.unwrap();
     assert_eq!(model_ids.lock().unwrap().as_slice(), &["gpt-5".to_string()]);
@@ -1170,10 +1199,8 @@ async fn scripted_interactive_settings_command_enters_settings_menu() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn scripted_interactive_settings_escape_closes_menu_after_idle_timeout() {
-    use std::time::Duration;
-
     // The decisive test: send /settings, then a lone ESC, then a /help command.
     // - With the idle-flush fix: ESC fires after ~10ms, menu closes, /help runs
     //   and renders "Show help".
@@ -1182,9 +1209,9 @@ async fn scripted_interactive_settings_escape_closes_menu_after_idle_timeout() {
     //   and /help never executes -- even though stdin closure later flushes ESC.
     let output = run_scripted_idle_interactive_with_delays(
         vec![
-            ("/settings\r", Duration::from_millis(20)),
-            ("\x1b", Duration::from_millis(40)),
-            ("/help\r", Duration::from_millis(20)),
+            ("/settings\r", SETTINGS_COMMAND_INPUT_DELAY),
+            ("\x1b", SETTINGS_ESCAPE_INPUT_DELAY),
+            ("/help\r", SETTINGS_HELP_COMMAND_INPUT_DELAY),
         ],
         80,
         24,

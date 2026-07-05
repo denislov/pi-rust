@@ -167,15 +167,6 @@ pub struct SessionMetadata {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JsonlSessionMetadata {
-    pub id: String,
-    pub created_at: String,
-    pub cwd: String,
-    pub path: std::path::PathBuf,
-    pub parent_session_path: Option<std::path::PathBuf>,
-}
-
 /// A node in the session tree, built from a `SessionEntry` with resolved
 /// label information and child nodes.
 #[derive(Debug, Clone, PartialEq)]

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
-use pi_agent_core::session::{SessionEntry, StoredAgentMessage, StoredUsage};
-use pi_agent_core::session::{SessionTreeNode, create_timestamp};
+use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage, StoredUsage};
+use pi_agent_core::transcript::{SessionTreeNode, create_timestamp};
 #[cfg(test)]
 use pi_ai::types::{ContentBlock, StopReason};
 
@@ -325,6 +325,26 @@ fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> T
         CodingAgentSessionTranscriptItem::BranchSummary { summary } => {
             TranscriptItem::assistant("branch_summary", summary, true)
         }
+        CodingAgentSessionTranscriptItem::Delegation {
+            target_kind,
+            target_id,
+            task,
+            status,
+            summary,
+            ..
+        } => {
+            let target_kind = match target_kind {
+                crate::coding_session::ProfileKind::Agent => "agent",
+                crate::coding_session::ProfileKind::Team => "team",
+            };
+            let mut text =
+                format!("Delegation: {target_kind} {target_id}\nStatus: {status}\nTask: {task}");
+            if let Some(summary) = summary.filter(|summary| !summary.trim().is_empty()) {
+                text.push_str("\nSummary: ");
+                text.push_str(&summary);
+            }
+            TranscriptItem::system(text)
+        }
         CodingAgentSessionTranscriptItem::Diagnostic { message } => TranscriptItem::system(message),
     }
 }
@@ -444,7 +464,7 @@ fn export_transcript_html(
 
 /// Get a current RFC3339 timestamp string for use in label changes etc.
 pub(super) fn current_timestamp() -> String {
-    pi_agent_core::session::create_timestamp()
+    pi_agent_core::transcript::create_timestamp()
 }
 
 fn html_escape(text: &str) -> String {

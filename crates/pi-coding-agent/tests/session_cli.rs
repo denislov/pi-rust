@@ -1,9 +1,11 @@
+mod support;
+
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
-use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
 use pi_coding_agent::{CliRunOptions, run_cli_with_options};
 use std::sync::Arc;
+use support::ProviderGuard;
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -57,21 +59,25 @@ async fn continue_uses_previous_session_context() {
     let sessions = dir.path().join("sessions");
 
     let api1 = "session-cli-first";
-    registry::register(api1, Arc::new(FauxProvider::simple_text("first answer")));
+    let api2 = "session-cli-second";
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            api1.to_string(),
+            Arc::new(FauxProvider::simple_text("first answer")),
+        ),
+        (
+            api2.to_string(),
+            Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
+                responses: vec![text_response("second answer")],
+                stop_reason: StopReason::Stop,
+            }])),
+        ),
+    ]);
     let options1 = test_options(api1, &cwd, &sessions);
     let first = run_cli_with_options(vec!["-p".into(), "first".into()], options1).await;
     assert_eq!(first.exit_code, 0);
     assert_eq!(first.stdout, "first answer\n");
-    registry::unregister(api1);
 
-    let api2 = "session-cli-second";
-    registry::register(
-        api2,
-        Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
-            responses: vec![text_response("second answer")],
-            stop_reason: StopReason::Stop,
-        }])),
-    );
     let options2 = test_options(api2, &cwd, &sessions);
     let second = run_cli_with_options(
         vec!["--continue".into(), "-p".into(), "second".into()],
@@ -80,7 +86,6 @@ async fn continue_uses_previous_session_context() {
     .await;
     assert_eq!(second.exit_code, 0);
     assert_eq!(second.stdout, "second answer\n");
-    registry::unregister(api2);
 }
 
 #[tokio::test]
@@ -91,7 +96,8 @@ async fn no_session_does_not_write_files() {
     let sessions = dir.path().join("sessions");
 
     let api = "session-cli-no-persist";
-    registry::register(api, Arc::new(FauxProvider::simple_text("answer")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("answer")));
 
     let options = CliRunOptions {
         model_override: Some(faux_model(api)),
@@ -115,7 +121,6 @@ async fn no_session_does_not_write_files() {
     let mut files = Vec::new();
     collect_jsonl_files(dir.path(), &mut files);
     assert!(files.is_empty());
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -126,7 +131,17 @@ async fn session_path_target_opens_rust_native_session_directory() {
     let sessions = dir.path().join("sessions");
 
     let api1 = "session-cli-path-create";
-    registry::register(api1, Arc::new(FauxProvider::simple_text("first")));
+    let api2 = "session-cli-path-append";
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            api1.to_string(),
+            Arc::new(FauxProvider::simple_text("first")),
+        ),
+        (
+            api2.to_string(),
+            Arc::new(FauxProvider::simple_text("second")),
+        ),
+    ]);
     let options1 = test_options(api1, &cwd, &sessions);
 
     let result = run_cli_with_options(
@@ -140,12 +155,9 @@ async fn session_path_target_opens_rust_native_session_directory() {
     )
     .await;
     assert_eq!(result.exit_code, 0);
-    registry::unregister(api1);
 
     assert!(sessions.join("path-test-id").join("session.json").is_file());
 
-    let api2 = "session-cli-path-append";
-    registry::register(api2, Arc::new(FauxProvider::simple_text("second")));
     let options2 = test_options(api2, &cwd, &sessions);
     let session_path = sessions.join("path-test-id").display().to_string();
 
@@ -166,7 +178,6 @@ async fn session_path_target_opens_rust_native_session_directory() {
     assert_eq!(text.matches(r#""kind":"turn.input.recorded""#).count(), 2);
     assert_eq!(text.matches(r#""kind":"message.completed""#).count(), 2);
     assert!(!text.contains(r#""type":"message""#));
-    registry::unregister(api2);
 }
 
 #[tokio::test]
@@ -177,7 +188,17 @@ async fn session_id_creates_and_reopens() {
     let sessions = dir.path().join("sessions");
 
     let api1 = "session-cli-id-create";
-    registry::register(api1, Arc::new(FauxProvider::simple_text("first")));
+    let api2 = "session-cli-id-reopen";
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            api1.to_string(),
+            Arc::new(FauxProvider::simple_text("first")),
+        ),
+        (
+            api2.to_string(),
+            Arc::new(FauxProvider::simple_text("second")),
+        ),
+    ]);
     let options1 = test_options(api1, &cwd, &sessions);
 
     let result = run_cli_with_options(
@@ -191,10 +212,7 @@ async fn session_id_creates_and_reopens() {
     )
     .await;
     assert_eq!(result.exit_code, 0);
-    registry::unregister(api1);
 
-    let api2 = "session-cli-id-reopen";
-    registry::register(api2, Arc::new(FauxProvider::simple_text("second")));
     let options2 = test_options(api2, &cwd, &sessions);
 
     let result = run_cli_with_options(
@@ -209,7 +227,6 @@ async fn session_id_creates_and_reopens() {
     .await;
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout, "second\n");
-    registry::unregister(api2);
 }
 
 #[tokio::test]
@@ -220,7 +237,17 @@ async fn fork_target_routes_through_rust_native_print_session_cli() {
     let sessions = dir.path().join("sessions");
 
     let api1 = "session-cli-fork-source";
-    registry::register(api1, Arc::new(FauxProvider::simple_text("source")));
+    let api2 = "session-cli-fork-target";
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            api1.to_string(),
+            Arc::new(FauxProvider::simple_text("source")),
+        ),
+        (
+            api2.to_string(),
+            Arc::new(FauxProvider::simple_text("fork")),
+        ),
+    ]);
     let options1 = test_options(api1, &cwd, &sessions);
 
     let result = run_cli_with_options(
@@ -234,10 +261,6 @@ async fn fork_target_routes_through_rust_native_print_session_cli() {
     )
     .await;
     assert_eq!(result.exit_code, 0);
-    registry::unregister(api1);
-
-    let api2 = "session-cli-fork-target";
-    registry::register(api2, Arc::new(FauxProvider::simple_text("fork")));
 
     let options2 = test_options(api2, &cwd, &sessions);
     let result = run_cli_with_options(
@@ -267,8 +290,6 @@ async fn fork_target_routes_through_rust_native_print_session_cli() {
     let source_events =
         std::fs::read_to_string(sessions.join("fork-source-id/events.jsonl")).unwrap();
     assert!(!source_events.contains("fork prompt"));
-
-    registry::unregister(api2);
 }
 
 #[tokio::test]
@@ -279,7 +300,8 @@ async fn name_does_not_write_legacy_session_info_entry() {
     let sessions = dir.path().join("sessions");
 
     let api = "session-cli-name";
-    registry::register(api, Arc::new(FauxProvider::simple_text("answer")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("answer")));
     let options = test_options(api, &cwd, &sessions);
 
     let result = run_cli_with_options(
@@ -301,7 +323,6 @@ async fn name_does_not_write_legacy_session_info_entry() {
     assert!(text.contains(r#""kind":"session.created""#));
     assert!(!text.contains("session_info"));
     assert!(!text.contains("named-run"));
-    registry::unregister(api);
 }
 
 fn collect_jsonl_files(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -327,7 +348,17 @@ async fn continue_maintains_parent_chain() {
     let sessions = dir.path().join("sessions");
 
     let api1 = "chain-first";
-    registry::register(api1, Arc::new(FauxProvider::simple_text("first response")));
+    let api2 = "chain-second";
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (
+            api1.to_string(),
+            Arc::new(FauxProvider::simple_text("first response")),
+        ),
+        (
+            api2.to_string(),
+            Arc::new(FauxProvider::simple_text("second response")),
+        ),
+    ]);
     let options1 = test_options(api1, &cwd, &sessions);
     let result = run_cli_with_options(
         vec![
@@ -340,10 +371,7 @@ async fn continue_maintains_parent_chain() {
     )
     .await;
     assert_eq!(result.exit_code, 0);
-    registry::unregister(api1);
 
-    let api2 = "chain-second";
-    registry::register(api2, Arc::new(FauxProvider::simple_text("second response")));
     let options2 = test_options(api2, &cwd, &sessions);
     let result = run_cli_with_options(
         vec![
@@ -356,7 +384,6 @@ async fn continue_maintains_parent_chain() {
     )
     .await;
     assert_eq!(result.exit_code, 0);
-    registry::unregister(api2);
 
     let text = std::fs::read_to_string(sessions.join("test123").join("events.jsonl")).unwrap();
     assert_eq!(text.matches(r#""kind":"turn.input.recorded""#).count(), 2);
@@ -373,7 +400,8 @@ async fn session_dir_flag_writes_to_custom_path() {
     std::fs::create_dir_all(&custom_sessions).unwrap();
 
     let api = "session-dir-custom";
-    registry::register(api, Arc::new(FauxProvider::simple_text("answer")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("answer")));
 
     let options = CliRunOptions {
         model_override: Some(faux_model(api)),
@@ -397,7 +425,6 @@ async fn session_dir_flag_writes_to_custom_path() {
     )
     .await;
     assert_eq!(result.exit_code, 0);
-    registry::unregister(api);
 
     let mut files = Vec::new();
     collect_jsonl_files(&custom_sessions, &mut files);

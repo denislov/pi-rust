@@ -31,6 +31,16 @@ pub enum UiEvent {
     SystemNotice {
         text: String,
     },
+    DelegationBlock {
+        call_id: String,
+        target_kind: String,
+        target_id: String,
+        task: String,
+        status: String,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
+        is_error: bool,
+    },
     CompactionNotice {
         summary: String,
     },
@@ -75,37 +85,81 @@ impl CodingEventBridge {
                 name,
                 arguments_json,
                 ..
-            } => vec![UiEvent::ToolStarted {
-                call_id: tool_call_id.clone(),
-                name: name.clone(),
-                args: parse_tool_arguments(arguments_json),
-            }],
+            } => {
+                if let Some(event) =
+                    delegation_block_from_tool_start(tool_call_id, name, arguments_json)
+                {
+                    vec![event]
+                } else {
+                    vec![UiEvent::ToolStarted {
+                        call_id: tool_call_id.clone(),
+                        name: name.clone(),
+                        args: parse_tool_arguments(arguments_json),
+                    }]
+                }
+            }
             CodingAgentEvent::ToolCallUpdated {
                 tool_call_id,
+                name,
                 message,
                 ..
-            } => vec![UiEvent::ToolUpdated {
-                call_id: tool_call_id.clone(),
-                result: message.clone(),
-            }],
+            } => {
+                if is_delegation_tool(name) {
+                    vec![UiEvent::ToolUpdated {
+                        call_id: tool_call_id.clone(),
+                        result: message.clone(),
+                    }]
+                } else {
+                    vec![UiEvent::ToolUpdated {
+                        call_id: tool_call_id.clone(),
+                        result: message.clone(),
+                    }]
+                }
+            }
             CodingAgentEvent::ToolCallCompleted {
                 tool_call_id,
+                name,
                 summary,
                 ..
-            } => vec![UiEvent::ToolFinished {
-                call_id: tool_call_id.clone(),
-                result: summary.clone(),
-                is_error: false,
-            }],
+            } => {
+                if let Some(event) = delegation_block_from_tool_result(tool_call_id, name, summary)
+                {
+                    vec![event]
+                } else {
+                    vec![UiEvent::ToolFinished {
+                        call_id: tool_call_id.clone(),
+                        result: summary.clone(),
+                        is_error: false,
+                    }]
+                }
+            }
             CodingAgentEvent::ToolCallFailed {
                 tool_call_id,
+                name,
                 message,
                 ..
-            } => vec![UiEvent::ToolFinished {
-                call_id: tool_call_id.clone(),
-                result: message.clone(),
-                is_error: true,
-            }],
+            } => {
+                if is_delegation_tool(name) {
+                    vec![UiEvent::DelegationBlock {
+                        call_id: tool_call_id.clone(),
+                        target_kind: delegation_tool_kind_label(name)
+                            .unwrap_or("agent")
+                            .to_string(),
+                        target_id: String::new(),
+                        task: String::new(),
+                        status: "failed".to_string(),
+                        child_operation_id: None,
+                        summary: Some(format!("failed: {message}")),
+                        is_error: true,
+                    }]
+                } else {
+                    vec![UiEvent::ToolFinished {
+                        call_id: tool_call_id.clone(),
+                        result: message.clone(),
+                        is_error: true,
+                    }]
+                }
+            }
             CodingAgentEvent::RuntimeCompactionCompleted { summary, .. }
             | CodingAgentEvent::SessionCompactionCompleted { summary, .. } => vec![
                 UiEvent::CompactionNotice {
@@ -126,6 +180,22 @@ impl CodingEventBridge {
             CodingAgentEvent::PromptAborted { reason, .. } => vec![UiEvent::AgentError {
                 error: format!("prompt aborted: {reason}"),
             }],
+            CodingAgentEvent::DelegationRequested {
+                tool_call_id,
+                target_kind,
+                target_id,
+                task,
+                ..
+            } => vec![UiEvent::DelegationBlock {
+                call_id: tool_call_id.clone(),
+                target_kind: profile_kind_label(*target_kind).to_string(),
+                target_id: target_id.to_string(),
+                task: task.clone(),
+                status: "requested".to_string(),
+                child_operation_id: None,
+                summary: Some("requested".to_string()),
+                is_error: false,
+            }],
             CodingAgentEvent::DelegationConfirmationRequired {
                 operation_id,
                 tool_call_id,
@@ -134,85 +204,103 @@ impl CodingEventBridge {
                 task,
                 reason,
                 ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Delegation confirmation required for {} {}.\nTask: {}\nReason: {}\nApprove: /delegation approve {} {}\nReject: /delegation reject {} {} [reason]\nList pending: /delegations",
-                    profile_kind_label(*target_kind),
-                    target_id,
-                    task,
-                    reason,
-                    operation_id,
-                    tool_call_id,
-                    operation_id,
-                    tool_call_id
-                ),
+            } => vec![UiEvent::DelegationBlock {
+                call_id: tool_call_id.clone(),
+                target_kind: profile_kind_label(*target_kind).to_string(),
+                target_id: target_id.to_string(),
+                task: task.clone(),
+                status: "confirmation_required".to_string(),
+                child_operation_id: None,
+                summary: Some(format!(
+                    "confirmation required: {reason}\nApprove: /delegation approve {operation_id} {tool_call_id}\nReject: /delegation reject {operation_id} {tool_call_id} [reason]\nList pending: /delegations"
+                )),
+                is_error: false,
             }],
             CodingAgentEvent::DelegationApproved {
+                tool_call_id,
                 target_kind,
                 target_id,
                 task,
                 ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Delegation approved for {} {}: {}",
-                    profile_kind_label(*target_kind),
-                    target_id,
-                    task
-                ),
+            } => vec![UiEvent::DelegationBlock {
+                call_id: tool_call_id.clone(),
+                target_kind: profile_kind_label(*target_kind).to_string(),
+                target_id: target_id.to_string(),
+                task: task.clone(),
+                status: "approved".to_string(),
+                child_operation_id: None,
+                summary: Some("approved".to_string()),
+                is_error: false,
             }],
             CodingAgentEvent::DelegationRejected {
+                tool_call_id,
                 target_kind,
                 target_id,
                 task,
                 reason,
                 ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Delegation rejected for {} {}: {} ({})",
-                    profile_kind_label(*target_kind),
-                    target_id,
-                    task,
-                    reason
-                ),
+            } => vec![UiEvent::DelegationBlock {
+                call_id: tool_call_id.clone(),
+                target_kind: profile_kind_label(*target_kind).to_string(),
+                target_id: target_id.to_string(),
+                task: task.clone(),
+                status: "rejected".to_string(),
+                child_operation_id: None,
+                summary: Some(format!("rejected: {reason}")),
+                is_error: true,
             }],
             CodingAgentEvent::DelegationStarted {
+                tool_call_id,
                 target_kind,
                 target_id,
                 task,
+                child_operation_id,
                 ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Delegation started for {} {}: {}",
-                    profile_kind_label(*target_kind),
-                    target_id,
-                    task
-                ),
+            } => vec![UiEvent::DelegationBlock {
+                call_id: tool_call_id.clone(),
+                target_kind: profile_kind_label(*target_kind).to_string(),
+                target_id: target_id.to_string(),
+                task: task.clone(),
+                status: "running".to_string(),
+                child_operation_id: Some(child_operation_id.clone()),
+                summary: None,
+                is_error: false,
             }],
             CodingAgentEvent::DelegationCompleted {
+                tool_call_id,
                 target_kind,
                 target_id,
+                task,
+                child_operation_id,
                 final_text,
                 ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Delegation completed for {} {}: {}",
-                    profile_kind_label(*target_kind),
-                    target_id,
-                    final_text
-                ),
+            } => vec![UiEvent::DelegationBlock {
+                call_id: tool_call_id.clone(),
+                target_kind: profile_kind_label(*target_kind).to_string(),
+                target_id: target_id.to_string(),
+                task: task.clone(),
+                status: "completed".to_string(),
+                child_operation_id: Some(child_operation_id.clone()),
+                summary: Some(format!("completed: {final_text}")),
+                is_error: false,
             }],
             CodingAgentEvent::DelegationFailed {
+                tool_call_id,
                 target_kind,
                 target_id,
+                task,
+                child_operation_id,
                 error,
                 ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Delegation failed for {} {}: {}",
-                    profile_kind_label(*target_kind),
-                    target_id,
-                    error
-                ),
+            } => vec![UiEvent::DelegationBlock {
+                call_id: tool_call_id.clone(),
+                target_kind: profile_kind_label(*target_kind).to_string(),
+                target_id: target_id.to_string(),
+                task: task.clone(),
+                status: "failed".to_string(),
+                child_operation_id: Some(child_operation_id.clone()),
+                summary: Some(format!("failed: {error}")),
+                is_error: true,
             }],
             CodingAgentEvent::SelfHealingEditStarted {
                 path, replacements, ..
@@ -268,7 +356,6 @@ impl CodingEventBridge {
             | CodingAgentEvent::AgentTeamCompleted { .. }
             | CodingAgentEvent::AgentTeamFailed { .. }
             | CodingAgentEvent::AgentTeamAborted { .. }
-            | CodingAgentEvent::DelegationRequested { .. }
             | CodingAgentEvent::SessionWritePending { .. }
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }
@@ -308,6 +395,100 @@ fn check_output_label(
     output
         .map(|output| format!("check exit {}", output.exit_code))
         .unwrap_or_else(|| "no check output".to_string())
+}
+
+fn delegation_block_from_tool_start(
+    tool_call_id: &str,
+    tool_name: &str,
+    arguments_json: &str,
+) -> Option<UiEvent> {
+    let target_kind = delegation_tool_kind_label(tool_name)?;
+    let args = parse_tool_arguments(arguments_json);
+    let target_id_key = delegation_tool_target_key(tool_name)?;
+    Some(UiEvent::DelegationBlock {
+        call_id: tool_call_id.to_string(),
+        target_kind: target_kind.to_string(),
+        target_id: args
+            .get(target_id_key)
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        task: args
+            .get("task")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        status: "requested".to_string(),
+        child_operation_id: None,
+        summary: None,
+        is_error: false,
+    })
+}
+
+fn delegation_block_from_tool_result(
+    tool_call_id: &str,
+    tool_name: &str,
+    summary: &str,
+) -> Option<UiEvent> {
+    let fallback_kind = delegation_tool_kind_label(tool_name)?;
+    let value: serde_json::Value = serde_json::from_str(summary).ok()?;
+    let status = value
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("requested");
+    let message = value
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or(status);
+    let is_error = status == "rejected" || status == "failed";
+    let summary = match status {
+        "requested" => Some("requested".to_string()),
+        "rejected" => Some(format!("rejected: {message}")),
+        "failed" => Some(format!("failed: {message}")),
+        other => Some(other.to_string()),
+    };
+    Some(UiEvent::DelegationBlock {
+        call_id: tool_call_id.to_string(),
+        target_kind: value
+            .get("target_kind")
+            .and_then(|value| value.as_str())
+            .unwrap_or(fallback_kind)
+            .to_string(),
+        target_id: value
+            .get("target_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        task: value
+            .get("task")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        status: status.to_string(),
+        child_operation_id: None,
+        summary,
+        is_error,
+    })
+}
+
+fn is_delegation_tool(name: &str) -> bool {
+    delegation_tool_kind_label(name).is_some()
+}
+
+fn delegation_tool_kind_label(name: &str) -> Option<&'static str> {
+    match name {
+        "delegate_agent" => Some("agent"),
+        "delegate_team" => Some("team"),
+        _ => None,
+    }
+}
+
+fn delegation_tool_target_key(name: &str) -> Option<&'static str> {
+    match name {
+        "delegate_agent" => Some("agent_id"),
+        "delegate_team" => Some("team_id"),
+        _ => None,
+    }
 }
 
 fn parse_tool_arguments(arguments_json: &str) -> serde_json::Value {

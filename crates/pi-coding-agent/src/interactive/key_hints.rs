@@ -37,17 +37,17 @@ pub fn key_hint(kb: &KeybindingsManager, action: &str, description: &str) -> Str
 }
 
 /// Format a hint for an app-level action that may not be registered in
-/// `TUI_KEYBINDINGS`. Falls back to a small static table, then to the
-/// keybinding manager, then to the description alone.
+/// the active app keybinding catalog. Registered app bindings, including user
+/// overrides, win before the small legacy fallback table.
 pub fn app_key_hint(kb: &KeybindingsManager, action: &str, description: &str) -> String {
-    if let Some(key) = app_fallback_key(action) {
-        return format!("{} {}", format_key_text(&[key.to_string()]), description);
-    }
     let keys = kb.get_keys(action);
-    if keys.is_empty() {
-        description.to_string()
+    if !keys.is_empty() {
+        return format!("{} {}", format_key_text(&keys), description);
+    }
+    if let Some(key) = app_fallback_key(action) {
+        format!("{} {}", format_key_text(&[key.to_string()]), description)
     } else {
-        format!("{} {}", format_key_text(&keys), description)
+        description.to_string()
     }
 }
 
@@ -63,11 +63,11 @@ fn app_fallback_key(action: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_tui::TUI_KEYBINDINGS;
+    use crate::interactive::keybindings;
     use std::collections::BTreeMap;
 
     fn kb() -> KeybindingsManager {
-        KeybindingsManager::new(TUI_KEYBINDINGS.clone(), BTreeMap::new())
+        KeybindingsManager::new(keybindings::default_keybindings(), BTreeMap::new())
     }
 
     #[test]
@@ -94,6 +94,10 @@ mod tests {
     #[test]
     fn app_key_hint_uses_fallback_for_unknown_action() {
         let kb = kb();
+        assert!(kb.definition("app.interrupt").is_some());
+        assert!(kb.definition("app.tools.expand").is_some());
+        assert!(kb.definition("app.model.next").is_some());
+        assert!(kb.definition("app.tree.foldOrUp").is_some());
         assert_eq!(
             app_key_hint(&kb, "app.interrupt", "interrupt"),
             "Ctrl+C interrupt"
@@ -110,5 +114,20 @@ mod tests {
         // registered binding over the static table when the action is known.
         let kb = kb();
         assert_eq!(app_key_hint(&kb, "tui.input.copy", "copy"), "Ctrl+C copy");
+    }
+
+    #[test]
+    fn app_key_hint_prefers_user_registered_app_binding() {
+        let mut user_bindings = BTreeMap::new();
+        user_bindings.insert(
+            "app.tools.expand".to_string(),
+            vec!["ctrl+shift+x".to_string()],
+        );
+        let kb = KeybindingsManager::new(keybindings::default_keybindings(), user_bindings);
+
+        assert_eq!(
+            app_key_hint(&kb, "app.tools.expand", "expand tools"),
+            "Ctrl+Shift+X expand tools"
+        );
     }
 }

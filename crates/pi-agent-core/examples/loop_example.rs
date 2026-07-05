@@ -1,3 +1,9 @@
+// global provider runtime compatibility example.
+// This example exercises Agent::run()/Agent::prompt(), which currently reaches
+// providers through pi-agent-core's global AI runtime compatibility boundary.
+// Direct provider-facing examples should prefer scoped
+// pi_ai::api::ProviderRegistry/AiClient.
+
 use futures::StreamExt;
 use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
 use pi_ai::providers::faux::FauxProvider;
@@ -5,6 +11,7 @@ use pi_ai::registry;
 use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
 use std::sync::Arc;
 
+#[allow(deprecated)]
 #[tokio::main]
 async fn main() {
     let provider = Arc::new(FauxProvider::with_call_queue(vec![

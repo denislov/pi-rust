@@ -4,7 +4,8 @@ pub(crate) struct RuntimeService;
 use std::collections::BTreeSet;
 
 use pi_agent_core::{Agent, AgentMessage, AgentResources, AgentTool};
-use pi_ai::types::{AssistantMessage, ContentBlock, StopReason};
+use pi_ai::stream::EventStream;
+use pi_ai::types::{AssistantMessage, ContentBlock, Context, StopReason, StreamOptions};
 
 use crate::runtime::{SessionMode, build_agent_config};
 
@@ -18,6 +19,22 @@ use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, T
 pub(crate) struct AgentRuntimeBuild {
     pub(crate) agent: Agent,
     pub(crate) diagnostics: Vec<CodingDiagnostic>,
+}
+
+#[allow(deprecated)]
+pub(crate) fn register_builtin_providers_for_global_runtime() {
+    pi_ai::providers::register_builtins();
+}
+
+pub(crate) fn stream_model_for_global_runtime(
+    runtime: &RuntimeSnapshot,
+    context: Context,
+    opts: Option<StreamOptions>,
+) -> EventStream {
+    if runtime.register_builtins() {
+        register_builtin_providers_for_global_runtime();
+    }
+    pi_ai::stream_model(runtime.model(), context, opts)
 }
 
 impl RuntimeService {
@@ -48,7 +65,7 @@ impl RuntimeService {
         plugin_service: &PluginService,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
         if runtime.register_builtins() {
-            pi_ai::providers::register_builtins();
+            register_builtin_providers_for_global_runtime();
         }
 
         let mut diagnostics = runtime.profile_diagnostics().to_vec();
@@ -186,7 +203,7 @@ impl RuntimeService {
                         timestamp: 0,
                     });
                 }
-                TranscriptItem::Diagnostic { .. } => {
+                TranscriptItem::Diagnostic { .. } | TranscriptItem::DelegationBlock { .. } => {
                     flush_replay_hydration_group(
                         agent,
                         &mut pending_assistant,

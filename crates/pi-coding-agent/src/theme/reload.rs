@@ -7,13 +7,13 @@
 //! [`ThemeReloadSignal`] through a `tokio` channel. Built-in `dark`/`light`
 //! themes are never watched, matching TS `startThemeWatcher`.
 //!
-//! Stop is cooperative: a shared `AtomicBool` flag lets the debounce worker
-//! exit promptly (within one poll tick) when the watcher is dropped. We can't
-//! rely on the channel closing because the worker itself holds a sender clone.
+//! Stop is cooperative: a shared `AtomicBool` flag and condition variable let
+//! the debounce worker wake promptly when the watcher is dropped. We can't rely
+//! on the channel closing because the worker itself holds a sender clone.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -43,8 +43,23 @@ pub fn should_watch_target(name: &str) -> Option<PathBuf> {
 pub struct ThemeWatcher {
     watcher: Option<RecommendedWatcher>,
     debounce_handle: Option<std::thread::JoinHandle<()>>,
-    pending: Arc<Mutex<Option<Instant>>>,
+    pending: Arc<(Mutex<DebounceState>, Condvar)>,
     stop_flag: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct DebounceState {
+    deadline: Option<Instant>,
+}
+
+impl DebounceState {
+    fn schedule(&mut self, now: Instant, debounce: Duration) {
+        self.deadline = Some(now + debounce);
+    }
+
+    fn clear(&mut self) {
+        self.deadline = None;
+    }
 }
 
 impl ThemeWatcher {
@@ -67,7 +82,8 @@ impl ThemeWatcher {
         let (tx, rx) = mpsc::unbounded_channel();
 
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let pending: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let pending: Arc<(Mutex<DebounceState>, Condvar)> =
+            Arc::new((Mutex::new(DebounceState::default()), Condvar::new()));
 
         // Built-in themes are not watched.
         let target = match should_watch_target(&name) {
@@ -88,8 +104,8 @@ impl ThemeWatcher {
         let stop_flag_for_debouncer = stop_flag.clone();
         let pending_for_debouncer = pending.clone();
 
-        // Debounce worker: sleeps in short increments, fires a reload when the
-        // scheduled deadline passes, and exits once `stop_flag` is set.
+        // Debounce worker: waits until the scheduled deadline, reloads, and
+        // exits once `stop_flag` is set.
         let name_for_debouncer = name.clone();
         let dir_for_debouncer = themes_dir.clone();
         let target_for_debouncer = target.clone();
@@ -115,8 +131,10 @@ impl ThemeWatcher {
             if !is_relevant_event(&event, &target_for_watcher) {
                 return;
             }
-            if let Ok(mut p) = pending_for_watcher.lock() {
-                *p = Some(Instant::now() + debounce);
+            let (pending_lock, pending_changed) = &*pending_for_watcher;
+            if let Ok(mut p) = pending_lock.lock() {
+                p.schedule(Instant::now(), debounce);
+                pending_changed.notify_one();
             }
         })
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -139,13 +157,14 @@ impl ThemeWatcher {
     }
 
     /// Cancel any pending reload, drop the fs watcher, and join the debounce
-    /// worker. The worker checks `stop_flag` each poll tick (<=10ms) so this
-    /// returns promptly.
+    /// worker. The condition variable wakes the worker so this returns promptly.
     fn stop(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
-        if let Ok(mut p) = self.pending.lock() {
-            *p = None;
+        let (pending_lock, pending_changed) = &*self.pending;
+        if let Ok(mut p) = pending_lock.lock() {
+            p.clear();
         }
+        pending_changed.notify_all();
         // Drop the fs watcher first so no new events are scheduled.
         self.watcher = None;
         if let Some(handle) = self.debounce_handle.take() {
@@ -177,56 +196,90 @@ fn is_relevant_event(event: &notify::Event, target: &Path) -> bool {
         .any(|p| p.file_name().is_some_and(|n| n == target))
 }
 
-/// Debounce loop body. Polls the shared deadline; when due, reparses the theme
-/// file and sends a [`ThemeReloadSignal`]. Exits when `stop_flag` is set or the
-/// receiver is dropped.
+/// Debounce loop body. Waits for the shared deadline; when due, reparses the
+/// theme file and sends a [`ThemeReloadSignal`]. Exits when `stop_flag` is set
+/// or the receiver is dropped.
 #[allow(clippy::too_many_arguments)]
 fn debounce_loop(
     stop_flag: Arc<AtomicBool>,
-    pending: Arc<Mutex<Option<Instant>>>,
+    pending: Arc<(Mutex<DebounceState>, Condvar)>,
     themes_dir: PathBuf,
     target: PathBuf,
     name: String,
     tx: mpsc::UnboundedSender<ThemeReloadSignal>,
 ) {
-    let poll = Duration::from_millis(10);
-    while !stop_flag.load(Ordering::Relaxed) {
-        let now = Instant::now();
-        let due = {
-            let Ok(mut p) = pending.lock() else {
-                return;
-            };
-            match *p {
-                Some(deadline) if now >= deadline => {
-                    *p = None;
-                    true
-                }
-                _ => false,
-            }
+    let (pending_lock, pending_changed) = &*pending;
+    loop {
+        let mut pending_guard = match pending_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
         };
-        if due {
-            // Reload from disk; ignore transient missing/invalid files
-            // (TS keeps the last good theme and ignores parse errors).
-            let theme_file = themes_dir.join(&target);
-            if let Ok(content) = std::fs::read_to_string(&theme_file)
-                && let Ok(theme) = serde_json::from_str::<ThemeJson>(&content)
-            {
-                let display_name = if theme.name.is_empty() {
-                    name.clone()
-                } else {
-                    theme.name.clone()
-                };
-                if tx
-                    .send(ThemeReloadSignal {
-                        name: display_name,
-                        theme,
-                    })
-                    .is_err()
-                {
-                    return; // receiver dropped -> stop
+        loop {
+            if stop_flag.load(Ordering::Relaxed) {
+                return;
+            }
+            let now = Instant::now();
+            match pending_guard.deadline {
+                Some(deadline) if now >= deadline => {
+                    pending_guard.deadline = None;
+                    break;
+                }
+                Some(deadline) => {
+                    let wait = deadline.saturating_duration_since(now);
+                    let Ok((guard, _)) = pending_changed.wait_timeout(pending_guard, wait) else {
+                        return;
+                    };
+                    pending_guard = guard;
+                }
+                None => {
+                    let Ok(guard) = pending_changed.wait(pending_guard) else {
+                        return;
+                    };
+                    pending_guard = guard;
                 }
             }
         }
-        std::thread::sleep(poll);
+        drop(pending_guard);
+
+        // Reload from disk; ignore transient missing/invalid files
+        // (TS keeps the last good theme and ignores parse errors).
+        let theme_file = themes_dir.join(&target);
+        if let Ok(content) = std::fs::read_to_string(&theme_file)
+            && let Ok(theme) = serde_json::from_str::<ThemeJson>(&content)
+        {
+            let display_name = if theme.name.is_empty() {
+                name.clone()
+            } else {
+                theme.name.clone()
+            };
+            if tx
+                .send(ThemeReloadSignal {
+                    name: display_name,
+                    theme,
+                })
+                .is_err()
+            {
+                return; // receiver dropped -> stop
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debounce_state_extends_deadline_for_rapid_events() {
+        let debounce = Duration::from_millis(80);
+        let start = Instant::now();
+        let mut state = DebounceState::default();
+
+        state.schedule(start, debounce);
+        state.schedule(start + Duration::from_millis(20), debounce);
+
+        assert_eq!(state.deadline, Some(start + Duration::from_millis(100)));
+        state.clear();
+        assert_eq!(state.deadline, None);
     }
 }

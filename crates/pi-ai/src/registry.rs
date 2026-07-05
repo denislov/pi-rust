@@ -1,3 +1,4 @@
+use crate::providers;
 use crate::stream::EventStream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
@@ -45,6 +46,18 @@ impl ProviderRegistry {
         self.providers.read().unwrap().get(api).cloned()
     }
 
+    pub fn registered_apis(&self) -> Vec<String> {
+        let mut apis = self
+            .providers
+            .read()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        apis.sort();
+        apis
+    }
+
     pub fn stream_model(
         &self,
         model: &Model,
@@ -67,10 +80,19 @@ impl ProviderRegistry {
             None => return unknown_provider_stream(api),
         };
 
-        if let Some(ref mut o) = opts {
-            if o.api_key.is_none() {
-                o.api_key = auth_resolver.resolve_api_key(&model.provider);
+        match opts.as_mut() {
+            Some(options) if options.api_key.is_none() => {
+                options.api_key = auth_resolver.resolve_api_key(&model.provider);
             }
+            None => {
+                if let Some(api_key) = auth_resolver.resolve_api_key(&model.provider) {
+                    opts = Some(StreamOptions {
+                        api_key: Some(api_key),
+                        ..StreamOptions::default()
+                    });
+                }
+            }
+            _ => {}
         }
 
         provider.stream(model, ctx, opts)
@@ -117,6 +139,10 @@ impl AiClient {
 
     pub fn register_provider(&self, api: impl Into<String>, provider: Arc<dyn ApiProvider>) {
         self.registry.register(api, provider);
+    }
+
+    pub fn register_builtins(&self) {
+        providers::register_builtins_into(&self.registry);
     }
 
     pub fn unregister_provider(&self, api: &str) {

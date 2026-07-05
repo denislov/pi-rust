@@ -1,6 +1,5 @@
-use pi_agent_core::session::{
-    InMemorySessionStorage, SessionEntry, StoredAgentMessage, build_session_context,
-};
+use pi_agent_core::session_context::{InMemorySessionStorage, build_session_context};
+use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage};
 use pi_ai::types::ContentBlock;
 
 fn user(text: &str, id: &str, parent: Option<&str>) -> SessionEntry {

@@ -54,30 +54,37 @@ pub use self_healing_edit_flow::{
 
 use agent_invocation_flow::AgentInvocationContext;
 use agent_team_flow::AgentTeamContext;
-use branch_summary_flow::{BranchSummaryContext, BranchSummaryOptions, BranchSummaryOutcome};
+use branch_summary_flow::{
+    BranchSummaryContext, BranchSummaryOptions, branch_summary_failed_outcome,
+    branch_summary_outcome_text, branch_summary_success_outcome,
+};
 use capability_service::CapabilityService;
 use delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
-    emit_delegation_approved, emit_delegation_completed, emit_delegation_confirmation_required,
-    emit_delegation_failed, emit_delegation_rejected, emit_delegation_started,
 };
 use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
 use futures::future::{BoxFuture, FutureExt};
-use manual_compaction_flow::{ManualCompactionContext, ManualCompactionOptions};
+use manual_compaction_flow::{
+    ManualCompactionContext, ManualCompactionOptions, manual_compaction_failed_outcome,
+    manual_compaction_success_outcome,
+};
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
-use prompt::{DelegationRequest, PromptTurnContext, PromptTurnIds, RuntimeSnapshot};
+use prompt::{DelegationRequest, PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
+pub(crate) use runtime_service::register_builtin_providers_for_global_runtime;
 pub(crate) use self_healing_edit_flow::{
     ModelSelfHealingEditRepairStrategy, PlannedSelfHealingEditRepairStrategy,
     SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditObserver, SelfHealingEditOptions,
     SelfHealingEditRepairStrategy,
 };
-use session_log::event::{PersistedDelegationRuntimeSeed, PersistedPluginDiagnostic};
+use session_log::event::{
+    PersistedDelegationRuntimeSeed, PersistedDelegationStatus, PersistedPluginDiagnostic,
+};
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use session_log::replay::{ReplayPendingDelegationConfirmation, TranscriptItem};
 use session_service::{FinalizedSessionWrite, SessionService};
@@ -116,15 +123,11 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
         repair: &'a SelfHealingEditRepairAttempt,
     ) -> BoxFuture<'a, ()> {
         async move {
-            self.event_service
-                .emit(CodingAgentEvent::SelfHealingEditRepairAttempted {
-                    operation_id: self.operation_id.clone(),
-                    path: path.to_owned(),
-                    attempt: repair.attempt,
-                    replacements: repair.replacements.clone(),
-                    diagnostics: repair.diagnostics.clone(),
-                    check_output: repair.check_output.clone(),
-                });
+            self.event_service.emit_self_healing_edit_repair_attempted(
+                self.operation_id.clone(),
+                path,
+                repair,
+            );
         }
         .boxed()
     }
@@ -164,6 +167,12 @@ pub(crate) struct PendingDelegationConfirmationState {
     requested_at: String,
     child_delegation_depth: usize,
     delegation_lineage: Vec<DelegationLineageEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApprovedDelegationExecution {
+    child_operation_id: String,
+    final_text: String,
 }
 
 impl PendingDelegationConfirmationState {
@@ -216,6 +225,20 @@ impl TransientSessionState {
             transcript: Vec::new(),
             default_agent_profile_id,
         }
+    }
+
+    fn finalize_prompt_transaction(
+        &mut self,
+        context: &PromptTurnContext,
+        outcome: &PromptTurnOutcome,
+    ) -> FinalizedSessionWrite {
+        if outcome.is_success() {
+            self.transcript.extend(context.completed_transcript_items());
+        }
+        SessionService::skip_prompt_transaction(
+            context.operation_id().to_owned(),
+            "session persistence disabled",
+        )
     }
 }
 
@@ -628,7 +651,7 @@ impl CodingAgentSession {
             }
         }
         self.event_service
-            .emit(CodingAgentEvent::DefaultAgentProfileChanged { profile_id });
+            .emit_default_agent_profile_changed(profile_id);
         Ok(())
     }
 
@@ -659,26 +682,27 @@ impl CodingAgentSession {
         let mut ids = SystemIdGenerator;
         self.record_delegation_confirmation_approved(index, ids.next_operation_id())?;
         let pending = self.pending_delegation_confirmations.remove(index);
-        self.emit_delegation_approved(&pending.request);
+        self.event_service
+            .emit_delegation_approved(&pending.request);
         match pending.request.target_kind {
-            ProfileKind::Agent => {
-                self.execute_approved_agent_delegation(
+            ProfileKind::Agent => self
+                .execute_approved_agent_delegation(
                     &pending.request,
                     pending.prompt_options,
                     pending.child_delegation_depth,
                     pending.delegation_lineage,
                 )
                 .await
-            }
-            ProfileKind::Team => {
-                self.execute_approved_team_delegation(
+                .map(|_| ()),
+            ProfileKind::Team => self
+                .execute_approved_team_delegation(
                     &pending.request,
                     pending.prompt_options,
                     pending.child_delegation_depth,
                     pending.delegation_lineage,
                 )
                 .await
-            }
+                .map(|_| ()),
         }
     }
 
@@ -698,7 +722,8 @@ impl CodingAgentSession {
         };
         self.record_delegation_confirmation_rejected(index, reason.clone())?;
         let pending = self.pending_delegation_confirmations.remove(index);
-        self.emit_delegation_rejected(&pending.request, &reason);
+        self.event_service
+            .emit_delegation_rejected(&pending.request, &reason);
         Ok(())
     }
 
@@ -853,9 +878,7 @@ impl CodingAgentSession {
             .map(|pending| pending_state_from_replay(pending, &cwd))
             .collect::<Result<Vec<_>, _>>()?;
         let event_service = EventService::new();
-        event_service.emit(CodingAgentEvent::SessionOpened {
-            session_id: session_service.session_id().to_owned(),
-        });
+        event_service.emit_session_opened(session_service.session_id().to_owned());
 
         Ok(Self {
             persistence: SessionPersistence::Persistent(session_service),
@@ -918,7 +941,7 @@ impl CodingAgentSession {
                         error.code(),
                         error.to_string(),
                     )?;
-                    self.emit_session_write_events(&finalized);
+                    self.event_service.emit_session_write_events(&finalized);
                 }
                 return Err(error);
             }
@@ -936,20 +959,12 @@ impl CodingAgentSession {
         {
             let finalized =
                 session_service.commit_plugin_load_transaction(Some(transaction), operation_id)?;
-            self.emit_session_write_events(&finalized);
+            self.event_service.emit_session_write_events(&finalized);
         }
         if let Some(plugin_service) = context.take_loaded_plugin_service() {
             self.plugin_service = plugin_service;
         }
-        for diagnostic in &outcome.diagnostics {
-            self.event_service.emit(CodingAgentEvent::Diagnostic {
-                operation_id: None,
-                message: diagnostic.message.clone(),
-            });
-        }
-        if outcome.capability_changed {
-            self.event_service.emit(CodingAgentEvent::CapabilityChanged);
-        }
+        self.event_service.emit_plugin_load_outcome(&outcome);
         Ok(outcome)
     }
 
@@ -967,10 +982,8 @@ impl CodingAgentSession {
         let operation_id = context.operation_id().to_owned();
         let turn_id = context.turn_id().to_owned();
 
-        self.event_service.emit(CodingAgentEvent::PromptStarted {
-            operation_id,
-            turn_id,
-        });
+        self.event_service
+            .emit_prompt_started(operation_id, turn_id);
         let mut outcome = match self.flow_service.run_prompt_turn(&mut context).await {
             Ok(outcome) => outcome,
             Err(error) => match context.abort_reason() {
@@ -980,19 +993,19 @@ impl CodingAgentSession {
                 None => context.finish_failure(error),
             },
         };
-        if matches!(outcome, PromptTurnOutcome::Success { .. }) {
+        if outcome.is_success() {
             match context.authorize_delegation_requests(0) {
                 Ok(decisions) => {
                     let decisions = decisions.to_vec();
                     let prompt_options = context.options().clone();
                     if let Err(error) = self
-                        .execute_authorized_delegations(&decisions, prompt_options)
+                        .execute_authorized_delegations(&mut context, &decisions, prompt_options)
                         .await
                     {
-                        self.event_service.emit(CodingAgentEvent::Diagnostic {
-                            operation_id: Some(context.operation_id().to_owned()),
-                            message: format!("delegation execution failed: {error}"),
-                        });
+                        self.event_service.emit_diagnostic(
+                            Some(context.operation_id().to_owned()),
+                            format!("delegation execution failed: {error}"),
+                        );
                     }
                 }
                 Err(error) => {
@@ -1013,11 +1026,11 @@ impl CodingAgentSession {
         apply_finalized_session_write(&mut outcome, &finalized);
 
         if !context.live_events_enabled() {
-            self.emit_coding_events_before_prompt_outcome(context.coding_events());
+            self.event_service
+                .emit_events_before_prompt_outcome(context.coding_events());
         }
-        self.emit_session_write_events(&finalized);
-        self.emit_prompt_diagnostics(&outcome);
-        self.emit_prompt_outcome_event(&outcome);
+        self.event_service.emit_session_write_events(&finalized);
+        self.event_service.emit_prompt_outcome(&outcome);
         Ok(outcome)
     }
 
@@ -1053,6 +1066,7 @@ impl CodingAgentSession {
 
     async fn execute_authorized_delegations(
         &mut self,
+        context: &mut PromptTurnContext,
         decisions: &[DelegationAuthorizationDecision],
         prompt_options: PromptTurnOptions,
     ) -> Result<(), CodingSessionError> {
@@ -1062,8 +1076,8 @@ impl CodingAgentSession {
                     request,
                     child_delegation_depth,
                 } => {
-                    self.emit_delegation_approved(request);
-                    match request.target_kind {
+                    self.event_service.emit_delegation_approved(request);
+                    let execution = match request.target_kind {
                         ProfileKind::Agent => {
                             self.execute_approved_agent_delegation(
                                 request,
@@ -1071,7 +1085,7 @@ impl CodingAgentSession {
                                 *child_delegation_depth,
                                 delegation_lineage_for_request(&[], request),
                             )
-                            .await?;
+                            .await
                         }
                         ProfileKind::Team => {
                             self.execute_approved_team_delegation(
@@ -1080,7 +1094,26 @@ impl CodingAgentSession {
                                 *child_delegation_depth,
                                 delegation_lineage_for_request(&[], request),
                             )
-                            .await?;
+                            .await
+                        }
+                    };
+                    match execution {
+                        Ok(execution) => {
+                            context.record_delegation_folded_update(
+                                request,
+                                PersistedDelegationStatus::Completed,
+                                Some(execution.child_operation_id),
+                                Some(execution.final_text),
+                            )?;
+                        }
+                        Err(error) => {
+                            context.record_delegation_folded_update(
+                                request,
+                                PersistedDelegationStatus::Failed,
+                                None,
+                                Some(error.to_string()),
+                            )?;
+                            return Err(error);
                         }
                     }
                 }
@@ -1089,6 +1122,12 @@ impl CodingAgentSession {
                     reason,
                     child_delegation_depth,
                 } => {
+                    context.record_delegation_folded_update(
+                        request,
+                        PersistedDelegationStatus::ConfirmationRequired,
+                        None,
+                        Some(reason.clone()),
+                    )?;
                     let pending = PendingDelegationConfirmationState {
                         request: request.clone(),
                         prompt_options: prompt_options.clone(),
@@ -1100,7 +1139,13 @@ impl CodingAgentSession {
                     self.queue_pending_delegation_confirmation(pending, true)?;
                 }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
-                    self.emit_delegation_rejected(request, reason);
+                    self.event_service.emit_delegation_rejected(request, reason);
+                    context.record_delegation_folded_update(
+                        request,
+                        PersistedDelegationStatus::Rejected,
+                        None,
+                        Some(reason.clone()),
+                    )?;
                 }
             }
         }
@@ -1130,18 +1175,19 @@ impl CodingAgentSession {
                     && existing.request.tool_call_id == pending.request.tool_call_id
             })
         {
-            self.event_service.emit(CodingAgentEvent::Diagnostic {
-                operation_id: Some(pending.request.operation_id.clone()),
-                message: format!(
+            self.event_service.emit_diagnostic(
+                Some(pending.request.operation_id.clone()),
+                format!(
                     "duplicate pending delegation confirmation ignored: operation_id={}, tool_call_id={}",
                     pending.request.operation_id, pending.request.tool_call_id
                 ),
-            });
+            );
             return Ok(());
         }
         self.record_delegation_confirmation_requested(&pending)?;
         if emit_confirmation_required {
-            self.emit_delegation_confirmation_required(&pending.request, &pending.reason);
+            self.event_service
+                .emit_delegation_confirmation_required(&pending.request, &pending.reason);
         }
         self.pending_delegation_confirmations.push(pending);
         Ok(())
@@ -1230,7 +1276,7 @@ impl CodingAgentSession {
         prompt_options: PromptTurnOptions,
         child_delegation_depth: usize,
         delegation_lineage: Vec<DelegationLineageEntry>,
-    ) -> Result<(), CodingSessionError> {
+    ) -> Result<ApprovedDelegationExecution, CodingSessionError> {
         let mut context = AgentInvocationContext::new(
             AgentInvocationOptions::new(
                 request.target_id.clone(),
@@ -1244,19 +1290,32 @@ impl CodingAgentSession {
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
-        self.emit_delegation_started(request, child_operation_id.clone());
+        self.event_service
+            .emit_delegation_started(request, child_operation_id.clone());
         let result = self.flow_service.run_agent_invocation(&mut context).await;
         let pending_confirmations = context.take_pending_delegation_confirmations();
         self.adopt_pending_delegation_confirmations(pending_confirmations)?;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
-                self.emit_delegation_failed(request, child_operation_id, error.clone());
+                self.event_service.emit_delegation_failed(
+                    request,
+                    child_operation_id,
+                    error.clone(),
+                );
                 return Err(error);
             }
         };
-        self.emit_delegation_completed(request, child_operation_id, outcome.final_text);
-        Ok(())
+        let final_text = outcome.final_text;
+        self.event_service.emit_delegation_completed(
+            request,
+            child_operation_id.clone(),
+            final_text.clone(),
+        );
+        Ok(ApprovedDelegationExecution {
+            child_operation_id,
+            final_text,
+        })
     }
 
     async fn execute_approved_team_delegation(
@@ -1265,7 +1324,7 @@ impl CodingAgentSession {
         prompt_options: PromptTurnOptions,
         child_delegation_depth: usize,
         delegation_lineage: Vec<DelegationLineageEntry>,
-    ) -> Result<(), CodingSessionError> {
+    ) -> Result<ApprovedDelegationExecution, CodingSessionError> {
         let mut context = AgentTeamContext::new(
             AgentTeamOptions::new(
                 request.target_id.clone(),
@@ -1279,53 +1338,32 @@ impl CodingAgentSession {
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
-        self.emit_delegation_started(request, child_operation_id.clone());
+        self.event_service
+            .emit_delegation_started(request, child_operation_id.clone());
         let result = self.flow_service.run_agent_team(&mut context).await;
         let pending_confirmations = context.take_pending_delegation_confirmations();
         self.adopt_pending_delegation_confirmations(pending_confirmations)?;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
-                self.emit_delegation_failed(request, child_operation_id, error.clone());
+                self.event_service.emit_delegation_failed(
+                    request,
+                    child_operation_id,
+                    error.clone(),
+                );
                 return Err(error);
             }
         };
-        self.emit_delegation_completed(request, child_operation_id, outcome.final_text);
-        Ok(())
-    }
-
-    fn emit_delegation_approved(&self, request: &DelegationRequest) {
-        emit_delegation_approved(&self.event_service, request);
-    }
-
-    fn emit_delegation_rejected(&self, request: &DelegationRequest, reason: &str) {
-        emit_delegation_rejected(&self.event_service, request, reason);
-    }
-
-    fn emit_delegation_confirmation_required(&self, request: &DelegationRequest, reason: &str) {
-        emit_delegation_confirmation_required(&self.event_service, request, reason);
-    }
-
-    fn emit_delegation_started(&self, request: &DelegationRequest, child_operation_id: String) {
-        emit_delegation_started(&self.event_service, request, child_operation_id);
-    }
-
-    fn emit_delegation_completed(
-        &self,
-        request: &DelegationRequest,
-        child_operation_id: String,
-        final_text: String,
-    ) {
-        emit_delegation_completed(&self.event_service, request, child_operation_id, final_text);
-    }
-
-    fn emit_delegation_failed(
-        &self,
-        request: &DelegationRequest,
-        child_operation_id: String,
-        error: CodingSessionError,
-    ) {
-        emit_delegation_failed(&self.event_service, request, child_operation_id, error);
+        let final_text = outcome.final_text;
+        self.event_service.emit_delegation_completed(
+            request,
+            child_operation_id.clone(),
+            final_text.clone(),
+        );
+        Ok(ApprovedDelegationExecution {
+            child_operation_id,
+            final_text,
+        })
     }
 
     fn self_healing_model_repair_policy(
@@ -1378,11 +1416,11 @@ impl CodingAgentSession {
             let cwd = session_cwd(session_service).unwrap_or_else(default_cwd);
             let mut transaction = session_service.begin_self_healing_edit_transaction();
             let operation_id = transaction.operation_id().to_owned();
-            event_service.emit(CodingAgentEvent::SelfHealingEditStarted {
-                operation_id: operation_id.clone(),
-                path: event_path.clone(),
-                replacements: replacement_count,
-            });
+            event_service.emit_self_healing_edit_started(
+                operation_id.clone(),
+                event_path.clone(),
+                replacement_count,
+            );
             SessionService::record_self_healing_edit_started(
                 &mut transaction,
                 path.clone(),
@@ -1420,13 +1458,7 @@ impl CodingAgentSession {
                         )?;
                     }
                     SessionService::record_self_healing_edit_completed(&mut transaction, &outcome)?;
-                    event_service.emit(CodingAgentEvent::SelfHealingEditCompleted {
-                        operation_id: operation_id.clone(),
-                        path: outcome.path.clone(),
-                        attempts: outcome.attempts,
-                        first_changed_line: outcome.first_changed_line,
-                        check_output: outcome.check_output.clone(),
-                    });
+                    event_service.emit_self_healing_edit_completed(operation_id.clone(), &outcome);
                     let finalized = session_service
                         .commit_self_healing_edit_transaction(Some(transaction), operation_id)?;
                     (Ok(outcome), finalized)
@@ -1439,11 +1471,11 @@ impl CodingAgentSession {
                             repair,
                         )?;
                     }
-                    event_service.emit(CodingAgentEvent::SelfHealingEditFailed {
-                        operation_id: operation_id.clone(),
-                        path: event_path.clone(),
-                        error: error.clone(),
-                    });
+                    event_service.emit_self_healing_edit_failed(
+                        operation_id.clone(),
+                        event_path.clone(),
+                        &error,
+                    );
                     let finalized = session_service.fail_self_healing_edit_transaction(
                         Some(transaction),
                         operation_id,
@@ -1454,7 +1486,7 @@ impl CodingAgentSession {
                 }
             }
         };
-        self.emit_session_write_events(&finalized);
+        self.event_service.emit_session_write_events(&finalized);
         result
     }
 
@@ -1477,41 +1509,32 @@ impl CodingAgentSession {
 
         match self.flow_service.run_manual_compaction(&mut context).await {
             Ok(compaction) => {
-                let mut outcome = PromptTurnOutcome::Success {
-                    operation_id: operation_id.clone(),
-                    turn_id: turn_id.clone(),
-                    session_id: Some(session_service.session_id().to_owned()),
-                    leaf_id: session_service.active_leaf_id().map(str::to_owned),
-                    final_text: compaction.summary.clone(),
-                    final_message: compaction.final_message,
-                    diagnostics: Vec::new(),
-                };
+                let mut outcome = manual_compaction_success_outcome(
+                    operation_id.clone(),
+                    turn_id.clone(),
+                    session_service.session_id().to_owned(),
+                    session_service.active_leaf_id().map(str::to_owned),
+                    &compaction,
+                );
                 let finalized = session_service.commit_manual_compaction_transaction(
                     context.take_transaction(),
                     operation_id.clone(),
                 )?;
                 apply_finalized_session_write(&mut outcome, &finalized);
 
-                emit_session_write_pending(&self.event_service, &finalized);
-                self.event_service
-                    .emit(CodingAgentEvent::SessionCompactionCompleted {
-                        operation_id,
-                        turn_id,
-                        summary: compaction.summary,
-                        first_kept_message_id: compaction.first_kept_message_id,
-                        tokens_before: compaction.tokens_before,
-                    });
-                emit_session_write_committed(&self.event_service, &finalized);
-                self.emit_prompt_outcome_event(&outcome);
+                self.event_service.emit_session_write_pending(&finalized);
+                self.event_service.emit_session_compaction_completed(
+                    operation_id,
+                    turn_id,
+                    &compaction,
+                );
+                self.event_service.emit_session_write_committed(&finalized);
+                self.event_service.emit_prompt_outcome(&outcome);
                 Ok(outcome)
             }
             Err(error) => {
-                let mut outcome = PromptTurnOutcome::Failed {
-                    operation_id: operation_id.clone(),
-                    turn_id: Some(turn_id),
-                    error: error.clone(),
-                    diagnostics: Vec::new(),
-                };
+                let mut outcome =
+                    manual_compaction_failed_outcome(operation_id.clone(), turn_id, error.clone());
                 let finalized = session_service.fail_prompt_transaction(
                     context.take_transaction(),
                     operation_id.clone(),
@@ -1519,8 +1542,8 @@ impl CodingAgentSession {
                     error.to_string(),
                 )?;
                 apply_finalized_session_write(&mut outcome, &finalized);
-                self.emit_session_write_events(&finalized);
-                self.emit_prompt_outcome_event(&outcome);
+                self.event_service.emit_session_write_events(&finalized);
+                self.event_service.emit_prompt_outcome(&outcome);
                 Ok(outcome)
             }
         }
@@ -1550,15 +1573,14 @@ impl CodingAgentSession {
         let mut ids = SystemIdGenerator;
         let operation_id = ids.next_operation_id();
         let turn_id = ids.next_turn_id();
-        Ok(Some(PromptTurnOutcome::Success {
+        Ok(Some(branch_summary_success_outcome(
             operation_id,
             turn_id,
-            session_id: Some(session_service.session_id().to_owned()),
-            leaf_id: session_service.active_leaf_id().map(str::to_owned),
-            final_text: summary.clone(),
-            final_message: branch_summary_final_message(&runtime, &summary),
-            diagnostics: Vec::new(),
-        }))
+            session_service.session_id().to_owned(),
+            session_service.active_leaf_id().map(str::to_owned),
+            &runtime,
+            summary,
+        )))
     }
 
     async fn summarize_branch_inner(
@@ -1595,29 +1617,24 @@ impl CodingAgentSession {
 
         match self.flow_service.run_branch_summary(&mut context).await {
             Ok(branch_summary) => {
-                let final_text = branch_summary_text(branch_summary);
-                let mut outcome = PromptTurnOutcome::Success {
-                    operation_id: operation_id.clone(),
+                let final_text = branch_summary_outcome_text(&branch_summary);
+                let mut outcome = branch_summary_success_outcome(
+                    operation_id.clone(),
                     turn_id,
-                    session_id: Some(session_service.session_id().to_owned()),
-                    leaf_id: session_service.active_leaf_id().map(str::to_owned),
-                    final_text: final_text.clone(),
-                    final_message: branch_summary_final_message(&runtime, &final_text),
-                    diagnostics: Vec::new(),
-                };
+                    session_service.session_id().to_owned(),
+                    session_service.active_leaf_id().map(str::to_owned),
+                    &runtime,
+                    final_text,
+                );
                 let finalized = session_service
                     .commit_branch_summary_transaction(context.take_transaction(), operation_id)?;
                 apply_finalized_session_write(&mut outcome, &finalized);
-                self.emit_session_write_events(&finalized);
+                self.event_service.emit_session_write_events(&finalized);
                 Ok(outcome)
             }
             Err(error) => {
-                let mut outcome = PromptTurnOutcome::Failed {
-                    operation_id: operation_id.clone(),
-                    turn_id: Some(turn_id),
-                    error: error.clone(),
-                    diagnostics: Vec::new(),
-                };
+                let mut outcome =
+                    branch_summary_failed_outcome(operation_id.clone(), turn_id, error.clone());
                 let finalized = session_service.fail_prompt_transaction(
                     context.take_transaction(),
                     operation_id,
@@ -1625,7 +1642,7 @@ impl CodingAgentSession {
                     error.to_string(),
                 )?;
                 apply_finalized_session_write(&mut outcome, &finalized);
-                self.emit_session_write_events(&finalized);
+                self.event_service.emit_session_write_events(&finalized);
                 Ok(outcome)
             }
         }
@@ -1714,96 +1731,12 @@ impl CodingAgentSession {
         let operation_id = context.operation_id().to_owned();
         let transaction = context.take_transaction();
         match &mut self.persistence {
-            SessionPersistence::Persistent(session_service) => match outcome {
-                PromptTurnOutcome::Success { .. } => {
-                    session_service.commit_prompt_transaction(transaction, operation_id)
-                }
-                PromptTurnOutcome::Aborted { reason, .. } => session_service
-                    .abort_prompt_transaction(transaction, operation_id, reason.clone()),
-                PromptTurnOutcome::Failed { error, .. } => session_service.fail_prompt_transaction(
-                    transaction,
-                    operation_id,
-                    error.code(),
-                    error.to_string(),
-                ),
-            },
+            SessionPersistence::Persistent(session_service) => {
+                session_service.finalize_prompt_transaction(transaction, operation_id, outcome)
+            }
             SessionPersistence::NonPersistent(state) => {
-                if matches!(outcome, PromptTurnOutcome::Success { .. }) {
-                    state
-                        .transcript
-                        .extend(context.completed_transcript_items());
-                }
-                Ok(SessionService::skip_prompt_transaction(
-                    operation_id,
-                    "session persistence disabled",
-                ))
+                Ok(state.finalize_prompt_transaction(context, outcome))
             }
-        }
-    }
-
-    fn emit_coding_events_before_prompt_outcome(&self, events: &[CodingAgentEvent]) {
-        for event in events {
-            if is_prompt_outcome_event(event) {
-                continue;
-            }
-            self.event_service.emit(event.clone());
-        }
-    }
-
-    fn emit_session_write_events(&self, finalized: &FinalizedSessionWrite) {
-        for event in &finalized.events {
-            self.event_service.emit(event.clone());
-        }
-    }
-
-    fn emit_prompt_diagnostics(&self, outcome: &PromptTurnOutcome) {
-        let (operation_id, diagnostics) = match outcome {
-            PromptTurnOutcome::Success {
-                operation_id,
-                diagnostics,
-                ..
-            }
-            | PromptTurnOutcome::Failed {
-                operation_id,
-                diagnostics,
-                ..
-            } => (operation_id, diagnostics),
-            PromptTurnOutcome::Aborted { .. } => return,
-        };
-        for diagnostic in diagnostics {
-            self.event_service.emit(CodingAgentEvent::Diagnostic {
-                operation_id: Some(operation_id.clone()),
-                message: diagnostic.message.clone(),
-            });
-        }
-    }
-
-    fn emit_prompt_outcome_event(&self, outcome: &PromptTurnOutcome) {
-        match outcome {
-            PromptTurnOutcome::Success {
-                operation_id,
-                turn_id,
-                ..
-            } => self.event_service.emit(CodingAgentEvent::PromptCompleted {
-                operation_id: operation_id.clone(),
-                turn_id: turn_id.clone(),
-            }),
-            PromptTurnOutcome::Aborted {
-                operation_id,
-                reason,
-                ..
-            } => self.event_service.emit(CodingAgentEvent::PromptAborted {
-                operation_id: operation_id.clone(),
-                reason: reason.clone(),
-            }),
-            PromptTurnOutcome::Failed {
-                operation_id,
-                error,
-                ..
-            } => self.event_service.emit(CodingAgentEvent::PromptFailed {
-                operation_id: operation_id.clone(),
-                error: error.clone(),
-            }),
         }
     }
 
@@ -1830,71 +1763,14 @@ fn persisted_plugin_diagnostics(
         .collect()
 }
 
-fn branch_summary_text(outcome: BranchSummaryOutcome) -> String {
-    match outcome {
-        BranchSummaryOutcome::Created { summary, .. } => summary,
-        BranchSummaryOutcome::NoOp { reason } => reason,
-    }
-}
-
-fn branch_summary_final_message(
-    runtime: &RuntimeSnapshot,
-    summary: &str,
-) -> pi_ai::types::AssistantMessage {
-    let mut message =
-        pi_ai::types::AssistantMessage::empty(&runtime.model().api, &runtime.model().id);
-    message.provider = Some(runtime.model().provider.clone());
-    message.content.push(pi_ai::types::ContentBlock::Text {
-        text: summary.to_owned(),
-        text_signature: None,
-    });
-    message
-}
-
-fn is_prompt_outcome_event(event: &CodingAgentEvent) -> bool {
-    matches!(
-        event,
-        CodingAgentEvent::PromptCompleted { .. }
-            | CodingAgentEvent::PromptFailed { .. }
-            | CodingAgentEvent::PromptAborted { .. }
-    )
-}
-
 fn apply_finalized_session_write(
     outcome: &mut PromptTurnOutcome,
     finalized: &FinalizedSessionWrite,
 ) {
-    if let PromptTurnOutcome::Success {
-        session_id,
-        leaf_id,
-        ..
-    } = outcome
-    {
-        if let Some(finalized_session_id) = &finalized.session_id {
-            *session_id = Some(finalized_session_id.clone());
-        }
-        *leaf_id = finalized.leaf_id.clone();
-    }
-}
-
-fn emit_session_write_pending(event_service: &EventService, finalized: &FinalizedSessionWrite) {
-    for event in &finalized.events {
-        if matches!(event, CodingAgentEvent::SessionWritePending { .. }) {
-            event_service.emit(event.clone());
-        }
-    }
-}
-
-fn emit_session_write_committed(event_service: &EventService, finalized: &FinalizedSessionWrite) {
-    for event in &finalized.events {
-        if matches!(
-            event,
-            CodingAgentEvent::SessionWriteCommitted { .. }
-                | CodingAgentEvent::SessionWriteSkipped { .. }
-        ) {
-            event_service.emit(event.clone());
-        }
-    }
+    outcome.apply_success_session_write_metadata(
+        finalized.session_id.clone(),
+        finalized.leaf_id.clone(),
+    );
 }
 
 #[cfg(test)]
@@ -1907,7 +1783,6 @@ mod tests {
     use async_stream::stream;
     use pi_agent_core::{AgentResources, AgentTool, AgentToolOutput};
     use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
-    use pi_ai::registry;
     use pi_ai::registry::ApiProvider;
     use pi_ai::stream::EventStream;
     use pi_ai::types::{
@@ -2280,7 +2155,7 @@ mod tests {
     async fn load_plugins_updates_session_runtime_and_emits_capability_events() {
         let api = "coding-session-plugin-load-owner";
         let contexts = Arc::new(Mutex::new(Vec::new()));
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(RecordingProvider::new(contexts.clone(), "plugin loaded")),
         );
@@ -2337,7 +2212,6 @@ mod tests {
         let contexts = contexts.lock().unwrap();
         let tools = contexts[0].tools.as_ref().unwrap();
         assert!(tools.iter().any(|tool| tool.name == "plugin_echo"));
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -2478,7 +2352,10 @@ runtime = "lua"
     async fn prompt_abort_control_returns_aborted_outcome_and_records_operation_abort() {
         let api = "coding-session-abort-control";
         let (started_tx, started_rx) = oneshot::channel();
-        registry::register(api, Arc::new(AbortableProvider::new(started_tx)));
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(AbortableProvider::new(started_tx)),
+        );
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
@@ -2517,7 +2394,6 @@ runtime = "lua"
         .unwrap();
         assert!(event_log.contains("\"kind\":\"operation.aborted\""));
         assert!(event_log.contains("user cancelled"));
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -2526,7 +2402,7 @@ runtime = "lua"
         let contexts = Arc::new(Mutex::new(Vec::new()));
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(BlockingTwoTurnProvider::new(
                 contexts.clone(),
@@ -2567,13 +2443,15 @@ runtime = "lua"
             "{:#?}",
             contexts[1].messages
         );
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn prompt_runs_flow_and_commits_session_events() {
         let api = "coding-session-prompt";
-        registry::register(api, Arc::new(FauxProvider::simple_text("session answer")));
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("session answer")),
+        );
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
             .with_session_id("sess_prompt")
@@ -2666,7 +2544,6 @@ runtime = "lua"
             Some(leaf_id.as_str())
         );
         assert_eq!(session.view().session_id, "sess_prompt");
-        registry::unregister(api);
     }
 
     #[tokio::test]
@@ -2724,7 +2601,10 @@ runtime = "lua"
     #[tokio::test]
     async fn non_persistent_prompt_emits_skipped_write_before_completion() {
         let api = "coding-session-non-persistent-prompt";
-        registry::register(api, Arc::new(FauxProvider::simple_text("transient answer")));
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("transient answer")),
+        );
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
             .unwrap();
@@ -2751,16 +2631,26 @@ runtime = "lua"
             CodingAgentEvent::SessionWriteSkipped { reason, .. }
                 if reason == "session persistence disabled"
         )));
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn non_persistent_prompt_hydrates_owner_lifetime_transcript() {
         let first_api = "coding-session-non-persistent-first";
-        registry::register(
-            first_api,
-            Arc::new(FauxProvider::simple_text("first answer")),
-        );
+        let second_api = "coding-session-non-persistent-second";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let _provider_guard = crate::test_support::ProviderGuard::register_many(vec![
+            (
+                first_api.to_string(),
+                Arc::new(FauxProvider::simple_text("first answer")),
+            ),
+            (
+                second_api.to_string(),
+                Arc::new(RecordingProvider::new(
+                    Arc::clone(&contexts),
+                    "second answer",
+                )),
+            ),
+        ]);
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
             .unwrap();
@@ -2769,17 +2659,6 @@ runtime = "lua"
             .prompt(prompt_options(first_api, "first question"))
             .await
             .unwrap();
-        registry::unregister(first_api);
-
-        let second_api = "coding-session-non-persistent-second";
-        let contexts = Arc::new(Mutex::new(Vec::new()));
-        registry::register(
-            second_api,
-            Arc::new(RecordingProvider::new(
-                Arc::clone(&contexts),
-                "second answer",
-            )),
-        );
 
         session
             .prompt(prompt_options(second_api, "second question"))
@@ -2813,13 +2692,12 @@ runtime = "lua"
                     text_signature: None,
                 }]
         ));
-        registry::unregister(second_api);
     }
 
     #[tokio::test]
     async fn prompt_does_not_duplicate_failure_event_from_agent_error() {
         let api = "coding-session-prompt-error";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::text_call("partial", StopReason::Error),
@@ -2864,13 +2742,12 @@ runtime = "lua"
                 .any(|diagnostic| diagnostic.message.contains("operation")
                     && diagnostic.message.contains("failed"))
         );
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn branch_summary_persistent_session_records_model_summary() {
         let api = "coding-session-branch-summary";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::text_call("root answer", StopReason::Stop),
@@ -2950,13 +2827,12 @@ runtime = "lua"
             std::fs::read_to_string(temp.path().join("sess_branch_summary_owner/events.jsonl"))
                 .unwrap();
         assert!(event_log.contains("branch.summary.created"));
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn branch_summary_navigation_reuses_existing_summary_without_rewriting_session() {
         let api = "coding-session-branch-summary-navigation-reuse";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::text_call("root answer", StopReason::Stop),
@@ -3036,13 +2912,12 @@ runtime = "lua"
         assert_eq!(event_log_after, event_log_before);
         assert_eq!(summary_count_before, 1);
         assert_eq!(event_log_after.matches("branch.summary.created").count(), 1);
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn compact_persistent_session_records_events_and_replays_summary() {
         let api = "coding-session-compact";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::text_call("first answer", StopReason::Stop),
@@ -3121,13 +2996,12 @@ runtime = "lua"
             std::fs::read_to_string(temp.path().join("sess_compact/events.jsonl")).unwrap();
         assert!(event_log.contains("session.compaction.started"));
         assert!(event_log.contains("session.compaction.completed"));
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn compact_summary_failure_records_failure_without_folding_replay() {
         let api = "coding-session-compact-summary-failure";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::text_call("first answer", StopReason::Stop),
@@ -3199,16 +3073,26 @@ runtime = "lua"
         assert!(event_log.contains("session.compaction.started"));
         assert!(event_log.contains("operation.failed"));
         assert!(!event_log.contains("session.compaction.completed"));
-        registry::unregister(api);
     }
 
     #[tokio::test]
     async fn prompt_hydrates_replayed_transcript_when_opening_session() {
         let first_api = "coding-session-hydrate-first";
-        registry::register(
-            first_api,
-            Arc::new(FauxProvider::simple_text("first answer")),
-        );
+        let second_api = "coding-session-hydrate-second";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let _provider_guard = crate::test_support::ProviderGuard::register_many(vec![
+            (
+                first_api.to_string(),
+                Arc::new(FauxProvider::simple_text("first answer")),
+            ),
+            (
+                second_api.to_string(),
+                Arc::new(RecordingProvider::new(
+                    Arc::clone(&contexts),
+                    "second answer",
+                )),
+            ),
+        ]);
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
             .with_session_id("sess_hydrate")
@@ -3218,17 +3102,6 @@ runtime = "lua"
             .prompt(prompt_options(first_api, "first question"))
             .await
             .unwrap();
-        registry::unregister(first_api);
-
-        let second_api = "coding-session-hydrate-second";
-        let contexts = Arc::new(Mutex::new(Vec::new()));
-        registry::register(
-            second_api,
-            Arc::new(RecordingProvider::new(
-                Arc::clone(&contexts),
-                "second answer",
-            )),
-        );
         let mut opened = CodingAgentSession::open(options).await.unwrap();
 
         let outcome = opened
@@ -3267,31 +3140,41 @@ runtime = "lua"
                     text_signature: None,
                 }]
         ));
-        registry::unregister(second_api);
     }
 
     #[tokio::test]
     async fn prompt_hydrates_replayed_tool_calls_when_opening_session() {
         let first_api = "coding-session-hydrate-tool-first";
-        registry::register(
-            first_api,
-            Arc::new(FauxProvider::with_call_queue(vec![
-                FauxProvider::single_call(
-                    vec![FauxResponse {
-                        text_deltas: vec!["I will use echo.".into()],
-                        thinking_deltas: Vec::new(),
-                        tool_calls: vec![FauxToolCall {
-                            id: "toolu_1".into(),
-                            name: "echo".into(),
-                            deltas: Vec::new(),
-                            final_arguments: serde_json::json!({"text": "hi"}),
+        let second_api = "coding-session-hydrate-tool-second";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let _provider_guard = crate::test_support::ProviderGuard::register_many(vec![
+            (
+                first_api.to_string(),
+                Arc::new(FauxProvider::with_call_queue(vec![
+                    FauxProvider::single_call(
+                        vec![FauxResponse {
+                            text_deltas: vec!["I will use echo.".into()],
+                            thinking_deltas: Vec::new(),
+                            tool_calls: vec![FauxToolCall {
+                                id: "toolu_1".into(),
+                                name: "echo".into(),
+                                deltas: Vec::new(),
+                                final_arguments: serde_json::json!({"text": "hi"}),
+                            }],
                         }],
-                    }],
-                    StopReason::ToolUse,
-                ),
-                FauxProvider::text_call("tool final", StopReason::Stop),
-            ])),
-        );
+                        StopReason::ToolUse,
+                    ),
+                    FauxProvider::text_call("tool final", StopReason::Stop),
+                ])),
+            ),
+            (
+                second_api.to_string(),
+                Arc::new(RecordingProvider::new(
+                    Arc::clone(&contexts),
+                    "second answer",
+                )),
+            ),
+        ]);
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
             .with_session_id("sess_tool_hydrate")
@@ -3305,17 +3188,6 @@ runtime = "lua"
             ))
             .await
             .unwrap();
-        registry::unregister(first_api);
-
-        let second_api = "coding-session-hydrate-tool-second";
-        let contexts = Arc::new(Mutex::new(Vec::new()));
-        registry::register(
-            second_api,
-            Arc::new(RecordingProvider::new(
-                Arc::clone(&contexts),
-                "second answer",
-            )),
-        );
         let mut opened = CodingAgentSession::open(options).await.unwrap();
 
         opened
@@ -3384,13 +3256,12 @@ runtime = "lua"
                     text_signature: None,
                 }]
         ));
-        registry::unregister(second_api);
     }
 
     #[tokio::test]
     async fn export_current_html_writes_rust_native_session_transcript() {
         let api = "coding-session-export-html";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::single_call(
@@ -3436,7 +3307,6 @@ runtime = "lua"
         assert!(html.contains("&lt;hi&gt;"), "{html}");
         assert!(html.contains("echo: &lt;hi&gt;"), "{html}");
         assert!(html.contains("tool final &lt;done&gt;"), "{html}");
-        registry::unregister(api);
     }
 
     #[tokio::test]

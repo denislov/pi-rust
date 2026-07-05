@@ -7,7 +7,8 @@ use std::sync::atomic::AtomicUsize;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
-use pi_agent_core::{AgentResources, session::create_session_id};
+use pi_agent_core::AgentResources;
+use pi_agent_core::transcript::create_session_id;
 use pi_ai::types::Model;
 #[cfg(test)]
 use pi_tui::{Component, InputEvent, Terminal, visible_width};
@@ -378,6 +379,16 @@ mod tests {
         events.extend(buffer.flush());
         assert_eq!(events.len(), 1, "expected exactly one input event");
         events.remove(0)
+    }
+
+    fn type_text(root: &mut InteractiveRoot, text: &str) {
+        let mut buffer = StdinBuffer::new();
+        for event in buffer.process(text) {
+            root.handle_input(&event);
+        }
+        for event in buffer.flush() {
+            root.handle_input(&event);
+        }
     }
 
     fn ctrl_p_event(shift: bool) -> InputEvent {
@@ -3152,6 +3163,7 @@ display_name = "Coder"
         });
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\r"));
+        type_text(&mut root, "coder");
         root.handle_input(&key_event("\r"));
 
         assert_eq!(root.take_action(), InteractiveAction::AgentProfileUse);
@@ -3189,6 +3201,7 @@ display_name = "Coder"
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\r"));
+        type_text(&mut root, "coder");
         root.handle_input(&key_event("\r"));
         root.editor.set_text("refactor module");
         root.handle_input(&key_event("\r"));
@@ -4396,7 +4409,6 @@ pub mod test_harness {
     use std::time::Duration;
 
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::registry;
     use pi_ai::types::{Model, ModelCost, ModelInput};
     use pi_tui::{TerminalOp, VirtualTerminal};
 
@@ -4417,6 +4429,37 @@ pub mod test_harness {
     impl ScriptedInteractiveOutput {
         pub fn contains(&self, needle: &str) -> bool {
             self.rendered.contains(needle)
+        }
+    }
+
+    pub struct ScriptedInputDriver {
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+        consumed_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+        idle_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+    }
+
+    impl ScriptedInputDriver {
+        pub fn send(
+            &self,
+            chunk: impl Into<String>,
+        ) -> Result<(), tokio::sync::mpsc::error::SendError<String>> {
+            self.tx.send(chunk.into())
+        }
+
+        pub async fn wait_for_consumed(&mut self, expected: &str) {
+            while let Some(chunk) = self.consumed_rx.recv().await {
+                if chunk == expected {
+                    return;
+                }
+            }
+            panic!("input closed before consuming {expected:?}");
+        }
+
+        pub async fn wait_for_idle(&mut self) {
+            self.idle_rx
+                .recv()
+                .await
+                .expect("interactive loop closed before returning to idle");
         }
     }
 
@@ -4513,7 +4556,7 @@ pub mod test_harness {
             "interactive-harness-{}",
             INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
         );
-        registry::register(&api, provider);
+        let _provider_guard = crate::test_support::ProviderGuard::register(api.clone(), provider);
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut input = InputPump::from_receiver(rx);
@@ -4527,7 +4570,43 @@ pub mod test_harness {
 
         let run = run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input);
         let (result, ()) = tokio::join!(run, driver(tx));
-        registry::unregister(&api);
+
+        Ok(scripted_output(result?, None))
+    }
+
+    pub async fn run_scripted_interactive_with_observed_provider_driver<F, Fut>(
+        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        driver: F,
+    ) -> Result<ScriptedInteractiveOutput, CliError>
+    where
+        F: FnOnce(ScriptedInputDriver) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let api = format!(
+            "interactive-harness-{}",
+            INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
+        );
+        let _provider_guard = crate::test_support::ProviderGuard::register(api.clone(), provider);
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (consumed_tx, consumed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (idle_tx, idle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut input = InputPump::from_receiver_with_observers(rx, consumed_tx, idle_tx);
+        let parsed = CliArgs::default();
+        let options = CliRunOptions {
+            model_override: Some(faux_model(&api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: SessionRunOptions::disabled(PathBuf::from(".")),
+        };
+        let input_driver = ScriptedInputDriver {
+            tx,
+            consumed_rx,
+            idle_rx,
+        };
+
+        let run = run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input);
+        let (result, ()) = tokio::join!(run, driver(input_driver));
 
         Ok(scripted_output(result?, None))
     }
@@ -4560,17 +4639,20 @@ pub mod test_harness {
     }
 
     /// Drive the interactive loop with a sequence of `(chunk, post_delay)`
-    /// steps. After each chunk is sent, the harness sleeps `post_delay`
-    /// before sending the next chunk (or, on the final step, before closing
-    /// stdin and letting the loop terminate). This allows tests to exercise
-    /// the [`StdinBuffer`] idle-flush timer for stuck escape sequences.
+    /// steps. After each chunk is sent, the harness advances paused Tokio time
+    /// by `post_delay` before sending the next chunk (or, on the final step,
+    /// before closing stdin and letting the loop terminate). This allows tests
+    /// to exercise the [`StdinBuffer`] idle-flush timer for stuck escape
+    /// sequences without sleeping real time.
     pub async fn run_scripted_idle_interactive_with_delays(
         steps: Vec<(&str, Duration)>,
         columns: usize,
         rows: usize,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut input = InputPump::from_receiver(rx);
+        let (consumed_tx, consumed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (idle_tx, idle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut input = InputPump::from_receiver_with_observers(rx, consumed_tx, idle_tx);
         let parsed = CliArgs::default();
         let options = CliRunOptions {
             register_builtins: false,
@@ -4581,23 +4663,35 @@ pub mod test_harness {
             .into_iter()
             .map(|(chunk, delay)| (chunk.to_string(), delay))
             .collect::<Vec<_>>();
+        let clock =
+            crate::interactive::r#loop::ManualInteractiveClock::new(std::time::Instant::now());
+        let driver_clock = clock.clone();
         let driver = async move {
+            let mut input_driver = ScriptedInputDriver {
+                tx,
+                consumed_rx,
+                idle_rx,
+            };
             for (chunk, delay) in owned_steps {
-                if tx.send(chunk).is_err() {
+                if input_driver.send(chunk.clone()).is_err() {
                     return;
                 }
+                input_driver.wait_for_consumed(&chunk).await;
                 if delay > Duration::ZERO {
-                    tokio::time::sleep(delay).await;
+                    tokio::task::yield_now().await;
+                    driver_clock.advance(delay);
+                    tokio::time::advance(delay).await;
+                    tokio::task::yield_now().await;
                 }
             }
-            drop(tx);
         };
 
-        let run = run_interactive_loop(
+        let run = crate::interactive::r#loop::run_interactive_loop_with_clock(
             parsed,
             options,
             VirtualTerminal::new(columns, rows),
             &mut input,
+            &clock,
         );
         let (result, ()) = tokio::join!(run, driver);
         Ok(scripted_output(result?, None))
@@ -4641,7 +4735,7 @@ pub mod test_harness {
             "interactive-harness-{}",
             INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
         );
-        registry::register(&api, provider);
+        let _provider_guard = crate::test_support::ProviderGuard::register(api.clone(), provider);
 
         let chunks = input_chunks
             .into_iter()
@@ -4669,7 +4763,6 @@ pub mod test_harness {
             &mut input,
         )
         .await;
-        registry::unregister(&api);
 
         Ok(scripted_output(result?, session_dir))
     }
@@ -4685,7 +4778,7 @@ pub mod test_harness {
             "interactive-harness-{}",
             INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
         );
-        registry::register(&api, provider);
+        let _provider_guard = crate::test_support::ProviderGuard::register(api.clone(), provider);
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut input = InputPump::from_receiver(rx);
@@ -4724,7 +4817,6 @@ pub mod test_harness {
             &mut input,
         );
         let (result, input_result) = tokio::join!(run, input_driver);
-        registry::unregister(&api);
         input_result?;
 
         Ok(scripted_output(result?, Some(session_dir)))
@@ -4795,18 +4887,19 @@ pub mod test_harness {
     }
 
     async fn wait_for_session_text(root: &Path, needle: &str) -> Result<(), CliError> {
-        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
-        loop {
-            if session_files_contain(root, needle) {
-                return Ok(());
+        let observed = tokio::time::timeout(tokio::time::Duration::from_secs(2), async {
+            loop {
+                if session_files_contain(root, needle) {
+                    break;
+                }
+                tokio::task::yield_now().await;
             }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(CliError::AgentFailure(format!(
-                    "timed out waiting for session text: {needle}"
-                )));
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        }
+        })
+        .await;
+
+        observed.map_err(|_| {
+            CliError::AgentFailure(format!("timed out waiting for session text: {needle}"))
+        })
     }
 
     fn session_files_contain(root: &Path, needle: &str) -> bool {

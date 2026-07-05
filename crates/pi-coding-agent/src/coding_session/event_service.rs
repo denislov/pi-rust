@@ -5,7 +5,14 @@ use tokio::sync::broadcast;
 use pi_agent_core::AgentEvent;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock};
 
-use super::{CodingAgentEvent, CodingSessionError, ProfileId, ProfileKind};
+use super::{
+    CodingAgentEvent, CodingSessionError, ProfileId, ProfileKind,
+    manual_compaction_flow::ManualCompactionOutcome,
+    plugin_load_flow::PluginLoadOutcome,
+    prompt::{DelegationRequest, PromptTurnOutcome},
+    self_healing_edit_flow::{SelfHealingEditOutcome, SelfHealingEditRepairAttempt},
+    session_service::FinalizedSessionWrite,
+};
 
 const EVENT_CHANNEL_CAPACITY: usize = 128;
 
@@ -34,6 +41,504 @@ impl EventService {
             self.emit(event.clone());
         }
         events
+    }
+
+    pub(crate) fn emit_session_opened(&self, session_id: impl Into<String>) {
+        self.emit(CodingAgentEvent::SessionOpened {
+            session_id: session_id.into(),
+        });
+    }
+
+    pub(crate) fn emit_diagnostic(
+        &self,
+        operation_id: Option<impl Into<String>>,
+        message: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::Diagnostic {
+            operation_id: operation_id.map(Into::into),
+            message: message.into(),
+        });
+    }
+
+    pub(crate) fn emit_default_agent_profile_changed(&self, profile_id: impl Into<ProfileId>) {
+        self.emit(CodingAgentEvent::DefaultAgentProfileChanged {
+            profile_id: profile_id.into(),
+        });
+    }
+
+    pub(crate) fn emit_session_compaction_completed(
+        &self,
+        operation_id: impl Into<String>,
+        turn_id: impl Into<String>,
+        outcome: &ManualCompactionOutcome,
+    ) {
+        self.emit(CodingAgentEvent::SessionCompactionCompleted {
+            operation_id: operation_id.into(),
+            turn_id: turn_id.into(),
+            summary: outcome.summary.clone(),
+            first_kept_message_id: outcome.first_kept_message_id.clone(),
+            tokens_before: outcome.tokens_before,
+        });
+    }
+
+    pub(crate) fn emit_plugin_load_outcome(&self, outcome: &PluginLoadOutcome) {
+        for diagnostic in &outcome.diagnostics {
+            self.emit_diagnostic(None::<String>, diagnostic.message.clone());
+        }
+        if outcome.capability_changed {
+            self.emit(CodingAgentEvent::CapabilityChanged);
+        }
+    }
+
+    pub(crate) fn emit_prompt_started(
+        &self,
+        operation_id: impl Into<String>,
+        turn_id: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::PromptStarted {
+            operation_id: operation_id.into(),
+            turn_id: turn_id.into(),
+        });
+    }
+
+    pub(crate) fn emit_events_before_prompt_outcome(&self, events: &[CodingAgentEvent]) {
+        for event in events {
+            if is_prompt_outcome_event(event) {
+                continue;
+            }
+            self.emit(event.clone());
+        }
+    }
+
+    pub(crate) fn prompt_completed_event(
+        operation_id: impl Into<String>,
+        turn_id: impl Into<String>,
+    ) -> CodingAgentEvent {
+        CodingAgentEvent::PromptCompleted {
+            operation_id: operation_id.into(),
+            turn_id: turn_id.into(),
+        }
+    }
+
+    pub(crate) fn session_write_pending_event(operation_id: impl Into<String>) -> CodingAgentEvent {
+        CodingAgentEvent::SessionWritePending {
+            operation_id: operation_id.into(),
+        }
+    }
+
+    pub(crate) fn session_write_committed_event(
+        operation_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> CodingAgentEvent {
+        CodingAgentEvent::SessionWriteCommitted {
+            operation_id: operation_id.into(),
+            session_id: session_id.into(),
+        }
+    }
+
+    pub(crate) fn session_write_skipped_event(
+        operation_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> CodingAgentEvent {
+        CodingAgentEvent::SessionWriteSkipped {
+            operation_id: operation_id.into(),
+            reason: reason.into(),
+        }
+    }
+
+    pub(crate) fn emit_prompt_completed(
+        &self,
+        operation_id: impl Into<String>,
+        turn_id: impl Into<String>,
+    ) {
+        self.emit(Self::prompt_completed_event(operation_id, turn_id));
+    }
+
+    pub(crate) fn emit_prompt_aborted(
+        &self,
+        operation_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::PromptAborted {
+            operation_id: operation_id.into(),
+            reason: reason.into(),
+        });
+    }
+
+    pub(crate) fn emit_prompt_failed(
+        &self,
+        operation_id: impl Into<String>,
+        error: CodingSessionError,
+    ) {
+        self.emit(CodingAgentEvent::PromptFailed {
+            operation_id: operation_id.into(),
+            error,
+        });
+    }
+
+    pub(crate) fn emit_session_write_events(&self, finalized: &FinalizedSessionWrite) {
+        for event in &finalized.events {
+            self.emit(event.clone());
+        }
+    }
+
+    pub(crate) fn emit_session_write_pending(&self, finalized: &FinalizedSessionWrite) {
+        for event in &finalized.events {
+            if matches!(event, CodingAgentEvent::SessionWritePending { .. }) {
+                self.emit(event.clone());
+            }
+        }
+    }
+
+    pub(crate) fn emit_session_write_committed(&self, finalized: &FinalizedSessionWrite) {
+        for event in &finalized.events {
+            if matches!(
+                event,
+                CodingAgentEvent::SessionWriteCommitted { .. }
+                    | CodingAgentEvent::SessionWriteSkipped { .. }
+            ) {
+                self.emit(event.clone());
+            }
+        }
+    }
+
+    pub(crate) fn emit_prompt_outcome(&self, outcome: &PromptTurnOutcome) {
+        self.emit_prompt_diagnostics(outcome);
+        match outcome {
+            PromptTurnOutcome::Success {
+                operation_id,
+                turn_id,
+                ..
+            } => self.emit_prompt_completed(operation_id.clone(), turn_id.clone()),
+            PromptTurnOutcome::Aborted {
+                operation_id,
+                reason,
+                ..
+            } => self.emit_prompt_aborted(operation_id.clone(), reason.clone()),
+            PromptTurnOutcome::Failed {
+                operation_id,
+                error,
+                ..
+            } => self.emit_prompt_failed(operation_id.clone(), error.clone()),
+        }
+    }
+
+    pub(crate) fn emit_agent_invocation_started(
+        &self,
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        profile_id: impl Into<ProfileId>,
+        task: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentInvocationStarted {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            profile_id: profile_id.into(),
+            task: task.into(),
+        });
+    }
+
+    pub(crate) fn emit_agent_invocation_completed(
+        &self,
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        profile_id: impl Into<ProfileId>,
+        final_text: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentInvocationCompleted {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            profile_id: profile_id.into(),
+            final_text: final_text.into(),
+        });
+    }
+
+    pub(crate) fn emit_agent_invocation_failed(
+        &self,
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        profile_id: impl Into<ProfileId>,
+        error: CodingSessionError,
+    ) {
+        self.emit(CodingAgentEvent::AgentInvocationFailed {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            profile_id: profile_id.into(),
+            error,
+        });
+    }
+
+    pub(crate) fn emit_agent_invocation_aborted(
+        &self,
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        profile_id: impl Into<ProfileId>,
+        reason: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentInvocationAborted {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            profile_id: profile_id.into(),
+            reason: reason.into(),
+        });
+    }
+
+    pub(crate) fn emit_agent_team_started(
+        &self,
+        operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        task: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentTeamStarted {
+            operation_id: operation_id.into(),
+            team_id: team_id.into(),
+            task: task.into(),
+        });
+    }
+
+    pub(crate) fn emit_agent_team_member_started(
+        &self,
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        profile_id: impl Into<ProfileId>,
+        task: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentTeamMemberStarted {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            team_id: team_id.into(),
+            profile_id: profile_id.into(),
+            task: task.into(),
+        });
+    }
+
+    pub(crate) fn emit_agent_team_member_completed(
+        &self,
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        profile_id: impl Into<ProfileId>,
+        final_text: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentTeamMemberCompleted {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            team_id: team_id.into(),
+            profile_id: profile_id.into(),
+            final_text: final_text.into(),
+        });
+    }
+
+    pub(crate) fn emit_agent_team_completed(
+        &self,
+        operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        final_text: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentTeamCompleted {
+            operation_id: operation_id.into(),
+            team_id: team_id.into(),
+            final_text: final_text.into(),
+        });
+    }
+
+    pub(crate) fn emit_agent_team_failed(
+        &self,
+        operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        error: CodingSessionError,
+    ) {
+        self.emit(CodingAgentEvent::AgentTeamFailed {
+            operation_id: operation_id.into(),
+            team_id: team_id.into(),
+            error,
+        });
+    }
+
+    pub(crate) fn emit_agent_team_aborted(
+        &self,
+        operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        reason: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::AgentTeamAborted {
+            operation_id: operation_id.into(),
+            team_id: team_id.into(),
+            reason: reason.into(),
+        });
+    }
+
+    fn emit_prompt_diagnostics(&self, outcome: &PromptTurnOutcome) {
+        let (operation_id, diagnostics) = match outcome {
+            PromptTurnOutcome::Success {
+                operation_id,
+                diagnostics,
+                ..
+            }
+            | PromptTurnOutcome::Failed {
+                operation_id,
+                diagnostics,
+                ..
+            } => (operation_id, diagnostics),
+            PromptTurnOutcome::Aborted { .. } => return,
+        };
+        for diagnostic in diagnostics {
+            self.emit_diagnostic(Some(operation_id.clone()), diagnostic.message.clone());
+        }
+    }
+
+    pub(crate) fn emit_delegation_approved(&self, request: &DelegationRequest) {
+        self.emit(CodingAgentEvent::DelegationApproved {
+            operation_id: request.operation_id.clone(),
+            turn_id: request.turn_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+        });
+    }
+
+    pub(crate) fn emit_delegation_rejected(&self, request: &DelegationRequest, reason: &str) {
+        self.emit(CodingAgentEvent::DelegationRejected {
+            operation_id: request.operation_id.clone(),
+            turn_id: request.turn_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+            reason: reason.to_owned(),
+        });
+    }
+
+    pub(crate) fn emit_delegation_confirmation_required(
+        &self,
+        request: &DelegationRequest,
+        reason: &str,
+    ) {
+        self.emit(CodingAgentEvent::DelegationConfirmationRequired {
+            operation_id: request.operation_id.clone(),
+            turn_id: request.turn_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+            reason: reason.to_owned(),
+        });
+    }
+
+    pub(crate) fn emit_delegation_started(
+        &self,
+        request: &DelegationRequest,
+        child_operation_id: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::DelegationStarted {
+            operation_id: request.operation_id.clone(),
+            turn_id: request.turn_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+            child_operation_id: child_operation_id.into(),
+        });
+    }
+
+    pub(crate) fn emit_delegation_completed(
+        &self,
+        request: &DelegationRequest,
+        child_operation_id: impl Into<String>,
+        final_text: impl Into<String>,
+    ) {
+        self.emit(CodingAgentEvent::DelegationCompleted {
+            operation_id: request.operation_id.clone(),
+            turn_id: request.turn_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+            child_operation_id: child_operation_id.into(),
+            final_text: final_text.into(),
+        });
+    }
+
+    pub(crate) fn emit_delegation_failed(
+        &self,
+        request: &DelegationRequest,
+        child_operation_id: impl Into<String>,
+        error: CodingSessionError,
+    ) {
+        self.emit(CodingAgentEvent::DelegationFailed {
+            operation_id: request.operation_id.clone(),
+            turn_id: request.turn_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+            child_operation_id: child_operation_id.into(),
+            error,
+        });
+    }
+
+    pub(crate) fn emit_self_healing_edit_started(
+        &self,
+        operation_id: impl Into<String>,
+        path: impl Into<String>,
+        replacements: usize,
+    ) {
+        self.emit(CodingAgentEvent::SelfHealingEditStarted {
+            operation_id: operation_id.into(),
+            path: path.into(),
+            replacements,
+        });
+    }
+
+    pub(crate) fn emit_self_healing_edit_repair_attempted(
+        &self,
+        operation_id: impl Into<String>,
+        path: impl Into<String>,
+        repair: &SelfHealingEditRepairAttempt,
+    ) {
+        self.emit(CodingAgentEvent::SelfHealingEditRepairAttempted {
+            operation_id: operation_id.into(),
+            path: path.into(),
+            attempt: repair.attempt,
+            replacements: repair.replacements.clone(),
+            diagnostics: repair.diagnostics.clone(),
+            check_output: repair.check_output.clone(),
+        });
+    }
+
+    pub(crate) fn emit_self_healing_edit_completed(
+        &self,
+        operation_id: impl Into<String>,
+        outcome: &SelfHealingEditOutcome,
+    ) {
+        self.emit(CodingAgentEvent::SelfHealingEditCompleted {
+            operation_id: operation_id.into(),
+            path: outcome.path.clone(),
+            attempts: outcome.attempts,
+            first_changed_line: outcome.first_changed_line,
+            check_output: outcome.check_output.clone(),
+        });
+    }
+
+    pub(crate) fn emit_self_healing_edit_failed(
+        &self,
+        operation_id: impl Into<String>,
+        path: impl Into<String>,
+        error: &CodingSessionError,
+    ) {
+        self.emit(CodingAgentEvent::SelfHealingEditFailed {
+            operation_id: operation_id.into(),
+            path: path.into(),
+            error: error.clone(),
+        });
     }
 
     pub(crate) fn subscribe(&self) -> CodingAgentEventReceiver {
@@ -212,6 +717,15 @@ fn map_assistant_event(
         | AssistantMessageEvent::ToolcallDelta { .. }
         | AssistantMessageEvent::ToolcallEnd { .. } => Vec::new(),
     }
+}
+
+fn is_prompt_outcome_event(event: &CodingAgentEvent) -> bool {
+    matches!(
+        event,
+        CodingAgentEvent::PromptCompleted { .. }
+            | CodingAgentEvent::PromptFailed { .. }
+            | CodingAgentEvent::PromptAborted { .. }
+    )
 }
 
 fn content_blocks_text(content: &[ContentBlock]) -> String {
@@ -736,5 +1250,689 @@ mod tests {
                 text: "hi".into(),
             }
         );
+    }
+
+    #[test]
+    fn event_service_emits_plugin_load_outcome_events() {
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let outcome = crate::coding_session::plugin_load_flow::PluginLoadOutcome {
+            loaded_plugin_ids: vec!["lua".into()],
+            diagnostics: vec![crate::coding_session::plugin_service::PluginDiagnostic {
+                plugin_id: Some("lua".into()),
+                message: "loaded with warning".into(),
+            }],
+            capabilities: crate::plugins::PluginCapabilities::new(),
+            capability_changed: true,
+        };
+
+        service.emit_plugin_load_outcome(&outcome);
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: "loaded with warning".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::CapabilityChanged)
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_session_opened_and_diagnostics() {
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+
+        service.emit_session_opened("sess_1");
+        service.emit_diagnostic(Some("op_1"), "profile warning");
+        service.emit_diagnostic(None::<String>, "global warning");
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionOpened {
+                session_id: "sess_1".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::Diagnostic {
+                operation_id: Some("op_1".into()),
+                message: "profile warning".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: "global warning".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_owner_status_events() {
+        use crate::coding_session::manual_compaction_flow::ManualCompactionOutcome;
+
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let compaction = ManualCompactionOutcome {
+            summary: "short summary".into(),
+            first_kept_message_id: "msg_2".into(),
+            tokens_before: 42,
+            final_message: AssistantMessage::empty("messages", "test-model"),
+        };
+
+        service.emit_default_agent_profile_changed(ProfileId::from("reviewer"));
+        service.emit_session_compaction_completed("op_1", "turn_1", &compaction);
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::DefaultAgentProfileChanged {
+                profile_id: ProfileId::from("reviewer"),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionCompactionCompleted {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                summary: "short summary".into(),
+                first_kept_message_id: "msg_2".into(),
+                tokens_before: 42,
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_filters_prompt_outcomes_and_session_write_slices() {
+        use crate::coding_session::session_service::FinalizedSessionWrite;
+
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let prompt_events = vec![
+            CodingAgentEvent::PromptStarted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_prompt".into(),
+            },
+            CodingAgentEvent::PromptCompleted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_prompt".into(),
+            },
+            CodingAgentEvent::PromptFailed {
+                operation_id: "op_failed".into(),
+                error: CodingSessionError::Cancelled,
+            },
+            CodingAgentEvent::PromptAborted {
+                operation_id: "op_aborted".into(),
+                reason: "cancelled".into(),
+            },
+            CodingAgentEvent::Diagnostic {
+                operation_id: Some("op_prompt".into()),
+                message: "warning".into(),
+            },
+        ];
+
+        service.emit_events_before_prompt_outcome(&prompt_events);
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptStarted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_prompt".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::Diagnostic {
+                operation_id: Some("op_prompt".into()),
+                message: "warning".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+
+        let finalized = FinalizedSessionWrite {
+            events: vec![
+                CodingAgentEvent::SessionWritePending {
+                    operation_id: "op_write".into(),
+                },
+                CodingAgentEvent::Diagnostic {
+                    operation_id: Some("op_write".into()),
+                    message: "persisted warning".into(),
+                },
+                CodingAgentEvent::SessionWriteCommitted {
+                    operation_id: "op_write".into(),
+                    session_id: "sess_1".into(),
+                },
+                CodingAgentEvent::SessionWriteSkipped {
+                    operation_id: "op_skip".into(),
+                    reason: "disabled".into(),
+                },
+            ],
+            session_id: Some("sess_1".into()),
+            leaf_id: Some("leaf_1".into()),
+        };
+
+        service.emit_session_write_pending(&finalized);
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionWritePending {
+                operation_id: "op_write".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+
+        service.emit_session_write_committed(&finalized);
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionWriteCommitted {
+                operation_id: "op_write".into(),
+                session_id: "sess_1".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionWriteSkipped {
+                operation_id: "op_skip".into(),
+                reason: "disabled".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+
+        service.emit_session_write_events(&finalized);
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionWritePending {
+                operation_id: "op_write".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::Diagnostic {
+                operation_id: Some("op_write".into()),
+                message: "persisted warning".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionWriteCommitted {
+                operation_id: "op_write".into(),
+                session_id: "sess_1".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SessionWriteSkipped {
+                operation_id: "op_skip".into(),
+                reason: "disabled".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_prompt_lifecycle_events() {
+        use crate::coding_session::{CodingDiagnostic, PromptTurnOutcome};
+
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let failed_error = CodingSessionError::Provider {
+            message: "provider failed".into(),
+        };
+        let direct_failed_error = CodingSessionError::Provider {
+            message: "direct provider failed".into(),
+        };
+
+        service.emit_prompt_started("op_1", "turn_1");
+        service.emit_prompt_outcome(&PromptTurnOutcome::Success {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            session_id: None,
+            leaf_id: None,
+            final_text: "done".into(),
+            final_message: AssistantMessage::empty("messages", "test-model"),
+            diagnostics: vec![CodingDiagnostic::warning("profile warning")],
+        });
+        service.emit_prompt_outcome(&PromptTurnOutcome::Failed {
+            operation_id: "op_2".into(),
+            turn_id: Some("turn_2".into()),
+            error: failed_error.clone(),
+            diagnostics: vec![CodingDiagnostic::error("provider diagnostic")],
+        });
+        service.emit_prompt_outcome(&PromptTurnOutcome::Aborted {
+            operation_id: "op_3".into(),
+            turn_id: Some("turn_3".into()),
+            reason: "cancelled".into(),
+            session_id: None,
+        });
+        service.emit_prompt_completed("op_direct_1", "turn_direct_1");
+        service.emit_prompt_failed("op_direct_2", direct_failed_error.clone());
+        service.emit_prompt_aborted("op_direct_3", "stopped");
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptStarted {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::Diagnostic {
+                operation_id: Some("op_1".into()),
+                message: "profile warning".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptCompleted {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::Diagnostic {
+                operation_id: Some("op_2".into()),
+                message: "provider diagnostic".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptFailed {
+                operation_id: "op_2".into(),
+                error: failed_error,
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptAborted {
+                operation_id: "op_3".into(),
+                reason: "cancelled".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptCompleted {
+                operation_id: "op_direct_1".into(),
+                turn_id: "turn_direct_1".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptFailed {
+                operation_id: "op_direct_2".into(),
+                error: direct_failed_error,
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptAborted {
+                operation_id: "op_direct_3".into(),
+                reason: "stopped".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_agent_invocation_lifecycle_events() {
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let failed_error = CodingSessionError::Provider {
+            message: "child failed".into(),
+        };
+
+        service.emit_agent_invocation_started(
+            "op_1",
+            "child_op_1",
+            ProfileId::from("coder"),
+            "implement it",
+        );
+        service.emit_agent_invocation_completed(
+            "op_1",
+            "child_op_1",
+            ProfileId::from("coder"),
+            "done",
+        );
+        service.emit_agent_invocation_failed(
+            "op_2",
+            "child_op_2",
+            ProfileId::from("coder"),
+            failed_error.clone(),
+        );
+        service.emit_agent_invocation_aborted(
+            "op_3",
+            "child_op_3",
+            ProfileId::from("coder"),
+            "cancelled",
+        );
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentInvocationStarted {
+                operation_id: "op_1".into(),
+                child_operation_id: "child_op_1".into(),
+                profile_id: ProfileId::from("coder"),
+                task: "implement it".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentInvocationCompleted {
+                operation_id: "op_1".into(),
+                child_operation_id: "child_op_1".into(),
+                profile_id: ProfileId::from("coder"),
+                final_text: "done".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentInvocationFailed {
+                operation_id: "op_2".into(),
+                child_operation_id: "child_op_2".into(),
+                profile_id: ProfileId::from("coder"),
+                error: failed_error,
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentInvocationAborted {
+                operation_id: "op_3".into(),
+                child_operation_id: "child_op_3".into(),
+                profile_id: ProfileId::from("coder"),
+                reason: "cancelled".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_agent_team_lifecycle_events() {
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let failed_error = CodingSessionError::Provider {
+            message: "team failed".into(),
+        };
+
+        service.emit_agent_team_started("team_op_1", ProfileId::from("review-team"), "review it");
+        service.emit_agent_team_member_started(
+            "team_op_1",
+            "child_op_1",
+            ProfileId::from("review-team"),
+            ProfileId::from("reviewer"),
+            "review it",
+        );
+        service.emit_agent_team_member_completed(
+            "team_op_1",
+            "child_op_1",
+            ProfileId::from("review-team"),
+            ProfileId::from("reviewer"),
+            "looks good",
+        );
+        service.emit_agent_team_completed("team_op_1", ProfileId::from("review-team"), "done");
+        service.emit_agent_team_failed(
+            "team_op_2",
+            ProfileId::from("review-team"),
+            failed_error.clone(),
+        );
+        service.emit_agent_team_aborted("team_op_3", ProfileId::from("review-team"), "cancelled");
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentTeamStarted {
+                operation_id: "team_op_1".into(),
+                team_id: ProfileId::from("review-team"),
+                task: "review it".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentTeamMemberStarted {
+                operation_id: "team_op_1".into(),
+                child_operation_id: "child_op_1".into(),
+                team_id: ProfileId::from("review-team"),
+                profile_id: ProfileId::from("reviewer"),
+                task: "review it".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentTeamMemberCompleted {
+                operation_id: "team_op_1".into(),
+                child_operation_id: "child_op_1".into(),
+                team_id: ProfileId::from("review-team"),
+                profile_id: ProfileId::from("reviewer"),
+                final_text: "looks good".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentTeamCompleted {
+                operation_id: "team_op_1".into(),
+                team_id: ProfileId::from("review-team"),
+                final_text: "done".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentTeamFailed {
+                operation_id: "team_op_2".into(),
+                team_id: ProfileId::from("review-team"),
+                error: failed_error,
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::AgentTeamAborted {
+                operation_id: "team_op_3".into(),
+                team_id: ProfileId::from("review-team"),
+                reason: "cancelled".into(),
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_delegation_lifecycle_events() {
+        use crate::coding_session::prompt::DelegationRequest;
+
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let request = DelegationRequest {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: "tool_1".into(),
+            requesting_profile_id: ProfileId::from("planner"),
+            target_kind: ProfileKind::Agent,
+            target_id: ProfileId::from("coder"),
+            task: "implement it".into(),
+        };
+        let failed_error = CodingSessionError::Provider {
+            message: "child failed".into(),
+        };
+
+        service.emit_delegation_approved(&request);
+        service.emit_delegation_confirmation_required(&request, "needs approval");
+        service.emit_delegation_rejected(&request, "not allowed");
+        service.emit_delegation_started(&request, "child_op_1");
+        service.emit_delegation_completed(&request, "child_op_1", "done");
+        service.emit_delegation_failed(&request, "child_op_2", failed_error.clone());
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::DelegationApproved {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                requesting_profile_id: ProfileId::from("planner"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("coder"),
+                task: "implement it".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::DelegationConfirmationRequired {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                requesting_profile_id: ProfileId::from("planner"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("coder"),
+                task: "implement it".into(),
+                reason: "needs approval".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::DelegationRejected {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                requesting_profile_id: ProfileId::from("planner"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("coder"),
+                task: "implement it".into(),
+                reason: "not allowed".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::DelegationStarted {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                requesting_profile_id: ProfileId::from("planner"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("coder"),
+                task: "implement it".into(),
+                child_operation_id: "child_op_1".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::DelegationCompleted {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                requesting_profile_id: ProfileId::from("planner"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("coder"),
+                task: "implement it".into(),
+                child_operation_id: "child_op_1".into(),
+                final_text: "done".into(),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::DelegationFailed {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                requesting_profile_id: ProfileId::from("planner"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("coder"),
+                task: "implement it".into(),
+                child_operation_id: "child_op_2".into(),
+                error: failed_error,
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_self_healing_edit_events() {
+        use crate::coding_session::{
+            SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditOutcome,
+            SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
+        };
+
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let check_output = SelfHealingEditCheckOutput {
+            command: "cargo check".into(),
+            stdout: "ok".into(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+        let repair = SelfHealingEditRepairAttempt {
+            attempt: 1,
+            replacements: vec![SelfHealingEditReplacement::new("old", "new")],
+            diagnostics: vec![SelfHealingEditDiagnostic {
+                message: "fixed by repair".into(),
+            }],
+            check_output: Some(check_output.clone()),
+        };
+        let outcome = SelfHealingEditOutcome {
+            path: "src/lib.rs".into(),
+            message: "edited".into(),
+            diff: String::new(),
+            patch: String::new(),
+            first_changed_line: Some(7),
+            attempts: 2,
+            diagnostics: Vec::new(),
+            check_output: Some(check_output.clone()),
+            repair_attempts: vec![repair.clone()],
+        };
+        let error = CodingSessionError::SelfHealingEditFailed {
+            message: "check failed".into(),
+            diagnostics: vec![SelfHealingEditDiagnostic {
+                message: "missing symbol".into(),
+            }],
+            check_output: None,
+            repair_attempts: Vec::new(),
+        };
+
+        service.emit_self_healing_edit_started("op_1", "src/lib.rs", 1);
+        service.emit_self_healing_edit_repair_attempted("op_1", "src/lib.rs", &repair);
+        service.emit_self_healing_edit_completed("op_1", &outcome);
+        service.emit_self_healing_edit_failed("op_1", "src/lib.rs", &error);
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SelfHealingEditStarted {
+                operation_id: "op_1".into(),
+                path: "src/lib.rs".into(),
+                replacements: 1,
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SelfHealingEditRepairAttempted {
+                operation_id: "op_1".into(),
+                path: "src/lib.rs".into(),
+                attempt: 1,
+                replacements: vec![SelfHealingEditReplacement::new("old", "new")],
+                diagnostics: vec![SelfHealingEditDiagnostic {
+                    message: "fixed by repair".into(),
+                }],
+                check_output: Some(check_output.clone()),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SelfHealingEditCompleted {
+                operation_id: "op_1".into(),
+                path: "src/lib.rs".into(),
+                attempts: 2,
+                first_changed_line: Some(7),
+                check_output: Some(check_output),
+            })
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::SelfHealingEditFailed {
+                operation_id: "op_1".into(),
+                path: "src/lib.rs".into(),
+                error,
+            })
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
     }
 }

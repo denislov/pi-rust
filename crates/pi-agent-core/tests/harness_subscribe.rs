@@ -1,7 +1,9 @@
+mod common;
+
+use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::{AgentConfig, AgentHarness, AgentHarnessEvent, AgentHarnessHooks};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
-use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use std::sync::{Arc, Mutex};
 
@@ -23,9 +25,8 @@ fn faux_model(api: &str) -> Model {
     }
 }
 
-fn register_simple_text(api: &str, text: &str) {
-    registry::unregister(api);
-    registry::register(
+fn register_simple_text(api: &str, text: &str) -> ProviderGuard<'static> {
+    ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
             responses: vec![FauxResponse {
@@ -35,13 +36,13 @@ fn register_simple_text(api: &str, text: &str) {
             }],
             stop_reason: StopReason::Stop,
         }])),
-    );
+    )
 }
 
 #[tokio::test]
 async fn subscribe_observes_all_harness_events() {
     let api = "subscribe-all";
-    register_simple_text(api, "hi");
+    let _provider_guard = register_simple_text(api, "hi");
 
     let mut config = AgentConfig::new(faux_model(api));
     config.max_turns = Some(1);
@@ -72,7 +73,7 @@ async fn subscribe_observes_all_harness_events() {
 #[tokio::test]
 async fn subscribe_guard_drop_removes_listener() {
     let api = "subscribe-drop";
-    register_simple_text(api, "hi");
+    let _provider_guard = register_simple_text(api, "hi");
 
     let mut config = AgentConfig::new(faux_model(api));
     config.max_turns = Some(1);
@@ -94,7 +95,7 @@ async fn on_context_appends_to_existing_hook_chain() {
     use pi_agent_core::on_kind::ContextKind;
 
     let api = "on-context";
-    register_simple_text(api, "hi");
+    let _provider_guard = register_simple_text(api, "hi");
 
     let mut config = AgentConfig::new(faux_model(api));
     config.max_turns = Some(1);
@@ -128,7 +129,7 @@ async fn phase_starts_idle_and_returns_to_idle_after_prompt() {
     use pi_agent_core::AgentHarnessPhase;
 
     let api = "phase-idle";
-    register_simple_text(api, "ok");
+    let _provider_guard = register_simple_text(api, "ok");
     let mut config = AgentConfig::new(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
@@ -143,7 +144,7 @@ async fn phase_is_turn_during_active_prompt() {
     use pi_agent_core::AgentHarnessPhase;
 
     let api = "phase-turn";
-    register_simple_text(api, "ok");
+    let _provider_guard = register_simple_text(api, "ok");
     let mut config = AgentConfig::new(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
@@ -169,7 +170,7 @@ async fn abort_returns_cleared_queue_messages() {
     use pi_agent_core::AbortResult;
 
     let api = "abort-queues";
-    register_simple_text(api, "ok");
+    let _provider_guard = register_simple_text(api, "ok");
     let mut config = AgentConfig::new(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
@@ -197,7 +198,7 @@ async fn abort_with_empty_queues_returns_empty_lists() {
     use pi_agent_core::AbortResult;
 
     let api = "abort-empty";
-    register_simple_text(api, "ok");
+    let _provider_guard = register_simple_text(api, "ok");
     let mut config = AgentConfig::new(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);

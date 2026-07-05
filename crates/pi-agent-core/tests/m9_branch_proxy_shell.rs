@@ -1,3 +1,6 @@
+mod common;
+
+use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::branch_summary::{
     BranchSummaryOptions, collect_entries_for_branch_summary, generate_branch_summary,
@@ -7,12 +10,11 @@ use pi_agent_core::proxy::{
     ProxyAssistantMessageEvent, ProxyMessageState, ProxyStreamOptions, build_proxy_request_body,
     process_proxy_event, stream_proxy_with_transport,
 };
-use pi_agent_core::session::{SessionEntry, StoredAgentMessage, StoredUsage};
 use pi_agent_core::shell_output::{ShellCaptureOptions, execute_shell_with_capture};
+use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage, StoredUsage};
 use pi_agent_core::truncate::{TruncationLimit, truncate_head, truncate_tail};
 use pi_agent_core::{ExecutionOutput, FileSystem, InMemoryExecutionEnv};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
-use pi_ai::registry;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
@@ -130,8 +132,7 @@ fn branch_summary_collects_abandoned_branch_and_prepares_messages() {
 #[tokio::test]
 async fn branch_summary_generation_uses_faux_provider_and_adds_preamble() {
     let api = "m9-branch-summary-faux";
-    registry::unregister(api);
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
             responses: vec![FauxResponse {

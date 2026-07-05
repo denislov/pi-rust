@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
 use pi_agent_core::{AgentResources, AgentTool};
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
@@ -16,7 +16,7 @@ use pi_coding_agent::api::{
     AgentInvocationOptions, CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions,
     PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
 };
-use support::EnvGuard;
+use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -373,34 +373,34 @@ impl ApiProvider for RecordingProvider {
 }
 
 struct ProviderGuard {
-    apis: Vec<String>,
+    _guard: RegistryProviderGuard<'static>,
 }
 
 impl ProviderGuard {
     fn register(apis: Vec<String>, calls: Arc<Mutex<Vec<RecordedCall>>>) -> Self {
-        for api in &apis {
-            registry::register(
-                api,
-                Arc::new(RecordingProvider {
-                    calls: calls.clone(),
-                }),
-            );
+        let providers = apis
+            .into_iter()
+            .map(|api| {
+                (
+                    api,
+                    Arc::new(RecordingProvider {
+                        calls: calls.clone(),
+                    }) as Arc<dyn ApiProvider>,
+                )
+            })
+            .collect();
+        Self {
+            _guard: RegistryProviderGuard::register_many(providers),
         }
-        Self { apis }
     }
 
     fn register_failing(apis: Vec<String>) -> Self {
-        for api in &apis {
-            registry::register(api, Arc::new(FailingProvider));
-        }
-        Self { apis }
-    }
-}
-
-impl Drop for ProviderGuard {
-    fn drop(&mut self) {
-        for api in &self.apis {
-            registry::unregister(api);
+        let providers = apis
+            .into_iter()
+            .map(|api| (api, Arc::new(FailingProvider) as Arc<dyn ApiProvider>))
+            .collect();
+        Self {
+            _guard: RegistryProviderGuard::register_many(providers),
         }
     }
 }

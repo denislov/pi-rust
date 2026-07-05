@@ -3,7 +3,7 @@ use crate::plugins::PluginCapabilities;
 use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::types::RpcSessionState;
-use pi_agent_core::session::StoredAgentMessage;
+use pi_agent_core::transcript::StoredAgentMessage;
 use serde_json::Value;
 
 impl RpcState {

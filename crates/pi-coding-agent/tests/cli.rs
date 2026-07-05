@@ -1,9 +1,11 @@
+mod support;
+
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
 use pi_coding_agent::{CliRunOptions, run_cli_with_options};
 use std::sync::Arc;
+use support::ProviderGuard;
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -193,7 +195,8 @@ async fn unknown_model_is_rejected() {
 #[tokio::test]
 async fn print_mode_uses_injected_model_and_returns_stdout() {
     let api = "pi-coding-cli-success";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Hello from CLI")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello from CLI")));
 
     let output = run_cli_with_options(
         vec!["-p".to_string(), "hello".to_string()],
@@ -209,13 +212,13 @@ async fn print_mode_uses_injected_model_and_returns_stdout() {
     assert_eq!(output.exit_code, 0);
     assert_eq!(output.stdout, "Hello from CLI\n");
     assert!(output.stderr.is_empty());
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn json_mode_uses_injected_model_and_returns_jsonl() {
     let api = "pi-coding-cli-json";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Hello JSON")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello JSON")));
 
     let output = run_cli_with_options(
         vec![
@@ -240,7 +243,6 @@ async fn json_mode_uses_injected_model_and_returns_jsonl() {
             .lines()
             .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok())
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]

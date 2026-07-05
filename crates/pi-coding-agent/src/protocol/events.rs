@@ -2,10 +2,10 @@ use crate::coding_session::{
     CodingAgentEvent, ProfileKind, SelfHealingEditCheckOutput, SelfHealingEditReplacement,
 };
 use crate::protocol::types::{
-    CompactionProtocolResult, CompactionReason, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
-    ProtocolSelfHealingEditReplacement, ToolExecutionResult,
+    CompactionProtocolResult, CompactionReason, ProtocolDelegationFoldedBlock, ProtocolEvent,
+    ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, ToolExecutionResult,
 };
-use pi_agent_core::session::{StoredAgentMessage, StoredUsage, StoredUsageCost};
+use pi_agent_core::transcript::{StoredAgentMessage, StoredUsage, StoredUsageCost};
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
 
 pub struct CodingProtocolEventAdapter {
@@ -253,6 +253,16 @@ impl CodingProtocolEventAdapter {
                 target_kind: profile_kind_to_protocol(*target_kind).to_string(),
                 target_id: target_id.as_str().to_string(),
                 task: task.clone(),
+                folded_block: delegation_folded_block(
+                    tool_call_id,
+                    *target_kind,
+                    target_id.as_str(),
+                    task,
+                    "requested",
+                    None,
+                    Some("requested".into()),
+                    false,
+                ),
             }],
             CodingAgentEvent::DelegationRejected {
                 operation_id,
@@ -272,6 +282,16 @@ impl CodingProtocolEventAdapter {
                 target_id: target_id.as_str().to_string(),
                 task: task.clone(),
                 reason: reason.clone(),
+                folded_block: delegation_folded_block(
+                    tool_call_id,
+                    *target_kind,
+                    target_id.as_str(),
+                    task,
+                    "rejected",
+                    None,
+                    Some(format!("rejected: {reason}")),
+                    true,
+                ),
             }],
             CodingAgentEvent::DelegationApproved {
                 operation_id,
@@ -289,6 +309,16 @@ impl CodingProtocolEventAdapter {
                 target_kind: profile_kind_to_protocol(*target_kind).to_string(),
                 target_id: target_id.as_str().to_string(),
                 task: task.clone(),
+                folded_block: delegation_folded_block(
+                    tool_call_id,
+                    *target_kind,
+                    target_id.as_str(),
+                    task,
+                    "approved",
+                    None,
+                    Some("approved".into()),
+                    false,
+                ),
             }],
             CodingAgentEvent::DelegationConfirmationRequired {
                 operation_id,
@@ -308,6 +338,16 @@ impl CodingProtocolEventAdapter {
                 target_id: target_id.as_str().to_string(),
                 task: task.clone(),
                 reason: reason.clone(),
+                folded_block: delegation_folded_block(
+                    tool_call_id,
+                    *target_kind,
+                    target_id.as_str(),
+                    task,
+                    "confirmation_required",
+                    None,
+                    Some(format!("confirmation required: {reason}")),
+                    false,
+                ),
             }],
             CodingAgentEvent::DelegationStarted {
                 operation_id,
@@ -327,6 +367,16 @@ impl CodingProtocolEventAdapter {
                 target_id: target_id.as_str().to_string(),
                 task: task.clone(),
                 child_operation_id: child_operation_id.clone(),
+                folded_block: delegation_folded_block(
+                    tool_call_id,
+                    *target_kind,
+                    target_id.as_str(),
+                    task,
+                    "running",
+                    Some(child_operation_id.clone()),
+                    Some("running".into()),
+                    false,
+                ),
             }],
             CodingAgentEvent::DelegationCompleted {
                 operation_id,
@@ -348,6 +398,16 @@ impl CodingProtocolEventAdapter {
                 task: task.clone(),
                 child_operation_id: child_operation_id.clone(),
                 final_text: final_text.clone(),
+                folded_block: delegation_folded_block(
+                    tool_call_id,
+                    *target_kind,
+                    target_id.as_str(),
+                    task,
+                    "completed",
+                    Some(child_operation_id.clone()),
+                    Some(format!("completed: {final_text}")),
+                    false,
+                ),
             }],
             CodingAgentEvent::DelegationFailed {
                 operation_id,
@@ -369,6 +429,16 @@ impl CodingProtocolEventAdapter {
                 task: task.clone(),
                 child_operation_id: child_operation_id.clone(),
                 error: error.to_string(),
+                folded_block: delegation_folded_block(
+                    tool_call_id,
+                    *target_kind,
+                    target_id.as_str(),
+                    task,
+                    "failed",
+                    Some(child_operation_id.clone()),
+                    Some(format!("failed: {error}")),
+                    true,
+                ),
             }],
             CodingAgentEvent::AgentInvocationStarted {
                 operation_id,
@@ -650,6 +720,28 @@ fn protocol_self_healing_check_output(
         stdout: output.stdout.clone(),
         stderr: output.stderr.clone(),
         exit_code: output.exit_code,
+    }
+}
+
+fn delegation_folded_block(
+    tool_call_id: &str,
+    target_kind: ProfileKind,
+    target_id: &str,
+    task: &str,
+    status: &str,
+    child_operation_id: Option<String>,
+    summary: Option<String>,
+    is_error: bool,
+) -> ProtocolDelegationFoldedBlock {
+    ProtocolDelegationFoldedBlock {
+        tool_call_id: tool_call_id.to_string(),
+        target_kind: profile_kind_to_protocol(target_kind).to_string(),
+        target_id: target_id.to_string(),
+        task: task.to_string(),
+        status: status.to_string(),
+        child_operation_id,
+        summary,
+        is_error,
     }
 }
 

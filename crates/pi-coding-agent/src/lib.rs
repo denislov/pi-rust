@@ -50,11 +50,24 @@ pub mod api {
         SelfHealingEditRequest, SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
     };
     pub use crate::error::CliError;
+    pub use crate::models::{ModelRotation, ModelRotationEntry, parse_model_rotation};
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};
     pub use crate::prompt_options::PromptRunOptions;
+    pub use crate::protocol::types::{
+        CompactionProtocolResult, CompactionReason, ProtocolDelegationFoldedBlock, ProtocolEvent,
+        ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, RpcCapabilities,
+        RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus,
+        RpcDelegationRenderingMetadata, RpcResponse, RpcSelfHealingEditModelRepair,
+        RpcSelfHealingEditReplacement, RpcSessionState, StreamingBehavior, ToolExecutionResult,
+    };
     pub use crate::request::{
         CliDiagnostic, CliDiagnosticSeverity, ResolvedCliContext, ResolvedPromptRequest,
         render_diagnostics, resolve_cli_context, resolve_prompt_request, resolve_session_target,
+    };
+    pub use crate::resources::{
+        ContextFile, LoadedResources, ResourceLoadOptions, ThemeResource, build_agent_resources,
+        discover_context_files, find_skill, find_template, load_cli_resources,
+        load_cli_resources_with_options, resolve_resource_paths, tui_theme_from_resource,
     };
     pub use crate::runtime::{
         CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, PromptInvocation, SessionMode,
@@ -62,16 +75,26 @@ pub mod api {
         select_model,
     };
     pub use crate::session::{ResolvedSessionTarget, encode_cwd};
+    pub use crate::theme::{
+        ColorValue, DetectionConfidence, DetectionSource, REQUIRED_TOKEN_KEYS, ResolveError,
+        ResolvedColor, ResolvedTheme, TerminalTheme, ThemeBg, ThemeColor, ThemeExportColors,
+        ThemeJson, builtin_dark, builtin_light, detect_terminal_background,
+        get_resolved_theme_colors, get_theme_export_colors, get_theme_for_rgb_color,
+        is_light_theme, parse_osc11_background_color, resolve,
+    };
     pub use crate::tools::{ToolFilter, builtin_tools, filter_tools};
     pub use crate::{CliOutput, run_cli, run_cli_with_options, run_cli_with_options_and_stdin};
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness", debug_assertions))]
 pub(crate) mod test_support {
     use std::ffi::{OsStr, OsString};
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::{Arc, Mutex, MutexGuard};
+
+    use pi_ai::registry::{self, ApiProvider};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static PROVIDER_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
     pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
         ENV_LOCK
@@ -123,6 +146,45 @@ pub(crate) mod test_support {
                         Some(value) => std::env::set_var(name, value),
                         None => std::env::remove_var(name),
                     }
+                }
+            }
+        }
+    }
+
+    pub(crate) struct ProviderGuard<'a> {
+        _lock: MutexGuard<'a, ()>,
+        previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+    }
+
+    #[allow(dead_code)]
+    impl ProviderGuard<'static> {
+        pub(crate) fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
+            Self::register_many(vec![(api.into(), provider)])
+        }
+
+        pub(crate) fn register_many(providers: Vec<(String, Arc<dyn ApiProvider>)>) -> Self {
+            let lock = PROVIDER_REGISTRY_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut previous = Vec::with_capacity(providers.len());
+            for (api, provider) in providers {
+                let prior = registry::lookup(&api);
+                registry::register(&api, provider);
+                previous.push((api, prior));
+            }
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for ProviderGuard<'_> {
+        fn drop(&mut self) {
+            for (api, previous) in self.previous.drain(..).rev() {
+                match previous {
+                    Some(provider) => registry::register(&api, provider),
+                    None => registry::unregister(&api),
                 }
             }
         }

@@ -1,4 +1,4 @@
-use crate::session::types::SessionEntry;
+use crate::transcript::SessionEntry;
 use serde_json::{Map, Value};
 
 impl SessionEntry {

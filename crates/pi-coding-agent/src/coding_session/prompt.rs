@@ -28,8 +28,8 @@ use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
 use super::profiles::{AgentProfile, DelegationPolicy, ProfileId, ProfileKind};
 use super::session_log::event::{
-    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedToolResult,
-    SessionEventEnvelope,
+    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedDelegationStatus,
+    PersistedToolResult, SessionEventEnvelope,
 };
 use super::session_log::id::{SystemClock, SystemIdGenerator};
 use super::session_log::replay::{MessageStatus, SessionReplay, TranscriptItem};
@@ -260,6 +260,31 @@ pub enum PromptTurnOutcome {
         error: CodingSessionError,
         diagnostics: Vec<CodingDiagnostic>,
     },
+}
+
+impl PromptTurnOutcome {
+    pub(crate) fn is_success(&self) -> bool {
+        matches!(self, Self::Success { .. })
+    }
+
+    pub(crate) fn apply_success_session_write_metadata(
+        &mut self,
+        session_id: Option<String>,
+        leaf_id: Option<String>,
+    ) {
+        let Self::Success {
+            session_id: outcome_session_id,
+            leaf_id: outcome_leaf_id,
+            ..
+        } = self
+        else {
+            return;
+        };
+        if let Some(session_id) = session_id {
+            *outcome_session_id = Some(session_id);
+        }
+        *outcome_leaf_id = leaf_id;
+    }
 }
 
 pub(crate) type PromptTurnTransaction = TurnTransaction<SystemIdGenerator, SystemClock>;
@@ -852,6 +877,33 @@ impl PromptTurnContext {
         self.diagnostics.push(diagnostic);
     }
 
+    pub(crate) fn record_delegation_folded_update(
+        &mut self,
+        request: &DelegationRequest,
+        status: PersistedDelegationStatus,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        if let Some(transaction) = self.transaction.as_mut() {
+            let session_tool_call_id = self
+                .tool_session_call_ids
+                .get(&request.tool_call_id)
+                .cloned()
+                .unwrap_or_else(|| request.tool_call_id.clone());
+            transaction.record_delegation_folded_update(
+                session_tool_call_id,
+                request.requesting_profile_id.clone(),
+                request.target_kind,
+                request.target_id.clone(),
+                request.task.clone(),
+                status,
+                child_operation_id,
+                summary,
+            )?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn request_abort(&mut self, reason: impl Into<String>) {
         self.requested_abort_reason = Some(reason.into());
     }
@@ -1000,10 +1052,11 @@ impl PromptTurnContext {
             return Ok(());
         }
 
-        self.coding_events.push(CodingAgentEvent::PromptCompleted {
-            operation_id: self.operation_id().to_owned(),
-            turn_id: self.turn_id().to_owned(),
-        });
+        self.coding_events
+            .push(EventService::prompt_completed_event(
+                self.operation_id().to_owned(),
+                self.turn_id().to_owned(),
+            ));
         Ok(())
     }
 
@@ -1094,7 +1147,6 @@ impl PromptTurnContext {
     ) -> Result<(), CodingSessionError> {
         let session_tool_call_id =
             self.ensure_tool_session_call_started(agent_tool_call_id, tool_name, None)?;
-        self.tool_session_call_ids.remove(agent_tool_call_id);
         if result.is_error {
             self.transaction_mut_required()?
                 .record_tool_failed(session_tool_call_id, content_blocks_text(&result.content))

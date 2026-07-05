@@ -1,3 +1,4 @@
+use crate::ai_runtime::stream_model_with_global_runtime;
 use crate::compaction::error::CompactionError;
 use crate::types::AgentMessage;
 use pi_ai::types::{ContentBlock, Context, Message, Model, StreamOptions};
@@ -208,7 +209,7 @@ pub async fn summarize(
     opts.cancel = cancel;
     opts.max_tokens = Some(4096);
 
-    let stream = pi_ai::stream_model(model, ctx, Some(opts));
+    let stream = stream_model_with_global_runtime(model, ctx, Some(opts));
     let message = pi_ai::complete(stream)
         .await
         .map_err(|e| CompactionError::SummarizationFailed(format!("complete failed: {}", e)))?;

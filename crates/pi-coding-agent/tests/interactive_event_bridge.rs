@@ -237,12 +237,27 @@ fn coding_event_bridge_maps_delegation_confirmation_events() {
         reason: "profile policy requires confirmation".to_string(),
     });
 
-    let [UiEvent::SystemNotice { text }] = events.as_slice() else {
-        panic!("expected one system notice, got {events:?}");
+    let [
+        UiEvent::DelegationBlock {
+            call_id,
+            target_kind,
+            target_id,
+            task,
+            status,
+            summary,
+            ..
+        },
+    ] = events.as_slice()
+    else {
+        panic!("expected one delegation block, got {events:?}");
     };
-    assert!(text.contains("Delegation confirmation required"), "{text}");
-    assert!(text.contains("agent coder"), "{text}");
-    assert!(text.contains("implement parser"), "{text}");
+    assert_eq!(call_id, "tool_delegate_agent");
+    assert_eq!(target_kind, "agent");
+    assert_eq!(target_id, "coder");
+    assert_eq!(task, "implement parser");
+    assert_eq!(status, "confirmation_required");
+    let text = summary.as_deref().expect("confirmation summary");
+    assert!(text.contains("confirmation required"), "{text}");
     assert!(
         text.contains("/delegation approve op_1 tool_delegate_agent"),
         "{text}"
@@ -264,11 +279,79 @@ fn coding_event_bridge_maps_delegation_confirmation_events() {
         final_text: "child result".to_string(),
     });
 
-    let [UiEvent::SystemNotice { text }] = completed.as_slice() else {
-        panic!("expected one system notice, got {completed:?}");
+    let [
+        UiEvent::DelegationBlock {
+            call_id,
+            target_kind,
+            target_id,
+            status,
+            child_operation_id,
+            summary,
+            is_error,
+            ..
+        },
+    ] = completed.as_slice()
+    else {
+        panic!("expected one delegation block, got {completed:?}");
     };
-    assert!(text.contains("Delegation completed"), "{text}");
-    assert!(text.contains("child result"), "{text}");
+    assert_eq!(call_id, "tool_delegate_agent");
+    assert_eq!(target_kind, "agent");
+    assert_eq!(target_id, "coder");
+    assert_eq!(status, "completed");
+    assert_eq!(child_operation_id.as_deref(), Some("op_child"));
+    assert_eq!(summary.as_deref(), Some("completed: child result"));
+    assert!(!is_error);
+}
+
+#[test]
+fn coding_event_bridge_folds_delegation_lifecycle_into_one_transcript_item() {
+    let mut bridge = CodingEventBridge::new();
+    let mut transcript = Transcript::new();
+
+    for event in [
+        CodingAgentEvent::DelegationStarted {
+            operation_id: "op_1".to_string(),
+            turn_id: "turn_1".to_string(),
+            tool_call_id: "tool_delegate_agent".to_string(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".to_string(),
+            child_operation_id: "op_child".to_string(),
+        },
+        CodingAgentEvent::DelegationCompleted {
+            operation_id: "op_1".to_string(),
+            turn_id: "turn_1".to_string(),
+            tool_call_id: "tool_delegate_agent".to_string(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".to_string(),
+            child_operation_id: "op_child".to_string(),
+            final_text: "child result".to_string(),
+        },
+    ] {
+        for ui_event in bridge.handle(&event) {
+            transcript.apply_event(ui_event);
+        }
+    }
+
+    assert_eq!(
+        transcript.items(),
+        &[TranscriptItem::Tool {
+            call_id: "tool_delegate_agent".to_string(),
+            name: "delegation".to_string(),
+            args: serde_json::json!({
+                "targetKind": "agent",
+                "targetId": "coder",
+                "task": "implement parser",
+                "status": "completed",
+                "childOperationId": "op_child"
+            }),
+            result: Some("completed: child result".to_string()),
+            is_error: false,
+        }]
+    );
 }
 
 #[test]

@@ -1,12 +1,11 @@
 mod common;
-use common::{TestProvider, faux_model, tool_use_turn};
+use common::{ProviderGuard, TestProvider, faux_model, tool_use_turn};
 use futures::StreamExt;
 use pi_agent_core::{
     AfterToolCallResult, Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput,
     BeforeToolCallResult, QueueMode,
 };
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{ContentBlock, Message, StopReason};
 use std::sync::{
     Arc,
@@ -33,9 +32,13 @@ fn simple_text_tool(name: &str, text: &str) -> AgentTool {
     }
 }
 
-fn script_tool_then_stop(api: &str, tool_name: &str, args: serde_json::Value) {
+fn script_tool_then_stop(
+    api: &str,
+    tool_name: &str,
+    args: serde_json::Value,
+) -> ProviderGuard<'static> {
     let json_str = args.to_string();
-    registry::register(
+    ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::single_call(
@@ -53,7 +56,7 @@ fn script_tool_then_stop(api: &str, tool_name: &str, args: serde_json::Value) {
             ),
             FauxProvider::text_call("I'm done.", StopReason::Stop),
         ])),
-    );
+    )
 }
 
 #[tokio::test]
@@ -90,7 +93,7 @@ async fn before_hook_blocks_tool_execution() {
         }),
     });
 
-    script_tool_then_stop(api, "echo", serde_json::json!({}));
+    let _provider_guard = script_tool_then_stop(api, "echo", serde_json::json!({}));
     let mut stream = agent.prompt("run");
     let mut saw_blocked_result = false;
     while let Some(event) = stream.next().await {
@@ -105,8 +108,6 @@ async fn before_hook_blocks_tool_execution() {
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(saw_blocked_result);
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -130,7 +131,7 @@ async fn after_hook_replaces_tool_result() {
 
     let agent = Agent::new(config);
     agent.add_tool(simple_text_tool("echo", "original"));
-    script_tool_then_stop(api, "echo", serde_json::json!({}));
+    let _provider_guard = script_tool_then_stop(api, "echo", serde_json::json!({}));
 
     let mut stream = agent.prompt("run");
     while stream.next().await.is_some() {}
@@ -141,8 +142,6 @@ async fn after_hook_replaces_tool_result() {
         pi_agent_core::AgentMessage::ToolResult { is_error: true, content, .. }
             if content.iter().any(|block| matches!(block, ContentBlock::Text { text, .. } if text == "rewritten"))
     )));
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -161,7 +160,7 @@ async fn after_hook_terminate_stops_loop_after_tool_results() {
 
     let agent = Agent::new(config);
     agent.add_tool(simple_text_tool("echo", "ok"));
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(TestProvider::new(vec![tool_use_turn(
             "tool_1",
@@ -182,8 +181,6 @@ async fn after_hook_terminate_stops_loop_after_tool_results() {
             .iter()
             .any(|event| matches!(event, AgentEvent::AgentError { .. }))
     );
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -200,7 +197,7 @@ async fn should_stop_after_turn_runs_before_follow_up_queue() {
 
     let agent = Agent::new(config);
     agent.follow_up("should not run");
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("first.", StopReason::Stop),
@@ -222,8 +219,6 @@ async fn should_stop_after_turn_runs_before_follow_up_queue() {
         .filter(|message| matches!(message, AgentMessage::Assistant { .. }))
         .count();
     assert_eq!(assistant_count, 1);
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -259,7 +254,7 @@ async fn convert_to_llm_hook_overrides_default_message_conversion() {
         }
     }
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(CapturingProvider {
             captured: captured_for_provider,
@@ -303,8 +298,6 @@ async fn convert_to_llm_hook_overrides_default_message_conversion() {
         },
         _ => panic!("expected user"),
     }
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -340,7 +333,7 @@ async fn transform_context_hook_rewrites_messages_before_llm_call() {
         }
     }
 
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(CapturingProvider {
             captured: captured_for_provider,
@@ -383,8 +376,6 @@ async fn transform_context_hook_rewrites_messages_before_llm_call() {
         .filter(|m| matches!(m, AgentMessage::UserText { .. }))
         .count();
     assert_eq!(user_count, 2, "transform must not mutate stored messages");
-
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -413,7 +404,7 @@ async fn prepare_next_turn_can_replace_messages_before_follow_up_turn() {
 
     let agent = Agent::new(config);
     agent.follow_up("follow-up");
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("first.", StopReason::Stop),
@@ -432,6 +423,4 @@ async fn prepare_next_turn_can_replace_messages_before_follow_up_turn() {
     assert!(agent.messages().iter().any(|message| {
         matches!(message, AgentMessage::UserText { text, .. } if text == "prepared context")
     }));
-
-    registry::unregister(api);
 }

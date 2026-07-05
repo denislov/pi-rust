@@ -28,6 +28,15 @@ pub struct KeybindingsManager {
 pub static TUI_KEYBINDINGS: LazyLock<BTreeMap<String, KeybindingDefinition>> =
     LazyLock::new(default_keybindings);
 
+pub static GENERIC_TUI_KEYBINDINGS: LazyLock<BTreeMap<String, KeybindingDefinition>> =
+    LazyLock::new(|| {
+        TUI_KEYBINDINGS
+            .iter()
+            .filter(|(id, _definition)| !id.starts_with("app."))
+            .map(|(id, definition)| (id.clone(), definition.clone()))
+            .collect()
+    });
+
 impl KeybindingsManager {
     pub fn new(
         definitions: BTreeMap<String, KeybindingDefinition>,
@@ -298,87 +307,6 @@ fn default_keybindings() -> BTreeMap<String, KeybindingDefinition> {
         &["escape", "ctrl+c"],
         "Cancel selection",
     );
-    insert(
-        &mut definitions,
-        "app.model.next",
-        &["ctrl+p"],
-        "Cycle to next model",
-    );
-    insert(
-        &mut definitions,
-        "app.model.previous",
-        &["ctrl+shift+p"],
-        "Cycle to previous model",
-    );
-
-    // Tree selector keybindings
-    insert(
-        &mut definitions,
-        "app.tree.foldOrUp",
-        &["ctrl+left", "alt+left"],
-        "Fold node or go up branch",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.unfoldOrDown",
-        &["ctrl+right", "alt+right"],
-        "Unfold node or go down branch",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.editLabel",
-        &["shift+l"],
-        "Edit label for selected node",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.toggleLabelTimestamp",
-        &["shift+t"],
-        "Toggle label timestamp display",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.filter.default",
-        &["ctrl+d"],
-        "Tree filter: default",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.filter.noTools",
-        &["ctrl+t"],
-        "Tree filter: no-tools",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.filter.userOnly",
-        &["ctrl+u"],
-        "Tree filter: user-only",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.filter.labeledOnly",
-        &["ctrl+l"],
-        "Tree filter: labeled-only",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.filter.all",
-        &["ctrl+a"],
-        "Tree filter: all",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.filter.cycleForward",
-        &["ctrl+o"],
-        "Cycle tree filter forward",
-    );
-    insert(
-        &mut definitions,
-        "app.tree.filter.cycleBackward",
-        &["ctrl+shift+o"],
-        "Cycle tree filter backward",
-    );
-
     definitions
 }
 

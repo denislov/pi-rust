@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
 use pi_agent_core::{AgentResources, AgentTool};
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
@@ -16,7 +16,7 @@ use pi_coding_agent::api::{
     CodingAgentSession, CodingAgentSessionOptions, CodingDiagnosticSeverity, PromptInvocation,
     PromptRunOptions, PromptTurnOptions, PromptTurnOutcome, SessionRunOptions,
 };
-use support::EnvGuard;
+use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -258,27 +258,24 @@ impl ApiProvider for RecordingProvider {
 }
 
 struct ProviderGuard {
-    apis: Vec<String>,
+    _guard: RegistryProviderGuard<'static>,
 }
 
 impl ProviderGuard {
     fn register(apis: Vec<String>, calls: Arc<Mutex<Vec<RecordedCall>>>) -> Self {
-        for api in &apis {
-            registry::register(
-                api,
-                Arc::new(RecordingProvider {
-                    calls: calls.clone(),
-                }),
-            );
-        }
-        Self { apis }
-    }
-}
-
-impl Drop for ProviderGuard {
-    fn drop(&mut self) {
-        for api in &self.apis {
-            registry::unregister(api);
+        let providers = apis
+            .into_iter()
+            .map(|api| {
+                (
+                    api,
+                    Arc::new(RecordingProvider {
+                        calls: calls.clone(),
+                    }) as Arc<dyn ApiProvider>,
+                )
+            })
+            .collect();
+        Self {
+            _guard: RegistryProviderGuard::register_many(providers),
         }
     }
 }

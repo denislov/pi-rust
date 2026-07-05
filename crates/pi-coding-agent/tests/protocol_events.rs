@@ -1,4 +1,4 @@
-use pi_agent_core::session::StoredAgentMessage;
+use pi_agent_core::transcript::StoredAgentMessage;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
 use pi_coding_agent::api::{
     CodingAgentEvent, CodingSessionError, ProfileKind, SelfHealingEditCheckOutput,
@@ -340,6 +340,71 @@ fn coding_event_adapter_maps_agent_team_lifecycle_to_protocol_events() {
 }
 
 #[test]
+fn delegation_protocol_events_include_folded_block_payload() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let events = [
+        CodingAgentEvent::DelegationRequested {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+        },
+        CodingAgentEvent::DelegationStarted {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+            child_operation_id: "op_child".into(),
+        },
+        CodingAgentEvent::DelegationCompleted {
+            operation_id: "op_parent".into(),
+            turn_id: "turn_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            requesting_profile_id: "planner".into(),
+            target_kind: ProfileKind::Agent,
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+            child_operation_id: "op_child".into(),
+            final_text: "child result".into(),
+        },
+    ]
+    .into_iter()
+    .flat_map(|event| adapter.push(&event))
+    .map(|event| serde_json::to_value(event).unwrap())
+    .collect::<Vec<_>>();
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["foldedBlock"]["toolCallId"], "tool_delegate");
+    assert_eq!(events[0]["foldedBlock"]["status"], "requested");
+    assert_eq!(events[0]["foldedBlock"]["targetKind"], "agent");
+    assert_eq!(events[0]["foldedBlock"]["targetId"], "coder");
+    assert_eq!(events[0]["foldedBlock"]["task"], "implement parser");
+    assert_eq!(events[0]["foldedBlock"]["isError"], false);
+
+    assert_eq!(events[1]["foldedBlock"]["status"], "running");
+    assert_eq!(events[1]["foldedBlock"]["childOperationId"], "op_child");
+
+    assert_eq!(events[2]["foldedBlock"]["status"], "completed");
+    assert_eq!(events[2]["foldedBlock"]["childOperationId"], "op_child");
+    assert_eq!(
+        events[2]["foldedBlock"]["summary"],
+        "completed: child result"
+    );
+    assert_eq!(events[2]["foldedBlock"]["isError"], false);
+}
+
+#[test]
 fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events() {
     let mut adapter = CodingProtocolEventAdapter::new_with_provider(
         "faux".into(),
@@ -444,7 +509,16 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "requestingProfileId": "planner",
                 "targetKind": "agent",
                 "targetId": "coder",
-                "task": "implement parser"
+                "task": "implement parser",
+                "foldedBlock": {
+                    "toolCallId": "tool_delegate",
+                    "targetKind": "agent",
+                    "targetId": "coder",
+                    "task": "implement parser",
+                    "status": "requested",
+                    "summary": "requested",
+                    "isError": false
+                }
             }),
             json!({
                 "type": "delegation_rejected",
@@ -455,7 +529,16 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "targetKind": "team",
                 "targetId": "review-team",
                 "task": "review parser",
-                "reason": "delegation target is not allowed"
+                "reason": "delegation target is not allowed",
+                "foldedBlock": {
+                    "toolCallId": "tool_delegate_team",
+                    "targetKind": "team",
+                    "targetId": "review-team",
+                    "task": "review parser",
+                    "status": "rejected",
+                    "summary": "rejected: delegation target is not allowed",
+                    "isError": true
+                }
             }),
             json!({
                 "type": "delegation_approved",
@@ -465,7 +548,16 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "requestingProfileId": "planner",
                 "targetKind": "agent",
                 "targetId": "coder",
-                "task": "implement parser"
+                "task": "implement parser",
+                "foldedBlock": {
+                    "toolCallId": "tool_delegate",
+                    "targetKind": "agent",
+                    "targetId": "coder",
+                    "task": "implement parser",
+                    "status": "approved",
+                    "summary": "approved",
+                    "isError": false
+                }
             }),
             json!({
                 "type": "delegation_confirmation_required",
@@ -476,7 +568,16 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "targetKind": "team",
                 "targetId": "review-team",
                 "task": "review parser",
-                "reason": "team delegation requires confirmation under writes policy"
+                "reason": "team delegation requires confirmation under writes policy",
+                "foldedBlock": {
+                    "toolCallId": "tool_delegate_team",
+                    "targetKind": "team",
+                    "targetId": "review-team",
+                    "task": "review parser",
+                    "status": "confirmation_required",
+                    "summary": "confirmation required: team delegation requires confirmation under writes policy",
+                    "isError": false
+                }
             }),
             json!({
                 "type": "delegation_started",
@@ -487,7 +588,17 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "targetKind": "agent",
                 "targetId": "coder",
                 "task": "implement parser",
-                "childOperationId": "op_child"
+                "childOperationId": "op_child",
+                "foldedBlock": {
+                    "toolCallId": "tool_delegate",
+                    "targetKind": "agent",
+                    "targetId": "coder",
+                    "task": "implement parser",
+                    "status": "running",
+                    "childOperationId": "op_child",
+                    "summary": "running",
+                    "isError": false
+                }
             }),
             json!({
                 "type": "delegation_completed",
@@ -499,7 +610,17 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "targetId": "coder",
                 "task": "implement parser",
                 "childOperationId": "op_child",
-                "finalText": "child result"
+                "finalText": "child result",
+                "foldedBlock": {
+                    "toolCallId": "tool_delegate",
+                    "targetKind": "agent",
+                    "targetId": "coder",
+                    "task": "implement parser",
+                    "status": "completed",
+                    "childOperationId": "op_child",
+                    "summary": "completed: child result",
+                    "isError": false
+                }
             }),
             json!({
                 "type": "delegation_failed",
@@ -511,7 +632,17 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
                 "targetId": "missing-coder",
                 "task": "implement parser",
                 "childOperationId": "op_child_failed",
-                "error": "invalid input: Unknown agent profile: missing-coder"
+                "error": "invalid input: Unknown agent profile: missing-coder",
+                "foldedBlock": {
+                    "toolCallId": "tool_delegate_failed",
+                    "targetKind": "agent",
+                    "targetId": "missing-coder",
+                    "task": "implement parser",
+                    "status": "failed",
+                    "childOperationId": "op_child_failed",
+                    "summary": "failed: invalid input: Unknown agent profile: missing-coder",
+                    "isError": true
+                }
             })
         ]
     );

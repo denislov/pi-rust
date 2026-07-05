@@ -1,4 +1,5 @@
-use crate::session::{SessionEntry, SessionError, SessionErrorCode, SessionHeader};
+use crate::session_context::{SessionError, SessionErrorCode};
+use crate::transcript::{SessionEntry, SessionHeader};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -62,7 +63,7 @@ impl InMemorySessionStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::StoredAgentMessage;
+    use crate::transcript::StoredAgentMessage;
     use pi_ai::types::ContentBlock;
 
     fn user_entry(id: &str, parent: Option<&str>) -> SessionEntry {

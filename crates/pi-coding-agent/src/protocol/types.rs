@@ -1,5 +1,5 @@
 use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
-use pi_agent_core::session::StoredAgentMessage;
+use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -131,6 +131,8 @@ pub enum ProtocolEvent {
         #[serde(rename = "targetId")]
         target_id: String,
         task: String,
+        #[serde(rename = "foldedBlock")]
+        folded_block: ProtocolDelegationFoldedBlock,
     },
     #[serde(rename = "delegation_rejected")]
     DelegationRejected {
@@ -148,6 +150,8 @@ pub enum ProtocolEvent {
         target_id: String,
         task: String,
         reason: String,
+        #[serde(rename = "foldedBlock")]
+        folded_block: ProtocolDelegationFoldedBlock,
     },
     #[serde(rename = "delegation_approved")]
     DelegationApproved {
@@ -164,6 +168,8 @@ pub enum ProtocolEvent {
         #[serde(rename = "targetId")]
         target_id: String,
         task: String,
+        #[serde(rename = "foldedBlock")]
+        folded_block: ProtocolDelegationFoldedBlock,
     },
     #[serde(rename = "delegation_confirmation_required")]
     DelegationConfirmationRequired {
@@ -181,6 +187,8 @@ pub enum ProtocolEvent {
         target_id: String,
         task: String,
         reason: String,
+        #[serde(rename = "foldedBlock")]
+        folded_block: ProtocolDelegationFoldedBlock,
     },
     #[serde(rename = "delegation_started")]
     DelegationStarted {
@@ -199,6 +207,8 @@ pub enum ProtocolEvent {
         task: String,
         #[serde(rename = "childOperationId")]
         child_operation_id: String,
+        #[serde(rename = "foldedBlock")]
+        folded_block: ProtocolDelegationFoldedBlock,
     },
     #[serde(rename = "delegation_completed")]
     DelegationCompleted {
@@ -219,6 +229,8 @@ pub enum ProtocolEvent {
         child_operation_id: String,
         #[serde(rename = "finalText")]
         final_text: String,
+        #[serde(rename = "foldedBlock")]
+        folded_block: ProtocolDelegationFoldedBlock,
     },
     #[serde(rename = "delegation_failed")]
     DelegationFailed {
@@ -238,6 +250,8 @@ pub enum ProtocolEvent {
         #[serde(rename = "childOperationId")]
         child_operation_id: String,
         error: String,
+        #[serde(rename = "foldedBlock")]
+        folded_block: ProtocolDelegationFoldedBlock,
     },
     #[serde(rename = "agent_invocation_start")]
     AgentInvocationStart {
@@ -381,6 +395,24 @@ pub struct ProtocolSelfHealingEditCheckOutput {
     pub stderr: String,
     #[serde(rename = "exitCode")]
     pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProtocolDelegationFoldedBlock {
+    #[serde(rename = "toolCallId")]
+    pub tool_call_id: String,
+    #[serde(rename = "targetKind")]
+    pub target_kind: String,
+    #[serde(rename = "targetId")]
+    pub target_id: String,
+    pub task: String,
+    pub status: String,
+    #[serde(rename = "childOperationId", skip_serializing_if = "Option::is_none")]
+    pub child_operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(rename = "isError")]
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -591,7 +623,7 @@ pub struct RpcCapabilities {
     pub agent_profiles: RpcCapabilityStatus,
     #[serde(rename = "teamProfiles")]
     pub team_profiles: RpcCapabilityStatus,
-    pub delegation: RpcCapabilityStatus,
+    pub delegation: RpcDelegationCapabilityStatus,
     pub tools: RpcCapabilityStatus,
     pub shell: RpcCapabilityStatus,
     pub plugins: RpcCapabilityStatus,
@@ -604,6 +636,55 @@ pub enum RpcCapabilityStatus {
     Disabled { reason: String },
     Unsupported { reason: String },
     Busy { operation: String },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcDelegationCapabilityStatus {
+    #[serde(flatten)]
+    pub status: RpcCapabilityStatus,
+    pub rendering: RpcDelegationRenderingMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcDelegationRenderingMetadata {
+    pub mode: &'static str,
+    #[serde(rename = "eventFamily")]
+    pub event_family: &'static str,
+    #[serde(rename = "payloadField")]
+    pub payload_field: &'static str,
+    #[serde(rename = "upsertKey")]
+    pub upsert_key: &'static str,
+    #[serde(rename = "lifecycleEvents")]
+    pub lifecycle_events: Vec<&'static str>,
+}
+
+impl RpcDelegationRenderingMetadata {
+    fn folded_block() -> Self {
+        Self {
+            mode: "folded_block",
+            event_family: "delegation",
+            payload_field: "foldedBlock",
+            upsert_key: "toolCallId",
+            lifecycle_events: vec![
+                "delegation_requested",
+                "delegation_rejected",
+                "delegation_approved",
+                "delegation_confirmation_required",
+                "delegation_started",
+                "delegation_completed",
+                "delegation_failed",
+            ],
+        }
+    }
+}
+
+impl From<CapabilityStatus> for RpcDelegationCapabilityStatus {
+    fn from(status: CapabilityStatus) -> Self {
+        Self {
+            status: status.into(),
+            rendering: RpcDelegationRenderingMetadata::folded_block(),
+        }
+    }
 }
 
 impl From<CodingAgentCapabilities> for RpcCapabilities {

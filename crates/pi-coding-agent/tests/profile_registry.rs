@@ -7,7 +7,7 @@ use pi_coding_agent::api::{
 use tempfile::tempdir;
 
 #[test]
-fn built_in_default_agent_profile_is_available() {
+fn built_in_default_agent_profile_exposes_read_only_helper_roster() {
     let registry = ProfileRegistry::load(ProfileRegistryOptions::new()).unwrap();
 
     let profile = registry
@@ -18,10 +18,63 @@ fn built_in_default_agent_profile_is_available() {
     assert_eq!(profile.display_name, "Default");
     assert_eq!(profile.source, ProfileSource::BuiltIn);
     assert_eq!(profile.supervision, SupervisionPolicy::Session);
+    assert!(profile.delegation.allow_delegate_agent);
+    assert!(!profile.delegation.allow_delegate_team);
+    assert_eq!(profile.delegation.max_depth, 1);
+    assert_eq!(profile.delegation.max_parallel_children, 1);
     assert_eq!(
         profile.delegation.require_confirmation,
-        DelegationConfirmationMode::Writes
+        DelegationConfirmationMode::Never
     );
+    assert_eq!(
+        profile
+            .delegation
+            .allowed_agents
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["explore", "review", "check"]
+    );
+
+    for helper_id in ["explore", "review", "check"] {
+        let helper = registry
+            .agent(helper_id)
+            .expect("built-in helper profile should resolve");
+        assert_eq!(helper.source, ProfileSource::BuiltIn);
+        assert!(
+            helper.tools.is_empty(),
+            "built-in helper {helper_id} must not carry write tools by default"
+        );
+        assert!(
+            helper.skills.is_empty(),
+            "built-in helper {helper_id} must not carry privileged skills by default"
+        );
+        assert!(!helper.delegation.allow_delegate_agent);
+        assert!(!helper.delegation.allow_delegate_team);
+    }
+}
+
+#[test]
+fn custom_default_profile_does_not_inherit_built_in_helper_roster() {
+    let root = tempdir().unwrap();
+    write_file(
+        root.path().join("agents/default.toml"),
+        r#"
+schema_version = 1
+id = "default"
+display_name = "Project Default"
+"#,
+    );
+
+    let registry =
+        ProfileRegistry::load(ProfileRegistryOptions::new().with_project_root(root.path()))
+            .unwrap();
+    let profile = registry.agent("default").unwrap();
+
+    assert_eq!(profile.display_name, "Project Default");
+    assert_eq!(profile.source, ProfileSource::Project);
+    assert!(!profile.delegation.allow_delegate_agent);
+    assert!(profile.delegation.allowed_agents.is_empty());
 }
 
 #[test]

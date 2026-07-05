@@ -1,5 +1,5 @@
-use crate::session::{SessionError, SessionErrorCode};
 use std::collections::HashSet;
+use std::fmt;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
@@ -25,6 +25,31 @@ pub fn generate_entry_id(existing: &HashSet<String>) -> String {
     create_session_id()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptIdError {
+    message: String,
+}
+
+impl TranscriptIdError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for TranscriptIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for TranscriptIdError {}
+
 #[derive(Debug, Clone)]
 pub struct SessionIdGenerator {
     pub session_id: String,
@@ -41,12 +66,9 @@ impl SessionIdGenerator {
         }
     }
 
-    pub fn next_entry_id(&mut self) -> Result<String, SessionError> {
+    pub fn next_entry_id(&mut self) -> Result<String, TranscriptIdError> {
         if self.entry_ids.is_empty() {
-            return Err(SessionError::new(
-                SessionErrorCode::Unknown,
-                "test entry id generator exhausted",
-            ));
+            return Err(TranscriptIdError::new("test entry id generator exhausted"));
         }
         Ok(self.entry_ids.remove(0))
     }

@@ -7,10 +7,10 @@ use std::pin::Pin;
 use pi_agent_core::AgentMessage;
 use pi_agent_core::compaction::summarize::summarize;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
-use pi_ai::types::StreamOptions;
+use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
-use super::prompt::{PromptTurnTransaction, RuntimeSnapshot};
+use super::prompt::{PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
 use super::runtime_service::RuntimeService;
 use super::session_log::event::{DiagnosticLevel, PersistedContentBlock, SessionEventEnvelope};
 use super::session_log::replay::{ReplayLeaf, SessionReplay, ToolCallStatus, TranscriptItem};
@@ -166,6 +166,56 @@ pub(crate) enum BranchSummaryOutcome {
     NoOp {
         reason: String,
     },
+}
+
+pub(crate) fn branch_summary_outcome_text(outcome: &BranchSummaryOutcome) -> String {
+    match outcome {
+        BranchSummaryOutcome::Created { summary, .. } => summary.clone(),
+        BranchSummaryOutcome::NoOp { reason } => reason.clone(),
+    }
+}
+
+pub(crate) fn branch_summary_success_outcome(
+    operation_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    session_id: impl Into<String>,
+    leaf_id: Option<String>,
+    runtime: &RuntimeSnapshot,
+    final_text: impl Into<String>,
+) -> PromptTurnOutcome {
+    let final_text = final_text.into();
+    PromptTurnOutcome::Success {
+        operation_id: operation_id.into(),
+        turn_id: turn_id.into(),
+        session_id: Some(session_id.into()),
+        leaf_id,
+        final_message: branch_summary_final_message(runtime, &final_text),
+        final_text,
+        diagnostics: Vec::new(),
+    }
+}
+
+pub(crate) fn branch_summary_failed_outcome(
+    operation_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    error: CodingSessionError,
+) -> PromptTurnOutcome {
+    PromptTurnOutcome::Failed {
+        operation_id: operation_id.into(),
+        turn_id: Some(turn_id.into()),
+        error,
+        diagnostics: Vec::new(),
+    }
+}
+
+fn branch_summary_final_message(runtime: &RuntimeSnapshot, summary: &str) -> AssistantMessage {
+    let mut message = AssistantMessage::empty(&runtime.model().api, &runtime.model().id);
+    message.provider = Some(runtime.model().provider.clone());
+    message.content.push(ContentBlock::Text {
+        text: summary.to_owned(),
+        text_signature: None,
+    });
+    message
 }
 
 pub(crate) struct BranchSummaryContext {
@@ -651,7 +701,6 @@ mod tests {
 
     use pi_agent_core::AgentResources;
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::registry;
     use pi_ai::types::{Model, ModelCost, ModelInput};
 
     use super::*;
@@ -856,7 +905,7 @@ mod tests {
     #[tokio::test]
     async fn branch_summary_flow_uses_summary_model_when_runtime_is_available() {
         let api = "branch-summary-flow-model-summary";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::simple_text("model branch summary")),
         );
@@ -895,7 +944,6 @@ mod tests {
                 if summary.contains("model branch summary")
                     && !summary.contains("branch prompt")
         ));
-        registry::unregister(api);
     }
 
     #[tokio::test]

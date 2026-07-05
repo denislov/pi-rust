@@ -138,6 +138,19 @@ pub(crate) enum SessionEventData {
         tool_call_id: String,
         reason: String,
     },
+    #[serde(rename = "delegation.folded.updated")]
+    DelegationFoldedUpdated {
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        status: PersistedDelegationStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        child_operation_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
     #[serde(rename = "operation.started")]
     OperationStarted { operation: OperationKind },
     #[serde(rename = "operation.committed")]
@@ -233,6 +246,17 @@ pub(crate) enum OperationKind {
     PluginLoad,
     SelfHealingEdit,
     Other { name: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PersistedDelegationStatus {
+    Requested,
+    Running,
+    Completed,
+    Failed,
+    Rejected,
+    ConfirmationRequired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,6 +501,19 @@ mod tests {
                     reason: "not now".into(),
                 },
                 "delegation.confirmation.rejected",
+            ),
+            (
+                SessionEventData::DelegationFoldedUpdated {
+                    tool_call_id: "tool_delegate".into(),
+                    requesting_profile_id: ProfileId::from("planner"),
+                    target_kind: ProfileKind::Agent,
+                    target_id: ProfileId::from("coder"),
+                    task: "implement parser".into(),
+                    status: PersistedDelegationStatus::Completed,
+                    child_operation_id: Some("op_child".into()),
+                    summary: Some("child result".into()),
+                },
+                "delegation.folded.updated",
             ),
             (
                 SessionEventData::OperationStarted {

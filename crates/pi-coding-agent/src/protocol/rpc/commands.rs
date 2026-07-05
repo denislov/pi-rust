@@ -1058,6 +1058,7 @@ fn rpc_self_healing_edit_error_data(error: &CodingSessionError) -> Option<serde_
         CodingSessionError::SelfHealingEditFailed {
             diagnostics,
             check_output,
+            repair_attempts,
             ..
         } => Some(serde_json::json!({
             "diagnostics": diagnostics
@@ -1067,6 +1068,10 @@ fn rpc_self_healing_edit_error_data(error: &CodingSessionError) -> Option<serde_
             "checkOutput": check_output
                 .as_ref()
                 .map(rpc_self_healing_check_output_data),
+            "repairAttempts": repair_attempts
+                .iter()
+                .map(rpc_self_healing_repair_attempt_data)
+                .collect::<Vec<_>>(),
         })),
         _ => None,
     }

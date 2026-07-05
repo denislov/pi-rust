@@ -9,10 +9,7 @@ use pi_ai::types::AssistantMessage;
 use super::agent_team_flow::{AgentTeamContext, AgentTeamFlow, AgentTeamOptions};
 use super::delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
-    emit_delegation_approved, emit_delegation_completed, emit_delegation_confirmation_required,
-    emit_delegation_failed, emit_delegation_rejected, emit_delegation_started,
 };
-use super::event::CodingAgentEvent;
 use super::event_service::EventService;
 use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
@@ -321,13 +318,12 @@ impl AgentInvocationContext {
                 message: "agent invocation requires a non-empty task".into(),
             });
         }
-        self.event_service
-            .emit(CodingAgentEvent::AgentInvocationStarted {
-                operation_id: self.operation_id.clone(),
-                child_operation_id: self.child_operation_id.clone(),
-                profile_id: self.options.profile_id.clone(),
-                task: self.options.task.clone(),
-            });
+        self.event_service.emit_agent_invocation_started(
+            self.operation_id.clone(),
+            self.child_operation_id.clone(),
+            self.options.profile_id.clone(),
+            self.options.task.clone(),
+        );
         Ok(())
     }
 
@@ -422,10 +418,10 @@ impl AgentInvocationContext {
             .execute_authorized_delegations(&decisions, prompt_options)
             .await
         {
-            self.event_service.emit(CodingAgentEvent::Diagnostic {
-                operation_id: Some(self.child_operation_id.clone()),
-                message: format!("delegation execution failed: {error}"),
-            });
+            self.event_service.emit_diagnostic(
+                Some(self.child_operation_id.clone()),
+                format!("delegation execution failed: {error}"),
+            );
         }
         let child_context =
             self.child_context
@@ -448,7 +444,7 @@ impl AgentInvocationContext {
                     request,
                     child_delegation_depth,
                 } => {
-                    emit_delegation_approved(&self.event_service, request);
+                    self.event_service.emit_delegation_approved(request);
                     match request.target_kind {
                         ProfileKind::Agent => {
                             self.execute_approved_agent_delegation(
@@ -486,10 +482,11 @@ impl AgentInvocationContext {
                             ),
                         },
                     );
-                    emit_delegation_confirmation_required(&self.event_service, request, reason);
+                    self.event_service
+                        .emit_delegation_confirmation_required(request, reason);
                 }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
-                    emit_delegation_rejected(&self.event_service, request, reason);
+                    self.event_service.emit_delegation_rejected(request, reason);
                 }
             }
         }
@@ -518,7 +515,8 @@ impl AgentInvocationContext {
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
-        emit_delegation_started(&self.event_service, request, child_operation_id.clone());
+        self.event_service
+            .emit_delegation_started(request, child_operation_id.clone());
         let result = AgentInvocationFlow::new()?.run(&mut context).await;
         self.pending_delegation_confirmations
             .extend(context.take_pending_delegation_confirmations());
@@ -528,8 +526,7 @@ impl AgentInvocationContext {
         };
         match outcome {
             Ok(outcome) => {
-                emit_delegation_completed(
-                    &self.event_service,
+                self.event_service.emit_delegation_completed(
                     request,
                     child_operation_id,
                     outcome.final_text,
@@ -537,8 +534,7 @@ impl AgentInvocationContext {
                 Ok(())
             }
             Err(error) => {
-                emit_delegation_failed(
-                    &self.event_service,
+                self.event_service.emit_delegation_failed(
                     request,
                     child_operation_id,
                     error.clone(),
@@ -570,7 +566,8 @@ impl AgentInvocationContext {
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
-        emit_delegation_started(&self.event_service, request, child_operation_id.clone());
+        self.event_service
+            .emit_delegation_started(request, child_operation_id.clone());
         let result = AgentTeamFlow::new()?.run(&mut context).await;
         self.pending_delegation_confirmations
             .extend(context.take_pending_delegation_confirmations());
@@ -580,8 +577,7 @@ impl AgentInvocationContext {
         };
         match outcome {
             Ok(outcome) => {
-                emit_delegation_completed(
-                    &self.event_service,
+                self.event_service.emit_delegation_completed(
                     request,
                     child_operation_id,
                     outcome.final_text,
@@ -589,8 +585,7 @@ impl AgentInvocationContext {
                 Ok(())
             }
             Err(error) => {
-                emit_delegation_failed(
-                    &self.event_service,
+                self.event_service.emit_delegation_failed(
                     request,
                     child_operation_id,
                     error.clone(),
@@ -615,22 +610,19 @@ impl AgentInvocationContext {
                 ..
             } => {
                 for diagnostic in diagnostics {
-                    self.event_service.emit(CodingAgentEvent::Diagnostic {
-                        operation_id: Some(self.operation_id.clone()),
-                        message: diagnostic.message.clone(),
-                    });
+                    self.event_service.emit_diagnostic(
+                        Some(self.operation_id.clone()),
+                        diagnostic.message.clone(),
+                    );
                 }
-                self.event_service.emit(CodingAgentEvent::PromptCompleted {
-                    operation_id: self.child_operation_id.clone(),
-                    turn_id: turn_id.clone(),
-                });
                 self.event_service
-                    .emit(CodingAgentEvent::AgentInvocationCompleted {
-                        operation_id: self.operation_id.clone(),
-                        child_operation_id: self.child_operation_id.clone(),
-                        profile_id: self.options.profile_id.clone(),
-                        final_text: final_text.clone(),
-                    });
+                    .emit_prompt_completed(self.child_operation_id.clone(), turn_id.clone());
+                self.event_service.emit_agent_invocation_completed(
+                    self.operation_id.clone(),
+                    self.child_operation_id.clone(),
+                    self.options.profile_id.clone(),
+                    final_text.clone(),
+                );
                 Ok(())
             }
             PromptTurnOutcome::Aborted { reason, .. } => {
@@ -638,32 +630,26 @@ impl AgentInvocationContext {
                     message: format!("agent invocation aborted: {reason}"),
                 };
                 self.failure_error = Some(error.clone());
-                self.event_service.emit(CodingAgentEvent::PromptAborted {
-                    operation_id: self.child_operation_id.clone(),
-                    reason: reason.clone(),
-                });
                 self.event_service
-                    .emit(CodingAgentEvent::AgentInvocationAborted {
-                        operation_id: self.operation_id.clone(),
-                        child_operation_id: self.child_operation_id.clone(),
-                        profile_id: self.options.profile_id.clone(),
-                        reason: reason.clone(),
-                    });
+                    .emit_prompt_aborted(self.child_operation_id.clone(), reason.clone());
+                self.event_service.emit_agent_invocation_aborted(
+                    self.operation_id.clone(),
+                    self.child_operation_id.clone(),
+                    self.options.profile_id.clone(),
+                    reason.clone(),
+                );
                 Err(error)
             }
             PromptTurnOutcome::Failed { error, .. } => {
                 self.failure_error = Some(error.clone());
-                self.event_service.emit(CodingAgentEvent::PromptFailed {
-                    operation_id: self.child_operation_id.clone(),
-                    error: error.clone(),
-                });
                 self.event_service
-                    .emit(CodingAgentEvent::AgentInvocationFailed {
-                        operation_id: self.operation_id.clone(),
-                        child_operation_id: self.child_operation_id.clone(),
-                        profile_id: self.options.profile_id.clone(),
-                        error: error.clone(),
-                    });
+                    .emit_prompt_failed(self.child_operation_id.clone(), error.clone());
+                self.event_service.emit_agent_invocation_failed(
+                    self.operation_id.clone(),
+                    self.child_operation_id.clone(),
+                    self.options.profile_id.clone(),
+                    error.clone(),
+                );
                 Err(error.clone())
             }
         }
@@ -672,13 +658,12 @@ impl AgentInvocationContext {
     fn fail(&mut self, error: CodingSessionError) -> String {
         if self.failure_error.is_none() {
             self.failure_error = Some(error.clone());
-            self.event_service
-                .emit(CodingAgentEvent::AgentInvocationFailed {
-                    operation_id: self.operation_id.clone(),
-                    child_operation_id: self.child_operation_id.clone(),
-                    profile_id: self.options.profile_id.clone(),
-                    error: error.clone(),
-                });
+            self.event_service.emit_agent_invocation_failed(
+                self.operation_id.clone(),
+                self.child_operation_id.clone(),
+                self.options.profile_id.clone(),
+                error.clone(),
+            );
         }
         error.to_string()
     }

@@ -9,10 +9,7 @@ use super::agent_invocation_flow::{
 };
 use super::delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
-    emit_delegation_approved, emit_delegation_completed, emit_delegation_confirmation_required,
-    emit_delegation_failed, emit_delegation_rejected, emit_delegation_started,
 };
-use super::event::CodingAgentEvent;
 use super::event_service::EventService;
 use super::plugin_service::PluginService;
 use super::profiles::{
@@ -308,11 +305,11 @@ impl AgentTeamContext {
                 message: "agent team invocation requires a non-empty task".into(),
             });
         }
-        self.event_service.emit(CodingAgentEvent::AgentTeamStarted {
-            operation_id: self.operation_id.clone(),
-            team_id: self.options.team_id.clone(),
-            task: self.options.task.clone(),
-        });
+        self.event_service.emit_agent_team_started(
+            self.operation_id.clone(),
+            self.options.team_id.clone(),
+            self.options.task.clone(),
+        );
         Ok(())
     }
 
@@ -399,17 +396,14 @@ impl AgentTeamContext {
                 message: "agent team cannot finalize without final text".into(),
             })?;
         for diagnostic in self.all_diagnostics() {
-            self.event_service.emit(CodingAgentEvent::Diagnostic {
-                operation_id: Some(self.operation_id.clone()),
-                message: diagnostic.message,
-            });
+            self.event_service
+                .emit_diagnostic(Some(self.operation_id.clone()), diagnostic.message);
         }
-        self.event_service
-            .emit(CodingAgentEvent::AgentTeamCompleted {
-                operation_id: self.operation_id.clone(),
-                team_id: self.options.team_id.clone(),
-                final_text,
-            });
+        self.event_service.emit_agent_team_completed(
+            self.operation_id.clone(),
+            self.options.team_id.clone(),
+            final_text,
+        );
         Ok(())
     }
 
@@ -421,14 +415,13 @@ impl AgentTeamContext {
         let mut ids = SystemIdGenerator;
         let child_operation_id = ids.next_operation_id();
         let turn_id = ids.next_turn_id();
-        self.event_service
-            .emit(CodingAgentEvent::AgentTeamMemberStarted {
-                operation_id: self.operation_id.clone(),
-                child_operation_id: child_operation_id.clone(),
-                team_id: self.options.team_id.clone(),
-                profile_id: profile.id.clone(),
-                task: prompt_text.clone(),
-            });
+        self.event_service.emit_agent_team_member_started(
+            self.operation_id.clone(),
+            child_operation_id.clone(),
+            self.options.team_id.clone(),
+            profile.id.clone(),
+            prompt_text.clone(),
+        );
 
         let mut prompt_options = self.options.prompt_options.clone();
         prompt_options.set_invocation(PromptInvocation::Text(prompt_text));
@@ -480,10 +473,10 @@ impl AgentTeamContext {
                 .execute_authorized_delegations(&decisions, prompt_options)
                 .await
             {
-                self.event_service.emit(CodingAgentEvent::Diagnostic {
-                    operation_id: Some(child_operation_id.clone()),
-                    message: format!("delegation execution failed: {error}"),
-                });
+                self.event_service.emit_diagnostic(
+                    Some(child_operation_id.clone()),
+                    format!("delegation execution failed: {error}"),
+                );
             }
             child_context.finish_success(runtime_id, None)?
         } else {
@@ -500,18 +493,15 @@ impl AgentTeamContext {
                 diagnostics,
                 ..
             } => {
-                self.event_service.emit(CodingAgentEvent::PromptCompleted {
-                    operation_id: child_operation_id.clone(),
-                    turn_id: turn_id.clone(),
-                });
                 self.event_service
-                    .emit(CodingAgentEvent::AgentTeamMemberCompleted {
-                        operation_id: self.operation_id.clone(),
-                        child_operation_id: child_operation_id.clone(),
-                        team_id: self.options.team_id.clone(),
-                        profile_id: profile.id.clone(),
-                        final_text: final_text.clone(),
-                    });
+                    .emit_prompt_completed(child_operation_id.clone(), turn_id.clone());
+                self.event_service.emit_agent_team_member_completed(
+                    self.operation_id.clone(),
+                    child_operation_id.clone(),
+                    self.options.team_id.clone(),
+                    profile.id.clone(),
+                    final_text.clone(),
+                );
                 Ok(AgentTeamMemberOutcome {
                     profile_id: profile.id.clone(),
                     operation_id: child_operation_id,
@@ -522,19 +512,15 @@ impl AgentTeamContext {
                 })
             }
             PromptTurnOutcome::Aborted { reason, .. } => {
-                self.event_service.emit(CodingAgentEvent::PromptAborted {
-                    operation_id: child_operation_id,
-                    reason: reason.clone(),
-                });
+                self.event_service
+                    .emit_prompt_aborted(child_operation_id, reason.clone());
                 Err(CodingSessionError::Session {
                     message: format!("agent team child aborted: {reason}"),
                 })
             }
             PromptTurnOutcome::Failed { error, .. } => {
-                self.event_service.emit(CodingAgentEvent::PromptFailed {
-                    operation_id: child_operation_id,
-                    error: error.clone(),
-                });
+                self.event_service
+                    .emit_prompt_failed(child_operation_id, error.clone());
                 Err(error)
             }
         }
@@ -551,7 +537,7 @@ impl AgentTeamContext {
                     request,
                     child_delegation_depth,
                 } => {
-                    emit_delegation_approved(&self.event_service, request);
+                    self.event_service.emit_delegation_approved(request);
                     match request.target_kind {
                         ProfileKind::Agent => {
                             self.execute_approved_agent_delegation(
@@ -589,10 +575,11 @@ impl AgentTeamContext {
                             ),
                         },
                     );
-                    emit_delegation_confirmation_required(&self.event_service, request, reason);
+                    self.event_service
+                        .emit_delegation_confirmation_required(request, reason);
                 }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
-                    emit_delegation_rejected(&self.event_service, request, reason);
+                    self.event_service.emit_delegation_rejected(request, reason);
                 }
             }
         }
@@ -621,7 +608,8 @@ impl AgentTeamContext {
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
-        emit_delegation_started(&self.event_service, request, child_operation_id.clone());
+        self.event_service
+            .emit_delegation_started(request, child_operation_id.clone());
         let result = AgentInvocationFlow::new()?.run(&mut context).await;
         self.pending_delegation_confirmations
             .extend(context.take_pending_delegation_confirmations());
@@ -631,8 +619,7 @@ impl AgentTeamContext {
         };
         match outcome {
             Ok(outcome) => {
-                emit_delegation_completed(
-                    &self.event_service,
+                self.event_service.emit_delegation_completed(
                     request,
                     child_operation_id,
                     outcome.final_text,
@@ -640,8 +627,7 @@ impl AgentTeamContext {
                 Ok(())
             }
             Err(error) => {
-                emit_delegation_failed(
-                    &self.event_service,
+                self.event_service.emit_delegation_failed(
                     request,
                     child_operation_id,
                     error.clone(),
@@ -673,7 +659,8 @@ impl AgentTeamContext {
             self.event_service.clone(),
         );
         let child_operation_id = context.operation_id().to_owned();
-        emit_delegation_started(&self.event_service, request, child_operation_id.clone());
+        self.event_service
+            .emit_delegation_started(request, child_operation_id.clone());
         let result = AgentTeamFlow::new()?.run(&mut context).await;
         self.pending_delegation_confirmations
             .extend(context.take_pending_delegation_confirmations());
@@ -683,8 +670,7 @@ impl AgentTeamContext {
         };
         match outcome {
             Ok(outcome) => {
-                emit_delegation_completed(
-                    &self.event_service,
+                self.event_service.emit_delegation_completed(
                     request,
                     child_operation_id,
                     outcome.final_text,
@@ -692,8 +678,7 @@ impl AgentTeamContext {
                 Ok(())
             }
             Err(error) => {
-                emit_delegation_failed(
-                    &self.event_service,
+                self.event_service.emit_delegation_failed(
                     request,
                     child_operation_id,
                     error.clone(),
@@ -743,11 +728,11 @@ impl AgentTeamContext {
     fn fail(&mut self, error: CodingSessionError) -> String {
         if self.failure_error.is_none() {
             self.failure_error = Some(error.clone());
-            self.event_service.emit(CodingAgentEvent::AgentTeamFailed {
-                operation_id: self.operation_id.clone(),
-                team_id: self.options.team_id.clone(),
-                error: error.clone(),
-            });
+            self.event_service.emit_agent_team_failed(
+                self.operation_id.clone(),
+                self.options.team_id.clone(),
+                error.clone(),
+            );
         }
         error.to_string()
     }

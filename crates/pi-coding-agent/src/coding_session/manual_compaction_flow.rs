@@ -10,7 +10,7 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
-use super::prompt::{PromptTurnOptions, PromptTurnTransaction, RuntimeSnapshot};
+use super::prompt::{PromptTurnOptions, PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
 use super::runtime_service::RuntimeService;
 use super::session_log::event::SessionEventEnvelope;
 use super::session_log::replay::{SessionReplay, transcript_item_id};
@@ -150,6 +150,37 @@ pub(crate) struct ManualCompactionOutcome {
     pub(crate) first_kept_message_id: String,
     pub(crate) tokens_before: u32,
     pub(crate) final_message: AssistantMessage,
+}
+
+pub(crate) fn manual_compaction_success_outcome(
+    operation_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    session_id: impl Into<String>,
+    leaf_id: Option<String>,
+    outcome: &ManualCompactionOutcome,
+) -> PromptTurnOutcome {
+    PromptTurnOutcome::Success {
+        operation_id: operation_id.into(),
+        turn_id: turn_id.into(),
+        session_id: Some(session_id.into()),
+        leaf_id,
+        final_text: outcome.summary.clone(),
+        final_message: outcome.final_message.clone(),
+        diagnostics: Vec::new(),
+    }
+}
+
+pub(crate) fn manual_compaction_failed_outcome(
+    operation_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    error: CodingSessionError,
+) -> PromptTurnOutcome {
+    PromptTurnOutcome::Failed {
+        operation_id: operation_id.into(),
+        turn_id: Some(turn_id.into()),
+        error,
+        diagnostics: Vec::new(),
+    }
 }
 
 pub(crate) struct ManualCompactionContext {
@@ -501,7 +532,6 @@ mod tests {
 
     use pi_agent_core::AgentResources;
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::registry;
     use pi_ai::types::{Model, ModelCost, ModelInput};
 
     use super::*;
@@ -603,7 +633,7 @@ mod tests {
     #[tokio::test]
     async fn manual_compaction_flow_records_summary_events_without_flushing() {
         let api = "manual-compaction-flow-records-summary";
-        registry::register(
+        let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
             Arc::new(FauxProvider::simple_text("summary from flow")),
         );
@@ -655,6 +685,5 @@ mod tests {
                 crate::coding_session::session_log::replay::TranscriptItem::AssistantMessage { .. }
             ]
         ));
-        registry::unregister(api);
     }
 }

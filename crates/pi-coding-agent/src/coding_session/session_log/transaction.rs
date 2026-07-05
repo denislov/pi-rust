@@ -3,13 +3,15 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::event::{
-    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedPluginDiagnostic,
-    PersistedRole, PersistedSelfHealingEditCheckOutput, PersistedSelfHealingEditReplacement,
-    PersistedToolResult, SessionEventData, SessionEventEnvelope,
+    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedDelegationStatus,
+    PersistedPluginDiagnostic, PersistedRole, PersistedSelfHealingEditCheckOutput,
+    PersistedSelfHealingEditReplacement, PersistedToolResult, SessionEventData,
+    SessionEventEnvelope,
 };
 use super::id::{Clock, IdGenerator};
 use super::store::{ManifestPatch, SessionHandle, SessionLogStore};
 use crate::coding_session::CodingSessionError;
+use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use crate::coding_session::self_healing_edit_flow::{
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
@@ -298,6 +300,31 @@ where
         Ok(())
     }
 
+    pub(crate) fn record_delegation_folded_update(
+        &mut self,
+        tool_call_id: impl Into<String>,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: impl Into<String>,
+        status: PersistedDelegationStatus,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::DelegationFoldedUpdated {
+            tool_call_id: tool_call_id.into(),
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task: task.into(),
+            status,
+            child_operation_id,
+            summary,
+        });
+        Ok(())
+    }
+
     pub(crate) fn record_self_healing_edit_started(
         &mut self,
         path: impl Into<String>,
@@ -563,6 +590,7 @@ mod tests {
                 SessionEventData::DelegationConfirmationRejected { .. } => {
                     "delegation.confirmation.rejected"
                 }
+                SessionEventData::DelegationFoldedUpdated { .. } => "delegation.folded.updated",
                 SessionEventData::SessionCreated { .. } => "session.created",
                 SessionEventData::SessionCloned { .. } => "session.cloned",
                 SessionEventData::SessionForked { .. } => "session.forked",

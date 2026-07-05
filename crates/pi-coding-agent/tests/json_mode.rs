@@ -1,9 +1,11 @@
+mod support;
+
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
 use pi_coding_agent::{CliRunOptions, run_cli_with_options};
 use std::sync::Arc;
+use support::ProviderGuard;
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -33,7 +35,8 @@ fn json_lines(stdout: &str) -> Vec<serde_json::Value> {
 #[tokio::test]
 async fn json_mode_emits_session_header_and_lifecycle_events() {
     let api = "pi-coding-json-lifecycle";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello")));
 
     let output = run_cli_with_options(
         vec![
@@ -58,13 +61,12 @@ async fn json_mode_emits_session_header_and_lifecycle_events() {
     assert!(lines.iter().any(|line| line["type"] == "turn_start"));
     assert!(lines.iter().any(|line| line["type"] == "message_update"));
     assert!(lines.iter().any(|line| line["type"] == "agent_end"));
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn json_mode_emits_tool_execution_events() {
     let api = "pi-coding-json-tool";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxCall {
@@ -118,13 +120,12 @@ async fn json_mode_emits_tool_execution_events() {
             .iter()
             .any(|line| line["type"] == "tool_execution_end")
     );
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn json_mode_maps_provider_failure_to_error_output() {
     let api = "pi-coding-json-error";
-    registry::register(
+    let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![FauxCall {
             responses: vec![FauxResponse {
@@ -152,13 +153,13 @@ async fn json_mode_maps_provider_failure_to_error_output() {
     let lines = json_lines(&output.stdout);
     assert!(lines.iter().any(|line| line["type"] == "agent_start"));
     assert!(lines.iter().any(|line| line["type"] == "agent_end"));
-    registry::unregister(api);
 }
 
 #[tokio::test]
 async fn json_mode_enabled_session_uses_rust_native_log() {
     let api = "pi-coding-json-native-session";
-    registry::register(api, Arc::new(FauxProvider::simple_text("stored json")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("stored json")));
     let temp = tempfile::tempdir().unwrap();
     let project_dir = temp.path().join("project");
     let sessions_dir = temp.path().join("sessions");
@@ -198,7 +199,6 @@ async fn json_mode_enabled_session_uses_rust_native_log() {
     assert!(events.contains(r#""kind":"turn.input.recorded""#));
     assert!(events.contains(r#""kind":"message.completed""#));
     assert!(legacy_jsonl_files(&sessions_dir).is_empty());
-    registry::unregister(api);
 }
 
 fn rust_session_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {

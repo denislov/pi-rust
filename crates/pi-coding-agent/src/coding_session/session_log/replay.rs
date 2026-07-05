@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::event::{
-    DiagnosticLevel, PersistedContentBlock, PersistedDelegationRuntimeSeed, PersistedToolResult,
-    SessionEventData, SessionEventEnvelope,
+    DiagnosticLevel, PersistedContentBlock, PersistedDelegationRuntimeSeed,
+    PersistedDelegationStatus, PersistedToolResult, SessionEventData, SessionEventEnvelope,
 };
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
 
@@ -42,6 +42,16 @@ pub(crate) enum TranscriptItem {
         arguments: serde_json::Value,
         status: ToolCallStatus,
         summary: String,
+    },
+    DelegationBlock {
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        status: PersistedDelegationStatus,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
     },
     CompactionSummary {
         summary: String,
@@ -104,6 +114,7 @@ struct ReplayBuilder {
     diagnostics: Vec<ReplayDiagnostic>,
     message_indices: HashMap<String, usize>,
     tool_indices: HashMap<String, usize>,
+    delegation_indices: HashMap<String, usize>,
     operation_kinds: HashMap<String, super::event::OperationKind>,
     operation_transcript_starts: HashMap<String, usize>,
     pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
@@ -282,6 +293,27 @@ impl ReplayBuilder {
                 ..
             } => {
                 self.resolve_pending_delegation_confirmation(source_operation_id, tool_call_id);
+            }
+            SessionEventData::DelegationFoldedUpdated {
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+                status,
+                child_operation_id,
+                summary,
+            } => {
+                self.apply_delegation_folded_update(DelegationBlockUpdate {
+                    tool_call_id: tool_call_id.clone(),
+                    requesting_profile_id: requesting_profile_id.clone(),
+                    target_kind: *target_kind,
+                    target_id: target_id.clone(),
+                    task: task.clone(),
+                    status: *status,
+                    child_operation_id: child_operation_id.clone(),
+                    summary: summary.clone(),
+                });
             }
             SessionEventData::OperationCommitted { new_leaf_id } => {
                 if let Some(new_leaf_id) = new_leaf_id {
@@ -496,6 +528,31 @@ impl ReplayBuilder {
         self.pending_delegation_confirmations.remove(index);
     }
 
+    fn apply_delegation_folded_update(&mut self, update: DelegationBlockUpdate) {
+        let item = TranscriptItem::DelegationBlock {
+            tool_call_id: update.tool_call_id.clone(),
+            requesting_profile_id: update.requesting_profile_id,
+            target_kind: update.target_kind,
+            target_id: update.target_id,
+            task: update.task,
+            status: update.status,
+            child_operation_id: update.child_operation_id,
+            summary: update.summary,
+        };
+        if let Some(index) = self.delegation_indices.get(&update.tool_call_id).copied() {
+            self.transcript[index] = item;
+            return;
+        }
+        if let Some(index) = self.tool_indices.remove(&update.tool_call_id) {
+            self.transcript[index] = item;
+            self.delegation_indices.insert(update.tool_call_id, index);
+            return;
+        }
+        let index = self.transcript.len();
+        self.transcript.push(item);
+        self.delegation_indices.insert(update.tool_call_id, index);
+    }
+
     fn tool_mut(&mut self, tool_call_id: &str) -> Option<&mut String> {
         let index = *self.tool_indices.get(tool_call_id)?;
         match self.transcript.get_mut(index)? {
@@ -588,6 +645,7 @@ impl ReplayBuilder {
     fn rebuild_indices(&mut self) {
         self.message_indices.clear();
         self.tool_indices.clear();
+        self.delegation_indices.clear();
         for (index, item) in self.transcript.iter().enumerate() {
             match item {
                 TranscriptItem::AssistantMessage { message_id, .. } => {
@@ -595,6 +653,9 @@ impl ReplayBuilder {
                 }
                 TranscriptItem::ToolCall { tool_call_id, .. } => {
                     self.tool_indices.insert(tool_call_id.clone(), index);
+                }
+                TranscriptItem::DelegationBlock { tool_call_id, .. } => {
+                    self.delegation_indices.insert(tool_call_id.clone(), index);
                 }
                 TranscriptItem::UserInput { .. }
                 | TranscriptItem::CompactionSummary { .. }
@@ -605,11 +666,23 @@ impl ReplayBuilder {
     }
 }
 
+struct DelegationBlockUpdate {
+    tool_call_id: String,
+    requesting_profile_id: ProfileId,
+    target_kind: ProfileKind,
+    target_id: ProfileId,
+    task: String,
+    status: PersistedDelegationStatus,
+    child_operation_id: Option<String>,
+    summary: Option<String>,
+}
+
 pub(crate) fn transcript_item_id(item: &TranscriptItem) -> Option<String> {
     match item {
         TranscriptItem::UserInput { turn_id, .. } => Some(turn_id.clone()),
         TranscriptItem::AssistantMessage { message_id, .. } => Some(message_id.clone()),
         TranscriptItem::ToolCall { tool_call_id, .. } => Some(tool_call_id.clone()),
+        TranscriptItem::DelegationBlock { tool_call_id, .. } => Some(tool_call_id.clone()),
         TranscriptItem::CompactionSummary { .. }
         | TranscriptItem::BranchSummary { .. }
         | TranscriptItem::Diagnostic { .. } => None,

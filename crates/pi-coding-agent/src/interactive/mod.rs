@@ -6,6 +6,7 @@ pub mod event_bridge;
 mod git_branch;
 mod input;
 pub mod key_hints;
+pub(crate) mod keybindings;
 mod r#loop;
 mod model_selector;
 mod profile_menu;

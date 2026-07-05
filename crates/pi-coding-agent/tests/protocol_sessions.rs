@@ -1,11 +1,15 @@
+mod support;
+
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::{CliRunOptions, SessionRunOptions, protocol::rpc::run_rpc_mode_for_io};
 use std::sync::Arc;
 use std::time::Duration;
+use support::ProviderGuard;
 use tempfile::tempdir;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt};
+
+const PROTOCOL_SESSION_LINE_READ_TIMEOUT: Duration = Duration::from_millis(500);
 
 fn faux_model(api: &str) -> Model {
     Model {
@@ -25,6 +29,35 @@ fn faux_model(api: &str) -> Model {
     }
 }
 
+async fn read_protocol_session_line<R>(lines: &mut tokio::io::Lines<R>, context: &str) -> String
+where
+    R: AsyncBufRead + Unpin,
+{
+    tokio::time::timeout(PROTOCOL_SESSION_LINE_READ_TIMEOUT, lines.next_line())
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {context}"))
+        .unwrap_or_else(|error| panic!("failed reading {context}: {error}"))
+        .unwrap_or_else(|| panic!("rpc output closed before {context}"))
+}
+
+async fn read_protocol_session_json_matching<R>(
+    lines: &mut tokio::io::Lines<R>,
+    context: &str,
+    mut matches: impl FnMut(&serde_json::Value) -> bool,
+) -> serde_json::Value
+where
+    R: AsyncBufRead + Unpin,
+{
+    loop {
+        let line = read_protocol_session_line(lines, context).await;
+        let value: serde_json::Value = serde_json::from_str(&line)
+            .unwrap_or_else(|error| panic!("invalid JSON for {context}: {error}"));
+        if matches(&value) {
+            return value;
+        }
+    }
+}
+
 #[tokio::test]
 async fn rpc_prompt_persists_session_messages() {
     let dir = tempdir().unwrap();
@@ -32,7 +65,8 @@ async fn rpc_prompt_persists_session_messages() {
     let sessions = dir.path().join("sessions");
     std::fs::create_dir_all(&cwd).unwrap();
     let api = "pi-coding-rpc-session";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello")));
     let mut session_options = SessionRunOptions::enabled(cwd);
     session_options.session_dir = Some(sessions.clone());
 
@@ -59,7 +93,6 @@ async fn rpc_prompt_persists_session_messages() {
     assert!(contents.contains("\"kind\":\"session.created\""));
     assert!(contents.contains("\"kind\":\"turn.input.recorded\""));
     assert!(contents.contains("\"kind\":\"message.completed\""));
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -69,7 +102,8 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
     let sessions = dir.path().join("sessions");
     std::fs::create_dir_all(&cwd).unwrap();
     let api = "pi-coding-rpc-session-state";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello")));
     let mut session_options = SessionRunOptions::enabled(cwd);
     session_options.session_dir = Some(sessions.clone());
 
@@ -97,38 +131,21 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
         .unwrap();
 
     let mut lines = tokio::io::BufReader::new(output_reader).lines();
-    tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before agent_end");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "agent_end" {
-                break;
-            }
-        }
+    read_protocol_session_json_matching(&mut lines, "agent_end after prompt", |value| {
+        value["type"] == "agent_end"
     })
-    .await
-    .expect("agent_end after prompt");
+    .await;
 
     input_writer
         .write_all(b"{\"id\":\"s1\",\"type\":\"get_state\"}\n")
         .await
         .unwrap();
 
-    let state = tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            let Some(line) = lines.next_line().await.unwrap() else {
-                panic!("rpc output closed before get_state response");
-            };
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["type"] == "response" && value["command"] == "get_state" {
-                break value;
-            }
-        }
-    })
-    .await
-    .expect("state response after prompt");
+    let state =
+        read_protocol_session_json_matching(&mut lines, "state response after prompt", |value| {
+            value["type"] == "response" && value["command"] == "get_state"
+        })
+        .await;
 
     drop(input_writer);
     task.await.unwrap();
@@ -146,7 +163,6 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
         .expect("active leaf should be present after RPC prompt");
     assert_eq!(state["data"]["sessionId"], active_leaf_id);
     assert_ne!(active_leaf_id, manifest["session_id"].as_str().unwrap());
-    registry::unregister(api);
 }
 
 #[tokio::test]
@@ -156,7 +172,8 @@ async fn rpc_disabled_session_prompt_uses_non_persistent_runtime_without_session
     let sessions = dir.path().join("sessions");
     std::fs::create_dir_all(&cwd).unwrap();
     let api = "pi-coding-rpc-disabled-session";
-    registry::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello")));
     let mut session_options = SessionRunOptions::disabled(cwd);
     session_options.session_dir = Some(sessions.clone());
 
@@ -188,7 +205,6 @@ async fn rpc_disabled_session_prompt_uses_non_persistent_runtime_without_session
     assert_eq!(state["data"]["sessionId"], "in-memory");
     assert!(state["data"]["sessionFile"].is_null());
     assert!(collect_native_session_dirs(&sessions).is_empty());
-    registry::unregister(api);
 }
 
 fn collect_native_session_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {

@@ -6,7 +6,7 @@ use pi_ai::compat::{
     ModelCompat, OpenAICompletionsCompat, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue,
 };
 use pi_ai::providers::openai::completions;
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StopReason, StreamOptions, ThinkingConfig, Tool,
@@ -319,9 +319,9 @@ async fn completions_provider_missing_key_returns_error_event() {
 
 #[test]
 fn builtins_register_openai_completions_api() {
-    registry::unregister("openai-completions");
-    pi_ai::providers::register_builtins();
-    assert!(registry::lookup("openai-completions").is_some());
+    let registry = pi_ai::registry::ProviderRegistry::new();
+    pi_ai::providers::register_builtins_into(&registry);
+    assert!(registry.lookup("openai-completions").is_some());
 }
 
 #[tokio::test]

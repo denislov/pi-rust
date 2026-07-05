@@ -6,17 +6,17 @@ use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
 use pi_agent_core::{AgentResources, AgentTool};
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, PromptInvocation,
-    PromptRunOptions, PromptTurnOptions, SessionRunOptions,
+    CodingAgentEvent, CodingAgentSession, CodingAgentSessionExportItem, CodingAgentSessionOptions,
+    PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
 };
-use support::EnvGuard;
+use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -127,6 +127,283 @@ system_prompt = "Coder child instructions."
                 if target_id.as_str() == "coder" && final_text == "child result"
         )),
         "expected delegation completed event, got {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-built-in-default-helper-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_explore",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "explore", "task": "inspect replay"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::text("explore result"),
+        ],
+    );
+
+    let mut session =
+        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
+            .await
+            .unwrap();
+    let mut events = session.subscribe();
+
+    let outcome = session
+        .prompt(prompt_options_with_tools(
+            &cwd,
+            api,
+            "plan feature",
+            vec![parent_only_tool()],
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        3,
+        "expected parent tool, parent final, and built-in helper calls"
+    );
+    assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
+    assert_eq!(user_texts(&calls[2].context), vec!["inspect replay"]);
+    assert_eq!(
+        calls[2].context.system_prompt.as_deref(),
+        Some(
+            "You are a read-only exploration helper. Gather context and summarize findings without making changes."
+        )
+    );
+
+    let parent_tools = tool_names(&calls[0].context);
+    assert!(
+        parent_tools.iter().any(|tool| tool == "delegate_agent"),
+        "default parent profile should expose built-in agent delegation: {parent_tools:#?}"
+    );
+    assert!(
+        parent_tools.iter().any(|tool| tool == "parent_only"),
+        "parent should keep explicitly configured runtime tools: {parent_tools:#?}"
+    );
+    let helper_tools = tool_names(&calls[2].context);
+    assert!(
+        !helper_tools.iter().any(|tool| tool == "parent_only"),
+        "built-in helper must not inherit parent runtime tools: {helper_tools:#?}"
+    );
+    assert!(
+        !helper_tools.iter().any(|tool| tool == "delegate_agent"),
+        "built-in helper must not inherit delegation authority: {helper_tools:#?}"
+    );
+    drop(calls);
+
+    let events = drain_events(&mut events);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationApproved { target_id, task, .. }
+                if target_id.as_str() == "explore" && task == "inspect replay"
+        )),
+        "expected built-in helper delegation approval, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationStarted { target_id, child_operation_id, .. }
+                if target_id.as_str() == "explore" && !child_operation_id.is_empty()
+        )),
+        "expected built-in helper delegation start, got {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
+                if target_id.as_str() == "explore" && final_text == "explore result"
+        )),
+        "expected built-in helper delegation completion, got {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            CodingAgentEvent::DelegationConfirmationRequired { target_id, .. }
+                if target_id.as_str() == "explore"
+        )),
+        "built-in helper delegation should not require confirmation: {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn delegated_helper_receives_minimal_context_without_parent_transcript() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&global).unwrap();
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-helper-minimal-context-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::text("parent history answer"),
+            ScriptedResponse::tool_call(
+                "tool_delegate_explore",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "explore", "task": "inspect replay"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::text("explore result"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_session_log_root(&sessions)
+            .with_session_id("sess_default_helper_minimal_context"),
+    )
+    .await
+    .unwrap();
+
+    let first = session
+        .prompt(prompt_options(&cwd, api, "parent secret context"))
+        .await
+        .unwrap();
+    assert_eq!(first.final_text(), Some("parent history answer"));
+
+    let second = session
+        .prompt(prompt_options(&cwd, api, "plan with prior history"))
+        .await
+        .unwrap();
+    assert_eq!(second.final_text(), Some("parent ready"));
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        4,
+        "expected first prompt, parent delegation tool/final, and helper calls"
+    );
+    let second_parent_texts = context_texts(&calls[1].context);
+    assert!(
+        second_parent_texts
+            .iter()
+            .any(|text| text.contains("parent secret context")),
+        "persistent parent prompt should hydrate prior user text: {second_parent_texts:#?}"
+    );
+    assert!(
+        second_parent_texts
+            .iter()
+            .any(|text| text.contains("parent history answer")),
+        "persistent parent prompt should hydrate prior assistant text: {second_parent_texts:#?}"
+    );
+
+    assert_eq!(user_texts(&calls[3].context), vec!["inspect replay"]);
+    assert_eq!(
+        calls[3].context.system_prompt.as_deref(),
+        Some(
+            "You are a read-only exploration helper. Gather context and summarize findings without making changes."
+        )
+    );
+    let helper_context_texts = context_texts(&calls[3].context);
+    for forbidden in [
+        "parent secret context",
+        "parent history answer",
+        "plan with prior history",
+        "parent ready",
+    ] {
+        assert!(
+            !helper_context_texts
+                .iter()
+                .any(|text| text.contains(forbidden)),
+            "delegated helper context must omit parent transcript text {forbidden:?}: {helper_context_texts:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn persistent_default_helper_delegation_exports_folded_block() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&global).unwrap();
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-built-in-default-helper-export-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_explore",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "explore", "task": "inspect replay"}),
+            ),
+            ScriptedResponse::text("parent ready"),
+            ScriptedResponse::text("explore result"),
+        ],
+    );
+
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_cwd(&cwd)
+            .with_session_log_root(&sessions)
+            .with_session_id("sess_default_helper_export"),
+    )
+    .await
+    .unwrap();
+
+    let outcome = session
+        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .await
+        .unwrap();
+    assert_eq!(outcome.final_text(), Some("parent ready"));
+
+    let export = session.export_current().unwrap();
+    assert!(
+        export.transcript.iter().any(|item| matches!(
+            item,
+            CodingAgentSessionExportItem::Delegation {
+                target_id,
+                task,
+                status,
+                summary: Some(summary),
+                ..
+            } if target_id.as_str() == "explore"
+                && task == "inspect replay"
+                && status == "completed"
+                && summary == "explore result"
+        )),
+        "expected exported folded delegation block, got {:#?}",
+        export.transcript
+    );
+    assert!(
+        !export.transcript.iter().any(|item| matches!(
+            item,
+            CodingAgentSessionExportItem::Tool { name, .. } if name == "delegate_agent"
+        )),
+        "delegation request tool call should fold into the delegation block: {:#?}",
+        export.transcript
+    );
+    assert!(
+        !export.transcript.iter().any(|item| matches!(
+            item,
+            CodingAgentSessionExportItem::Assistant { text, .. } if text == "explore result"
+        )),
+        "delegated child output must stay folded, not appear as a parent assistant message: {:#?}",
+        export.transcript
     );
 }
 
@@ -1918,6 +2195,23 @@ fn user_texts(context: &Context) -> Vec<String> {
         .collect()
 }
 
+fn context_texts(context: &Context) -> Vec<String> {
+    let mut texts = Vec::new();
+    for message in &context.messages {
+        let content = match message {
+            Message::User { content }
+            | Message::Assistant { content }
+            | Message::ToolResult { content, .. } => content,
+        };
+        for block in content {
+            if let ContentBlock::Text { text, .. } = block {
+                texts.push(text.clone());
+            }
+        }
+    }
+    texts
+}
+
 #[derive(Debug, Clone)]
 struct RecordedCall {
     context: Context,
@@ -1998,7 +2292,7 @@ impl ApiProvider for ScriptedProvider {
 }
 
 struct ProviderGuard {
-    api: String,
+    _guard: RegistryProviderGuard<'static>,
 }
 
 impl ProviderGuard {
@@ -2007,19 +2301,13 @@ impl ProviderGuard {
         calls: Arc<Mutex<Vec<RecordedCall>>>,
         responses: Vec<ScriptedResponse>,
     ) -> Self {
-        registry::register(
+        let guard = RegistryProviderGuard::register(
             api,
             Arc::new(ScriptedProvider {
                 calls,
                 responses: Arc::new(Mutex::new(responses)),
             }),
         );
-        Self { api: api.into() }
-    }
-}
-
-impl Drop for ProviderGuard {
-    fn drop(&mut self) {
-        registry::unregister(&self.api);
+        Self { _guard: guard }
     }
 }

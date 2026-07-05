@@ -2,7 +2,6 @@ use bytes::Bytes;
 use futures::stream;
 use pi_ai::providers::openai::responses;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model, ModelCost, ModelInput, StopReason};
-
 fn test_model() -> Model {
     Model {
         id: "gpt-4.1".into(),
@@ -76,9 +75,9 @@ async fn responses_fixture_maps_text_tool_and_done() {
 
 #[test]
 fn builtins_register_openai_responses_api() {
-    pi_ai::registry::unregister("openai-responses");
-    pi_ai::providers::register_builtins();
-    assert!(pi_ai::registry::lookup("openai-responses").is_some());
+    let registry = pi_ai::registry::ProviderRegistry::new();
+    pi_ai::providers::register_builtins_into(&registry);
+    assert!(registry.lookup("openai-responses").is_some());
 }
 
 #[tokio::test]

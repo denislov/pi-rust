@@ -1,4 +1,6 @@
-use super::self_healing_edit_flow::{SelfHealingEditCheckOutput, SelfHealingEditDiagnostic};
+use super::self_healing_edit_flow::{
+    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditRepairAttempt,
+};
 use crate::error::CliError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -18,6 +20,7 @@ pub enum CodingSessionError {
         message: String,
         diagnostics: Vec<SelfHealingEditDiagnostic>,
         check_output: Option<SelfHealingEditCheckOutput>,
+        repair_attempts: Vec<SelfHealingEditRepairAttempt>,
     },
     #[error("provider error: {message}")]
     Provider { message: String },
@@ -121,6 +124,7 @@ mod tests {
                     message: "check failed".into(),
                     diagnostics: Vec::new(),
                     check_output: None,
+                    repair_attempts: Vec::new(),
                 },
                 "self_healing_edit_failed",
             ),
