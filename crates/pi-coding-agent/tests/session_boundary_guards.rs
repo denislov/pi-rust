@@ -70,6 +70,27 @@ fn coding_agent_session_owner_does_not_define_self_healing_edit_event_observer()
     );
 }
 
+#[test]
+fn coding_agent_session_owner_does_not_define_session_persistence_state() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let session_service_source =
+        fs::read_to_string(crate_root.join("src/coding_session/session_service.rs"))
+            .expect("session service source should be readable");
+
+    assert!(
+        !owner_source.contains("enum SessionPersistence")
+            && !owner_source.contains("struct TransientSessionState"),
+        "CodingAgentSession owner should not define session persistence state; persistent/transient state belongs behind SessionService"
+    );
+    assert!(
+        session_service_source.contains("enum SessionPersistence")
+            && session_service_source.contains("struct TransientSessionState"),
+        "SessionService should own session persistence state"
+    );
+}
+
 fn collect_core_session_imports(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
     collect_core_session_imports_with_allowlist(repo_root, path, &[], violations);
 }

@@ -85,8 +85,10 @@ use session_log::event::{
     PersistedDelegationRuntimeSeed, PersistedDelegationStatus, PersistedPluginDiagnostic,
 };
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
-use session_log::replay::{ReplayPendingDelegationConfirmation, TranscriptItem};
-use session_service::{FinalizedSessionWrite, SessionService};
+use session_log::replay::ReplayPendingDelegationConfirmation;
+use session_service::{
+    FinalizedSessionWrite, SessionPersistence, SessionService, TransientSessionState,
+};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -169,44 +171,6 @@ fn delegation_confirmation_is_expired(requested_at: &str, now: &str) -> bool {
         return false;
     };
     now >= requested_at + TimeDuration::hours(DELEGATION_CONFIRMATION_TTL_HOURS)
-}
-
-#[derive(Debug)]
-enum SessionPersistence {
-    Persistent(SessionService),
-    NonPersistent(TransientSessionState),
-}
-
-#[derive(Debug)]
-struct TransientSessionState {
-    runtime_id: String,
-    transcript: Vec<TranscriptItem>,
-    default_agent_profile_id: ProfileId,
-}
-
-impl TransientSessionState {
-    fn new(default_agent_profile_id: ProfileId) -> Self {
-        let mut ids = SystemIdGenerator;
-        Self {
-            runtime_id: format!("runtime_{}", ids.next_session_id()),
-            transcript: Vec::new(),
-            default_agent_profile_id,
-        }
-    }
-
-    fn finalize_prompt_transaction(
-        &mut self,
-        context: &PromptTurnContext,
-        outcome: &PromptTurnOutcome,
-    ) -> FinalizedSessionWrite {
-        if outcome.is_success() {
-            self.transcript.extend(context.completed_transcript_items());
-        }
-        SessionService::skip_prompt_transaction(
-            context.operation_id().to_owned(),
-            "session persistence disabled",
-        )
-    }
 }
 
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {

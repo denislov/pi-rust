@@ -6,7 +6,7 @@ use pi_ai::types::ContentBlock;
 
 use super::event_service::EventService;
 use super::export_flow::{ExportContext, ExportOptions};
-use super::prompt::{PromptTurnOutcome, PromptTurnTransaction};
+use super::prompt::{PromptTurnContext, PromptTurnOutcome, PromptTurnTransaction};
 use super::session_log::event::{
     OperationKind, PersistedContentBlock, PersistedDelegationRuntimeSeed,
     PersistedDelegationStatus, PersistedPluginDiagnostic, SessionEventData, SessionEventEnvelope,
@@ -36,6 +36,44 @@ pub(crate) struct FinalizedSessionWrite {
     pub(crate) events: Vec<CodingAgentEvent>,
     pub(crate) session_id: Option<String>,
     pub(crate) leaf_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) enum SessionPersistence {
+    Persistent(SessionService),
+    NonPersistent(TransientSessionState),
+}
+
+#[derive(Debug)]
+pub(crate) struct TransientSessionState {
+    pub(crate) runtime_id: String,
+    pub(crate) transcript: Vec<TranscriptItem>,
+    pub(crate) default_agent_profile_id: ProfileId,
+}
+
+impl TransientSessionState {
+    pub(crate) fn new(default_agent_profile_id: ProfileId) -> Self {
+        let mut ids = SystemIdGenerator;
+        Self {
+            runtime_id: format!("runtime_{}", ids.next_session_id()),
+            transcript: Vec::new(),
+            default_agent_profile_id,
+        }
+    }
+
+    pub(crate) fn finalize_prompt_transaction(
+        &mut self,
+        context: &PromptTurnContext,
+        outcome: &PromptTurnOutcome,
+    ) -> FinalizedSessionWrite {
+        if outcome.is_success() {
+            self.transcript.extend(context.completed_transcript_items());
+        }
+        SessionService::skip_prompt_transaction(
+            context.operation_id().to_owned(),
+            "session persistence disabled",
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
