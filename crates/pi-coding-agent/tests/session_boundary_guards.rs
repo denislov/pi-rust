@@ -189,6 +189,34 @@ fn coding_agent_session_owner_does_not_define_approved_delegation_execution() {
 }
 
 #[test]
+fn coding_agent_session_owner_does_not_define_plugin_load_execution() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let service_source =
+        fs::read_to_string(crate_root.join("src/coding_session/plugin_load_service.rs"))
+            .unwrap_or_default();
+
+    assert!(
+        !owner_source.contains("PluginLoadContext::new(")
+            && !owner_source.contains("run_plugin_load(")
+            && !owner_source.contains("begin_plugin_load_transaction")
+            && !owner_source.contains("record_plugin_load_completed")
+            && !owner_source.contains("commit_plugin_load_transaction")
+            && !owner_source.contains("fail_plugin_load_transaction"),
+        "CodingAgentSession owner should not define plugin load execution plumbing"
+    );
+    assert!(
+        service_source.contains("struct PluginLoadService")
+            && service_source.contains("PluginLoadContext::new(")
+            && service_source.contains("run_plugin_load")
+            && service_source.contains("commit_plugin_load_transaction")
+            && service_source.contains("fail_plugin_load_transaction"),
+        "PluginLoadService should own plugin load flow execution plumbing"
+    );
+}
+
+#[test]
 fn coding_agent_session_owner_does_not_define_branch_summary_execution() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))

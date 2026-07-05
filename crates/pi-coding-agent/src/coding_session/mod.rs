@@ -17,6 +17,7 @@ mod manual_compaction_flow;
 mod manual_compaction_service;
 mod operation_control;
 mod plugin_load_flow;
+mod plugin_load_service;
 mod plugin_service;
 mod profiles;
 mod prompt;
@@ -75,7 +76,8 @@ use manual_compaction_flow::ManualCompactionOptions;
 use manual_compaction_service::ManualCompactionService;
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
-use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
+use plugin_load_flow::PluginLoadOptions;
+use plugin_load_service::PluginLoadService;
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
@@ -85,7 +87,7 @@ pub(crate) use self_healing_edit_flow::{
     SelfHealingEditOptions, SelfHealingEditRepairStrategy,
 };
 use self_healing_edit_service::SelfHealingEditService;
-use session_log::event::{PersistedDelegationStatus, PersistedPluginDiagnostic};
+use session_log::event::PersistedDelegationStatus;
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use session_service::{
     FinalizedSessionWrite, SessionPersistence, SessionService, TransientSessionState,
@@ -105,6 +107,7 @@ pub struct CodingAgentSession {
     event_service: EventService,
     capability_service: CapabilityService,
     plugin_service: PluginService,
+    plugin_load_service: PluginLoadService,
     profile_registry: ProfileRegistry,
     default_plugin_load_options: PluginLoadOptions,
     operation_control: OperationControl,
@@ -701,6 +704,7 @@ impl CodingAgentSession {
             event_service,
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
+            plugin_load_service: PluginLoadService::new(),
             profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
@@ -725,6 +729,7 @@ impl CodingAgentSession {
             event_service: EventService::new(),
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
+            plugin_load_service: PluginLoadService::new(),
             profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
@@ -742,54 +747,19 @@ impl CodingAgentSession {
         &mut self,
         options: PluginLoadOptions,
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
-        let mut transaction = match &self.persistence {
-            SessionPersistence::Persistent(session_service) => {
-                Some(session_service.begin_plugin_load_transaction())
-            }
-            SessionPersistence::NonPersistent(_) => None,
-        };
-        let operation_id = transaction
-            .as_ref()
-            .map(|transaction| transaction.operation_id().to_owned())
-            .unwrap_or_else(|| "plugin_load".to_owned());
-        let mut context = PluginLoadContext::new(options);
-        let outcome = match self.flow_service.run_plugin_load(&mut context).await {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                if let Some(transaction) = transaction.take()
-                    && let SessionPersistence::Persistent(session_service) = &mut self.persistence
-                {
-                    let finalized = session_service.fail_plugin_load_transaction(
-                        Some(transaction),
-                        operation_id,
-                        error.code(),
-                        error.to_string(),
-                    )?;
-                    self.event_service.emit_session_write_events(&finalized);
-                }
-                return Err(error);
-            }
-        };
-        if let Some(transaction) = transaction.as_mut() {
-            SessionService::record_plugin_load_completed(
-                transaction,
-                outcome.loaded_plugin_ids.clone(),
-                persisted_plugin_diagnostics(&outcome.diagnostics),
-                outcome.capability_changed,
-            )?;
-        }
-        if let Some(transaction) = transaction.take()
-            && let SessionPersistence::Persistent(session_service) = &mut self.persistence
-        {
-            let finalized =
-                session_service.commit_plugin_load_transaction(Some(transaction), operation_id)?;
-            self.event_service.emit_session_write_events(&finalized);
-        }
-        if let Some(plugin_service) = context.take_loaded_plugin_service() {
+        let execution = self
+            .plugin_load_service
+            .load(
+                &mut self.persistence,
+                &self.flow_service,
+                &self.event_service,
+                options,
+            )
+            .await?;
+        if let Some(plugin_service) = execution.loaded_plugin_service {
             self.plugin_service = plugin_service;
         }
-        self.event_service.emit_plugin_load_outcome(&outcome);
-        Ok(outcome)
+        Ok(execution.outcome)
     }
 
     async fn prompt_inner(
@@ -1123,18 +1093,6 @@ impl CodingAgentSession {
             }
         }
     }
-}
-
-fn persisted_plugin_diagnostics(
-    diagnostics: &[plugin_service::PluginDiagnostic],
-) -> Vec<PersistedPluginDiagnostic> {
-    diagnostics
-        .iter()
-        .map(|diagnostic| PersistedPluginDiagnostic {
-            plugin_id: diagnostic.plugin_id.clone(),
-            message: diagnostic.message.clone(),
-        })
-        .collect()
 }
 
 fn apply_finalized_session_write(
