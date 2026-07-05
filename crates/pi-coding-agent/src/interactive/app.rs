@@ -4414,6 +4414,8 @@ pub mod test_harness {
 
     use super::*;
 
+    const INTERACTIVE_SESSION_TEXT_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+
     #[derive(Debug)]
     pub struct ScriptedInteractiveOutput {
         pub rendered: String,
@@ -4887,7 +4889,7 @@ pub mod test_harness {
     }
 
     async fn wait_for_session_text(root: &Path, needle: &str) -> Result<(), CliError> {
-        let observed = tokio::time::timeout(tokio::time::Duration::from_secs(2), async {
+        let observed = tokio::time::timeout(INTERACTIVE_SESSION_TEXT_WAIT_TIMEOUT, async {
             loop {
                 if session_files_contain(root, needle) {
                     break;

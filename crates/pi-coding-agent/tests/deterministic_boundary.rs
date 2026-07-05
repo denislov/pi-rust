@@ -117,6 +117,23 @@ fn interactive_loop_shutdown_drain_uses_named_durations() {
 }
 
 #[test]
+fn interactive_harness_session_text_wait_uses_named_timeout_constant() {
+    let mut violations = Vec::new();
+
+    for (index, line) in INTERACTIVE_APP_SOURCE.lines().enumerate() {
+        if line.contains("tokio::time::timeout(tokio::time::Duration::from_") {
+            violations.push(format!("{}: {}", index + 1, line.trim()));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "interactive harness session text waits should use named timeout constants instead of inline fixed durations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn interactive_harness_session_wait_does_not_poll_with_fixed_sleep() {
     assert!(
         !INTERACTIVE_APP_SOURCE
