@@ -1,5 +1,7 @@
 const AGENT_INVOCATION_FLOW: &str = include_str!("../src/coding_session/agent_invocation_flow.rs");
 const AGENT_TEAM_FLOW: &str = include_str!("../src/coding_session/agent_team_flow.rs");
+const BRANCH_SUMMARY_SERVICE: &str =
+    include_str!("../src/coding_session/branch_summary_service.rs");
 const CODING_SESSION_OWNER: &str = include_str!("../src/coding_session/mod.rs");
 const MANUAL_COMPACTION_SERVICE: &str =
     include_str!("../src/coding_session/manual_compaction_service.rs");
@@ -74,18 +76,16 @@ fn manual_compaction_prompt_outcomes_are_built_by_flow_boundary() {
 
 #[test]
 fn branch_summary_prompt_outcomes_are_built_by_flow_boundary() {
-    let branch_summary_region = CODING_SESSION_OWNER
-        .split("    fn reused_branch_summary_outcome(")
-        .nth(1)
-        .expect("reused_branch_summary_outcome should be present")
-        .split("    fn apply_default_agent_profile")
-        .next()
-        .expect("apply_default_agent_profile should follow branch summary helpers");
+    assert!(
+        BRANCH_SUMMARY_SERVICE.contains("branch_summary_success_outcome")
+            && BRANCH_SUMMARY_SERVICE.contains("branch_summary_failed_outcome"),
+        "BranchSummaryService should delegate branch-summary outcome construction to flow-boundary helpers"
+    );
 
     for variant in ["PromptTurnOutcome::Success", "PromptTurnOutcome::Failed"] {
         assert!(
-            !branch_summary_region.contains(variant),
-            "branch summary owner methods should delegate outcome construction to the branch summary flow boundary instead of building {variant} inline"
+            !BRANCH_SUMMARY_SERVICE.contains(variant),
+            "BranchSummaryService should delegate outcome construction to the branch summary flow boundary instead of building {variant} inline"
         );
     }
 }

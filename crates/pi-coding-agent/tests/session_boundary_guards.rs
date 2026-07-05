@@ -189,6 +189,29 @@ fn coding_agent_session_owner_does_not_define_approved_delegation_execution() {
 }
 
 #[test]
+fn coding_agent_session_owner_does_not_define_branch_summary_execution() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let service_source =
+        fs::read_to_string(crate_root.join("src/coding_session/branch_summary_service.rs"))
+            .unwrap_or_default();
+
+    assert!(
+        !owner_source.contains("fn reused_branch_summary_outcome")
+            && !owner_source.contains("async fn summarize_branch_inner")
+            && !owner_source.contains("BranchSummaryContext::new("),
+        "CodingAgentSession owner should not define branch summary execution plumbing"
+    );
+    assert!(
+        service_source.contains("struct BranchSummaryService")
+            && service_source.contains("BranchSummaryContext::new(")
+            && service_source.contains("run_branch_summary"),
+        "BranchSummaryService should own branch summary flow execution plumbing"
+    );
+}
+
+#[test]
 fn coding_agent_session_owner_does_not_define_manual_compaction_execution() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))

@@ -1,6 +1,7 @@
 mod agent_invocation_flow;
 mod agent_team_flow;
 mod branch_summary_flow;
+mod branch_summary_service;
 mod capability_service;
 mod context;
 mod delegation;
@@ -59,10 +60,7 @@ pub use self_healing_edit_flow::{
 
 use agent_invocation_flow::AgentInvocationContext;
 use agent_team_flow::AgentTeamContext;
-use branch_summary_flow::{
-    BranchSummaryContext, BranchSummaryOptions, branch_summary_failed_outcome,
-    branch_summary_outcome_text, branch_summary_success_outcome,
-};
+use branch_summary_service::BranchSummaryService;
 use capability_service::CapabilityService;
 pub(crate) use delegation::{
     DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
@@ -111,6 +109,7 @@ pub struct CodingAgentSession {
     default_plugin_load_options: PluginLoadOptions,
     operation_control: OperationControl,
     pending_delegation_confirmations: PendingDelegationConfirmationQueue,
+    branch_summary_service: BranchSummaryService,
     delegation_confirmation_service: DelegationConfirmationService,
     delegation_execution_service: DelegationExecutionService,
     manual_compaction_service: ManualCompactionService,
@@ -619,13 +618,22 @@ impl CodingAgentSession {
         custom_instructions: Option<String>,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
         let _operation = self.operation_control.begin(OperationKind::BranchSummary)?;
-        self.summarize_branch_inner(
-            options,
-            source_leaf_id.into(),
-            target_leaf_id.into(),
-            custom_instructions,
-        )
-        .await
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "branch summary without persistent session".into(),
+            });
+        };
+        self.branch_summary_service
+            .run_persistent(
+                session_service,
+                &self.flow_service,
+                &self.event_service,
+                options,
+                source_leaf_id.into(),
+                target_leaf_id.into(),
+                custom_instructions,
+            )
+            .await
     }
 
     pub(crate) async fn summarize_branch_for_navigation(
@@ -637,7 +645,8 @@ impl CodingAgentSession {
         self.operation_control.ensure_idle()?;
         let source_leaf_id = source_leaf_id.into();
         let target_leaf_id = target_leaf_id.into();
-        if let Some(outcome) = self.reused_branch_summary_outcome(
+        if let Some(outcome) = self.branch_summary_service.reused_outcome(
+            &self.persistence,
             &options,
             source_leaf_id.as_str(),
             target_leaf_id.as_str(),
@@ -646,7 +655,21 @@ impl CodingAgentSession {
         }
 
         let _operation = self.operation_control.begin(OperationKind::BranchSummary)?;
-        self.summarize_branch_inner(options, source_leaf_id, target_leaf_id, None)
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "branch summary without persistent session".into(),
+            });
+        };
+        self.branch_summary_service
+            .run_persistent(
+                session_service,
+                &self.flow_service,
+                &self.event_service,
+                options,
+                source_leaf_id,
+                target_leaf_id,
+                None,
+            )
             .await
     }
 
@@ -682,6 +705,7 @@ impl CodingAgentSession {
             default_plugin_load_options,
             operation_control: OperationControl::new(),
             pending_delegation_confirmations,
+            branch_summary_service: BranchSummaryService::new(),
             delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
             manual_compaction_service: ManualCompactionService::new(),
@@ -705,6 +729,7 @@ impl CodingAgentSession {
             default_plugin_load_options,
             operation_control: OperationControl::new(),
             pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
+            branch_summary_service: BranchSummaryService::new(),
             delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
             manual_compaction_service: ManualCompactionService::new(),
@@ -995,105 +1020,6 @@ impl CodingAgentSession {
             Arc::new(ModelSelfHealingEditRepairStrategy::new(runtime)),
             max_attempts,
         )))
-    }
-
-    fn reused_branch_summary_outcome(
-        &self,
-        options: &PromptTurnOptions,
-        source_leaf_id: &str,
-        target_leaf_id: &str,
-    ) -> Result<Option<PromptTurnOutcome>, CodingSessionError> {
-        let runtime = options
-            .runtime()
-            .cloned()
-            .ok_or_else(|| CodingSessionError::Config {
-                message: "branch summary options do not include a runtime snapshot".into(),
-            })?;
-        let SessionPersistence::Persistent(session_service) = &self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "branch summary without persistent session".into(),
-            });
-        };
-        let Some(summary) = session_service.branch_summary_for(source_leaf_id, target_leaf_id)?
-        else {
-            return Ok(None);
-        };
-        let mut ids = SystemIdGenerator;
-        let operation_id = ids.next_operation_id();
-        let turn_id = ids.next_turn_id();
-        Ok(Some(branch_summary_success_outcome(
-            operation_id,
-            turn_id,
-            session_service.session_id().to_owned(),
-            session_service.active_leaf_id().map(str::to_owned),
-            &runtime,
-            summary,
-        )))
-    }
-
-    async fn summarize_branch_inner(
-        &mut self,
-        options: PromptTurnOptions,
-        source_leaf_id: String,
-        target_leaf_id: String,
-        custom_instructions: Option<String>,
-    ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        let runtime = options
-            .runtime()
-            .cloned()
-            .ok_or_else(|| CodingSessionError::Config {
-                message: "branch summary options do not include a runtime snapshot".into(),
-            })?;
-        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "branch summary without persistent session".into(),
-            });
-        };
-
-        let mut branch_options = BranchSummaryOptions::new()
-            .with_source_leaf_id(source_leaf_id)
-            .with_target_leaf_id(target_leaf_id)
-            .with_runtime(runtime.clone());
-        if let Some(custom_instructions) = custom_instructions {
-            branch_options = branch_options.with_custom_instructions(custom_instructions);
-        }
-        let replay = session_service.replay()?;
-        let transaction = session_service.begin_branch_summary_transaction();
-        let mut context = BranchSummaryContext::new(branch_options, replay, transaction);
-        let operation_id = context.operation_id().to_owned();
-        let turn_id = context.turn_id().to_owned();
-
-        match self.flow_service.run_branch_summary(&mut context).await {
-            Ok(branch_summary) => {
-                let final_text = branch_summary_outcome_text(&branch_summary);
-                let mut outcome = branch_summary_success_outcome(
-                    operation_id.clone(),
-                    turn_id,
-                    session_service.session_id().to_owned(),
-                    session_service.active_leaf_id().map(str::to_owned),
-                    &runtime,
-                    final_text,
-                );
-                let finalized = session_service
-                    .commit_branch_summary_transaction(context.take_transaction(), operation_id)?;
-                apply_finalized_session_write(&mut outcome, &finalized);
-                self.event_service.emit_session_write_events(&finalized);
-                Ok(outcome)
-            }
-            Err(error) => {
-                let mut outcome =
-                    branch_summary_failed_outcome(operation_id.clone(), turn_id, error.clone());
-                let finalized = session_service.fail_prompt_transaction(
-                    context.take_transaction(),
-                    operation_id,
-                    error.code(),
-                    error.to_string(),
-                )?;
-                apply_finalized_session_write(&mut outcome, &finalized);
-                self.event_service.emit_session_write_events(&finalized);
-                Ok(outcome)
-            }
-        }
     }
 
     fn apply_default_agent_profile(
