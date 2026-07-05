@@ -1,6 +1,8 @@
 const AGENT_INVOCATION_FLOW: &str = include_str!("../src/coding_session/agent_invocation_flow.rs");
 const AGENT_TEAM_FLOW: &str = include_str!("../src/coding_session/agent_team_flow.rs");
 const CODING_SESSION_OWNER: &str = include_str!("../src/coding_session/mod.rs");
+const MANUAL_COMPACTION_SERVICE: &str =
+    include_str!("../src/coding_session/manual_compaction_service.rs");
 const PROMPT_CONTEXT: &str = include_str!("../src/coding_session/prompt.rs");
 const SESSION_SERVICE: &str = include_str!("../src/coding_session/session_service.rs");
 
@@ -56,18 +58,16 @@ fn workflow_flows_emit_prompt_outcomes_through_event_service_helpers() {
 
 #[test]
 fn manual_compaction_prompt_outcomes_are_built_by_flow_boundary() {
-    let compact_inner = CODING_SESSION_OWNER
-        .split("    async fn compact_inner(")
-        .nth(1)
-        .expect("compact_inner should be present")
-        .split("    fn reused_branch_summary_outcome")
-        .next()
-        .expect("branch summary boundary should follow compact_inner");
+    assert!(
+        MANUAL_COMPACTION_SERVICE.contains("manual_compaction_success_outcome")
+            && MANUAL_COMPACTION_SERVICE.contains("manual_compaction_failed_outcome"),
+        "ManualCompactionService should delegate manual compaction outcome construction to flow-boundary helpers"
+    );
 
     for variant in ["PromptTurnOutcome::Success", "PromptTurnOutcome::Failed"] {
         assert!(
-            !compact_inner.contains(variant),
-            "compact_inner should delegate manual compaction outcome construction to the flow boundary instead of building {variant} inline"
+            !MANUAL_COMPACTION_SERVICE.contains(variant),
+            "ManualCompactionService should delegate manual compaction outcome construction to the flow boundary instead of building {variant} inline"
         );
     }
 }

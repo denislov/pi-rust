@@ -13,6 +13,7 @@ mod export;
 mod export_flow;
 mod flow_service;
 mod manual_compaction_flow;
+mod manual_compaction_service;
 mod operation_control;
 mod plugin_load_flow;
 mod plugin_service;
@@ -72,10 +73,8 @@ use delegation_execution_service::DelegationExecutionService;
 use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
-use manual_compaction_flow::{
-    ManualCompactionContext, ManualCompactionOptions, manual_compaction_failed_outcome,
-    manual_compaction_success_outcome,
-};
+use manual_compaction_flow::ManualCompactionOptions;
+use manual_compaction_service::ManualCompactionService;
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
@@ -114,6 +113,7 @@ pub struct CodingAgentSession {
     pending_delegation_confirmations: PendingDelegationConfirmationQueue,
     delegation_confirmation_service: DelegationConfirmationService,
     delegation_execution_service: DelegationExecutionService,
+    manual_compaction_service: ManualCompactionService,
     self_healing_edit_service: SelfHealingEditService,
 }
 
@@ -489,7 +489,20 @@ impl CodingAgentSession {
         options: PromptTurnOptions,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
         let _operation = self.operation_control.begin(OperationKind::Compact)?;
-        self.compact_inner(options).await
+        let options = ManualCompactionOptions::from_prompt_turn_options(&options)?;
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "manual compaction without persistent session".into(),
+            });
+        };
+        self.manual_compaction_service
+            .run_persistent(
+                session_service,
+                &self.flow_service,
+                &self.event_service,
+                options,
+            )
+            .await
     }
 
     pub async fn self_healing_edit(
@@ -671,6 +684,7 @@ impl CodingAgentSession {
             pending_delegation_confirmations,
             delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
+            manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
         })
     }
@@ -693,6 +707,7 @@ impl CodingAgentSession {
             pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
             delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
+            manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
         })
     }
@@ -980,65 +995,6 @@ impl CodingAgentSession {
             Arc::new(ModelSelfHealingEditRepairStrategy::new(runtime)),
             max_attempts,
         )))
-    }
-
-    async fn compact_inner(
-        &mut self,
-        options: PromptTurnOptions,
-    ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        let options = ManualCompactionOptions::from_prompt_turn_options(&options)?;
-        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "manual compaction without persistent session".into(),
-            });
-        };
-
-        let replay = session_service.replay()?;
-        let transaction = session_service.begin_manual_compaction_transaction();
-        let mut context = ManualCompactionContext::new(options, replay, transaction);
-        let operation_id = context.operation_id().to_owned();
-        let turn_id = context.turn_id().to_owned();
-
-        match self.flow_service.run_manual_compaction(&mut context).await {
-            Ok(compaction) => {
-                let mut outcome = manual_compaction_success_outcome(
-                    operation_id.clone(),
-                    turn_id.clone(),
-                    session_service.session_id().to_owned(),
-                    session_service.active_leaf_id().map(str::to_owned),
-                    &compaction,
-                );
-                let finalized = session_service.commit_manual_compaction_transaction(
-                    context.take_transaction(),
-                    operation_id.clone(),
-                )?;
-                apply_finalized_session_write(&mut outcome, &finalized);
-
-                self.event_service.emit_session_write_pending(&finalized);
-                self.event_service.emit_session_compaction_completed(
-                    operation_id,
-                    turn_id,
-                    &compaction,
-                );
-                self.event_service.emit_session_write_committed(&finalized);
-                self.event_service.emit_prompt_outcome(&outcome);
-                Ok(outcome)
-            }
-            Err(error) => {
-                let mut outcome =
-                    manual_compaction_failed_outcome(operation_id.clone(), turn_id, error.clone());
-                let finalized = session_service.fail_prompt_transaction(
-                    context.take_transaction(),
-                    operation_id.clone(),
-                    error.code(),
-                    error.to_string(),
-                )?;
-                apply_finalized_session_write(&mut outcome, &finalized);
-                self.event_service.emit_session_write_events(&finalized);
-                self.event_service.emit_prompt_outcome(&outcome);
-                Ok(outcome)
-            }
-        }
     }
 
     fn reused_branch_summary_outcome(

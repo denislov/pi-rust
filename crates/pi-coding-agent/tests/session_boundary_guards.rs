@@ -189,6 +189,29 @@ fn coding_agent_session_owner_does_not_define_approved_delegation_execution() {
 }
 
 #[test]
+fn coding_agent_session_owner_does_not_define_manual_compaction_execution() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let service_source =
+        fs::read_to_string(crate_root.join("src/coding_session/manual_compaction_service.rs"))
+            .unwrap_or_default();
+
+    assert!(
+        !owner_source.contains("async fn compact_inner")
+            && !owner_source.contains("ManualCompactionContext::new(")
+            && !owner_source.contains("run_manual_compaction"),
+        "CodingAgentSession owner should not define manual compaction execution plumbing"
+    );
+    assert!(
+        service_source.contains("struct ManualCompactionService")
+            && service_source.contains("ManualCompactionContext::new(")
+            && service_source.contains("run_manual_compaction"),
+        "ManualCompactionService should own manual compaction flow execution plumbing"
+    );
+}
+
+#[test]
 fn coding_agent_session_owner_does_not_define_self_healing_edit_execution() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
