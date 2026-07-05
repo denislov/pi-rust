@@ -1,21 +1,40 @@
+#[doc(hidden)]
 pub mod autocomplete;
+#[doc(hidden)]
 pub mod component;
+#[doc(hidden)]
 pub mod components;
+#[doc(hidden)]
 pub mod cursor;
+#[doc(hidden)]
 pub mod fuzzy;
+#[doc(hidden)]
 pub mod input;
+#[doc(hidden)]
 pub mod kill_ring;
+#[doc(hidden)]
 pub mod overlay;
+#[doc(hidden)]
 pub mod runtime;
+#[doc(hidden)]
 pub mod style;
+#[doc(hidden)]
 pub mod terminal;
+#[doc(hidden)]
 pub mod terminal_colors;
+#[doc(hidden)]
 pub mod terminal_image;
+#[doc(hidden)]
 pub mod theme;
+#[doc(hidden)]
 pub mod tui;
+#[doc(hidden)]
 pub mod undo_stack;
+#[doc(hidden)]
 pub mod utils;
+#[doc(hidden)]
 pub mod virtual_terminal;
+#[doc(hidden)]
 pub mod word_navigation;
 
 pub use autocomplete::{
