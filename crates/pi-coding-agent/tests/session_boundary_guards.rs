@@ -135,6 +135,30 @@ fn coding_agent_session_owner_does_not_define_delegation_runtime_seed_mapping() 
     );
 }
 
+#[test]
+fn coding_agent_session_owner_does_not_define_approved_delegation_execution() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let delegation_execution_source =
+        fs::read_to_string(crate_root.join("src/coding_session/delegation_execution_service.rs"))
+            .unwrap_or_default();
+
+    assert!(
+        !owner_source.contains("struct ApprovedDelegationExecution")
+            && !owner_source.contains("async fn execute_approved_agent_delegation")
+            && !owner_source.contains("async fn execute_approved_team_delegation"),
+        "CodingAgentSession owner should not define approved delegation execution helpers"
+    );
+    assert!(
+        delegation_execution_source.contains("struct DelegationExecutionService")
+            && delegation_execution_source.contains("struct ApprovedDelegationExecution")
+            && delegation_execution_source.contains("AgentInvocationContext::new(")
+            && delegation_execution_source.contains("AgentTeamContext::new("),
+        "DelegationExecutionService should own approved delegated flow context construction"
+    );
+}
+
 fn collect_core_session_imports(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
     collect_core_session_imports_with_allowlist(repo_root, path, &[], violations);
 }

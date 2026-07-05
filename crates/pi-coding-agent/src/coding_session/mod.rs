@@ -4,6 +4,7 @@ mod branch_summary_flow;
 mod capability_service;
 mod context;
 mod delegation;
+mod delegation_execution_service;
 mod error;
 mod event;
 mod event_service;
@@ -61,10 +62,11 @@ use branch_summary_flow::{
 };
 use capability_service::CapabilityService;
 pub(crate) use delegation::{
-    DelegationAuthorizationDecision, DelegationLineageEntry, PendingDelegationConfirmationQueue,
+    DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
     PendingDelegationConfirmationState, delegation_lineage_for_request,
     delegation_runtime_seed_from_prompt_options, pending_state_from_replay,
 };
+use delegation_execution_service::DelegationExecutionService;
 use event_service::{EventService, SelfHealingEditEventObserver};
 use export_flow::ExportOptions;
 use flow_service::FlowService;
@@ -76,7 +78,7 @@ use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::{PluginLoadContext, PluginLoadOptions};
 use plugin_service::PluginService;
-use prompt::{DelegationRequest, PromptTurnContext, PromptTurnIds};
+use prompt::{PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
 pub(crate) use runtime_service::register_builtin_providers_for_global_runtime;
 pub(crate) use self_healing_edit_flow::{
@@ -108,12 +110,7 @@ pub struct CodingAgentSession {
     default_plugin_load_options: PluginLoadOptions,
     operation_control: OperationControl,
     pending_delegation_confirmations: PendingDelegationConfirmationQueue,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ApprovedDelegationExecution {
-    child_operation_id: String,
-    final_text: String,
+    delegation_execution_service: DelegationExecutionService,
 }
 
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
@@ -421,26 +418,38 @@ impl CodingAgentSession {
             .unwrap_or(pending);
         self.event_service
             .emit_delegation_approved(&pending.request);
-        match pending.request.target_kind {
-            ProfileKind::Agent => self
-                .execute_approved_agent_delegation(
-                    &pending.request,
-                    pending.prompt_options,
-                    pending.child_delegation_depth,
-                    pending.delegation_lineage,
-                )
-                .await
-                .map(|_| ()),
-            ProfileKind::Team => self
-                .execute_approved_team_delegation(
-                    &pending.request,
-                    pending.prompt_options,
-                    pending.child_delegation_depth,
-                    pending.delegation_lineage,
-                )
-                .await
-                .map(|_| ()),
-        }
+        let outcome = match pending.request.target_kind {
+            ProfileKind::Agent => {
+                self.delegation_execution_service
+                    .execute_agent(
+                        &self.flow_service,
+                        self.profile_registry.clone(),
+                        self.plugin_service.clone(),
+                        self.event_service.clone(),
+                        &pending.request,
+                        pending.prompt_options,
+                        pending.child_delegation_depth,
+                        pending.delegation_lineage,
+                    )
+                    .await
+            }
+            ProfileKind::Team => {
+                self.delegation_execution_service
+                    .execute_team(
+                        &self.flow_service,
+                        self.profile_registry.clone(),
+                        self.plugin_service.clone(),
+                        self.event_service.clone(),
+                        &pending.request,
+                        pending.prompt_options,
+                        pending.child_delegation_depth,
+                        pending.delegation_lineage,
+                    )
+                    .await
+            }
+        };
+        self.adopt_pending_delegation_confirmations(outcome.pending_confirmations)?;
+        outcome.execution.map(|_| ())
     }
 
     pub fn reject_delegation_confirmation(
@@ -639,6 +648,7 @@ impl CodingAgentSession {
             default_plugin_load_options,
             operation_control: OperationControl::new(),
             pending_delegation_confirmations,
+            delegation_execution_service: DelegationExecutionService::new(),
         })
     }
 
@@ -658,6 +668,7 @@ impl CodingAgentSession {
             default_plugin_load_options,
             operation_control: OperationControl::new(),
             pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
+            delegation_execution_service: DelegationExecutionService::new(),
         })
     }
 
@@ -825,27 +836,38 @@ impl CodingAgentSession {
                     child_delegation_depth,
                 } => {
                     self.event_service.emit_delegation_approved(request);
-                    let execution = match request.target_kind {
+                    let outcome = match request.target_kind {
                         ProfileKind::Agent => {
-                            self.execute_approved_agent_delegation(
-                                request,
-                                prompt_options.clone(),
-                                *child_delegation_depth,
-                                delegation_lineage_for_request(&[], request),
-                            )
-                            .await
+                            self.delegation_execution_service
+                                .execute_agent(
+                                    &self.flow_service,
+                                    self.profile_registry.clone(),
+                                    self.plugin_service.clone(),
+                                    self.event_service.clone(),
+                                    request,
+                                    prompt_options.clone(),
+                                    *child_delegation_depth,
+                                    delegation_lineage_for_request(&[], request),
+                                )
+                                .await
                         }
                         ProfileKind::Team => {
-                            self.execute_approved_team_delegation(
-                                request,
-                                prompt_options.clone(),
-                                *child_delegation_depth,
-                                delegation_lineage_for_request(&[], request),
-                            )
-                            .await
+                            self.delegation_execution_service
+                                .execute_team(
+                                    &self.flow_service,
+                                    self.profile_registry.clone(),
+                                    self.plugin_service.clone(),
+                                    self.event_service.clone(),
+                                    request,
+                                    prompt_options.clone(),
+                                    *child_delegation_depth,
+                                    delegation_lineage_for_request(&[], request),
+                                )
+                                .await
                         }
                     };
-                    match execution {
+                    self.adopt_pending_delegation_confirmations(outcome.pending_confirmations)?;
+                    match outcome.execution {
                         Ok(execution) => {
                             context.record_delegation_folded_update(
                                 request,
@@ -987,102 +1009,6 @@ impl CodingAgentSession {
             )?;
         }
         Ok(())
-    }
-
-    async fn execute_approved_agent_delegation(
-        &mut self,
-        request: &DelegationRequest,
-        prompt_options: PromptTurnOptions,
-        child_delegation_depth: usize,
-        delegation_lineage: Vec<DelegationLineageEntry>,
-    ) -> Result<ApprovedDelegationExecution, CodingSessionError> {
-        let mut context = AgentInvocationContext::new(
-            AgentInvocationOptions::new(
-                request.target_id.clone(),
-                request.task.clone(),
-                prompt_options,
-            )
-            .with_delegation_depth(child_delegation_depth)
-            .with_delegation_lineage(delegation_lineage),
-            self.profile_registry.clone(),
-            self.plugin_service.clone(),
-            self.event_service.clone(),
-        );
-        let child_operation_id = context.operation_id().to_owned();
-        self.event_service
-            .emit_delegation_started(request, child_operation_id.clone());
-        let result = self.flow_service.run_agent_invocation(&mut context).await;
-        let pending_confirmations = context.take_pending_delegation_confirmations();
-        self.adopt_pending_delegation_confirmations(pending_confirmations)?;
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                self.event_service.emit_delegation_failed(
-                    request,
-                    child_operation_id,
-                    error.clone(),
-                );
-                return Err(error);
-            }
-        };
-        let final_text = outcome.final_text;
-        self.event_service.emit_delegation_completed(
-            request,
-            child_operation_id.clone(),
-            final_text.clone(),
-        );
-        Ok(ApprovedDelegationExecution {
-            child_operation_id,
-            final_text,
-        })
-    }
-
-    async fn execute_approved_team_delegation(
-        &mut self,
-        request: &DelegationRequest,
-        prompt_options: PromptTurnOptions,
-        child_delegation_depth: usize,
-        delegation_lineage: Vec<DelegationLineageEntry>,
-    ) -> Result<ApprovedDelegationExecution, CodingSessionError> {
-        let mut context = AgentTeamContext::new(
-            AgentTeamOptions::new(
-                request.target_id.clone(),
-                request.task.clone(),
-                prompt_options,
-            )
-            .with_delegation_depth(child_delegation_depth)
-            .with_delegation_lineage(delegation_lineage),
-            self.profile_registry.clone(),
-            self.plugin_service.clone(),
-            self.event_service.clone(),
-        );
-        let child_operation_id = context.operation_id().to_owned();
-        self.event_service
-            .emit_delegation_started(request, child_operation_id.clone());
-        let result = self.flow_service.run_agent_team(&mut context).await;
-        let pending_confirmations = context.take_pending_delegation_confirmations();
-        self.adopt_pending_delegation_confirmations(pending_confirmations)?;
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                self.event_service.emit_delegation_failed(
-                    request,
-                    child_operation_id,
-                    error.clone(),
-                );
-                return Err(error);
-            }
-        };
-        let final_text = outcome.final_text;
-        self.event_service.emit_delegation_completed(
-            request,
-            child_operation_id.clone(),
-            final_text.clone(),
-        );
-        Ok(ApprovedDelegationExecution {
-            child_operation_id,
-            final_text,
-        })
     }
 
     fn self_healing_model_repair_policy(
