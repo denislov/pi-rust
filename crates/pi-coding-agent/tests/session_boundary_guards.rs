@@ -113,6 +113,28 @@ fn coding_agent_session_owner_does_not_define_pending_delegation_queue_state() {
     );
 }
 
+#[test]
+fn coding_agent_session_owner_does_not_define_delegation_runtime_seed_mapping() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let delegation_source = fs::read_to_string(crate_root.join("src/coding_session/delegation.rs"))
+        .expect("delegation source should be readable");
+
+    assert!(
+        !owner_source.contains("fn pending_state_from_replay")
+            && !owner_source.contains("fn prompt_options_from_delegation_runtime_seed")
+            && !owner_source.contains("fn delegation_runtime_seed_from_prompt_options"),
+        "CodingAgentSession owner should not define delegation runtime seed mapping helpers"
+    );
+    assert!(
+        delegation_source.contains("fn pending_state_from_replay")
+            && delegation_source.contains("fn prompt_options_from_delegation_runtime_seed")
+            && delegation_source.contains("fn delegation_runtime_seed_from_prompt_options"),
+        "delegation boundary should own delegation runtime seed mapping helpers"
+    );
+}
+
 fn collect_core_session_imports(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
     collect_core_session_imports_with_allowlist(repo_root, path, &[], violations);
 }

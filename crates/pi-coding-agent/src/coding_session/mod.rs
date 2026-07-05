@@ -63,6 +63,7 @@ use capability_service::CapabilityService;
 pub(crate) use delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, PendingDelegationConfirmationQueue,
     PendingDelegationConfirmationState, delegation_lineage_for_request,
+    delegation_runtime_seed_from_prompt_options, pending_state_from_replay,
 };
 use event_service::{EventService, SelfHealingEditEventObserver};
 use export_flow::ExportOptions;
@@ -83,23 +84,17 @@ pub(crate) use self_healing_edit_flow::{
     SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOptions,
     SelfHealingEditRepairStrategy,
 };
-use session_log::event::{
-    PersistedDelegationRuntimeSeed, PersistedDelegationStatus, PersistedPluginDiagnostic,
-};
+use session_log::event::{PersistedDelegationStatus, PersistedPluginDiagnostic};
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
-use session_log::replay::ReplayPendingDelegationConfirmation;
 use session_service::{
     FinalizedSessionWrite, SessionPersistence, SessionService, TransientSessionState,
 };
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::plugins::{
     CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
 };
-use crate::prompt_options::PromptRunOptions;
-use crate::runtime::{PromptInvocation, SessionRunOptions};
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -176,156 +171,6 @@ fn pending_delegation_confirmation_not_found(
             "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
         ),
     }
-}
-
-fn pending_state_from_replay(
-    replay_pending: ReplayPendingDelegationConfirmation,
-    cwd: &Path,
-) -> Result<PendingDelegationConfirmationState, CodingSessionError> {
-    let child_delegation_depth = replay_pending
-        .runtime_seed
-        .parent_delegation_depth
-        .saturating_add(1);
-    let delegation_lineage = replay_pending.runtime_seed.delegation_lineage.clone();
-    Ok(PendingDelegationConfirmationState {
-        request: DelegationRequest {
-            operation_id: replay_pending.source_operation_id,
-            turn_id: replay_pending.turn_id,
-            tool_call_id: replay_pending.tool_call_id,
-            requesting_profile_id: replay_pending.requesting_profile_id,
-            target_kind: replay_pending.target_kind,
-            target_id: replay_pending.target_id,
-            task: replay_pending.task,
-        },
-        prompt_options: prompt_options_from_delegation_runtime_seed(
-            replay_pending.runtime_seed,
-            cwd,
-        )?,
-        reason: replay_pending.reason,
-        requested_at: replay_pending.requested_at,
-        child_delegation_depth,
-        delegation_lineage,
-    })
-}
-
-fn prompt_options_from_delegation_runtime_seed(
-    seed: PersistedDelegationRuntimeSeed,
-    cwd: &Path,
-) -> Result<PromptTurnOptions, CodingSessionError> {
-    let (config, mut diagnostics) = crate::config::load_config(cwd);
-    let api_key = crate::config::auth::resolve_api_key(
-        &seed.model.provider,
-        None,
-        &config.auth,
-        &mut diagnostics,
-    )
-    .map(|key| key.value);
-    let tools = restored_builtin_tools(cwd, &seed.tool_names);
-    let options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
-        prompt: String::new(),
-        model: seed.model,
-        api_key,
-        system_prompt: seed.system_prompt,
-        max_turns: seed.max_turns,
-        tools,
-        register_builtins: seed.register_builtins,
-        session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
-        session_target: None,
-        session_name: seed.session_name,
-        thinking_level: parse_optional_runtime_value("thinking level", seed.thinking_level)?,
-        tool_execution: parse_optional_runtime_value("tool execution mode", seed.tool_execution)?,
-        resources: pi_agent_core::AgentResources::default(),
-        settings: Some(config.settings),
-        invocation: PromptInvocation::Text(String::new()),
-    })
-    .with_mode(parse_prompt_turn_mode(&seed.mode)?);
-    Ok(options)
-}
-
-fn restored_builtin_tools(cwd: &Path, tool_names: &[String]) -> Vec<pi_agent_core::AgentTool> {
-    if tool_names.is_empty() {
-        return Vec::new();
-    }
-    let names = tool_names
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    crate::tools::builtin_tools(cwd.to_path_buf())
-        .into_iter()
-        .filter(|tool| names.contains(tool.name.as_str()))
-        .collect()
-}
-
-fn parse_optional_runtime_value<T>(
-    label: &str,
-    value: Option<String>,
-) -> Result<Option<T>, CodingSessionError>
-where
-    T: std::str::FromStr<Err = String>,
-{
-    value
-        .map(|value| {
-            value
-                .parse::<T>()
-                .map_err(|message| CodingSessionError::Session {
-                    message: format!("invalid persisted delegation {label}: {message}"),
-                })
-        })
-        .transpose()
-}
-
-fn parse_prompt_turn_mode(value: &str) -> Result<PromptTurnMode, CodingSessionError> {
-    match value {
-        "print" => Ok(PromptTurnMode::Print),
-        "json" => Ok(PromptTurnMode::Json),
-        "rpc" => Ok(PromptTurnMode::Rpc),
-        other => Err(CodingSessionError::Session {
-            message: format!("invalid persisted delegation prompt mode: {other}"),
-        }),
-    }
-}
-
-fn prompt_turn_mode_label(mode: PromptTurnMode) -> &'static str {
-    match mode {
-        PromptTurnMode::Print => "print",
-        PromptTurnMode::Json => "json",
-        PromptTurnMode::Rpc => "rpc",
-    }
-}
-
-fn persisted_delegation_model(model: &pi_ai::types::Model) -> pi_ai::types::Model {
-    let mut persisted = model.clone();
-    persisted.headers = None;
-    persisted
-}
-
-fn delegation_runtime_seed_from_prompt_options(
-    options: &PromptTurnOptions,
-    child_delegation_depth: usize,
-    delegation_lineage: &[DelegationLineageEntry],
-) -> Result<PersistedDelegationRuntimeSeed, CodingSessionError> {
-    let runtime = options
-        .runtime()
-        .ok_or_else(|| CodingSessionError::Config {
-            message: "delegation confirmation options do not include a runtime snapshot".into(),
-        })?;
-    Ok(PersistedDelegationRuntimeSeed {
-        mode: prompt_turn_mode_label(options.mode()).to_string(),
-        model: persisted_delegation_model(runtime.model()),
-        system_prompt: runtime.system_prompt().map(str::to_owned),
-        max_turns: runtime.max_turns(),
-        tool_names: runtime
-            .tools()
-            .iter()
-            .map(|tool| tool.name.clone())
-            .collect(),
-        register_builtins: runtime.register_builtins(),
-        thinking_level: runtime.thinking_level().map(|level| level.to_string()),
-        tool_execution: runtime.tool_execution().map(|mode| mode.to_string()),
-        session_name: options.session_name().map(str::to_owned),
-        parent_delegation_depth: child_delegation_depth.saturating_sub(1),
-        delegation_lineage: delegation_lineage.to_vec(),
-    })
 }
 
 impl CodingAgentSession {
