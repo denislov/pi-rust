@@ -136,6 +136,35 @@ fn coding_agent_session_owner_does_not_define_delegation_runtime_seed_mapping() 
 }
 
 #[test]
+fn coding_agent_session_owner_does_not_define_delegation_confirmation_service_glue() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let service_source = fs::read_to_string(
+        crate_root.join("src/coding_session/delegation_confirmation_service.rs"),
+    )
+    .unwrap_or_default();
+
+    assert!(
+        !owner_source.contains("fn pending_delegation_confirmation_not_found")
+            && !owner_source.contains("fn adopt_pending_delegation_confirmations")
+            && !owner_source.contains("fn queue_pending_delegation_confirmation")
+            && !owner_source.contains("fn record_delegation_confirmation_requested")
+            && !owner_source.contains("fn record_delegation_confirmation_approved")
+            && !owner_source.contains("fn record_delegation_confirmation_rejected"),
+        "CodingAgentSession owner should not define delegation confirmation queue/persistence glue"
+    );
+    assert!(
+        service_source.contains("struct DelegationConfirmationService")
+            && service_source.contains("fn adopt_pending")
+            && service_source.contains("fn queue_pending")
+            && service_source.contains("fn approve_pending")
+            && service_source.contains("fn reject_pending"),
+        "DelegationConfirmationService should own pending delegation confirmation queue and persistence glue"
+    );
+}
+
+#[test]
 fn coding_agent_session_owner_does_not_define_approved_delegation_execution() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))

@@ -4,6 +4,7 @@ mod branch_summary_flow;
 mod capability_service;
 mod context;
 mod delegation;
+mod delegation_confirmation_service;
 mod delegation_execution_service;
 mod error;
 mod event;
@@ -64,9 +65,9 @@ use branch_summary_flow::{
 use capability_service::CapabilityService;
 pub(crate) use delegation::{
     DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
-    PendingDelegationConfirmationState, delegation_lineage_for_request,
-    delegation_runtime_seed_from_prompt_options, pending_state_from_replay,
+    PendingDelegationConfirmationState, delegation_lineage_for_request, pending_state_from_replay,
 };
+use delegation_confirmation_service::DelegationConfirmationService;
 use delegation_execution_service::DelegationExecutionService;
 use event_service::EventService;
 use export_flow::ExportOptions;
@@ -111,6 +112,7 @@ pub struct CodingAgentSession {
     default_plugin_load_options: PluginLoadOptions,
     operation_control: OperationControl,
     pending_delegation_confirmations: PendingDelegationConfirmationQueue,
+    delegation_confirmation_service: DelegationConfirmationService,
     delegation_execution_service: DelegationExecutionService,
     self_healing_edit_service: SelfHealingEditService,
 }
@@ -159,17 +161,6 @@ fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> Profi
 
 fn default_cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-}
-
-fn pending_delegation_confirmation_not_found(
-    operation_id: &str,
-    tool_call_id: &str,
-) -> CodingSessionError {
-    CodingSessionError::Input {
-        message: format!(
-            "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
-        ),
-    }
 }
 
 impl CodingAgentSession {
@@ -391,7 +382,8 @@ impl CodingAgentSession {
 
     pub fn pending_delegation_confirmations(&self) -> Vec<PendingDelegationConfirmation> {
         let now = SystemClock.now_rfc3339();
-        self.pending_delegation_confirmations.active_views(&now)
+        self.delegation_confirmation_service
+            .active_views(&self.pending_delegation_confirmations, &now)
     }
 
     pub async fn approve_delegation_confirmation(
@@ -402,24 +394,27 @@ impl CodingAgentSession {
         let operation_id = operation_id.as_ref();
         let tool_call_id = tool_call_id.as_ref();
         let now = SystemClock.now_rfc3339();
-        let pending = self
-            .pending_delegation_confirmations
-            .active_pending(operation_id, tool_call_id, &now)
-            .cloned()
-            .ok_or_else(|| pending_delegation_confirmation_not_found(operation_id, tool_call_id))?;
+        let pending = self.delegation_confirmation_service.active_pending(
+            &self.pending_delegation_confirmations,
+            operation_id,
+            tool_call_id,
+            &now,
+        )?;
         let operation_kind = match pending.request.target_kind {
             ProfileKind::Agent => OperationKind::AgentInvocation,
             ProfileKind::Team => OperationKind::AgentTeam,
         };
         let _operation = self.operation_control.begin(operation_kind)?;
         let mut ids = SystemIdGenerator;
-        self.record_delegation_confirmation_approved(&pending, ids.next_operation_id())?;
-        let pending = self
-            .pending_delegation_confirmations
-            .remove_active(operation_id, tool_call_id, &now)
-            .unwrap_or(pending);
-        self.event_service
-            .emit_delegation_approved(&pending.request);
+        let pending = self.delegation_confirmation_service.approve_pending(
+            &mut self.persistence,
+            &mut self.pending_delegation_confirmations,
+            &self.event_service,
+            operation_id,
+            tool_call_id,
+            &now,
+            ids.next_operation_id(),
+        )?;
         let outcome = match pending.request.target_kind {
             ProfileKind::Agent => {
                 self.delegation_execution_service
@@ -450,7 +445,12 @@ impl CodingAgentSession {
                     .await
             }
         };
-        self.adopt_pending_delegation_confirmations(outcome.pending_confirmations)?;
+        self.delegation_confirmation_service.adopt_pending(
+            &mut self.persistence,
+            &mut self.pending_delegation_confirmations,
+            &self.event_service,
+            outcome.pending_confirmations,
+        )?;
         outcome.execution.map(|_| ())
     }
 
@@ -463,25 +463,15 @@ impl CodingAgentSession {
         let operation_id = operation_id.as_ref();
         let tool_call_id = tool_call_id.as_ref();
         let now = SystemClock.now_rfc3339();
-        let pending = self
-            .pending_delegation_confirmations
-            .active_pending(operation_id, tool_call_id, &now)
-            .cloned()
-            .ok_or_else(|| pending_delegation_confirmation_not_found(operation_id, tool_call_id))?;
-        let reason = reason.into();
-        let reason = if reason.trim().is_empty() {
-            "delegation rejected by user".to_string()
-        } else {
-            reason
-        };
-        self.record_delegation_confirmation_rejected(&pending, reason.clone())?;
-        let pending = self
-            .pending_delegation_confirmations
-            .remove_active(operation_id, tool_call_id, &now)
-            .unwrap_or(pending);
-        self.event_service
-            .emit_delegation_rejected(&pending.request, &reason);
-        Ok(())
+        self.delegation_confirmation_service.reject_pending(
+            &mut self.persistence,
+            &mut self.pending_delegation_confirmations,
+            &self.event_service,
+            operation_id,
+            tool_call_id,
+            &now,
+            reason.into(),
+        )
     }
 
     pub async fn prompt(
@@ -679,6 +669,7 @@ impl CodingAgentSession {
             default_plugin_load_options,
             operation_control: OperationControl::new(),
             pending_delegation_confirmations,
+            delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
         })
@@ -700,6 +691,7 @@ impl CodingAgentSession {
             default_plugin_load_options,
             operation_control: OperationControl::new(),
             pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
+            delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
         })
@@ -899,7 +891,12 @@ impl CodingAgentSession {
                                 .await
                         }
                     };
-                    self.adopt_pending_delegation_confirmations(outcome.pending_confirmations)?;
+                    self.delegation_confirmation_service.adopt_pending(
+                        &mut self.persistence,
+                        &mut self.pending_delegation_confirmations,
+                        &self.event_service,
+                        outcome.pending_confirmations,
+                    )?;
                     match outcome.execution {
                         Ok(execution) => {
                             context.record_delegation_folded_update(
@@ -939,7 +936,13 @@ impl CodingAgentSession {
                         child_delegation_depth: *child_delegation_depth,
                         delegation_lineage: delegation_lineage_for_request(&[], request),
                     };
-                    self.queue_pending_delegation_confirmation(pending, true)?;
+                    self.delegation_confirmation_service.queue_pending(
+                        &mut self.persistence,
+                        &mut self.pending_delegation_confirmations,
+                        &self.event_service,
+                        pending,
+                        true,
+                    )?;
                 }
                 DelegationAuthorizationDecision::Rejected { request, reason } => {
                     self.event_service.emit_delegation_rejected(request, reason);
@@ -951,95 +954,6 @@ impl CodingAgentSession {
                     )?;
                 }
             }
-        }
-        Ok(())
-    }
-
-    fn adopt_pending_delegation_confirmations(
-        &mut self,
-        pending_confirmations: Vec<PendingDelegationConfirmationState>,
-    ) -> Result<(), CodingSessionError> {
-        for pending in pending_confirmations {
-            self.queue_pending_delegation_confirmation(pending, false)?;
-        }
-        Ok(())
-    }
-
-    fn queue_pending_delegation_confirmation(
-        &mut self,
-        pending: PendingDelegationConfirmationState,
-        emit_confirmation_required: bool,
-    ) -> Result<(), CodingSessionError> {
-        if self.pending_delegation_confirmations.is_duplicate(&pending) {
-            self.event_service.emit_diagnostic(
-                Some(pending.request.operation_id.clone()),
-                format!(
-                    "duplicate pending delegation confirmation ignored: operation_id={}, tool_call_id={}",
-                    pending.request.operation_id, pending.request.tool_call_id
-                ),
-            );
-            return Ok(());
-        }
-        self.record_delegation_confirmation_requested(&pending)?;
-        if emit_confirmation_required {
-            self.event_service
-                .emit_delegation_confirmation_required(&pending.request, &pending.reason);
-        }
-        self.pending_delegation_confirmations.push(pending);
-        Ok(())
-    }
-
-    fn record_delegation_confirmation_requested(
-        &mut self,
-        pending: &PendingDelegationConfirmationState,
-    ) -> Result<(), CodingSessionError> {
-        let runtime_seed = delegation_runtime_seed_from_prompt_options(
-            &pending.prompt_options,
-            pending.child_delegation_depth,
-            &pending.delegation_lineage,
-        )?;
-        if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
-            session_service.record_delegation_confirmation_requested(
-                pending.request.operation_id.clone(),
-                pending.request.turn_id.clone(),
-                pending.request.tool_call_id.clone(),
-                pending.request.requesting_profile_id.clone(),
-                pending.request.target_kind,
-                pending.request.target_id.clone(),
-                pending.request.task.clone(),
-                pending.reason.clone(),
-                runtime_seed,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn record_delegation_confirmation_approved(
-        &mut self,
-        pending: &PendingDelegationConfirmationState,
-        approval_operation_id: String,
-    ) -> Result<(), CodingSessionError> {
-        if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
-            session_service.record_delegation_confirmation_approved(
-                pending.request.operation_id.clone(),
-                pending.request.tool_call_id.clone(),
-                approval_operation_id,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn record_delegation_confirmation_rejected(
-        &mut self,
-        pending: &PendingDelegationConfirmationState,
-        reason: String,
-    ) -> Result<(), CodingSessionError> {
-        if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
-            session_service.record_delegation_confirmation_rejected(
-                pending.request.operation_id.clone(),
-                pending.request.tool_call_id.clone(),
-                reason,
-            )?;
         }
         Ok(())
     }
@@ -1369,6 +1283,7 @@ mod tests {
     };
     use tokio::sync::oneshot;
 
+    use super::delegation::delegation_runtime_seed_from_prompt_options;
     use super::plugin_load_flow::{PluginLoadCandidate, PluginLoadManifest, PluginLoadOptions};
     use super::*;
     use crate::coding_session::session_log::event::{
