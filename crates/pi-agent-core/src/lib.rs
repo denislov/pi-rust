@@ -1,26 +1,45 @@
+#[doc(hidden)]
 pub mod agent;
 #[deprecated(
     note = "use Agent::run() for the public low-level stream or AgentTurnFlow for the internal flow runtime"
 )]
+#[doc(hidden)]
 pub mod agent_loop;
+#[doc(hidden)]
 pub mod agent_turn_flow;
 mod ai_runtime;
+#[doc(hidden)]
 pub mod branch_summary;
+#[doc(hidden)]
 pub mod compaction;
+#[doc(hidden)]
 pub mod convert;
+#[doc(hidden)]
 pub mod env;
+#[doc(hidden)]
 pub mod errors;
+#[doc(hidden)]
 pub mod flow;
+#[doc(hidden)]
 pub mod harness;
+#[doc(hidden)]
 pub mod hooks;
 mod loop_runtime;
+#[doc(hidden)]
 pub mod proxy;
+#[doc(hidden)]
 pub mod queues;
+#[doc(hidden)]
 pub mod resources;
+#[doc(hidden)]
 pub mod session_context;
+#[doc(hidden)]
 pub mod shell_output;
+#[doc(hidden)]
 pub mod transcript;
+#[doc(hidden)]
 pub mod truncate;
+#[doc(hidden)]
 pub mod types;
 
 pub use agent::Agent;
