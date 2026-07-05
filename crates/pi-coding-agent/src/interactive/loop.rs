@@ -37,6 +37,8 @@ use crate::{CliArgs, CliError, CliRunOptions};
 
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
+const SHUTDOWN_DRAIN_MAX: Duration = Duration::from_millis(1000);
+const SHUTDOWN_DRAIN_IDLE: Duration = Duration::from_millis(50);
 
 /// Print startup resource summary to stderr before the TUI takes over.
 /// Mirrors the TS startup banner with [Context], [Skills], [Extensions].
@@ -227,7 +229,7 @@ where
     // Drain in-flight Kitty key release events before stopping, matching TS `drainInput(1000)`.
     let _ = tui
         .terminal_mut()
-        .drain_input(Duration::from_millis(1000), Duration::from_millis(50));
+        .drain_input(SHUTDOWN_DRAIN_MAX, SHUTDOWN_DRAIN_IDLE);
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
 
     // Print resume hint after terminal cleanup.
@@ -274,7 +276,7 @@ where
     // Drain in-flight Kitty key release events before stopping.
     let _ = tui
         .terminal_mut()
-        .drain_input(Duration::from_millis(1000), Duration::from_millis(50));
+        .drain_input(SHUTDOWN_DRAIN_MAX, SHUTDOWN_DRAIN_IDLE);
     let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
 
     // Print resume hint after terminal cleanup.

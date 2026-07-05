@@ -2,6 +2,7 @@ const THEME_RELOAD_SOURCE: &str = include_str!("../src/theme/reload.rs");
 const THEME_TEST_SOURCE: &str = include_str!("theme.rs");
 const TOOL_BASH_TEST_SOURCE: &str = include_str!("tool_bash.rs");
 const INTERACTIVE_APP_SOURCE: &str = include_str!("../src/interactive/app.rs");
+const INTERACTIVE_LOOP_SOURCE: &str = include_str!("../src/interactive/loop.rs");
 const RPC_MODE_TEST_SOURCE: &str = include_str!("rpc_mode.rs");
 const PROTOCOL_SESSIONS_TEST_SOURCE: &str = include_str!("protocol_sessions.rs");
 const INTERACTIVE_MODE_TEST_SOURCE: &str = include_str!("interactive_mode.rs");
@@ -89,6 +90,28 @@ fn tool_bash_shell_timing_literals_use_named_constants() {
     assert!(
         violations.is_empty(),
         "tool_bash timing-sensitive shell sleeps, command timeouts, and timeout assertions should use named constants/helpers instead of inline fixed values:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn interactive_loop_shutdown_drain_uses_named_durations() {
+    let mut violations = Vec::new();
+    let lines: Vec<_> = INTERACTIVE_LOOP_SOURCE.lines().collect();
+
+    for (index, line) in lines.iter().enumerate() {
+        if !line.contains(".drain_input(") {
+            continue;
+        }
+        let window = lines[index..std::cmp::min(index + 4, lines.len())].join("\n");
+        if window.contains("Duration::from_") {
+            violations.push(format!("{}: {}", index + 1, line.trim()));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "interactive loop shutdown drain should use named duration constants instead of inline fixed durations:\n{}",
         violations.join("\n")
     );
 }
