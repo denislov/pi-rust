@@ -151,6 +151,23 @@ fn interactive_idle_flush_harness_advances_paused_time_instead_of_sleeping() {
 }
 
 #[test]
+fn interactive_harness_manual_clock_uses_named_anchor() {
+    let mut violations = Vec::new();
+
+    for (index, line) in INTERACTIVE_APP_SOURCE.lines().enumerate() {
+        if line.contains("ManualInteractiveClock::new(std::time::Instant::now())") {
+            violations.push(format!("{}: {}", index + 1, line.trim()));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "interactive harness manual clocks should use a named clock anchor helper instead of scattering direct Instant::now() constructors:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn rpc_mode_line_reads_use_named_timeout_helpers() {
     let mut violations = Vec::new();
     let lines: Vec<_> = RPC_MODE_TEST_SOURCE.lines().collect();

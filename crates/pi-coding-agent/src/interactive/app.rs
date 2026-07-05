@@ -4416,6 +4416,10 @@ pub mod test_harness {
 
     const INTERACTIVE_SESSION_TEXT_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
+    fn interactive_manual_clock_anchor() -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
     #[derive(Debug)]
     pub struct ScriptedInteractiveOutput {
         pub rendered: String,
@@ -4665,8 +4669,9 @@ pub mod test_harness {
             .into_iter()
             .map(|(chunk, delay)| (chunk.to_string(), delay))
             .collect::<Vec<_>>();
-        let clock =
-            crate::interactive::r#loop::ManualInteractiveClock::new(std::time::Instant::now());
+        let clock = crate::interactive::r#loop::ManualInteractiveClock::new(
+            interactive_manual_clock_anchor(),
+        );
         let driver_clock = clock.clone();
         let driver = async move {
             let mut input_driver = ScriptedInputDriver {
