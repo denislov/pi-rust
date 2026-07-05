@@ -334,6 +334,55 @@ fn interactive_abort_tests_use_named_harness_timeout_helper() {
 }
 
 #[test]
+fn theme_reload_unit_tests_use_named_time_constants() {
+    let mut violations = Vec::new();
+    let lines: Vec<_> = THEME_RELOAD_SOURCE.lines().collect();
+    let start_index = source_tests_start_index(&lines, "theme reload");
+
+    for index in start_index..lines.len() {
+        let line = lines[index];
+        if !line.contains("Duration::from_millis") {
+            continue;
+        }
+        if line.trim_start().starts_with("const THEME_RELOAD_TEST_") {
+            continue;
+        }
+        violations.push(format!("{}: {}", index + 1, line.trim()));
+    }
+
+    assert!(
+        violations.is_empty(),
+        "theme reload unit tests should use named timing constants instead of inline fixed durations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn theme_reload_unit_tests_use_named_clock_anchor() {
+    let mut violations = Vec::new();
+    let lines: Vec<_> = THEME_RELOAD_SOURCE.lines().collect();
+    let start_index = source_tests_start_index(&lines, "theme reload");
+
+    for index in start_index..lines.len() {
+        let line = lines[index];
+        if !line.contains("Instant::now()") {
+            continue;
+        }
+        let prefix = lines[index.saturating_sub(2)..=index].join("\n");
+        if prefix.contains("fn theme_reload_test_clock_anchor") {
+            continue;
+        }
+        violations.push(format!("{}: {}", index + 1, line.trim()));
+    }
+
+    assert!(
+        violations.is_empty(),
+        "theme reload unit tests should use a named clock anchor helper instead of scattering Instant::now():\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn theme_watcher_tests_use_named_debounce_durations() {
     let mut violations = Vec::new();
     let lines: Vec<_> = THEME_TEST_SOURCE.lines().collect();
@@ -359,6 +408,13 @@ fn contains_numeric_literal_after(line: &str, marker: &str) -> bool {
     line.split_once(marker)
         .and_then(|(_, suffix)| suffix.trim_start().chars().next())
         .is_some_and(|character| character.is_ascii_digit())
+}
+
+fn source_tests_start_index(lines: &[&str], source_name: &str) -> usize {
+    lines
+        .iter()
+        .position(|line| line.trim() == "#[cfg(test)]")
+        .unwrap_or_else(|| panic!("{source_name} source should contain a #[cfg(test)] module"))
 }
 
 #[test]
