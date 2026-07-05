@@ -62,10 +62,9 @@ use capability_service::CapabilityService;
 use delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
 };
-use event_service::EventService;
+use event_service::{EventService, SelfHealingEditEventObserver};
 use export_flow::ExportOptions;
 use flow_service::FlowService;
-use futures::future::{BoxFuture, FutureExt};
 use manual_compaction_flow::{
     ManualCompactionContext, ManualCompactionOptions, manual_compaction_failed_outcome,
     manual_compaction_success_outcome,
@@ -79,7 +78,7 @@ use runtime_service::RuntimeService;
 pub(crate) use runtime_service::register_builtin_providers_for_global_runtime;
 pub(crate) use self_healing_edit_flow::{
     ModelSelfHealingEditRepairStrategy, PlannedSelfHealingEditRepairStrategy,
-    SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditObserver, SelfHealingEditOptions,
+    SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOptions,
     SelfHealingEditRepairStrategy,
 };
 use session_log::event::{
@@ -100,38 +99,6 @@ use crate::prompt_options::PromptRunOptions;
 use crate::runtime::{PromptInvocation, SessionRunOptions};
 
 const DELEGATION_CONFIRMATION_TTL_HOURS: i64 = 24;
-
-#[derive(Debug, Clone)]
-struct SelfHealingEditEventObserver {
-    event_service: EventService,
-    operation_id: String,
-}
-
-impl SelfHealingEditEventObserver {
-    fn new(event_service: EventService, operation_id: impl Into<String>) -> Self {
-        Self {
-            event_service,
-            operation_id: operation_id.into(),
-        }
-    }
-}
-
-impl SelfHealingEditObserver for SelfHealingEditEventObserver {
-    fn repair_attempted<'a>(
-        &'a self,
-        path: &'a str,
-        repair: &'a SelfHealingEditRepairAttempt,
-    ) -> BoxFuture<'a, ()> {
-        async move {
-            self.event_service.emit_self_healing_edit_repair_attempted(
-                self.operation_id.clone(),
-                path,
-                repair,
-            );
-        }
-        .boxed()
-    }
-}
 
 #[derive(Debug)]
 pub struct CodingAgentSession {

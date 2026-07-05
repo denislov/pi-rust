@@ -47,6 +47,29 @@ fn transcript_only_tests_use_transcript_boundary_for_core_session_types() {
     );
 }
 
+#[test]
+fn coding_agent_session_owner_does_not_define_self_healing_edit_event_observer() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let event_service_source =
+        fs::read_to_string(crate_root.join("src/coding_session/event_service.rs"))
+            .expect("event service source should be readable");
+
+    assert!(
+        !owner_source.contains("struct SelfHealingEditEventObserver")
+            && !owner_source
+                .contains("impl SelfHealingEditObserver for SelfHealingEditEventObserver"),
+        "CodingAgentSession owner should not define the self-healing edit event observer; live repair-attempt event emission belongs behind EventService"
+    );
+    assert!(
+        event_service_source.contains("struct SelfHealingEditEventObserver")
+            && event_service_source
+                .contains("impl SelfHealingEditObserver for SelfHealingEditEventObserver"),
+        "EventService should own the self-healing edit event observer"
+    );
+}
+
 fn collect_core_session_imports(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
     collect_core_session_imports_with_allowlist(repo_root, path, &[], violations);
 }

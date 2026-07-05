@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use futures::future::{BoxFuture, FutureExt};
 use tokio::sync::broadcast;
 
 use pi_agent_core::AgentEvent;
@@ -10,7 +11,9 @@ use super::{
     manual_compaction_flow::ManualCompactionOutcome,
     plugin_load_flow::PluginLoadOutcome,
     prompt::{DelegationRequest, PromptTurnOutcome},
-    self_healing_edit_flow::{SelfHealingEditOutcome, SelfHealingEditRepairAttempt},
+    self_healing_edit_flow::{
+        SelfHealingEditObserver, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+    },
     session_service::FinalizedSessionWrite,
 };
 
@@ -19,6 +22,38 @@ const EVENT_CHANNEL_CAPACITY: usize = 128;
 #[derive(Debug, Clone)]
 pub(crate) struct EventService {
     sender: broadcast::Sender<CodingAgentEvent>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SelfHealingEditEventObserver {
+    event_service: EventService,
+    operation_id: String,
+}
+
+impl SelfHealingEditEventObserver {
+    pub(crate) fn new(event_service: EventService, operation_id: impl Into<String>) -> Self {
+        Self {
+            event_service,
+            operation_id: operation_id.into(),
+        }
+    }
+}
+
+impl SelfHealingEditObserver for SelfHealingEditEventObserver {
+    fn repair_attempted<'a>(
+        &'a self,
+        path: &'a str,
+        repair: &'a SelfHealingEditRepairAttempt,
+    ) -> BoxFuture<'a, ()> {
+        async move {
+            self.event_service.emit_self_healing_edit_repair_attempted(
+                self.operation_id.clone(),
+                path,
+                repair,
+            );
+        }
+        .boxed()
+    }
 }
 
 impl EventService {
