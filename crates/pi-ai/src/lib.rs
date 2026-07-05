@@ -1,11 +1,20 @@
+#[doc(hidden)]
 pub mod compat;
+#[doc(hidden)]
 pub mod images;
+#[doc(hidden)]
 pub mod models;
+#[doc(hidden)]
 pub mod providers;
+#[doc(hidden)]
 pub mod registry;
+#[doc(hidden)]
 pub mod stream;
+#[doc(hidden)]
 pub mod transport;
+#[doc(hidden)]
 pub mod types;
+#[doc(hidden)]
 pub mod util;
 
 pub use models::{all_models, calculate_cost, get_model, get_models, get_providers, lookup_model};
