@@ -20,6 +20,7 @@ mod prompt;
 mod prompt_flow;
 mod runtime_service;
 mod self_healing_edit_flow;
+mod self_healing_edit_service;
 mod session_log;
 mod session_service;
 
@@ -67,7 +68,7 @@ pub(crate) use delegation::{
     delegation_runtime_seed_from_prompt_options, pending_state_from_replay,
 };
 use delegation_execution_service::DelegationExecutionService;
-use event_service::{EventService, SelfHealingEditEventObserver};
+use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
 use manual_compaction_flow::{
@@ -82,10 +83,10 @@ use prompt::{PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
 pub(crate) use runtime_service::register_builtin_providers_for_global_runtime;
 pub(crate) use self_healing_edit_flow::{
-    ModelSelfHealingEditRepairStrategy, PlannedSelfHealingEditRepairStrategy,
-    SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOptions,
-    SelfHealingEditRepairStrategy,
+    ModelSelfHealingEditRepairStrategy, SelfHealingEditContext, SelfHealingEditFlow,
+    SelfHealingEditOptions, SelfHealingEditRepairStrategy,
 };
+use self_healing_edit_service::SelfHealingEditService;
 use session_log::event::{PersistedDelegationStatus, PersistedPluginDiagnostic};
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use session_service::{
@@ -111,6 +112,7 @@ pub struct CodingAgentSession {
     operation_control: OperationControl,
     pending_delegation_confirmations: PendingDelegationConfirmationQueue,
     delegation_execution_service: DelegationExecutionService,
+    self_healing_edit_service: SelfHealingEditService,
 }
 
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
@@ -516,7 +518,36 @@ impl CodingAgentSession {
         let _operation = self
             .operation_control
             .begin(OperationKind::SelfHealingEdit)?;
-        self.self_healing_edit_inner(request).await
+        let (path, replacements, check_command, repair_attempts, model_repair) =
+            request.into_parts();
+        if !repair_attempts.is_empty() && model_repair.is_some() {
+            return Err(CodingSessionError::Input {
+                message: "configure either planned repair attempts or model repair, not both"
+                    .into(),
+            });
+        }
+        let model_repair_policy = self.self_healing_model_repair_policy(model_repair)?;
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "self-healing edit requires a persistent Rust-native session".into(),
+            });
+        };
+        let outcome = self
+            .self_healing_edit_service
+            .run_persistent(
+                session_service,
+                &self.flow_service,
+                self.event_service.clone(),
+                path,
+                replacements,
+                check_command,
+                repair_attempts,
+                model_repair_policy,
+            )
+            .await?;
+        self.event_service
+            .emit_session_write_events(&outcome.finalized);
+        outcome.result
     }
 
     pub async fn invoke_agent(
@@ -649,6 +680,7 @@ impl CodingAgentSession {
             operation_control: OperationControl::new(),
             pending_delegation_confirmations,
             delegation_execution_service: DelegationExecutionService::new(),
+            self_healing_edit_service: SelfHealingEditService::new(),
         })
     }
 
@@ -669,6 +701,7 @@ impl CodingAgentSession {
             operation_control: OperationControl::new(),
             pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
             delegation_execution_service: DelegationExecutionService::new(),
+            self_healing_edit_service: SelfHealingEditService::new(),
         })
     }
 
@@ -1033,106 +1066,6 @@ impl CodingAgentSession {
             Arc::new(ModelSelfHealingEditRepairStrategy::new(runtime)),
             max_attempts,
         )))
-    }
-
-    async fn self_healing_edit_inner(
-        &mut self,
-        request: SelfHealingEditRequest,
-    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
-        let (path, replacements, check_command, repair_attempts, model_repair) =
-            request.into_parts();
-        if !repair_attempts.is_empty() && model_repair.is_some() {
-            return Err(CodingSessionError::Input {
-                message: "configure either planned repair attempts or model repair, not both"
-                    .into(),
-            });
-        }
-        let model_repair_policy = self.self_healing_model_repair_policy(model_repair)?;
-        let replacement_count = replacements.len();
-        let event_path = path.clone();
-        let event_service = self.event_service.clone();
-        let (result, finalized) = {
-            let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-                return Err(CodingSessionError::UnsupportedCapability {
-                    capability: "self-healing edit requires a persistent Rust-native session"
-                        .into(),
-                });
-            };
-            let cwd = session_cwd(session_service).unwrap_or_else(default_cwd);
-            let mut transaction = session_service.begin_self_healing_edit_transaction();
-            let operation_id = transaction.operation_id().to_owned();
-            event_service.emit_self_healing_edit_started(
-                operation_id.clone(),
-                event_path.clone(),
-                replacement_count,
-            );
-            SessionService::record_self_healing_edit_started(
-                &mut transaction,
-                path.clone(),
-                replacement_count,
-            )?;
-            let mut options = SelfHealingEditOptions::new(cwd, path, replacements)
-                .with_repair_observer(Arc::new(SelfHealingEditEventObserver::new(
-                    event_service.clone(),
-                    operation_id.clone(),
-                )));
-            if let Some(command) = check_command {
-                options = options.with_check_command(command).with_real_check_runner();
-            }
-            let repair_attempt_count = repair_attempts.len();
-            if repair_attempt_count > 0 {
-                options = options
-                    .with_repair_strategy(Arc::new(PlannedSelfHealingEditRepairStrategy::new(
-                        repair_attempts,
-                    )))
-                    .with_max_repair_attempts(repair_attempt_count);
-            } else if let Some((strategy, max_attempts)) = model_repair_policy {
-                options = options
-                    .with_repair_strategy(strategy)
-                    .with_max_repair_attempts(max_attempts);
-            }
-            let mut context = SelfHealingEditContext::new(options);
-
-            match self.flow_service.run_self_healing_edit(&mut context).await {
-                Ok(outcome) => {
-                    for repair in outcome.repair_attempts.iter() {
-                        SessionService::record_self_healing_edit_repair_attempted(
-                            &mut transaction,
-                            &outcome.path,
-                            repair,
-                        )?;
-                    }
-                    SessionService::record_self_healing_edit_completed(&mut transaction, &outcome)?;
-                    event_service.emit_self_healing_edit_completed(operation_id.clone(), &outcome);
-                    let finalized = session_service
-                        .commit_self_healing_edit_transaction(Some(transaction), operation_id)?;
-                    (Ok(outcome), finalized)
-                }
-                Err(error) => {
-                    for repair in context.repair_attempts() {
-                        SessionService::record_self_healing_edit_repair_attempted(
-                            &mut transaction,
-                            &event_path,
-                            repair,
-                        )?;
-                    }
-                    event_service.emit_self_healing_edit_failed(
-                        operation_id.clone(),
-                        event_path.clone(),
-                        &error,
-                    );
-                    let finalized = session_service.fail_self_healing_edit_transaction(
-                        Some(transaction),
-                        operation_id,
-                        error.code(),
-                        error.to_string(),
-                    )?;
-                    (Err(error), finalized)
-                }
-            }
-        };
-        self.event_service.emit_session_write_events(&finalized);
-        result
     }
 
     async fn compact_inner(

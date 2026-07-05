@@ -159,6 +159,28 @@ fn coding_agent_session_owner_does_not_define_approved_delegation_execution() {
     );
 }
 
+#[test]
+fn coding_agent_session_owner_does_not_define_self_healing_edit_execution() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let owner_source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner source should be readable");
+    let service_source =
+        fs::read_to_string(crate_root.join("src/coding_session/self_healing_edit_service.rs"))
+            .unwrap_or_default();
+
+    assert!(
+        !owner_source.contains("async fn self_healing_edit_inner")
+            && !owner_source.contains("SelfHealingEditContext::new("),
+        "CodingAgentSession owner should not define self-healing edit execution plumbing"
+    );
+    assert!(
+        service_source.contains("struct SelfHealingEditService")
+            && service_source.contains("SelfHealingEditContext::new(")
+            && service_source.contains("run_self_healing_edit"),
+        "SelfHealingEditService should own self-healing edit flow execution plumbing"
+    );
+}
+
 fn collect_core_session_imports(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
     collect_core_session_imports_with_allowlist(repo_root, path, &[], violations);
 }
