@@ -1,21 +1,36 @@
 mod coding_session;
 mod plugins;
 
+#[doc(hidden)]
 pub mod args;
+#[doc(hidden)]
 pub mod config;
+#[doc(hidden)]
 pub mod error;
+#[doc(hidden)]
 pub mod input;
+#[doc(hidden)]
 pub mod interactive;
 mod list_models;
+#[doc(hidden)]
 pub mod models;
+#[doc(hidden)]
 pub mod print_mode;
+#[doc(hidden)]
 pub mod prompt_options;
+#[doc(hidden)]
 pub mod protocol;
+#[doc(hidden)]
 pub mod request;
+#[doc(hidden)]
 pub mod resources;
+#[doc(hidden)]
 pub mod runtime;
+#[doc(hidden)]
 pub mod session;
+#[doc(hidden)]
 pub mod theme;
+#[doc(hidden)]
 pub mod tools;
 
 pub use args::{CliArgs, CliMode, help_text, parse_args};
