@@ -16,6 +16,7 @@ mod tests {
 
     #[test]
     fn agent_turn_flow_runtime_entrypoint_exists() {
-        let _flow = AgentTurnFlow;
+        let _flow = AgentTurnFlow::new().expect("agent turn flow should build");
+        assert_eq!(AgentTurnFlow::node_ids()[0], "start_turn");
     }
 }
