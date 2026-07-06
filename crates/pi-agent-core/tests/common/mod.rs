@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, deprecated)]
 
 use async_stream::stream;
 use pi_ai::providers::faux::FauxResponse;

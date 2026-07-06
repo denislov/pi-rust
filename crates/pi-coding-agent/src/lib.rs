@@ -102,6 +102,7 @@ pub mod api {
 }
 
 #[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[allow(deprecated)]
 pub(crate) mod test_support {
     use std::ffi::{OsStr, OsString};
     use std::sync::{Arc, Mutex, MutexGuard};

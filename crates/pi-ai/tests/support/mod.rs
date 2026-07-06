@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex, MutexGuard};
 

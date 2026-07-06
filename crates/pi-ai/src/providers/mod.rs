@@ -81,6 +81,7 @@ pub fn register_builtins_into(registry: &ProviderRegistry) {
 
 /// Register all built-in providers in the global registry.
 /// Call this once at startup.
+#[allow(deprecated)]
 #[deprecated(
     note = "use register_builtins_into with a scoped ProviderRegistry or AiClient::register_builtins"
 )]

@@ -26,6 +26,7 @@ pub(crate) fn register_builtin_providers_for_global_runtime() {
     pi_ai::providers::register_builtins();
 }
 
+#[allow(deprecated)]
 pub(crate) fn stream_model_for_global_runtime(
     runtime: &RuntimeSnapshot,
     context: Context,

@@ -264,6 +264,7 @@ fn builtin_provider_catalog_is_stable_and_sorted() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn scoped_ai_client_streams_without_global_registration() {
     let client = AiClient::new();
     let model = scoped_model("scoped-only-api", "scoped-provider");

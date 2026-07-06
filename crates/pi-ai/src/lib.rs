@@ -19,10 +19,12 @@ pub mod util;
 
 pub use models::{all_models, calculate_cost, get_model, get_models, get_providers, lookup_model};
 pub use providers::{builtin_provider_apis, register_builtins_into};
+#[allow(deprecated)]
 #[deprecated(
     note = "use AiClient or ProviderRegistry for scoped provider runtime registration"
 )]
 pub use registry::register;
+#[allow(deprecated)]
 #[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime streaming")]
 pub use registry::stream_model;
 pub use registry::{

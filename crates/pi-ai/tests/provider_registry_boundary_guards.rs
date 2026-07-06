@@ -192,6 +192,31 @@ fn pi_ai_api_facade_keeps_global_provider_runtime_helpers_out() {
 }
 
 #[test]
+fn registry_global_runtime_helpers_are_deprecated_compatibility_functions() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let registry_source =
+        fs::read_to_string(crate_root.join("src/registry.rs")).expect("read pi-ai registry.rs");
+
+    for helper in [
+        "pub fn register(api: &str",
+        "pub fn unregister(api: &str",
+        "pub fn lookup(api: &str",
+        "pub fn stream_model(model: &Model",
+    ] {
+        let index = registry_source
+            .find(helper)
+            .unwrap_or_else(|| panic!("global registry helper should exist: {helper}"));
+        let preceding = &registry_source[index.saturating_sub(360)..index];
+        assert!(
+            preceding.contains("#[deprecated(")
+                && preceding.contains("AiClient")
+                && preceding.contains("ProviderRegistry"),
+            "global registry helper `{helper}` should be deprecated with scoped AiClient/ProviderRegistry replacement guidance"
+        );
+    }
+}
+
+#[test]
 fn pi_ai_root_global_runtime_helpers_are_deprecated_compatibility_exports() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lib_source = fs::read_to_string(crate_root.join("src/lib.rs")).expect("read pi-ai lib.rs");

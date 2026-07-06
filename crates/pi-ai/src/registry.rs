@@ -355,14 +355,17 @@ impl AiClient {
 
 static REGISTRY: LazyLock<ProviderRegistry> = LazyLock::new(ProviderRegistry::new);
 
+#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime registration")]
 pub fn register(api: &str, provider: Arc<dyn ApiProvider>) {
     REGISTRY.register(api, provider);
 }
 
+#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime state")]
 pub fn unregister(api: &str) {
     REGISTRY.unregister(api);
 }
 
+#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime lookup")]
 pub fn lookup(api: &str) -> Option<Arc<dyn ApiProvider>> {
     REGISTRY.lookup(api)
 }
@@ -370,6 +373,7 @@ pub fn lookup(api: &str) -> Option<Arc<dyn ApiProvider>> {
 /// Top-level entry point: resolves provider by model.api, injects env API key
 /// if not provided, delegates to provider.stream(). Returns a stream that
 /// immediately yields Error on unknown api.
+#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime streaming")]
 pub fn stream_model(model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream {
     REGISTRY.stream_model(model, ctx, opts)
 }
@@ -387,6 +391,7 @@ fn unknown_provider_stream(api: String) -> EventStream {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::types::{AssistantMessage, ModelCost, ModelInput};

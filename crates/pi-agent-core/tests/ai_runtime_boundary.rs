@@ -24,6 +24,30 @@ fn global_stream_model_calls_stay_behind_ai_runtime_boundary() {
 }
 
 #[test]
+fn ai_runtime_global_streaming_boundary_acknowledges_deprecated_helper() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ai_runtime =
+        fs::read_to_string(crate_root.join("src/ai_runtime.rs")).expect("read ai runtime source");
+
+    let lines = ai_runtime.lines().collect::<Vec<_>>();
+    let function_index = lines
+        .iter()
+        .position(|line| line.contains("fn stream_model_with_global_runtime("))
+        .expect("ai runtime compatibility boundary should exist");
+    let preceding = lines[..function_index]
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .copied()
+        .unwrap_or_default();
+    assert_eq!(
+        preceding.trim(),
+        "#[allow(deprecated)]",
+        "the only allowed core global streaming boundary should explicitly acknowledge the deprecated pi-ai global helper"
+    );
+}
+
+#[test]
 fn examples_using_global_provider_runtime_are_explicit_compatibility_examples() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = crate_root

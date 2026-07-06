@@ -202,6 +202,33 @@ fn collect_source_violations(
 }
 
 #[test]
+fn runtime_global_stream_model_boundary_acknowledges_deprecated_helper() {
+    let scan = SourceScan::new();
+    let runtime_service = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/runtime_service.rs"),
+    )
+    .expect("read runtime service source");
+
+    let lines = runtime_service.lines().collect::<Vec<_>>();
+    let function_index = lines
+        .iter()
+        .position(|line| line.contains("fn stream_model_for_global_runtime("))
+        .expect("runtime streaming compatibility boundary should exist");
+    let preceding = lines[..function_index]
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .copied()
+        .unwrap_or_default();
+    assert_eq!(
+        preceding.trim(),
+        "#[allow(deprecated)]",
+        "the only allowed product global streaming boundary should explicitly acknowledge the deprecated pi-ai global helper"
+    );
+}
+
+#[test]
 fn runtime_global_builtin_registration_boundary_acknowledges_deprecated_helper() {
     let scan = SourceScan::new();
     let runtime_service = fs::read_to_string(
