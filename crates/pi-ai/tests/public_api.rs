@@ -4,13 +4,13 @@ use pi_ai::api::{
     AssistantMessageEvent, CacheControlFormat, ContentBlock, Context, Cost, EventStream,
     ImageContent, ImageInput, ImageOutput, ImagesContext, ImagesModel, ImagesModelCost,
     ImagesModelOutput, ImagesUsage, Message, Model, ModelCompat, ModelCost, ModelInput,
-    OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting, ProviderAuthResolver,
-    ProviderError, ProviderErrorKind, ProviderPayloadHook, ProviderPayloadHookFuture,
-    ProviderRegistry, ProviderResponseHook, ProviderResponseHookFuture, ProviderResponseInfo,
-    ProviderStreamHooks, RetryConfig, StopReason, StreamOptions, TextContent, ThinkingConfig,
-    ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue, Tool, Usage, VercelGatewayRouting,
-    all_models, builtin_provider_apis, calculate_cost, complete, env_api_key, get_model,
-    get_models, get_providers, is_retryable_status, lookup_model, parse_retry_after_ms,
+    OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting, ProviderAuth,
+    ProviderAuthResolver, ProviderError, ProviderErrorKind, ProviderPayloadHook,
+    ProviderPayloadHookFuture, ProviderRegistry, ProviderResponseHook, ProviderResponseHookFuture,
+    ProviderResponseInfo, ProviderStreamHooks, RetryConfig, StopReason, StreamOptions, TextContent,
+    ThinkingConfig, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue, Tool, Usage,
+    VercelGatewayRouting, all_models, builtin_provider_apis, calculate_cost, complete, env_api_key,
+    get_model, get_models, get_providers, is_retryable_status, lookup_model, parse_retry_after_ms,
     register_builtins_into,
 };
 use std::sync::{Arc, Mutex};
@@ -325,11 +325,83 @@ async fn scoped_ai_client_uses_injected_auth_resolver() {
     );
 }
 
+#[tokio::test]
+async fn scoped_ai_client_applies_injected_auth_material() {
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(RichAuthResolver));
+    let model = scoped_model("scoped-auth-material-api", "scoped-provider");
+    client.register_provider(
+        "scoped-auth-material-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(
+        &model,
+        empty_context(),
+        Some(StreamOptions {
+            headers: Some(serde_json::json!({
+                "x-explicit": "user",
+                "x-auth": "explicit-overrides-auth",
+            })),
+            azure_api_version: Some("2026-01-01".into()),
+            ..StreamOptions::default()
+        }),
+    ))
+    .await
+    .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive stream options");
+    assert_eq!(options.api_key.as_deref(), Some("rich-key:scoped-provider"));
+    assert_eq!(
+        options.azure_base_url.as_deref(),
+        Some("https://scoped-resource.openai.azure.com/openai/v1")
+    );
+    assert_eq!(options.azure_api_version.as_deref(), Some("2026-01-01"));
+    assert_eq!(options.bedrock_region.as_deref(), Some("us-test-1"));
+    assert_eq!(
+        options.bedrock_bearer_token.as_deref(),
+        Some("bedrock-token")
+    );
+    let headers = options
+        .headers
+        .as_ref()
+        .and_then(|headers| headers.as_object())
+        .expect("merged auth headers should be an object");
+    assert_eq!(headers["x-auth"], "explicit-overrides-auth");
+    assert_eq!(headers["x-extra"], "auth-extra");
+    assert_eq!(headers["x-explicit"], "user");
+}
+
 struct StaticAuthResolver;
 
 impl ProviderAuthResolver for StaticAuthResolver {
     fn resolve_api_key(&self, provider: &str) -> Option<String> {
         Some(format!("scoped-key:{provider}"))
+    }
+}
+
+struct RichAuthResolver;
+
+impl ProviderAuthResolver for RichAuthResolver {
+    fn resolve_auth(&self, provider: &str) -> ProviderAuth {
+        ProviderAuth {
+            api_key: Some(format!("rich-key:{provider}")),
+            headers: Some(serde_json::json!({
+                "x-auth": "auth-default",
+                "x-extra": "auth-extra",
+            })),
+            azure_base_url: Some("https://scoped-resource.openai.azure.com/openai/v1".into()),
+            azure_api_version: Some("2025-12-01".into()),
+            bedrock_region: Some("us-test-1".into()),
+            bedrock_bearer_token: Some("bedrock-token".into()),
+            ..ProviderAuth::default()
+        }
     }
 }
 
@@ -363,6 +435,27 @@ impl ApiProvider for StaticProvider {
         let mut message = AssistantMessage::empty(&model.api, &model.id);
         message.content.push(ContentBlock::Text {
             text,
+            text_signature: None,
+        });
+        Box::pin(stream! {
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
+struct RecordingOptionsProvider {
+    seen_options: Arc<Mutex<Option<StreamOptions>>>,
+}
+
+impl ApiProvider for RecordingOptionsProvider {
+    fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+        *self.seen_options.lock().unwrap() = opts;
+        let mut message = AssistantMessage::empty(&model.api, &model.id);
+        message.content.push(ContentBlock::Text {
+            text: "recorded".into(),
             text_signature: None,
         });
         Box::pin(stream! {

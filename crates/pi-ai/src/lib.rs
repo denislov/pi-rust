@@ -26,7 +26,8 @@ pub use registry::register;
 #[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime streaming")]
 pub use registry::stream_model;
 pub use registry::{
-    AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuthResolver, ProviderRegistry,
+    AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuth, ProviderAuthResolver,
+    ProviderRegistry,
 };
 pub use stream::{EventStream, complete};
 pub use types::{
@@ -57,7 +58,8 @@ pub mod api {
     };
     pub use crate::providers::{builtin_provider_apis, register_builtins_into};
     pub use crate::registry::{
-        AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuthResolver, ProviderRegistry,
+        AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuth, ProviderAuthResolver,
+        ProviderRegistry,
     };
     pub use crate::stream::{EventStream, complete};
     pub use crate::transport::error::{ProviderError, ProviderErrorKind};

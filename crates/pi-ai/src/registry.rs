@@ -11,8 +11,30 @@ pub trait ApiProvider: Send + Sync {
     fn stream(&self, model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream;
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProviderAuth {
+    pub api_key: Option<String>,
+    pub headers: Option<serde_json::Value>,
+    pub azure_api_version: Option<String>,
+    pub azure_resource_name: Option<String>,
+    pub azure_base_url: Option<String>,
+    pub azure_deployment_name: Option<String>,
+    pub bedrock_region: Option<String>,
+    pub bedrock_profile: Option<String>,
+    pub bedrock_bearer_token: Option<String>,
+}
+
 pub trait ProviderAuthResolver: Send + Sync {
-    fn resolve_api_key(&self, provider: &str) -> Option<String>;
+    fn resolve_api_key(&self, _provider: &str) -> Option<String> {
+        None
+    }
+
+    fn resolve_auth(&self, provider: &str) -> ProviderAuth {
+        ProviderAuth {
+            api_key: self.resolve_api_key(provider),
+            ..ProviderAuth::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -80,22 +102,56 @@ impl ProviderRegistry {
             None => return unknown_provider_stream(api),
         };
 
-        match opts.as_mut() {
-            Some(options) if options.api_key.is_none() => {
-                options.api_key = auth_resolver.resolve_api_key(&model.provider);
-            }
-            None => {
-                if let Some(api_key) = auth_resolver.resolve_api_key(&model.provider) {
-                    opts = Some(StreamOptions {
-                        api_key: Some(api_key),
-                        ..StreamOptions::default()
-                    });
-                }
-            }
-            _ => {}
-        }
+        opts = apply_auth_material(opts, auth_resolver.resolve_auth(&model.provider));
 
         provider.stream(model, ctx, opts)
+    }
+}
+
+fn apply_auth_material(
+    mut opts: Option<StreamOptions>,
+    auth: ProviderAuth,
+) -> Option<StreamOptions> {
+    if auth == ProviderAuth::default() {
+        return opts;
+    }
+
+    let options = opts.get_or_insert_with(StreamOptions::default);
+    fill_if_none(&mut options.api_key, auth.api_key);
+    fill_if_none(&mut options.azure_api_version, auth.azure_api_version);
+    fill_if_none(&mut options.azure_resource_name, auth.azure_resource_name);
+    fill_if_none(&mut options.azure_base_url, auth.azure_base_url);
+    fill_if_none(
+        &mut options.azure_deployment_name,
+        auth.azure_deployment_name,
+    );
+    fill_if_none(&mut options.bedrock_region, auth.bedrock_region);
+    fill_if_none(&mut options.bedrock_profile, auth.bedrock_profile);
+    fill_if_none(&mut options.bedrock_bearer_token, auth.bedrock_bearer_token);
+    options.headers = merge_auth_headers(auth.headers, options.headers.take());
+    opts
+}
+
+fn fill_if_none(target: &mut Option<String>, value: Option<String>) {
+    if target.is_none() {
+        *target = value;
+    }
+}
+
+fn merge_auth_headers(
+    auth_headers: Option<serde_json::Value>,
+    option_headers: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    match (auth_headers, option_headers) {
+        (None, explicit) => explicit,
+        (auth, None) => auth,
+        (Some(serde_json::Value::Object(mut auth)), Some(serde_json::Value::Object(explicit))) => {
+            for (key, value) in explicit {
+                auth.insert(key, value);
+            }
+            Some(serde_json::Value::Object(auth))
+        }
+        (_, explicit @ Some(_)) => explicit,
     }
 }
 
