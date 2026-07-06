@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
+use std::sync::{Arc, RwLock};
 
+use futures::channel::mpsc;
 use pi_ai::types::{AssistantMessage, Context, StreamOptions};
 use tokio_util::sync::CancellationToken;
 
@@ -52,6 +54,8 @@ pub struct AgentTurnContext {
     pub should_finish: bool,
     pub has_more_queued_input: bool,
     pub events: Vec<AgentEvent>,
+    pub(crate) live_state: Option<Arc<RwLock<AgentState>>>,
+    event_sender: Option<mpsc::UnboundedSender<AgentEvent>>,
 }
 
 impl AgentTurnContext {
@@ -86,21 +90,71 @@ impl AgentTurnContext {
             should_finish: false,
             has_more_queued_input: false,
             events: Vec::new(),
+            live_state: None,
+            event_sender: None,
         }
     }
 
+    pub(crate) fn attach_runtime(
+        &mut self,
+        live_state: Arc<RwLock<AgentState>>,
+        event_sender: mpsc::UnboundedSender<AgentEvent>,
+    ) {
+        self.live_state = Some(live_state);
+        self.event_sender = Some(event_sender);
+    }
+
+    pub(crate) fn emit(&mut self, event: AgentEvent) {
+        if let Some(sender) = &self.event_sender {
+            let _ = sender.unbounded_send(event.clone());
+        }
+        self.events.push(event);
+    }
+
+    pub(crate) fn sync_live_queues(&mut self) {
+        let Some(live_state) = &self.live_state else {
+            return;
+        };
+        let mut state = live_state.write().unwrap();
+        self.steering_queue.extend(state.steering_queue.drain(..));
+        self.follow_up_queue.extend(state.follow_up_queue.drain(..));
+    }
+
+    pub(crate) fn take_provider_request_override(
+        &mut self,
+    ) -> Option<AgentTurnProviderRequestOverride> {
+        if let Some(live_state) = &self.live_state {
+            let mut state = live_state.write().unwrap();
+            return state.provider_request_override.take().map(|request| {
+                AgentTurnProviderRequestOverride {
+                    context: request.context,
+                    stream_options: request.stream_options,
+                }
+            });
+        }
+
+        let request = self.provider_request_override.take();
+        if request.is_some() {
+            self.provider_request_override_consumed = true;
+        }
+        request
+    }
+
     pub(crate) fn apply_to_state(&self, state: &mut AgentState) {
-        let mut config = self.config.clone();
-        config.resources = self.resources.clone();
+        let mut steering_queue = self.steering_queue.clone();
+        steering_queue.extend(state.steering_queue.drain(..));
+        let mut follow_up_queue = self.follow_up_queue.clone();
+        follow_up_queue.extend(state.follow_up_queue.drain(..));
 
         state.messages = self.messages.clone();
-        state.tools = self.tools.clone();
-        state.config = config;
+        state.config.model = self.config.model.clone();
+        state.config.stream_options = self.config.stream_options.clone();
+        state.config.thinking_level = self.config.thinking_level;
         state.cancel_token = self.cancel_token.clone();
-        state.steering_queue = self.steering_queue.clone();
-        state.follow_up_queue = self.follow_up_queue.clone();
+        state.steering_queue = steering_queue;
+        state.follow_up_queue = follow_up_queue;
 
-        if self.provider_request_override_consumed {
+        if self.live_state.is_none() && self.provider_request_override_consumed {
             state.provider_request_override = None;
         }
     }

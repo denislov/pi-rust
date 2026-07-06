@@ -128,30 +128,46 @@ impl AgentTurnFlow {
 
             loop {
                 let mut context = {
-                    let state = state.read().unwrap();
-                    AgentTurnContext::from_state(&state)
+                    let mut state = state.write().unwrap();
+                    let context = AgentTurnContext::from_state(&state);
+                    state.steering_queue.clear();
+                    state.follow_up_queue.clear();
+                    context
                 };
                 context.turn = turn;
                 let cancel = context.cancel_token.clone();
+                let (event_sender, mut event_receiver) = mpsc::unbounded();
+                context.attach_runtime(Arc::clone(&state), event_sender);
 
-                let outcome = match flow
-                    .run_with_options(
-                        &mut context,
-                        FlowRunOptions {
-                            cancel: Some(cancel),
-                            ..FlowRunOptions::default()
-                        },
-                    )
-                    .await
-                {
+                let mut run = Box::pin(flow.run_with_options(
+                    &mut context,
+                    FlowRunOptions {
+                        cancel: Some(cancel),
+                        ..FlowRunOptions::default()
+                    },
+                ))
+                .fuse();
+                let outcome_result = loop {
+                    futures::select! {
+                        event = event_receiver.next().fuse() => {
+                            if let Some(event) = event {
+                                yield event;
+                            }
+                        }
+                        outcome = &mut run => break outcome,
+                    }
+                };
+                drop(run);
+                while let Some(Some(event)) = event_receiver.next().now_or_never() {
+                    yield event;
+                }
+
+                let outcome = match outcome_result {
                     Ok(outcome) => outcome,
                     Err(error) => {
                         {
                             let mut state = state.write().unwrap();
                             context.apply_to_state(&mut state);
-                        }
-                        for event in std::mem::take(&mut context.events) {
-                            yield event;
                         }
                         yield AgentEvent::AgentError {
                             error: flow_error_message(error),
@@ -165,10 +181,6 @@ impl AgentTurnFlow {
                 {
                     let mut state = state.write().unwrap();
                     context.apply_to_state(&mut state);
-                }
-
-                for event in std::mem::take(&mut context.events) {
-                    yield event;
                 }
 
                 match outcome.last_action.as_str() {

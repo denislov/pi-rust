@@ -5,9 +5,15 @@ use pi_agent_core::{
     Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput, ToolExecutionMode,
 };
 use pi_ai::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Model, ModelCost, ModelInput, StopReason,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
+    ModelInput, StopReason,
 };
-use std::sync::Arc;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
 
 fn test_model(api_key: &str) -> Model {
     Model {
@@ -42,6 +48,42 @@ fn test_config(api_key: &str) -> AgentConfig {
     }
 }
 
+fn done_text_message(response_id: &str, text: &str) -> AssistantMessage {
+    let mut message = AssistantMessage::empty("test", "test-model");
+    message.response_id = Some(response_id.into());
+    message.content.push(ContentBlock::Text {
+        text: text.into(),
+        text_signature: None,
+    });
+    message.stop_reason = StopReason::Stop;
+    message
+}
+
+fn tool_use_message(response_id: &str, tool_id: &str, tool_name: &str) -> AssistantMessage {
+    let mut message = AssistantMessage::empty("test", "test-model");
+    message.response_id = Some(response_id.into());
+    message.content.push(ContentBlock::ToolCall {
+        id: tool_id.into(),
+        name: tool_name.into(),
+        arguments: serde_json::json!({}),
+        thought_signature: None,
+    });
+    message.stop_reason = StopReason::ToolUse;
+    message
+}
+
+fn context_contains_user_text(context: &Context, expected: &str) -> bool {
+    context.messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::User { content }
+                if content.iter().any(|block| {
+                    matches!(block, ContentBlock::Text { text, .. } if text == expected)
+                })
+        )
+    })
+}
+
 #[tokio::test]
 async fn single_turn_text_response() {
     let api_key = "test-api-1";
@@ -70,6 +112,288 @@ async fn single_turn_text_response() {
     assert_eq!(msgs.len(), 2); // UserText + Assistant
     assert!(matches!(&msgs[0], AgentMessage::UserText { .. }));
     assert!(matches!(&msgs[1], AgentMessage::Assistant { .. }));
+}
+
+#[tokio::test]
+async fn llm_events_stream_before_provider_done() {
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+    let mut config = test_config("live-stream-provider");
+    config.provider_streamer = Some(Arc::new(move |_model, _context, _opts| {
+        let release_rx = release_rx.clone();
+        Box::pin(async_stream::stream! {
+            let mut partial = AssistantMessage::empty("test", "test-model");
+            partial.content.push(ContentBlock::Text {
+                text: "partial".into(),
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "partial".into(),
+                partial: partial.clone(),
+            };
+            let release_rx = {
+                release_rx
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("release receiver should be available")
+            };
+            let _ = release_rx.await;
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message: done_text_message("resp_live_stream", "done"),
+            };
+        })
+    }));
+
+    let agent = Agent::new(config);
+    let mut stream = agent.prompt("hi");
+
+    tokio::time::timeout(Duration::from_millis(200), async {
+        while let Some(event) = stream.next().await {
+            if matches!(
+                event,
+                AgentEvent::LlmEvent(AssistantMessageEvent::TextDelta { delta, .. })
+                    if delta == "partial"
+            ) {
+                return;
+            }
+        }
+        panic!("stream ended before partial LLM event");
+    })
+    .await
+    .expect("partial LLM event should arrive before provider completes");
+
+    release_tx.send(()).unwrap();
+    while stream.next().await.is_some() {}
+}
+
+#[tokio::test]
+async fn follow_up_queued_during_provider_turn_is_not_lost_and_continues() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_streamer = calls.clone();
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel::<()>();
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+    let mut config = test_config("live-follow-up-provider");
+    config.provider_streamer = Some(Arc::new(move |_model, context, _opts| {
+        let call = calls_for_streamer.fetch_add(1, Ordering::SeqCst) + 1;
+        let started_tx = started_tx.clone();
+        let release_rx = release_rx.clone();
+        Box::pin(async_stream::stream! {
+            if call == 1 {
+                let _ = started_tx.send(());
+                let release_rx = {
+                    release_rx
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .expect("release receiver should be available")
+                };
+                let _ = release_rx.await;
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: done_text_message("resp_first", "first"),
+                };
+            } else {
+                assert!(
+                    context_contains_user_text(&context, "queued during provider"),
+                    "follow-up queued while provider awaited should reach the next provider call"
+                );
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: done_text_message("resp_second", "second"),
+                };
+            }
+        })
+    }));
+
+    let agent = Agent::new(config);
+    let collect_task = {
+        let stream = agent.prompt("first");
+        tokio::spawn(async move { stream.collect::<Vec<_>>().await })
+    };
+
+    started_rx
+        .recv()
+        .await
+        .expect("first provider call should start");
+    agent.follow_up("queued during provider");
+    release_tx.send(()).unwrap();
+
+    let events = collect_task.await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::AgentDone { message }
+                if message.content.iter().any(|block| {
+                    matches!(block, ContentBlock::Text { text, .. } if text == "second")
+                })
+        )
+    }));
+    assert!(agent.messages().iter().any(|message| {
+        matches!(message, AgentMessage::UserText { text, .. } if text == "queued during provider")
+    }));
+}
+
+#[tokio::test]
+async fn steer_queued_during_tool_turn_is_not_lost_before_next_provider_call() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_streamer = calls.clone();
+    let saw_steer = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw_steer_for_streamer = saw_steer.clone();
+    let mut config = test_config("live-steer-tool");
+    config.provider_streamer = Some(Arc::new(move |_model, context, _opts| {
+        let call = calls_for_streamer.fetch_add(1, Ordering::SeqCst) + 1;
+        let saw_steer_for_streamer = saw_steer_for_streamer.clone();
+        Box::pin(async_stream::stream! {
+            if call == 1 {
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::ToolUse,
+                    message: tool_use_message("resp_tool", "tool_1", "blocking"),
+                };
+            } else {
+                if context_contains_user_text(&context, "steered during tool") {
+                    saw_steer_for_streamer.store(true, Ordering::SeqCst);
+                }
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: done_text_message("resp_done", "done"),
+                };
+            }
+        })
+    }));
+
+    let agent = Agent::new(config);
+    let (tool_started_tx, mut tool_started_rx) = mpsc::unbounded_channel::<()>();
+    let (tool_release_tx, tool_release_rx) = oneshot::channel::<()>();
+    let tool_release_rx = Arc::new(Mutex::new(Some(tool_release_rx)));
+    agent.add_tool(AgentTool {
+        name: "blocking".into(),
+        description: "blocks until released".into(),
+        parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
+        execute: Arc::new(move |_, _on_update| {
+            let tool_started_tx = tool_started_tx.clone();
+            let tool_release_rx = tool_release_rx.clone();
+            Box::pin(async move {
+                let _ = tool_started_tx.send(());
+                let release_rx = {
+                    tool_release_rx
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .expect("tool release receiver should be available")
+                };
+                let _ = release_rx.await;
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
+                    text: "tool done".into(),
+                    text_signature: None,
+                }]))
+            })
+        }),
+    });
+
+    let collect_task = {
+        let stream = agent.prompt("use tool");
+        tokio::spawn(async move { stream.collect::<Vec<_>>().await })
+    };
+
+    tool_started_rx.recv().await.expect("tool should start");
+    agent.steer("steered during tool");
+    tool_release_tx.send(()).unwrap();
+    let _events = collect_task.await.unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(
+        saw_steer.load(Ordering::SeqCst),
+        "steer queued while tool awaited should reach the next provider call"
+    );
+}
+
+#[tokio::test]
+async fn provider_override_set_during_inflight_turn_survives_current_writeback() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_streamer = calls.clone();
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel::<()>();
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+    let observed_system_prompts = Arc::new(Mutex::new(Vec::new()));
+    let observed_for_streamer = observed_system_prompts.clone();
+    let mut config = test_config("override-race-provider");
+    config.system_prompt = None;
+    config.provider_streamer = Some(Arc::new(move |_model, context, _opts| {
+        let call = calls_for_streamer.fetch_add(1, Ordering::SeqCst) + 1;
+        observed_for_streamer
+            .lock()
+            .unwrap()
+            .push(context.system_prompt.clone());
+        let started_tx = started_tx.clone();
+        let release_rx = release_rx.clone();
+        Box::pin(async_stream::stream! {
+            if call == 1 {
+                let _ = started_tx.send(());
+                let release_rx = {
+                    release_rx
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .expect("release receiver should be available")
+                };
+                let _ = release_rx.await;
+            }
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message: done_text_message(&format!("resp_{call}"), "done"),
+            };
+        })
+    }));
+
+    let agent = Agent::new(config);
+    agent.add_message(AgentMessage::UserText {
+        message_id: "user_0".into(),
+        text: "first".into(),
+    });
+    agent.set_provider_request_override(
+        Context {
+            system_prompt: Some("initial override".into()),
+            messages: vec![],
+            tools: None,
+        },
+        None,
+    );
+
+    let collect_task = {
+        let stream = agent.run().expect("agent should run");
+        tokio::spawn(async move { stream.collect::<Vec<_>>().await })
+    };
+    started_rx
+        .recv()
+        .await
+        .expect("first provider call should start");
+    agent.set_provider_request_override(
+        Context {
+            system_prompt: Some("new override".into()),
+            messages: vec![],
+            tools: None,
+        },
+        None,
+    );
+    release_tx.send(()).unwrap();
+    let _ = collect_task.await.unwrap();
+
+    let second_events: Vec<_> = agent.prompt("second").collect().await;
+    assert!(
+        second_events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentDone { .. }))
+    );
+
+    let observed = observed_system_prompts.lock().unwrap().clone();
+    assert_eq!(observed.first(), Some(&Some("initial override".into())));
+    assert_eq!(observed.get(1), Some(&Some("new override".into())));
 }
 
 #[tokio::test]
