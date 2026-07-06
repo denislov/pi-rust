@@ -129,6 +129,13 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
     }
 
     if root.status == InteractiveStatus::Idle
+        && root.has_pending_delegation_rejection_reason()
+        && root.handle_pending_delegation_rejection_reason_input(event)
+    {
+        return;
+    }
+
+    if root.status == InteractiveStatus::Idle
         && root.has_pending_profile_task()
         && root.handle_pending_profile_task_input(event)
     {

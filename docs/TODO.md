@@ -230,6 +230,7 @@ Plan: [Lua host capabilities metadata](superpowers/plans/2026-07-04-lua-host-cap
 
 ## Progress Log
 
+- 2026-07-05: Delegation confirmation menu custom rejection reason follow-up completed. Interactive `/delegations` now keeps lowercase `r` for default rejection and adds uppercase `R` to collect a custom reason before queueing the existing session-owned rejection command; `docs/agent-profiles.md` no longer lists this as a follow-up.
 - 2026-07-05: Public API boundary gate closure audit completed. `pi-ai`, `pi-agent-core`, `pi-coding-agent`, and `pi-tui` now have closed P0 public API boundary TODOs backed by facade smoke tests, source guards for migration-private root modules, scoped/compatibility boundary guards, and focused public API boundary verification.
 - 2026-07-05: `pi-agent-core` public API boundary hardening advanced. Root public modules remain source-compatible but are now `#[doc(hidden)]` migration-private surfaces, while `pi_agent_core::api` stays the stable low-level runtime facade; `api_boundary_guards` prevents unmarked root public modules from returning.
 - 2026-07-05: Phase 6 closure audit completed. The active Phase 6 section has no remaining `[ ]`/`[~]` workflow items, so the top-level advanced Flow workflows item is now closed; future advanced workflow expansion should start from a new design/phase instead of reopening this checklist item.

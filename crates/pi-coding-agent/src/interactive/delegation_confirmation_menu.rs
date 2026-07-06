@@ -32,6 +32,10 @@ pub(super) enum DelegationConfirmationMenuOutcome {
         operation_id: String,
         tool_call_id: String,
     },
+    RejectWithReason {
+        operation_id: String,
+        tool_call_id: String,
+    },
 }
 
 impl DelegationConfirmationMenuState {
@@ -100,7 +104,7 @@ impl DelegationConfirmationMenuState {
         lines.push(fit_line(
             &paint_with(
                 &format!(
-                    "({}/{}) Enter/a approve · r reject · Esc close",
+                    "({}/{}) Enter/a approve · r reject · R reject with reason · Esc close",
                     self.selected + 1,
                     self.pending.len()
                 ),
@@ -154,7 +158,8 @@ impl DelegationConfirmationMenuState {
 
         match key_from_event(event) {
             Some(Key::Char(text)) if text.eq_ignore_ascii_case("a") => self.selected_outcome(true),
-            Some(Key::Char(text)) if text.eq_ignore_ascii_case("r") => self.selected_outcome(false),
+            Some(Key::Char(text)) if text == "R" => self.selected_reject_with_reason_outcome(),
+            Some(Key::Char(text)) if text == "r" => self.selected_outcome(false),
             _ => DelegationConfirmationMenuOutcome::None,
         }
     }
@@ -173,6 +178,16 @@ impl DelegationConfirmationMenuState {
                 operation_id: item.operation_id.clone(),
                 tool_call_id: item.tool_call_id.clone(),
             }
+        }
+    }
+
+    fn selected_reject_with_reason_outcome(&self) -> DelegationConfirmationMenuOutcome {
+        let Some(item) = self.pending.get(self.selected) else {
+            return DelegationConfirmationMenuOutcome::None;
+        };
+        DelegationConfirmationMenuOutcome::RejectWithReason {
+            operation_id: item.operation_id.clone(),
+            tool_call_id: item.tool_call_id.clone(),
         }
     }
 }

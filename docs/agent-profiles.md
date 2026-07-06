@@ -129,7 +129,7 @@ Semantics:
 - `/teams` lists resolved team profiles.
 - `/team` opens an interactive team menu. `Info` shows discovered teams and `Run` selects a team profile then asks for one task.
 - `/team:<team-id> <task>` runs one supervised team invocation without changing the default profile.
-- `/delegations` and `/delegation list` open an interactive confirmation menu for delegation requests currently waiting on the session owner. `Enter`/`a` approves the selected request; `r` rejects it with the default rejection reason.
+- `/delegations` and `/delegation list` open an interactive confirmation menu for delegation requests currently waiting on the session owner. `Enter`/`a` approves the selected request; `r` rejects it with the default rejection reason; `R` asks for a custom rejection reason before rejecting.
 - `/delegation approve <tool-call-id>` approves the unique pending request with that tool call id without opening the menu. Use `/delegation approve <operation-id> <tool-call-id>` when multiple pending requests share a tool call id.
 - `/delegation reject <tool-call-id> [reason]` rejects the unique pending request with that tool call id without opening the menu. A rejection emits a product event and does not run delegated work.
 - Ordinary text prompts run with the current session default agent profile.
@@ -181,9 +181,5 @@ Current behavior:
 - The protocol adapter serializes these as `delegation_requested`, `delegation_rejected`, `delegation_confirmation_required`, `delegation_approved`, `delegation_started`, `delegation_completed`, and `delegation_failed`.
 - The interactive event bridge renders delegation as folded transcript blocks: requested/running/completed/failed/rejected states stay visible in the parent transcript, while detailed delegated work remains available through delegated operation correlation rather than being appended as ordinary parent conversation.
 - Confirmation-required notices include the exact approve/reject slash commands, while `/delegations` provides the menu-driven approval path.
-
-Still follow-up:
-
-- Optional custom rejection reason entry from the interactive confirmation menu.
 
 Profiles and delegation tools do not expose raw `CodingAgentSession`, session storage, runtime service, provider internals, filesystem handles, shell handles, or Flow graph mutation APIs.

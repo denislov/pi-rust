@@ -3536,6 +3536,44 @@ members = ["coder"]
     }
 
     #[test]
+    fn delegation_confirmation_menu_accepts_custom_rejection_reason() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.open_delegation_confirmation_menu(vec![pending_delegation_confirmation(
+            "op_3",
+            "tool_delegate_agent",
+            "write migration",
+        )]);
+
+        root.handle_input(&key_event("R"));
+        let rendered = root.render(80).join("\n");
+        assert!(
+            rendered.contains("Delegation rejection reason"),
+            "{rendered}"
+        );
+
+        type_text(&mut root, "not safe yet");
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(
+            root.take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        let command = root
+            .take_pending_delegation_confirmation_command()
+            .expect("delegation rejection should be queued");
+        let PendingDelegationConfirmationCommand::Reject { selection, reason } = command else {
+            panic!("expected rejection command");
+        };
+        assert_eq!(selection.operation_id.as_deref(), Some("op_3"));
+        assert_eq!(selection.tool_call_id, "tool_delegate_agent");
+        assert_eq!(reason.as_deref(), Some("not safe yet"));
+    }
+
+    #[test]
     fn delegation_approve_command_queues_tool_only_selection() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),

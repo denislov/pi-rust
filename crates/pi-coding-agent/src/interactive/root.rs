@@ -171,6 +171,11 @@ pub(super) enum PendingDelegationConfirmationCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingDelegationRejectionReason {
+    selection: PendingDelegationConfirmationSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PendingPluginUiAction {
     pub(super) action_id: String,
     pub(super) label: String,
@@ -569,6 +574,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_delegation_confirmation_command:
         Option<PendingDelegationConfirmationCommand>,
     delegation_confirmation_menu: Option<DelegationConfirmationMenuState>,
+    pending_delegation_rejection_reason: Option<PendingDelegationRejectionReason>,
     pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
@@ -653,6 +659,7 @@ pub(super) struct InteractiveRenderState {
     session_selection_selected: usize,
     active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
     delegation_confirmation_menu_state: Option<DelegationConfirmationMenuRenderState>,
+    pending_delegation_rejection_reason: Option<PendingDelegationRejectionReason>,
     profile_menu_state: Option<ProfileMenuRenderState>,
     pending_profile_task: Option<PendingProfileTask>,
 }
@@ -745,6 +752,7 @@ impl InteractiveRoot {
             pending_plugin_command_request: None,
             pending_delegation_confirmation_command: None,
             delegation_confirmation_menu: None,
+            pending_delegation_rejection_reason: None,
             pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
             active_plugin_ui_dialog: None,
@@ -1116,6 +1124,7 @@ impl InteractiveRoot {
         pending: Vec<PendingDelegationConfirmation>,
     ) {
         self.delegation_confirmation_menu = Some(DelegationConfirmationMenuState::new(pending));
+        self.pending_delegation_rejection_reason = None;
         self.profile_menu = None;
         self.pending_profile_task = None;
         self.editor.set_text("");
@@ -1167,6 +1176,19 @@ impl InteractiveRoot {
                     });
                 self.action = InteractiveAction::DelegationConfirmation;
             }
+            DelegationConfirmationMenuOutcome::RejectWithReason {
+                operation_id,
+                tool_call_id,
+            } => {
+                self.delegation_confirmation_menu = None;
+                self.pending_delegation_rejection_reason = Some(PendingDelegationRejectionReason {
+                    selection: PendingDelegationConfirmationSelection {
+                        operation_id: Some(operation_id),
+                        tool_call_id,
+                    },
+                });
+                self.editor.set_text("");
+            }
         }
         true
     }
@@ -1182,12 +1204,60 @@ impl InteractiveRoot {
         self.profile_menu.is_some()
     }
 
+    pub(super) fn has_pending_delegation_rejection_reason(&self) -> bool {
+        self.pending_delegation_rejection_reason.is_some()
+    }
+
+    pub(super) fn handle_pending_delegation_rejection_reason_input(
+        &mut self,
+        event: &InputEvent,
+    ) -> bool {
+        let Some(pending_reason) = self.pending_delegation_rejection_reason.clone() else {
+            return false;
+        };
+        if matches_key(event, "escape") || matches_key(event, "ctrl+c") {
+            self.pending_delegation_rejection_reason = None;
+            self.editor.set_text("");
+            self.transcript
+                .push(TranscriptItem::system("Delegation rejection canceled"));
+            return true;
+        }
+
+        let before_text = self.editor.text().to_string();
+        self.editor.handle_input(event);
+        if self.editor.text() != before_text {
+            self.slash_suggestion_selected = 0;
+            self.slash_suggestions_dismissed_for = None;
+        }
+        if let Some(command) = self.take_scroll_command() {
+            let page_rows = self.viewport_height.saturating_sub(2).max(1);
+            match command {
+                TranscriptScrollCommand::PageUp => self.transcript.scroll_page_up(page_rows),
+                TranscriptScrollCommand::PageDown => self.transcript.scroll_page_down(page_rows),
+            }
+        }
+        let Some(text) = self.take_submitted() else {
+            return true;
+        };
+        let reason = text.trim().to_string();
+        self.pending_delegation_confirmation_command =
+            Some(PendingDelegationConfirmationCommand::Reject {
+                selection: pending_reason.selection,
+                reason: (!reason.is_empty()).then_some(reason),
+            });
+        self.pending_delegation_rejection_reason = None;
+        self.editor.set_text("");
+        self.action = InteractiveAction::DelegationConfirmation;
+        true
+    }
+
     pub(super) fn has_pending_profile_task(&self) -> bool {
         self.pending_profile_task.is_some()
     }
 
     pub(super) fn open_agent_menu(&mut self) {
         self.delegation_confirmation_menu = None;
+        self.pending_delegation_rejection_reason = None;
         self.profile_menu = Some(ProfileMenuState::agent());
         self.pending_profile_task = None;
         self.editor.set_text("");
@@ -1197,6 +1267,7 @@ impl InteractiveRoot {
 
     pub(super) fn open_team_menu(&mut self) {
         self.delegation_confirmation_menu = None;
+        self.pending_delegation_rejection_reason = None;
         self.profile_menu = Some(ProfileMenuState::team());
         self.pending_profile_task = None;
         self.editor.set_text("");
@@ -1304,6 +1375,25 @@ impl InteractiveRoot {
         )
     }
 
+    fn render_pending_delegation_rejection_reason(&self, width: usize) -> Vec<String> {
+        let Some(pending_reason) = &self.pending_delegation_rejection_reason else {
+            return Vec::new();
+        };
+        let operation_id = pending_reason
+            .selection
+            .operation_id
+            .as_deref()
+            .unwrap_or("unknown-operation");
+        let text = format!(
+            "Delegation rejection reason for {operation_id} {}: enter reason, then press Enter",
+            pending_reason.selection.tool_call_id
+        );
+        vec![fit_line(
+            &paint_with(&text, &SYSTEM, color_enabled()),
+            width,
+        )]
+    }
+
     fn render_pending_profile_task(&self, width: usize) -> Vec<String> {
         let Some(pending_task) = &self.pending_profile_task else {
             return Vec::new();
@@ -1394,6 +1484,7 @@ impl InteractiveRoot {
             || self.selecting_settings
             || self.selecting_tree
             || self.delegation_confirmation_menu.is_some()
+            || self.pending_delegation_rejection_reason.is_some()
             || self.profile_menu.is_some()
             || self.pending_profile_task.is_some()
         {
@@ -1890,6 +1981,7 @@ impl InteractiveRoot {
                 .delegation_confirmation_menu
                 .as_ref()
                 .map(|menu| menu.render_state()),
+            pending_delegation_rejection_reason: self.pending_delegation_rejection_reason.clone(),
             profile_menu_state: self.profile_menu.as_ref().map(|menu| menu.render_state()),
             pending_profile_task: self.pending_profile_task.clone(),
         }
@@ -1900,6 +1992,7 @@ impl InteractiveRoot {
             || self.selecting_settings
             || self.selecting_session
             || self.delegation_confirmation_menu.is_some()
+            || self.pending_delegation_rejection_reason.is_some()
             || self.profile_menu.is_some()
             || self.pending_profile_task.is_some()
         {
@@ -2374,6 +2467,7 @@ impl Component for InteractiveRoot {
         };
         let mut lines = self.transcript_lines(max_tool_result_lines);
         lines.extend(self.render_editor_box(width));
+        lines.extend(self.render_pending_delegation_rejection_reason(width));
         lines.extend(self.render_pending_profile_task(width));
         if self.selecting_tree {
             if let Some(ref selector) = self.tree_selector {
