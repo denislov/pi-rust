@@ -30,6 +30,24 @@ const AGENT_TURN_FLOW_FAST_TOOL_ADVANCE: Duration =
 const AGENT_TURN_FLOW_REMAINING_TOOL_ADVANCE: Duration =
     Duration::from_millis(AGENT_TURN_FLOW_SLOW_TOOL_DELAY_MS - AGENT_TURN_FLOW_FAST_TOOL_DELAY_MS);
 
+#[test]
+fn agent_turn_flow_exposes_real_graph_shape() {
+    assert_eq!(
+        pi_agent_core::agent_turn_flow::AgentTurnFlow::node_ids(),
+        &[
+            "start_turn",
+            "drain_queued_input",
+            "maybe_compact_runtime_context",
+            "prepare_provider_request",
+            "apply_before_provider_request_hook",
+            "provider_stream",
+            "decide_after_assistant",
+            "maybe_prepare_next_turn",
+            "execute_tools",
+        ]
+    );
+}
+
 #[derive(Clone)]
 struct ToolProbe {
     started: UnboundedSender<String>,
