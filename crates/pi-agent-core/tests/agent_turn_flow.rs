@@ -3,18 +3,22 @@ mod common;
 use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::agent_turn_flow::{
-    AgentTurnContext, DecideStopOrToolsNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
-    PrepareContextNode, ProviderStreamNode,
+    AgentTurnContext, ApplyBeforeProviderRequestHookNode, DecideAfterAssistantNode,
+    DecideStopOrToolsNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
+    MaybePrepareNextTurnNode, PrepareContextNode, PrepareProviderRequestNode, ProviderStreamNode,
+    StartTurnNode,
 };
+use pi_agent_core::api::{AgentLoopTurnUpdate, BeforeProviderRequestResult};
 use pi_agent_core::flow::{Action, Flow};
 use pi_agent_core::{
     AfterToolCallResult, Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool,
     AgentToolOutput, BeforeToolCallResult, CompactionConfig, CompactionSettings, PromptTemplate,
-    Skill, ToolExecutionMode,
+    QueueMode, Skill, ToolExecutionMode,
 };
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason, StreamOptions,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, StopReason,
+    StreamOptions,
 };
 use std::sync::{
     Arc,
@@ -84,6 +88,17 @@ fn text_content(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn stopped_assistant(response_id: &str, text: &str) -> AssistantMessage {
+    let mut message = AssistantMessage::empty("test", "test-model");
+    message.response_id = Some(response_id.into());
+    message.content.push(ContentBlock::Text {
+        text: text.into(),
+        text_signature: None,
+    });
+    message.stop_reason = StopReason::Stop;
+    message
 }
 
 fn probed_delayed_tool(
@@ -262,6 +277,237 @@ async fn prepare_context_node_builds_provider_request_from_context_snapshot() {
         expected_options.max_tokens
     );
     assert!(request.stream_options.cancel.is_some());
+}
+
+#[tokio::test]
+async fn start_turn_node_emits_turn_start_and_enforces_max_turns() {
+    let mut config = AgentConfig::new(common::faux_model("start-turn-node"));
+    config.max_turns = Some(1);
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("start_turn").unwrap();
+    flow.add_node("start_turn", StartTurnNode).unwrap();
+
+    let first = flow.run(&mut context).await.unwrap();
+    assert_eq!(first.last_action.as_str(), "default");
+    assert_eq!(context.turn, 1);
+    assert!(matches!(
+        context.events.as_slice(),
+        [AgentEvent::TurnStart { turn }] if *turn == 1
+    ));
+
+    let second = flow.run(&mut context).await.unwrap();
+    assert_eq!(second.last_action.as_str(), "error");
+    assert_eq!(context.turn, 2);
+    assert_eq!(context.max_turns_exceeded, Some(1));
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentError { error } if error == "max turns (1) exceeded"
+    )));
+}
+
+#[tokio::test]
+async fn provider_request_node_emits_before_provider_request_after_hook_update() {
+    let mut config = AgentConfig::new(common::faux_model("provider-request-hook"));
+    config.stream_options = Some(StreamOptions {
+        max_tokens: Some(12),
+        ..Default::default()
+    });
+    config.hooks.before_provider_request = Some(Arc::new(|mut ctx| {
+        assert_eq!(ctx.stream_options.max_tokens, Some(12));
+        Box::pin(async move {
+            ctx.context.messages = vec![Message::User {
+                content: vec![ContentBlock::Text {
+                    text: "hooked context".into(),
+                    text_signature: None,
+                }],
+            }];
+            ctx.stream_options.max_tokens = Some(77);
+            Ok(Some(BeforeProviderRequestResult {
+                context: Some(ctx.context),
+                stream_options: Some(ctx.stream_options),
+            }))
+        })
+    }));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "original context"));
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_provider_request").unwrap();
+    flow.add_node("prepare_provider_request", PrepareProviderRequestNode)
+        .unwrap()
+        .add_node(
+            "apply_before_provider_request_hook",
+            ApplyBeforeProviderRequestHookNode,
+        )
+        .unwrap()
+        .edge(
+            "prepare_provider_request",
+            "apply_before_provider_request_hook",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(
+        outcome.last_node.as_str(),
+        "apply_before_provider_request_hook"
+    );
+    let request = context
+        .provider_request
+        .as_ref()
+        .expect("provider request should be stored");
+    assert_eq!(request.stream_options.max_tokens, Some(77));
+    assert!(
+        request.stream_options.cancel.is_some(),
+        "hook-updated stream options must retain cancel token"
+    );
+    assert!(matches!(
+        request.context.messages.as_slice(),
+        [Message::User { content }]
+            if text_content(content) == "hooked context"
+    ));
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::BeforeProviderRequest { request }
+            if request.stream_options.max_tokens == Some(77)
+                && request.stream_options.cancel.is_some()
+                && matches!(
+                    request.context.messages.as_slice(),
+                    [Message::User { content }] if text_content(content) == "hooked context"
+                )
+    )));
+}
+
+#[tokio::test]
+async fn provider_request_node_applies_override_once_and_preserves_cancel() {
+    let mut config = AgentConfig::new(common::faux_model("provider-request-override"));
+    config.stream_options = Some(StreamOptions {
+        max_tokens: Some(12),
+        ..Default::default()
+    });
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "original context"));
+    agent.set_provider_request_override(
+        Context {
+            system_prompt: Some("override system".into()),
+            messages: vec![Message::User {
+                content: vec![ContentBlock::Text {
+                    text: "override context".into(),
+                    text_signature: None,
+                }],
+            }],
+            tools: None,
+        },
+        Some(StreamOptions {
+            max_tokens: Some(88),
+            ..Default::default()
+        }),
+    );
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("prepare_provider_request").unwrap();
+    flow.add_node("prepare_provider_request", PrepareProviderRequestNode)
+        .unwrap();
+
+    flow.run(&mut context).await.unwrap();
+    let first = context
+        .provider_request
+        .clone()
+        .expect("override request should be prepared");
+
+    assert_eq!(
+        first.context.system_prompt.as_deref(),
+        Some("override system")
+    );
+    assert!(matches!(
+        first.context.messages.as_slice(),
+        [Message::User { content }] if text_content(content) == "override context"
+    ));
+    assert_eq!(first.stream_options.max_tokens, Some(88));
+    assert!(
+        first.stream_options.cancel.is_some(),
+        "override stream options must retain cancel token"
+    );
+
+    flow.run(&mut context).await.unwrap();
+    let second = context
+        .provider_request
+        .as_ref()
+        .expect("second request should be prepared");
+
+    assert_ne!(
+        second.context.system_prompt.as_deref(),
+        Some("override system")
+    );
+    assert!(matches!(
+        second.context.messages.as_slice(),
+        [Message::User { content }] if text_content(content) == "original context"
+    ));
+    assert_eq!(second.stream_options.max_tokens, Some(12));
+    assert!(second.stream_options.cancel.is_some());
+}
+
+#[tokio::test]
+async fn maybe_prepare_next_turn_drains_follow_up_before_done() {
+    let prepare_calls = Arc::new(AtomicUsize::new(0));
+    let prepare_calls_for_hook = prepare_calls.clone();
+    let mut config = AgentConfig::new(common::faux_model("maybe-prepare-next-turn"));
+    config.follow_up_mode = QueueMode::OneAtATime;
+    config.hooks.prepare_next_turn = Some(Arc::new(move |ctx| {
+        prepare_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(ctx.turn, 1);
+        Box::pin(async move {
+            Ok(Some(AgentLoopTurnUpdate {
+                messages: Some(vec![AgentMessage::UserText {
+                    message_id: "prepared".into(),
+                    text: "prepared context".into(),
+                }]),
+                ..Default::default()
+            }))
+        })
+    }));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
+    agent.follow_up("follow up one");
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    context.turn = 1;
+    context.assistant_message = Some(stopped_assistant("resp_1", "first answer"));
+
+    let mut flow = Flow::new("decide_after_assistant").unwrap();
+    flow.add_node("decide_after_assistant", DecideAfterAssistantNode)
+        .unwrap()
+        .add_node("maybe_prepare_next_turn", MaybePrepareNextTurnNode)
+        .unwrap()
+        .edge_on(
+            "decide_after_assistant",
+            Action::new("continue").unwrap(),
+            "maybe_prepare_next_turn",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_action.as_str(), "continue");
+    assert_eq!(prepare_calls.load(Ordering::SeqCst), 1);
+    assert!(context.has_more_queued_input);
+    assert!(!context.should_finish);
+    assert!(context.follow_up_queue.is_empty());
+    assert!(context.messages.iter().any(|message| {
+        matches!(message, AgentMessage::UserText { text, .. } if text == "prepared context")
+    }));
+    assert!(context.messages.iter().any(|message| {
+        matches!(message, AgentMessage::UserText { text, .. } if text == "follow up one")
+    }));
+    assert!(
+        !context
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentDone { .. }))
+    );
 }
 
 #[tokio::test]
@@ -743,6 +989,10 @@ async fn execute_tools_node_emits_tool_update_events_before_end() {
 #[tokio::test]
 async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
     let api = "agent-turn-flow-execute-terminate";
+    let should_stop_calls = Arc::new(AtomicUsize::new(0));
+    let should_stop_calls_for_hook = should_stop_calls.clone();
+    let prepare_calls = Arc::new(AtomicUsize::new(0));
+    let prepare_calls_for_hook = prepare_calls.clone();
     let mut config = AgentConfig::new(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Sequential;
     config.hooks.after_tool_call = Some(Arc::new(|_| {
@@ -753,6 +1003,14 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
                 terminate: Some(true),
             }))
         })
+    }));
+    config.hooks.should_stop_after_turn = Some(Arc::new(move |_| {
+        should_stop_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move { Ok(false) })
+    }));
+    config.hooks.prepare_next_turn = Some(Arc::new(move |_| {
+        prepare_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move { Ok(None) })
     }));
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
@@ -778,24 +1036,35 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
         .unwrap()
         .add_node("provider_stream", ProviderStreamNode)
         .unwrap()
-        .add_node("decide_stop_or_tools", DecideStopOrToolsNode)
+        .add_node("decide_after_assistant", DecideAfterAssistantNode)
         .unwrap()
         .add_node("execute_tools", ExecuteToolsNode)
         .unwrap()
+        .add_node("maybe_prepare_next_turn", MaybePrepareNextTurnNode)
+        .unwrap()
         .edge("prepare_context", "provider_stream")
         .unwrap()
-        .edge("provider_stream", "decide_stop_or_tools")
+        .edge("provider_stream", "decide_after_assistant")
         .unwrap()
         .edge_on(
-            "decide_stop_or_tools",
+            "decide_after_assistant",
             Action::new("tools").unwrap(),
             "execute_tools",
+        )
+        .unwrap()
+        .edge_on(
+            "execute_tools",
+            Action::new("continue").unwrap(),
+            "maybe_prepare_next_turn",
         )
         .unwrap();
 
     let outcome = flow.run(&mut context).await.unwrap();
 
     assert_eq!(outcome.last_action.as_str(), "done");
+    assert_eq!(outcome.last_node.as_str(), "maybe_prepare_next_turn");
+    assert_eq!(should_stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(prepare_calls.load(Ordering::SeqCst), 0);
     assert!(context.tool_results.iter().all(|result| result.terminate));
     assert!(
         context
@@ -1147,4 +1416,68 @@ async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
                 ContentBlock::ToolCall { id, name, .. } if id == "call_1" && name == "echo"
             ))
     )));
+}
+
+#[tokio::test]
+async fn decide_after_assistant_tool_use_without_calls_routes_to_tools() {
+    let should_stop_calls = Arc::new(AtomicUsize::new(0));
+    let should_stop_calls_for_hook = should_stop_calls.clone();
+    let prepare_calls = Arc::new(AtomicUsize::new(0));
+    let prepare_calls_for_hook = prepare_calls.clone();
+    let mut config = AgentConfig::new(common::faux_model("agent-turn-flow-decide-empty-tool-use"));
+    config.hooks.should_stop_after_turn = Some(Arc::new(move |_| {
+        should_stop_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move { Ok(false) })
+    }));
+    config.hooks.prepare_next_turn = Some(Arc::new(move |_| {
+        prepare_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move { Ok(None) })
+    }));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use a tool"));
+
+    let mut assistant = AssistantMessage::empty("test", "test-model");
+    assistant.response_id = Some("resp_empty_tool_use".into());
+    assistant.stop_reason = StopReason::ToolUse;
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    context.assistant_message = Some(assistant);
+
+    let mut flow = Flow::new("decide_after_assistant").unwrap();
+    flow.add_node("decide_after_assistant", DecideAfterAssistantNode)
+        .unwrap()
+        .add_node("execute_tools", ExecuteToolsNode)
+        .unwrap()
+        .add_node("maybe_prepare_next_turn", MaybePrepareNextTurnNode)
+        .unwrap()
+        .add_node(
+            "drain_queued_input",
+            pi_agent_core::agent_turn_flow::DrainQueuedInputNode,
+        )
+        .unwrap()
+        .edge_on(
+            "decide_after_assistant",
+            Action::new("tools").unwrap(),
+            "execute_tools",
+        )
+        .unwrap()
+        .edge_on(
+            "execute_tools",
+            Action::new("continue").unwrap(),
+            "maybe_prepare_next_turn",
+        )
+        .unwrap()
+        .edge_on(
+            "execute_tools",
+            Action::new("continue_provider").unwrap(),
+            "drain_queued_input",
+        )
+        .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "drain_queued_input");
+    assert!(context.pending_tool_calls.is_empty());
+    assert_eq!(should_stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(prepare_calls.load(Ordering::SeqCst), 0);
 }

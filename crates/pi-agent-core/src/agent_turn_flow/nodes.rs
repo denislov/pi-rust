@@ -6,14 +6,18 @@ use crate::ai_runtime::stream_model_with_global_runtime;
 use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
 use crate::compaction::summarize::summarize_with_provider_streamer;
-use crate::convert::convert_to_context;
+use crate::convert::{assemble_context, convert_to_context, default_convert_to_llm};
 use crate::flow::{Action, FlowNode};
-use crate::hooks::{AfterToolCallContext, AfterToolCallHook, BeforeToolCallContext};
+use crate::hooks::{
+    AfterToolCallContext, AfterToolCallHook, BeforeProviderRequestContext, BeforeToolCallContext,
+    PrepareNextTurnContext, ShouldStopAfterTurnContext,
+};
 use crate::loop_runtime::context::stream_options_for_turn;
 use crate::loop_runtime::tools::{
     ToolCallExecution, ToolCallRequest, append_tool_result_messages, extract_tool_calls,
     should_use_sequential_tools,
 };
+use crate::queues::drain_queue;
 use crate::types::{
     AgentEvent, AgentMessage, AgentTool, AgentToolOutput, AgentToolResult, ProviderRequestSnapshot,
     ToolUpdateCallback,
@@ -24,6 +28,47 @@ use futures::{FutureExt, StreamExt};
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
 
 use super::context::{AgentTurnContext, PendingToolCall, RuntimeCompactionState};
+
+const ACTION_DEFAULT: &str = "default";
+const ACTION_CONTINUE: &str = "continue";
+const ACTION_CONTINUE_PROVIDER: &str = "continue_provider";
+const ACTION_TOOLS: &str = "tools";
+const ACTION_DONE: &str = "done";
+const ACTION_ERROR: &str = "error";
+const ACTION_ABORTED: &str = "aborted";
+
+pub struct StartTurnNode;
+
+impl FlowNode<AgentTurnContext> for StartTurnNode {
+    fn name(&self) -> &str {
+        "start_turn"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { start_turn(ctx) })
+    }
+}
+
+pub struct DrainQueuedInputNode;
+
+impl FlowNode<AgentTurnContext> for DrainQueuedInputNode {
+    fn name(&self) -> &str {
+        "drain_queued_input"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move {
+            drain_queued_input(ctx);
+            default_action()
+        })
+    }
+}
 
 pub struct PrepareContextNode;
 
@@ -36,10 +81,37 @@ impl FlowNode<AgentTurnContext> for PrepareContextNode {
         &'a self,
         ctx: &'a mut AgentTurnContext,
     ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            prepare_context(ctx)?;
-            default_action()
-        })
+        Box::pin(async move { prepare_provider_request(ctx).await })
+    }
+}
+
+pub struct PrepareProviderRequestNode;
+
+impl FlowNode<AgentTurnContext> for PrepareProviderRequestNode {
+    fn name(&self) -> &str {
+        "prepare_provider_request"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { prepare_provider_request(ctx).await })
+    }
+}
+
+pub struct ApplyBeforeProviderRequestHookNode;
+
+impl FlowNode<AgentTurnContext> for ApplyBeforeProviderRequestHookNode {
+    fn name(&self) -> &str {
+        "apply_before_provider_request_hook"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { apply_before_provider_request_hook(ctx).await })
     }
 }
 
@@ -91,6 +163,36 @@ impl FlowNode<AgentTurnContext> for DecideStopOrToolsNode {
     }
 }
 
+pub struct DecideAfterAssistantNode;
+
+impl FlowNode<AgentTurnContext> for DecideAfterAssistantNode {
+    fn name(&self) -> &str {
+        "decide_after_assistant"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { decide_after_assistant(ctx) })
+    }
+}
+
+pub struct MaybePrepareNextTurnNode;
+
+impl FlowNode<AgentTurnContext> for MaybePrepareNextTurnNode {
+    fn name(&self) -> &str {
+        "maybe_prepare_next_turn"
+    }
+
+    fn run<'a>(
+        &'a self,
+        ctx: &'a mut AgentTurnContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
+        Box::pin(async move { maybe_prepare_next_turn(ctx).await })
+    }
+}
+
 pub struct ExecuteToolsNode;
 
 impl FlowNode<AgentTurnContext> for ExecuteToolsNode {
@@ -104,6 +206,37 @@ impl FlowNode<AgentTurnContext> for ExecuteToolsNode {
     ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
         Box::pin(async move { execute_tools(ctx).await })
     }
+}
+
+pub fn start_turn(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    if ctx.cancel_token.is_cancelled() {
+        ctx.should_finish = true;
+        ctx.events.push(AgentEvent::AgentError {
+            error: "aborted".into(),
+        });
+        return action(ACTION_ABORTED);
+    }
+
+    ctx.turn += 1;
+    if let Some(max_turns) = ctx.config.max_turns
+        && ctx.turn > max_turns
+    {
+        ctx.max_turns_exceeded = Some(max_turns);
+        ctx.should_finish = true;
+        ctx.events.push(AgentEvent::AgentError {
+            error: format!("max turns ({}) exceeded", max_turns),
+        });
+        return action(ACTION_ERROR);
+    }
+
+    ctx.events.push(AgentEvent::TurnStart { turn: ctx.turn });
+    default_action()
+}
+
+pub fn drain_queued_input(ctx: &mut AgentTurnContext) {
+    let steered = drain_queue(&mut ctx.steering_queue, ctx.config.steering_mode);
+    ctx.messages.extend(steered);
+    ctx.has_more_queued_input = !ctx.steering_queue.is_empty() || !ctx.follow_up_queue.is_empty();
 }
 
 pub fn prepare_context(ctx: &mut AgentTurnContext) -> Result<(), String> {
@@ -120,12 +253,148 @@ pub fn prepare_context(ctx: &mut AgentTurnContext) -> Result<(), String> {
     );
     stream_options.cancel = Some(ctx.cancel_token.clone());
 
-    ctx.provider_request = Some(ProviderRequestSnapshot {
+    let mut request = ProviderRequestSnapshot {
         model: ctx.config.model.clone(),
         context,
         stream_options,
-    });
+    };
+
+    if let Some(override_request) = ctx.provider_request_override.take() {
+        request.context = override_request.context;
+        if let Some(override_options) = override_request.stream_options {
+            request.stream_options = override_options;
+        }
+        request.stream_options.cancel = Some(ctx.cancel_token.clone());
+    }
+
+    ctx.provider_request = Some(request);
     Ok(())
+}
+
+pub async fn prepare_provider_request(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    let transformed_messages = if let Some(hook) = ctx.config.hooks.transform_context.clone() {
+        match hook(ctx.messages.clone()).await {
+            Ok(messages) => Some(messages),
+            Err(error) => {
+                ctx.events.push(AgentEvent::AgentError {
+                    error: error.clone(),
+                });
+                return action(ACTION_ERROR);
+            }
+        }
+    } else {
+        None
+    };
+
+    let llm_messages_override = if let Some(hook) = ctx.config.hooks.convert_to_llm.clone() {
+        let messages = transformed_messages
+            .clone()
+            .unwrap_or_else(|| ctx.messages.clone());
+        match hook(messages, ctx.resources.clone()).await {
+            Ok(llm_messages) => Some(llm_messages),
+            Err(error) => {
+                ctx.events.push(AgentEvent::AgentError {
+                    error: error.clone(),
+                });
+                return action(ACTION_ERROR);
+            }
+        }
+    } else {
+        None
+    };
+
+    let messages_for_context = transformed_messages.as_ref().unwrap_or(&ctx.messages);
+    let context = if let Some(llm_messages) = llm_messages_override {
+        assemble_context(
+            &ctx.config.system_prompt,
+            messages_for_context,
+            llm_messages,
+            &ctx.tools,
+            &ctx.resources,
+        )
+    } else if transformed_messages.is_some() {
+        let llm_messages = default_convert_to_llm(messages_for_context, &ctx.resources);
+        assemble_context(
+            &ctx.config.system_prompt,
+            messages_for_context,
+            llm_messages,
+            &ctx.tools,
+            &ctx.resources,
+        )
+    } else {
+        convert_to_context(
+            &ctx.config.system_prompt,
+            &ctx.messages,
+            &ctx.tools,
+            &ctx.resources,
+        )
+    };
+
+    let mut stream_options = stream_options_for_turn(
+        &ctx.config.model,
+        ctx.config.stream_options.clone().unwrap_or_default(),
+        ctx.config.thinking_level,
+    );
+    stream_options.cancel = Some(ctx.cancel_token.clone());
+
+    let mut request = ProviderRequestSnapshot {
+        model: ctx.config.model.clone(),
+        context,
+        stream_options,
+    };
+
+    if let Some(override_request) = ctx.provider_request_override.take() {
+        request.context = override_request.context;
+        if let Some(override_options) = override_request.stream_options {
+            request.stream_options = override_options;
+        }
+        request.stream_options.cancel = Some(ctx.cancel_token.clone());
+    }
+
+    ctx.provider_request = Some(request);
+
+    default_action()
+}
+
+pub async fn apply_before_provider_request_hook(
+    ctx: &mut AgentTurnContext,
+) -> Result<Action, String> {
+    let mut request = match ctx.provider_request.clone() {
+        Some(request) => request,
+        None => {
+            let error = "provider request is not prepared".to_string();
+            ctx.events.push(AgentEvent::AgentError {
+                error: error.clone(),
+            });
+            return action(ACTION_ERROR);
+        }
+    };
+
+    if let Some(hook) = ctx.config.hooks.before_provider_request.clone() {
+        match hook(BeforeProviderRequestContext::from(request.clone())).await {
+            Ok(Some(update)) => {
+                if let Some(updated_context) = update.context {
+                    request.context = updated_context;
+                }
+                if let Some(updated_options) = update.stream_options {
+                    request.stream_options = updated_options;
+                }
+                request.stream_options.cancel = Some(ctx.cancel_token.clone());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                ctx.events.push(AgentEvent::AgentError {
+                    error: error.clone(),
+                });
+                return action(ACTION_ERROR);
+            }
+        }
+    }
+
+    ctx.provider_request = Some(request.clone());
+    ctx.events
+        .push(AgentEvent::BeforeProviderRequest { request });
+    default_action()
 }
 
 pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result<(), String> {
@@ -295,10 +564,133 @@ pub fn decide_stop_or_tools(ctx: &mut AgentTurnContext) -> Result<Action, String
     }
 }
 
+pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    let assistant = ctx
+        .assistant_message
+        .clone()
+        .ok_or_else(|| "assistant message is not available".to_string())?;
+
+    ctx.messages.push(AgentMessage::Assistant {
+        message_id: assistant.response_id.clone().unwrap_or_default(),
+        message: assistant.clone(),
+    });
+
+    match assistant.stop_reason {
+        StopReason::Stop | StopReason::Length => action(ACTION_CONTINUE),
+        StopReason::Error => {
+            let error = assistant
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "LLM error".into());
+            ctx.should_finish = true;
+            ctx.events.push(AgentEvent::AgentError { error });
+            action(ACTION_ERROR)
+        }
+        StopReason::Aborted => {
+            ctx.should_finish = true;
+            ctx.events.push(AgentEvent::AgentError {
+                error: "aborted".into(),
+            });
+            action(ACTION_ABORTED)
+        }
+        StopReason::ToolUse => {
+            let tool_calls = extract_tool_calls(&assistant);
+            ctx.pending_tool_calls = tool_calls
+                .into_iter()
+                .map(|call| PendingToolCall {
+                    index: call.index,
+                    id: call.tool_call_id,
+                    name: call.tool_name,
+                    arguments: call.arguments,
+                })
+                .collect();
+            action(ACTION_TOOLS)
+        }
+    }
+}
+
+pub async fn maybe_prepare_next_turn(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    let assistant = ctx
+        .assistant_message
+        .clone()
+        .ok_or_else(|| "assistant message is not available".to_string())?;
+
+    match assistant.stop_reason {
+        StopReason::Stop | StopReason::Length => {
+            let Some(should_stop) = should_stop_after_turn(ctx, &assistant).await? else {
+                return action(ACTION_ERROR);
+            };
+            if should_stop {
+                ctx.should_finish = true;
+                ctx.has_more_queued_input = false;
+                ctx.events
+                    .push(AgentEvent::AgentDone { message: assistant });
+                return action(ACTION_DONE);
+            }
+
+            if let Some(action) = prepare_next_turn_or_error(ctx).await? {
+                return Ok(action);
+            }
+
+            let has_more = !ctx.follow_up_queue.is_empty() || !ctx.steering_queue.is_empty();
+            ctx.has_more_queued_input = has_more;
+            if has_more {
+                let follow_ups = drain_queue(&mut ctx.follow_up_queue, ctx.config.follow_up_mode);
+                ctx.messages.extend(follow_ups);
+                ctx.should_finish = false;
+                action(ACTION_CONTINUE)
+            } else {
+                ctx.should_finish = true;
+                ctx.events
+                    .push(AgentEvent::AgentDone { message: assistant });
+                action(ACTION_DONE)
+            }
+        }
+        StopReason::ToolUse => {
+            let Some(should_stop) = should_stop_after_turn(ctx, &assistant).await? else {
+                return action(ACTION_ERROR);
+            };
+            if should_stop {
+                ctx.should_finish = true;
+                ctx.has_more_queued_input = false;
+                ctx.events
+                    .push(AgentEvent::AgentDone { message: assistant });
+                return action(ACTION_DONE);
+            }
+
+            if ctx.tool_results_all_terminate {
+                ctx.should_finish = true;
+                ctx.has_more_queued_input = false;
+                ctx.events
+                    .push(AgentEvent::AgentDone { message: assistant });
+                return action(ACTION_DONE);
+            }
+
+            if let Some(action) = prepare_next_turn_or_error(ctx).await? {
+                return Ok(action);
+            }
+
+            ctx.should_finish = false;
+            ctx.has_more_queued_input =
+                !ctx.follow_up_queue.is_empty() || !ctx.steering_queue.is_empty();
+            action(ACTION_CONTINUE)
+        }
+        StopReason::Error => {
+            ctx.should_finish = true;
+            action(ACTION_ERROR)
+        }
+        StopReason::Aborted => {
+            ctx.should_finish = true;
+            action(ACTION_ABORTED)
+        }
+    }
+}
+
 pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    ctx.tool_results_all_terminate = false;
     let pending = std::mem::take(&mut ctx.pending_tool_calls);
     if pending.is_empty() {
-        return Action::new("continue").map_err(|err| err.to_string());
+        return action(ACTION_CONTINUE_PROVIDER);
     }
 
     let requests: Vec<_> = pending
@@ -416,10 +808,7 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
         .extend(executions.iter().map(|execution| execution.result.clone()));
     append_tool_result_messages(&mut ctx.messages, &executions);
 
-    if all_terminate && let Some(message) = ctx.assistant_message.clone() {
-        ctx.events.push(AgentEvent::AgentDone { message });
-        return Action::new("done").map_err(|err| err.to_string());
-    }
+    ctx.tool_results_all_terminate = all_terminate;
 
     Action::new("continue").map_err(|err| err.to_string())
 }
@@ -576,7 +965,76 @@ async fn execute_tool(
 }
 
 fn default_action() -> Result<Action, String> {
-    Action::new("default").map_err(|err| err.to_string())
+    action(ACTION_DEFAULT)
+}
+
+fn action(value: &str) -> Result<Action, String> {
+    Action::new(value).map_err(|err| err.to_string())
+}
+
+async fn should_stop_after_turn(
+    ctx: &mut AgentTurnContext,
+    assistant: &AssistantMessage,
+) -> Result<Option<bool>, String> {
+    let Some(hook) = ctx.config.hooks.should_stop_after_turn.clone() else {
+        return Ok(Some(false));
+    };
+
+    match hook(ShouldStopAfterTurnContext {
+        messages: ctx.messages.clone(),
+        assistant_message: assistant.clone(),
+    })
+    .await
+    {
+        Ok(should_stop) => Ok(Some(should_stop)),
+        Err(error) => {
+            ctx.should_finish = true;
+            ctx.events.push(AgentEvent::AgentError {
+                error: error.clone(),
+            });
+            Ok(None)
+        }
+    }
+}
+
+async fn prepare_next_turn_or_error(ctx: &mut AgentTurnContext) -> Result<Option<Action>, String> {
+    let Some(hook) = ctx.config.hooks.prepare_next_turn.clone() else {
+        return Ok(None);
+    };
+
+    let update = match hook(PrepareNextTurnContext {
+        messages: ctx.messages.clone(),
+        turn: ctx.turn,
+    })
+    .await
+    {
+        Ok(update) => update,
+        Err(error) => {
+            ctx.should_finish = true;
+            ctx.events.push(AgentEvent::AgentError {
+                error: error.clone(),
+            });
+            return Ok(Some(action(ACTION_ERROR)?));
+        }
+    };
+
+    let Some(update) = update else {
+        return Ok(None);
+    };
+
+    if let Some(messages) = update.messages {
+        ctx.messages = messages;
+    }
+    if let Some(model) = update.model {
+        ctx.config.model = model;
+    }
+    if let Some(thinking_level) = update.thinking_level {
+        ctx.config.thinking_level = thinking_level;
+    }
+    if let Some(stream_options) = update.stream_options {
+        ctx.config.stream_options = Some(stream_options);
+    }
+    Ok(None)
 }
 
 fn message_id(message: &AgentMessage) -> &str {

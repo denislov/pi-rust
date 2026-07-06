@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use pi_ai::types::AssistantMessage;
+use pi_ai::types::{AssistantMessage, Context, StreamOptions};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::{Agent, AgentState};
@@ -24,6 +24,12 @@ pub struct RuntimeCompactionState {
     pub tokens_before: Option<u32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentTurnProviderRequestOverride {
+    pub context: Context,
+    pub stream_options: Option<StreamOptions>,
+}
+
 #[derive(Clone)]
 pub struct AgentTurnContext {
     pub config: AgentConfig,
@@ -35,10 +41,15 @@ pub struct AgentTurnContext {
     pub cancel_token: CancellationToken,
     pub turn: u32,
     pub provider_request: Option<ProviderRequestSnapshot>,
+    pub provider_request_override: Option<AgentTurnProviderRequestOverride>,
     pub assistant_message: Option<AssistantMessage>,
     pub pending_tool_calls: Vec<PendingToolCall>,
     pub tool_results: Vec<AgentToolResult>,
+    pub tool_results_all_terminate: bool,
     pub runtime_compaction: RuntimeCompactionState,
+    pub max_turns_exceeded: Option<u32>,
+    pub should_finish: bool,
+    pub has_more_queued_input: bool,
     pub events: Vec<AgentEvent>,
 }
 
@@ -58,10 +69,20 @@ impl AgentTurnContext {
             cancel_token: state.cancel_token.clone(),
             turn: 0,
             provider_request: None,
+            provider_request_override: state.provider_request_override.as_ref().map(|request| {
+                AgentTurnProviderRequestOverride {
+                    context: request.context.clone(),
+                    stream_options: request.stream_options.clone(),
+                }
+            }),
             assistant_message: None,
             pending_tool_calls: Vec::new(),
             tool_results: Vec::new(),
+            tool_results_all_terminate: false,
             runtime_compaction: RuntimeCompactionState::default(),
+            max_turns_exceeded: None,
+            should_finish: false,
+            has_more_queued_input: false,
             events: Vec::new(),
         }
     }

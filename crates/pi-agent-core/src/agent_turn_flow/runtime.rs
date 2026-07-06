@@ -10,7 +10,7 @@ use crate::ai_runtime::stream_model_with_global_runtime;
 use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
 use crate::compaction::summarize::summarize_with_provider_streamer;
-use crate::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use crate::flow::{Action, Flow, FlowError, FlowOutcome, FlowRunOptions};
 use crate::hooks::{
     AfterToolCallContext, BeforeProviderRequestContext, BeforeToolCallContext,
     PrepareNextTurnContext, ShouldStopAfterTurnContext,
@@ -25,8 +25,6 @@ use crate::types::{
     ProviderRequestSnapshot, ToolUpdateCallback,
 };
 use pi_ai::types::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
-use std::future::Future;
-use std::pin::Pin;
 
 pub const AGENT_TURN_NODE_IDS: &[&str] = &[
     "start_turn",
@@ -40,8 +38,8 @@ pub const AGENT_TURN_NODE_IDS: &[&str] = &[
     "execute_tools",
 ];
 
-const ACTION_DEFAULT: &str = "default";
 const ACTION_CONTINUE: &str = "continue";
+const ACTION_CONTINUE_PROVIDER: &str = "continue_provider";
 const ACTION_TOOLS: &str = "tools";
 
 pub struct AgentTurnFlow {
@@ -51,55 +49,58 @@ pub struct AgentTurnFlow {
 impl AgentTurnFlow {
     pub fn new() -> Result<Self, FlowError> {
         let mut flow = Flow::new(AGENT_TURN_NODE_IDS[0])?;
-        flow.add_node(
-            "start_turn",
-            PlaceholderDefaultActionNode::new("start_turn"),
-        )?
-        .add_node(
-            "drain_queued_input",
-            PlaceholderDefaultActionNode::new("drain_queued_input"),
-        )?
-        .add_node(
-            "maybe_compact_runtime_context",
-            nodes::MaybeCompactRuntimeContextNode,
-        )?
-        .add_node("prepare_provider_request", PrepareProviderRequestNode)?
-        .add_node(
-            "apply_before_provider_request_hook",
-            PlaceholderDefaultActionNode::new("apply_before_provider_request_hook"),
-        )?
-        .add_node("provider_stream", nodes::ProviderStreamNode)?
-        .add_node("decide_after_assistant", DecideAfterAssistantNode)?
-        .add_node(
-            "maybe_prepare_next_turn",
-            PlaceholderDefaultActionNode::new("maybe_prepare_next_turn"),
-        )?
-        .add_node("execute_tools", nodes::ExecuteToolsNode)?
-        .edge("start_turn", "drain_queued_input")?
-        .edge("drain_queued_input", "maybe_compact_runtime_context")?
-        .edge("maybe_compact_runtime_context", "prepare_provider_request")?
-        .edge(
-            "prepare_provider_request",
-            "apply_before_provider_request_hook",
-        )?
-        .edge("apply_before_provider_request_hook", "provider_stream")?
-        .edge("provider_stream", "decide_after_assistant")?
-        .edge_on(
-            "decide_after_assistant",
-            Action::new(ACTION_TOOLS)?,
-            "execute_tools",
-        )?
-        .edge_on(
-            "decide_after_assistant",
-            Action::new(ACTION_CONTINUE)?,
-            "maybe_prepare_next_turn",
-        )?
-        .edge_on(
-            "execute_tools",
-            Action::new(ACTION_CONTINUE)?,
-            "maybe_prepare_next_turn",
-        )?
-        .edge("maybe_prepare_next_turn", "drain_queued_input")?;
+        flow.add_node("start_turn", nodes::StartTurnNode)?
+            .add_node("drain_queued_input", nodes::DrainQueuedInputNode)?
+            .add_node(
+                "maybe_compact_runtime_context",
+                nodes::MaybeCompactRuntimeContextNode,
+            )?
+            .add_node(
+                "prepare_provider_request",
+                nodes::PrepareProviderRequestNode,
+            )?
+            .add_node(
+                "apply_before_provider_request_hook",
+                nodes::ApplyBeforeProviderRequestHookNode,
+            )?
+            .add_node("provider_stream", nodes::ProviderStreamNode)?
+            .add_node("decide_after_assistant", nodes::DecideAfterAssistantNode)?
+            .add_node("maybe_prepare_next_turn", nodes::MaybePrepareNextTurnNode)?
+            .add_node("execute_tools", nodes::ExecuteToolsNode)?
+            .edge("start_turn", "drain_queued_input")?
+            .edge("drain_queued_input", "maybe_compact_runtime_context")?
+            .edge("maybe_compact_runtime_context", "prepare_provider_request")?
+            .edge(
+                "prepare_provider_request",
+                "apply_before_provider_request_hook",
+            )?
+            .edge("apply_before_provider_request_hook", "provider_stream")?
+            .edge("provider_stream", "decide_after_assistant")?
+            .edge_on(
+                "decide_after_assistant",
+                Action::new(ACTION_TOOLS)?,
+                "execute_tools",
+            )?
+            .edge_on(
+                "decide_after_assistant",
+                Action::new(ACTION_CONTINUE)?,
+                "maybe_prepare_next_turn",
+            )?
+            .edge_on(
+                "execute_tools",
+                Action::new(ACTION_CONTINUE)?,
+                "maybe_prepare_next_turn",
+            )?
+            .edge_on(
+                "execute_tools",
+                Action::new(ACTION_CONTINUE_PROVIDER)?,
+                "drain_queued_input",
+            )?
+            .edge_on(
+                "maybe_prepare_next_turn",
+                Action::new(ACTION_CONTINUE)?,
+                "drain_queued_input",
+            )?;
 
         Ok(Self { flow })
     }
@@ -123,62 +124,6 @@ impl AgentTurnFlow {
 
     pub(crate) fn run_state(state: Arc<RwLock<AgentState>>) -> AgentStream {
         run_loop(state)
-    }
-}
-
-struct PlaceholderDefaultActionNode {
-    name: &'static str,
-}
-
-impl PlaceholderDefaultActionNode {
-    fn new(name: &'static str) -> Self {
-        Self { name }
-    }
-}
-
-impl FlowNode<AgentTurnContext> for PlaceholderDefaultActionNode {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn run<'a>(
-        &'a self,
-        _ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { Action::new(ACTION_DEFAULT).map_err(|err| err.to_string()) })
-    }
-}
-
-struct PrepareProviderRequestNode;
-
-impl FlowNode<AgentTurnContext> for PrepareProviderRequestNode {
-    fn name(&self) -> &str {
-        "prepare_provider_request"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            nodes::prepare_context(ctx)?;
-            Action::new(ACTION_DEFAULT).map_err(|err| err.to_string())
-        })
-    }
-}
-
-struct DecideAfterAssistantNode;
-
-impl FlowNode<AgentTurnContext> for DecideAfterAssistantNode {
-    fn name(&self) -> &str {
-        "decide_after_assistant"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { nodes::decide_stop_or_tools(ctx) })
     }
 }
 
