@@ -393,6 +393,47 @@ async fn env_auth_resolver_applies_azure_runtime_material_for_model() {
 }
 
 #[tokio::test]
+async fn env_auth_resolver_applies_bedrock_bearer_token_for_model() {
+    let env = EnvGuard::new(&["AWS_BEARER_TOKEN_BEDROCK"]);
+    env.set("AWS_BEARER_TOKEN_BEDROCK", "bedrock-env-token");
+
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(EnvProviderAuthResolver));
+    let model = scoped_model("env-bedrock-auth-api", "amazon-bedrock");
+    client.register_provider(
+        "env-bedrock-auth-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive resolver-populated stream options");
+    assert_eq!(
+        options.bedrock_bearer_token.as_deref(),
+        Some("bedrock-env-token")
+    );
+    let diagnostics = options
+        .auth_diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics,
+        vec![("bedrock_bearer_token", "AWS_BEARER_TOKEN_BEDROCK")]
+    );
+    let diagnostic_json = serde_json::to_string(&options.auth_diagnostics).unwrap();
+    assert!(!diagnostic_json.contains("bedrock-env-token"));
+}
+
+#[tokio::test]
 async fn scoped_ai_client_applies_injected_auth_material() {
     let seen_options = Arc::new(Mutex::new(None));
     let client = AiClient::with_auth_resolver(Arc::new(RichAuthResolver));

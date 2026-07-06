@@ -66,10 +66,6 @@ impl ApiProvider for BedrockProvider {
             .as_ref()
             .and_then(|o| o.bedrock_bearer_token.as_ref())
             .is_some()
-            || std::env::var("AWS_BEARER_TOKEN_BEDROCK")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .is_some()
         {
             auth::auth_headers(&url, &region, &body, &opts)
         } else {

@@ -18,7 +18,6 @@ pub fn auth_headers(
     if let Some(token) = opts
         .as_ref()
         .and_then(|o| o.bedrock_bearer_token.clone())
-        .or_else(|| std::env::var("AWS_BEARER_TOKEN_BEDROCK").ok())
         .filter(|token| !token.trim().is_empty())
     {
         return Ok(BTreeMap::from([(
@@ -70,7 +69,7 @@ pub fn resolve_credentials(explicit: Option<(String, String)>) -> Result<AwsCred
                 session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
             })
         }
-        _ => Err("No AWS credentials found. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_BEARER_TOKEN_BEDROCK, or pass a Bedrock bearer token.".into()),
+        _ => Err("No AWS credentials found. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or pass a Bedrock bearer token through StreamOptions/ProviderAuthResolver.".into()),
     }
 }
 

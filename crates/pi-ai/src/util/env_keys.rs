@@ -57,13 +57,9 @@ pub fn env_api_key_with_source(provider: &str) -> Option<(String, String)> {
 /// real signing/ADC is implemented in M8.
 fn self_auth_present(provider: &str) -> bool {
     match provider {
-        "amazon-bedrock" => [
-            "AWS_PROFILE",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_BEARER_TOKEN_BEDROCK",
-        ]
-        .iter()
-        .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty())),
+        "amazon-bedrock" => ["AWS_PROFILE", "AWS_ACCESS_KEY_ID"]
+            .iter()
+            .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty())),
         _ => false,
     }
 }

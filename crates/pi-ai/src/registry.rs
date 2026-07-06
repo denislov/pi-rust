@@ -91,6 +91,14 @@ impl ProviderAuthResolver for EnvProviderAuthResolver {
                 ));
             }
         }
+        if model.provider == "amazon-bedrock" || model.api == "bedrock-converse-stream" {
+            set_auth_from_env(
+                &mut auth.bedrock_bearer_token,
+                &mut auth.diagnostics,
+                "bedrock_bearer_token",
+                "AWS_BEARER_TOKEN_BEDROCK",
+            );
+        }
         auth
     }
 }

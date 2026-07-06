@@ -93,6 +93,35 @@ fn pi_ai_providers_do_not_read_env_api_keys_directly() {
 }
 
 #[test]
+fn bedrock_bearer_env_default_stays_behind_provider_auth_resolver() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate should live under crates/pi-ai");
+    let mut violations = Vec::new();
+
+    collect_provider_env_patterns(
+        repo_root,
+        &crate_root.join("src/providers/bedrock/mod.rs"),
+        &["AWS_BEARER_TOKEN_BEDROCK"],
+        &mut violations,
+    );
+    collect_provider_env_patterns(
+        repo_root,
+        &crate_root.join("src/providers/bedrock/auth.rs"),
+        &["AWS_BEARER_TOKEN_BEDROCK"],
+        &mut violations,
+    );
+
+    assert!(
+        violations.is_empty(),
+        "Bedrock bearer-token env defaults must be resolved by ProviderAuthResolver and injected through StreamOptions, not read directly inside the provider:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn azure_openai_runtime_env_defaults_stay_behind_provider_auth_resolver() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = crate_root
