@@ -68,9 +68,10 @@ pub use resources::{parse_command_args, substitute_args};
 pub use types::{
     AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
     AgentToolDefinitionError, AgentToolOutput, AgentToolResult, CompactionConfig,
-    CompactionSettings, DiagnosticSeverity, PromptTemplate, ProviderRequestSnapshot, QueueMode,
-    ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic,
-    SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
+    CompactionSettings, DiagnosticSeverity, PromptTemplate, ProviderRequestSnapshot,
+    ProviderStreamer, QueueMode, ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate,
+    SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
+    ToolUpdateCallback,
 };
 
 /// Stable low-level runtime facade for `pi-agent-core`.
@@ -108,8 +109,9 @@ pub mod api {
     pub use crate::types::{
         AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
         AgentToolDefinitionError, AgentToolOutput, AgentToolResult, CompactionConfig,
-        CompactionSettings, DiagnosticSeverity, PromptTemplate, ProviderRequestSnapshot, QueueMode,
-        ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate, SourcedResourceDiagnostic,
-        SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn, ToolUpdateCallback,
+        CompactionSettings, DiagnosticSeverity, PromptTemplate, ProviderRequestSnapshot,
+        ProviderStreamer, QueueMode, ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate,
+        SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
+        ToolUpdateCallback,
     };
 }

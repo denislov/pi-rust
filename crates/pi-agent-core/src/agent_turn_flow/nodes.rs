@@ -196,11 +196,18 @@ pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<Action, Strin
         .provider_request
         .clone()
         .ok_or_else(|| "provider request is not prepared".to_string())?;
-    let mut llm_stream = stream_model_with_global_runtime(
-        &request.model,
-        request.context,
-        Some(request.stream_options),
-    );
+    let mut llm_stream = match ctx.config.provider_streamer.clone() {
+        Some(provider_streamer) => provider_streamer(
+            &request.model,
+            request.context,
+            Some(request.stream_options),
+        ),
+        None => stream_model_with_global_runtime(
+            &request.model,
+            request.context,
+            Some(request.stream_options),
+        ),
+    };
     let mut assistant_message = None;
     let mut stream_error = None;
 

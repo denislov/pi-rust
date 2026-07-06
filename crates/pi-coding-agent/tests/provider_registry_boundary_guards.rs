@@ -202,6 +202,42 @@ fn collect_source_violations(
 }
 
 #[test]
+fn product_agent_runtime_build_installs_scoped_ai_client_streamer() {
+    let scan = SourceScan::new();
+    let runtime_service = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/runtime_service.rs"),
+    )
+    .expect("read runtime service source");
+
+    let start = runtime_service
+        .find("fn build_agent_runtime_with_plugins_and_diagnostics(")
+        .expect("runtime build function should exist");
+    let end = runtime_service[start..]
+        .find("fn apply_tool_policy(")
+        .map(|offset| start + offset)
+        .expect("runtime build function should be followed by helpers");
+    let build_body = &runtime_service[start..end];
+
+    assert!(
+        build_body.contains("AiClient::new()"),
+        "product runtime build should create a scoped pi_ai::AiClient"
+    );
+    assert!(
+        build_body.contains("ai_client.register_builtins()"),
+        "product runtime build should install builtins into the scoped AiClient"
+    );
+    assert!(
+        build_body.contains("config.provider_streamer = Some"),
+        "product runtime build should inject the scoped AiClient as the provider streamer"
+    );
+    assert!(
+        !build_body.contains("register_builtin_providers_for_global_runtime();"),
+        "product runtime build must not register builtins through the global compatibility helper"
+    );
+}
+
+#[test]
 fn runtime_global_stream_model_boundary_acknowledges_deprecated_helper() {
     let scan = SourceScan::new();
     let runtime_service = fs::read_to_string(

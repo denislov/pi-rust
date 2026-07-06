@@ -1,5 +1,6 @@
 use crate::hooks::AgentHooks;
 use futures::Stream;
+use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StreamOptions,
 };
@@ -363,6 +364,8 @@ pub type ToolFn = Arc<
         + Sync,
 >;
 pub type ToolUpdateCallback = Arc<dyn Fn(AgentToolOutput) + Send + Sync>;
+pub type ProviderStreamer =
+    Arc<dyn Fn(&Model, Context, Option<StreamOptions>) -> EventStream + Send + Sync>;
 
 #[derive(Clone)]
 pub struct AgentTool {
@@ -459,7 +462,7 @@ impl AgentTool {
 
 // ── AgentConfig ────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentConfig {
     pub model: Model,
     pub system_prompt: Option<String>,
@@ -475,6 +478,26 @@ pub struct AgentConfig {
     pub hooks: AgentHooks,
     pub resources: AgentResources,
     pub compaction: Option<CompactionConfig>,
+    pub provider_streamer: Option<ProviderStreamer>,
+}
+
+impl std::fmt::Debug for AgentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentConfig")
+            .field("model", &self.model)
+            .field("system_prompt", &self.system_prompt)
+            .field("max_turns", &self.max_turns)
+            .field("stream_options", &self.stream_options)
+            .field("thinking_level", &self.thinking_level)
+            .field("tool_execution", &self.tool_execution)
+            .field("steering_mode", &self.steering_mode)
+            .field("follow_up_mode", &self.follow_up_mode)
+            .field("hooks", &self.hooks)
+            .field("resources", &self.resources)
+            .field("compaction", &self.compaction)
+            .field("provider_streamer", &self.provider_streamer.is_some())
+            .finish()
+    }
 }
 
 impl AgentConfig {
@@ -491,6 +514,7 @@ impl AgentConfig {
             hooks: AgentHooks::default(),
             resources: AgentResources::default(),
             compaction: None,
+            provider_streamer: None,
         }
     }
 }

@@ -350,11 +350,22 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                 },
             };
 
-            let mut llm_stream = stream_model_with_global_runtime(
-                &request.model,
-                request.context,
-                Some(request.stream_options),
-            );
+            let provider_streamer = {
+                let s = state.read().unwrap();
+                s.config.provider_streamer.clone()
+            };
+            let mut llm_stream = match provider_streamer {
+                Some(provider_streamer) => provider_streamer(
+                    &request.model,
+                    request.context,
+                    Some(request.stream_options),
+                ),
+                None => stream_model_with_global_runtime(
+                    &request.model,
+                    request.context,
+                    Some(request.stream_options),
+                ),
+            };
             let mut assistant_message: Option<pi_ai::types::AssistantMessage> = None;
             let mut stream_error: Option<String> = None;
 

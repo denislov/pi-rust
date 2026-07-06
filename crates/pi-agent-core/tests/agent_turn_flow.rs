@@ -1,6 +1,7 @@
 mod common;
 
 use common::ProviderGuard;
+use futures::StreamExt;
 use pi_agent_core::agent_turn_flow::{
     AgentTurnContext, DecideStopOrToolsNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
     PrepareContextNode, ProviderStreamNode,
@@ -243,6 +244,48 @@ async fn prepare_context_node_builds_provider_request_from_context_snapshot() {
         expected_options.max_tokens
     );
     assert!(request.stream_options.cancel.is_some());
+}
+
+#[tokio::test]
+async fn agent_run_uses_configured_provider_streamer_without_global_registry() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_streamer = calls.clone();
+    let mut config = AgentConfig::new(common::faux_model("scoped-provider-streamer-only"));
+    config.provider_streamer = Some(Arc::new(move |model, _context, _opts| {
+        assert_eq!(model.api, "scoped-provider-streamer-only");
+        calls_for_streamer.fetch_add(1, Ordering::SeqCst);
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            let mut message = AssistantMessage::empty("scoped", &model_id);
+            message.content.push(ContentBlock::Text {
+                text: "streamed through scoped provider".into(),
+                text_signature: None,
+            });
+            message.stop_reason = StopReason::Stop;
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }));
+
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
+
+    let mut stream = agent.run().expect("agent should run with a user message");
+    let mut done_text = None;
+    while let Some(event) = stream.next().await {
+        if let AgentEvent::AgentDone { message } = event {
+            done_text = Some(text_content(&message.content));
+            break;
+        }
+    }
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        done_text.as_deref(),
+        Some("streamed through scoped provider")
+    );
 }
 
 #[tokio::test]
