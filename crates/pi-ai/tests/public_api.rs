@@ -1,11 +1,13 @@
+mod support;
+
 use async_stream::stream;
 use pi_ai::api::{
     AiClient, AnthropicMessagesCompat, ApiProvider, AssistantImages, AssistantMessage,
-    AssistantMessageEvent, CacheControlFormat, ContentBlock, Context, Cost, EventStream,
-    ImageContent, ImageInput, ImageOutput, ImagesContext, ImagesModel, ImagesModelCost,
-    ImagesModelOutput, ImagesUsage, Message, Model, ModelCompat, ModelCost, ModelInput,
-    OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting, ProviderAuth,
-    ProviderAuthResolver, ProviderError, ProviderErrorKind, ProviderPayloadHook,
+    AssistantMessageEvent, CacheControlFormat, ContentBlock, Context, Cost,
+    EnvProviderAuthResolver, EventStream, ImageContent, ImageInput, ImageOutput, ImagesContext,
+    ImagesModel, ImagesModelCost, ImagesModelOutput, ImagesUsage, Message, Model, ModelCompat,
+    ModelCost, ModelInput, OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting,
+    ProviderAuth, ProviderAuthResolver, ProviderError, ProviderErrorKind, ProviderPayloadHook,
     ProviderPayloadHookFuture, ProviderRegistry, ProviderResponseHook, ProviderResponseHookFuture,
     ProviderResponseInfo, ProviderStreamHooks, RetryConfig, StopReason, StreamOptions, TextContent,
     ThinkingConfig, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue, Tool, Usage,
@@ -14,6 +16,7 @@ use pi_ai::api::{
     register_builtins_into,
 };
 use std::sync::{Arc, Mutex};
+use support::EnvGuard;
 
 #[test]
 fn public_api_symbols_are_importable_from_api_facade() {
@@ -323,6 +326,50 @@ async fn scoped_ai_client_uses_injected_auth_resolver() {
         seen_api_key.lock().unwrap().as_deref(),
         Some("scoped-key:scoped-provider")
     );
+}
+
+#[tokio::test]
+async fn env_auth_resolver_applies_azure_runtime_material_for_model() {
+    let env = EnvGuard::new(&[
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_BASE_URL",
+        "AZURE_OPENAI_RESOURCE_NAME",
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+    ]);
+    env.set("AZURE_OPENAI_API_KEY", "azure-env-key");
+    env.set("AZURE_OPENAI_API_VERSION", "2026-02-01");
+    env.remove("AZURE_OPENAI_BASE_URL");
+    env.set("AZURE_OPENAI_RESOURCE_NAME", "env-resource");
+    env.set(
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        "other-model=other-deployment,gpt-4o=gpt-4o-env",
+    );
+
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(EnvProviderAuthResolver));
+    let mut model = scoped_model("env-azure-auth-api", "azure-openai-responses");
+    model.id = "gpt-4o".into();
+    client.register_provider(
+        "env-azure-auth-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive resolver-populated stream options");
+    assert_eq!(options.api_key.as_deref(), Some("azure-env-key"));
+    assert_eq!(options.azure_api_version.as_deref(), Some("2026-02-01"));
+    assert_eq!(options.azure_resource_name.as_deref(), Some("env-resource"));
+    assert_eq!(options.azure_deployment_name.as_deref(), Some("gpt-4o-env"));
 }
 
 #[tokio::test]

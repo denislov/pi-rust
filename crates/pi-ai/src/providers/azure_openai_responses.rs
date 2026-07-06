@@ -53,18 +53,15 @@ pub fn resolve_target(
     let api_version = opts
         .as_ref()
         .and_then(|o| o.azure_api_version.clone())
-        .or_else(|| std::env::var("AZURE_OPENAI_API_VERSION").ok())
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_AZURE_API_VERSION.into());
 
     let base_url = opts
         .as_ref()
         .and_then(|o| o.azure_base_url.clone())
-        .or_else(|| std::env::var("AZURE_OPENAI_BASE_URL").ok())
         .or_else(|| {
             opts.as_ref()
                 .and_then(|o| o.azure_resource_name.clone())
-                .or_else(|| std::env::var("AZURE_OPENAI_RESOURCE_NAME").ok())
                 .map(|resource| format!("https://{}.openai.azure.com/openai/v1", resource))
         })
         .or_else(|| {
@@ -75,7 +72,7 @@ pub fn resolve_target(
             }
         })
         .ok_or_else(|| {
-            "Azure OpenAI base URL is required. Set AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME, or pass azureBaseUrl, azureResourceName, or model.baseUrl.".to_string()
+            "Azure OpenAI base URL is required. Pass azureBaseUrl, azureResourceName, model.baseUrl, or configure ProviderAuthResolver.".to_string()
         })?;
 
     let base_url = normalize_azure_base_url(&base_url)?;
@@ -88,26 +85,7 @@ pub fn resolve_target(
 fn resolve_deployment_name(model: &Model, opts: &Option<StreamOptions>) -> String {
     opts.as_ref()
         .and_then(|o| o.azure_deployment_name.clone())
-        .or_else(|| {
-            let map = std::env::var("AZURE_OPENAI_DEPLOYMENT_NAME_MAP").ok()?;
-            parse_deployment_name_map(&map).remove(&model.id)
-        })
         .unwrap_or_else(|| model.id.clone())
-}
-
-fn parse_deployment_name_map(value: &str) -> BTreeMap<String, String> {
-    let mut map = BTreeMap::new();
-    for entry in value.split(',') {
-        let Some((model_id, deployment)) = entry.trim().split_once('=') else {
-            continue;
-        };
-        let model_id = model_id.trim();
-        let deployment = deployment.trim();
-        if !model_id.is_empty() && !deployment.is_empty() {
-            map.insert(model_id.to_string(), deployment.to_string());
-        }
-    }
-    map
 }
 
 fn normalize_azure_base_url(base_url: &str) -> Result<String, String> {

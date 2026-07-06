@@ -92,6 +92,54 @@ fn pi_ai_providers_do_not_read_env_api_keys_directly() {
     );
 }
 
+#[test]
+fn azure_openai_runtime_env_defaults_stay_behind_provider_auth_resolver() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate should live under crates/pi-ai");
+    let provider_file = crate_root.join("src/providers/azure_openai_responses.rs");
+    let mut violations = Vec::new();
+
+    collect_provider_env_patterns(
+        repo_root,
+        &provider_file,
+        &[
+            "AZURE_OPENAI_API_VERSION",
+            "AZURE_OPENAI_BASE_URL",
+            "AZURE_OPENAI_RESOURCE_NAME",
+            "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        ],
+        &mut violations,
+    );
+
+    assert!(
+        violations.is_empty(),
+        "Azure OpenAI runtime/auth env defaults must be resolved by ProviderAuthResolver and injected through StreamOptions, not read directly inside the provider:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn collect_provider_env_patterns(
+    repo_root: &Path,
+    path: &Path,
+    patterns: &[&str],
+    violations: &mut Vec<String>,
+) {
+    let content = fs::read_to_string(path).expect("read provider file");
+    let relative = path
+        .strip_prefix(repo_root)
+        .expect("scanned file should be under repo root")
+        .to_string_lossy()
+        .replace('\\', "/");
+    for (line_index, line) in content.lines().enumerate() {
+        if patterns.iter().any(|pattern| line.contains(pattern)) {
+            violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
+        }
+    }
+}
+
 fn collect_provider_env_key_reads(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
     let Ok(metadata) = fs::metadata(path) else {
         return;

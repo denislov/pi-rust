@@ -35,6 +35,10 @@ pub trait ProviderAuthResolver: Send + Sync {
             ..ProviderAuth::default()
         }
     }
+
+    fn resolve_model_auth(&self, model: &Model) -> ProviderAuth {
+        self.resolve_auth(&model.provider)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -44,6 +48,39 @@ impl ProviderAuthResolver for EnvProviderAuthResolver {
     fn resolve_api_key(&self, provider: &str) -> Option<String> {
         crate::util::env_keys::env_api_key(provider)
     }
+
+    fn resolve_model_auth(&self, model: &Model) -> ProviderAuth {
+        let mut auth = self.resolve_auth(&model.provider);
+        if model.provider == "azure-openai-responses" {
+            auth.azure_api_version = non_empty_env("AZURE_OPENAI_API_VERSION");
+            auth.azure_base_url = non_empty_env("AZURE_OPENAI_BASE_URL");
+            auth.azure_resource_name = non_empty_env("AZURE_OPENAI_RESOURCE_NAME");
+            auth.azure_deployment_name = resolve_azure_deployment_name(&model.id);
+        }
+        auth
+    }
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn resolve_azure_deployment_name(model_id: &str) -> Option<String> {
+    let map = non_empty_env("AZURE_OPENAI_DEPLOYMENT_NAME_MAP")?;
+    for entry in map.split(',') {
+        let Some((entry_model_id, deployment)) = entry.trim().split_once('=') else {
+            continue;
+        };
+        if entry_model_id.trim() == model_id {
+            let deployment = deployment.trim();
+            if !deployment.is_empty() {
+                return Some(deployment.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[derive(Clone, Default)]
@@ -102,7 +139,7 @@ impl ProviderRegistry {
             None => return unknown_provider_stream(api),
         };
 
-        opts = apply_auth_material(opts, auth_resolver.resolve_auth(&model.provider));
+        opts = apply_auth_material(opts, auth_resolver.resolve_model_auth(model));
 
         provider.stream(model, ctx, opts)
     }
