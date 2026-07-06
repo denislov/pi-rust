@@ -260,6 +260,7 @@ pub fn prepare_context(ctx: &mut AgentTurnContext) -> Result<(), String> {
     };
 
     if let Some(override_request) = ctx.provider_request_override.take() {
+        ctx.provider_request_override_consumed = true;
         request.context = override_request.context;
         if let Some(override_options) = override_request.stream_options {
             request.stream_options = override_options;
@@ -344,6 +345,7 @@ pub async fn prepare_provider_request(ctx: &mut AgentTurnContext) -> Result<Acti
     };
 
     if let Some(override_request) = ctx.provider_request_override.take() {
+        ctx.provider_request_override_consumed = true;
         request.context = override_request.context;
         if let Some(override_options) = override_request.stream_options {
             request.stream_options = override_options;

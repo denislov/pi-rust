@@ -5,12 +5,14 @@ use pi_ai::types::{Context, Message, Model, StreamOptions, ThinkingConfig};
 use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 
+#[allow(dead_code)]
 pub(crate) struct PreparedProviderRequest {
     pub model: Model,
     pub context: Context,
     pub stream_options: StreamOptions,
 }
 
+#[allow(dead_code)]
 pub(crate) fn prepare_provider_request(
     state: &Arc<RwLock<AgentState>>,
     cancel: CancellationToken,

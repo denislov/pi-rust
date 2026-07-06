@@ -90,16 +90,6 @@ impl AgentTurnFlow {
                 "execute_tools",
                 Action::new(ACTION_CONTINUE)?,
                 "maybe_prepare_next_turn",
-            )?
-            .edge_on(
-                "execute_tools",
-                Action::new(ACTION_CONTINUE_PROVIDER)?,
-                "drain_queued_input",
-            )?
-            .edge_on(
-                "maybe_prepare_next_turn",
-                Action::new(ACTION_CONTINUE)?,
-                "drain_queued_input",
             )?;
 
         Ok(Self { flow })
@@ -123,10 +113,81 @@ impl AgentTurnFlow {
     }
 
     pub(crate) fn run_state(state: Arc<RwLock<AgentState>>) -> AgentStream {
-        run_loop(state)
+        Box::pin(stream! {
+            let flow = match AgentTurnFlow::new() {
+                Ok(flow) => flow,
+                Err(error) => {
+                    yield AgentEvent::AgentError {
+                        error: error.to_string(),
+                    };
+                    return;
+                }
+            };
+
+            let mut turn: u32 = 0;
+
+            loop {
+                let mut context = {
+                    let state = state.read().unwrap();
+                    AgentTurnContext::from_state(&state)
+                };
+                context.turn = turn;
+                let cancel = context.cancel_token.clone();
+
+                let outcome = match flow
+                    .run_with_options(
+                        &mut context,
+                        FlowRunOptions {
+                            cancel: Some(cancel),
+                            ..FlowRunOptions::default()
+                        },
+                    )
+                    .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        {
+                            let mut state = state.write().unwrap();
+                            context.apply_to_state(&mut state);
+                        }
+                        for event in std::mem::take(&mut context.events) {
+                            yield event;
+                        }
+                        yield AgentEvent::AgentError {
+                            error: flow_error_message(error),
+                        };
+                        return;
+                    }
+                };
+
+                turn = context.turn;
+
+                {
+                    let mut state = state.write().unwrap();
+                    context.apply_to_state(&mut state);
+                }
+
+                for event in std::mem::take(&mut context.events) {
+                    yield event;
+                }
+
+                match outcome.last_action.as_str() {
+                    ACTION_CONTINUE | ACTION_CONTINUE_PROVIDER => continue,
+                    _ => return,
+                }
+            }
+        })
     }
 }
 
+fn flow_error_message(error: FlowError) -> String {
+    match error {
+        FlowError::Cancelled => "aborted".into(),
+        error => error.to_string(),
+    }
+}
+
+#[allow(dead_code)]
 struct PreparedToolCall {
     index: usize,
     tool_id: String,
@@ -136,6 +197,7 @@ struct PreparedToolCall {
     blocked: Option<AgentToolResult>,
 }
 
+#[allow(dead_code)]
 fn message_id(message: &AgentMessage) -> &str {
     match message {
         AgentMessage::UserText { message_id, .. }
@@ -149,12 +211,14 @@ fn message_id(message: &AgentMessage) -> &str {
     }
 }
 
+#[allow(dead_code)]
 fn clear_assistant_usage(message: &mut AgentMessage) {
     if let AgentMessage::Assistant { message, .. } = message {
         message.usage = Usage::default();
     }
 }
 
+#[allow(dead_code)]
 fn split_for_compaction_after_usage_anchor(
     messages: &[AgentMessage],
     anchor_index: Option<usize>,
@@ -174,6 +238,7 @@ fn split_for_compaction_after_usage_anchor(
     (messages[..split].to_vec(), messages[split..].to_vec())
 }
 
+#[allow(dead_code)]
 async fn compact_before_provider_request(
     state: &Arc<RwLock<AgentState>>,
 ) -> Result<Option<(String, String, u32)>, String> {
@@ -246,6 +311,7 @@ async fn compact_before_provider_request(
     Ok(Some((summary, first_kept_message_id, tokens_before)))
 }
 
+#[allow(dead_code)]
 async fn should_stop_after_turn(
     state: &Arc<RwLock<AgentState>>,
     assistant: &AssistantMessage,
@@ -268,6 +334,7 @@ async fn should_stop_after_turn(
     .await
 }
 
+#[allow(dead_code)]
 async fn prepare_next_turn(state: &Arc<RwLock<AgentState>>, turn: u32) -> Result<(), String> {
     let hook = {
         let s = state.read().unwrap();
@@ -300,6 +367,7 @@ async fn prepare_next_turn(state: &Arc<RwLock<AgentState>>, turn: u32) -> Result
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
     Box::pin(stream! {
         let cancel = {

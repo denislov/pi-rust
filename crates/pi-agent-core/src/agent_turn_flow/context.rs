@@ -42,6 +42,7 @@ pub struct AgentTurnContext {
     pub turn: u32,
     pub provider_request: Option<ProviderRequestSnapshot>,
     pub provider_request_override: Option<AgentTurnProviderRequestOverride>,
+    pub(crate) provider_request_override_consumed: bool,
     pub assistant_message: Option<AssistantMessage>,
     pub pending_tool_calls: Vec<PendingToolCall>,
     pub tool_results: Vec<AgentToolResult>,
@@ -75,6 +76,7 @@ impl AgentTurnContext {
                     stream_options: request.stream_options.clone(),
                 }
             }),
+            provider_request_override_consumed: false,
             assistant_message: None,
             pending_tool_calls: Vec::new(),
             tool_results: Vec::new(),
@@ -84,6 +86,22 @@ impl AgentTurnContext {
             should_finish: false,
             has_more_queued_input: false,
             events: Vec::new(),
+        }
+    }
+
+    pub(crate) fn apply_to_state(&self, state: &mut AgentState) {
+        let mut config = self.config.clone();
+        config.resources = self.resources.clone();
+
+        state.messages = self.messages.clone();
+        state.tools = self.tools.clone();
+        state.config = config;
+        state.cancel_token = self.cancel_token.clone();
+        state.steering_queue = self.steering_queue.clone();
+        state.follow_up_queue = self.follow_up_queue.clone();
+
+        if self.provider_request_override_consumed {
+            state.provider_request_override = None;
         }
     }
 }
