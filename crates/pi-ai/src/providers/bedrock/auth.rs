@@ -26,7 +26,7 @@ pub fn auth_headers(
         )]));
     }
 
-    let credentials = resolve_credentials(None)?;
+    let credentials = resolve_credentials_from_options(opts)?;
     let (host, uri, query) = parse_url_for_signing(url)?;
     let (date, amz_date) = super::datetime::current_aws_dates();
     let signed = sigv4::sign(
@@ -57,19 +57,29 @@ pub fn resolve_credentials(explicit: Option<(String, String)>) -> Result<AwsCred
             session_token: None,
         });
     }
-    let access_key = std::env::var("AWS_ACCESS_KEY_ID").ok();
-    let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY").ok();
-    match (access_key, secret_key) {
+    Err("No AWS credentials found. Pass Bedrock credentials or bearer token through StreamOptions/ProviderAuthResolver.".into())
+}
+
+pub fn resolve_credentials_from_options(
+    opts: &Option<StreamOptions>,
+) -> Result<AwsCredentials, String> {
+    let Some(opts) = opts.as_ref() else {
+        return resolve_credentials(None);
+    };
+    match (
+        opts.bedrock_access_key_id.clone(),
+        opts.bedrock_secret_access_key.clone(),
+    ) {
         (Some(access_key), Some(secret_key))
-            if !access_key.is_empty() && !secret_key.is_empty() =>
+            if !access_key.trim().is_empty() && !secret_key.trim().is_empty() =>
         {
             Ok(AwsCredentials {
                 access_key,
                 secret_key,
-                session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+                session_token: opts.bedrock_session_token.clone(),
             })
         }
-        _ => Err("No AWS credentials found. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or pass a Bedrock bearer token through StreamOptions/ProviderAuthResolver.".into()),
+        _ => resolve_credentials(None),
     }
 }
 

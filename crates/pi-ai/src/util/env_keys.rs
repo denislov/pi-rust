@@ -37,10 +37,8 @@ pub fn env_api_key(provider: &str) -> Option<String> {
 
 pub fn env_api_key_with_source(provider: &str) -> Option<(String, String)> {
     for var in provider_env_vars(provider) {
-        if let Ok(val) = std::env::var(var) {
-            if !val.is_empty() {
-                return Some((val, (*var).to_string()));
-            }
+        if let Some(val) = non_empty_env(var) {
+            return Some((val, (*var).to_string()));
         }
     }
     if self_auth_present(provider) {
@@ -50,6 +48,12 @@ pub fn env_api_key_with_source(provider: &str) -> Option<(String, String)> {
         ));
     }
     None
+}
+
+pub(crate) fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 /// Providers that authenticate via an external credential chain rather than a

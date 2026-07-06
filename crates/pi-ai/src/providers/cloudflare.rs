@@ -1,7 +1,10 @@
-pub fn resolve_base_url_with(
+pub fn resolve_base_url_with<S>(
     template: &str,
-    mut lookup: impl FnMut(&str) -> Option<&'static str>,
-) -> Result<String, String> {
+    mut lookup: impl FnMut(&str) -> Option<S>,
+) -> Result<String, String>
+where
+    S: AsRef<str>,
+{
     let mut out = String::new();
     let mut rest = template;
     while let Some(start) = rest.find('{') {
@@ -17,7 +20,7 @@ pub fn resolve_base_url_with(
                 name
             )
         })?;
-        out.push_str(value);
+        out.push_str(value.as_ref());
         rest = &after_start[end + 1..];
     }
     out.push_str(rest);
@@ -25,9 +28,5 @@ pub fn resolve_base_url_with(
 }
 
 pub fn resolve_base_url(template: &str) -> Result<String, String> {
-    resolve_base_url_with(template, |name| {
-        std::env::var(name)
-            .ok()
-            .map(|s| Box::leak(s.into_boxed_str()) as &'static str)
-    })
+    resolve_base_url_with(template, crate::util::env_keys::non_empty_env)
 }

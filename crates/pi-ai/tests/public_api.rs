@@ -434,6 +434,76 @@ async fn env_auth_resolver_applies_bedrock_bearer_token_for_model() {
 }
 
 #[tokio::test]
+async fn env_auth_resolver_applies_bedrock_sigv4_material_for_model() {
+    let env = EnvGuard::new(&[
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_PROFILE",
+    ]);
+    env.set("AWS_REGION", "us-west-2");
+    env.set("AWS_DEFAULT_REGION", "us-east-1");
+    env.set("AWS_ACCESS_KEY_ID", "bedrock-access");
+    env.set("AWS_SECRET_ACCESS_KEY", "bedrock-secret");
+    env.set("AWS_SESSION_TOKEN", "bedrock-session");
+    env.remove("AWS_PROFILE");
+
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(EnvProviderAuthResolver));
+    let model = scoped_model("env-bedrock-sigv4-api", "amazon-bedrock");
+    client.register_provider(
+        "env-bedrock-sigv4-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive resolver-populated stream options");
+    assert!(options.api_key.is_none());
+    assert_eq!(options.bedrock_region.as_deref(), Some("us-west-2"));
+    assert_eq!(
+        options.bedrock_access_key_id.as_deref(),
+        Some("bedrock-access")
+    );
+    assert_eq!(
+        options.bedrock_secret_access_key.as_deref(),
+        Some("bedrock-secret")
+    );
+    assert_eq!(
+        options.bedrock_session_token.as_deref(),
+        Some("bedrock-session")
+    );
+    let diagnostics = options
+        .auth_diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics,
+        vec![
+            ("bedrock_region", "AWS_REGION"),
+            ("bedrock_access_key_id", "AWS_ACCESS_KEY_ID"),
+            ("bedrock_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
+            ("bedrock_session_token", "AWS_SESSION_TOKEN"),
+        ]
+    );
+    let diagnostic_json = serde_json::to_string(&options.auth_diagnostics).unwrap();
+    assert!(!diagnostic_json.contains("bedrock-access"));
+    assert!(!diagnostic_json.contains("bedrock-secret"));
+    assert!(!diagnostic_json.contains("bedrock-session"));
+}
+
+#[tokio::test]
 async fn scoped_ai_client_applies_injected_auth_material() {
     let seen_options = Arc::new(Mutex::new(None));
     let client = AiClient::with_auth_resolver(Arc::new(RichAuthResolver));

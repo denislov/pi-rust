@@ -93,7 +93,26 @@ fn pi_ai_providers_do_not_read_env_api_keys_directly() {
 }
 
 #[test]
-fn bedrock_bearer_env_default_stays_behind_provider_auth_resolver() {
+fn pi_ai_provider_modules_do_not_read_process_env_directly() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate should live under crates/pi-ai");
+    let providers_root = crate_root.join("src/providers");
+    let mut violations = Vec::new();
+
+    collect_provider_process_env_reads(repo_root, &providers_root, &mut violations);
+
+    assert!(
+        violations.is_empty(),
+        "provider modules must receive env-derived auth/runtime material through ProviderAuthResolver, StreamOptions, or shared env utilities instead of reading process env directly:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn bedrock_env_defaults_stay_behind_provider_auth_resolver() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = crate_root
         .parent()
@@ -104,19 +123,33 @@ fn bedrock_bearer_env_default_stays_behind_provider_auth_resolver() {
     collect_provider_env_patterns(
         repo_root,
         &crate_root.join("src/providers/bedrock/mod.rs"),
-        &["AWS_BEARER_TOKEN_BEDROCK"],
+        &[
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ],
         &mut violations,
     );
     collect_provider_env_patterns(
         repo_root,
         &crate_root.join("src/providers/bedrock/auth.rs"),
-        &["AWS_BEARER_TOKEN_BEDROCK"],
+        &[
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ],
         &mut violations,
     );
 
     assert!(
         violations.is_empty(),
-        "Bedrock bearer-token env defaults must be resolved by ProviderAuthResolver and injected through StreamOptions, not read directly inside the provider:\n{}",
+        "Bedrock env defaults must be resolved by ProviderAuthResolver and injected through StreamOptions, not read directly inside the provider:\n{}",
         violations.join("\n")
     );
 }
@@ -170,6 +203,23 @@ fn collect_provider_env_patterns(
 }
 
 fn collect_provider_env_key_reads(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
+    collect_provider_source_violations(repo_root, path, violations, |line| {
+        line.contains("env_keys::env_api_key") || line.contains("env_api_key(")
+    });
+}
+
+fn collect_provider_process_env_reads(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
+    collect_provider_source_violations(repo_root, path, violations, |line| {
+        line.contains("std::env::var") || line.contains("std::env::var_os")
+    });
+}
+
+fn collect_provider_source_violations(
+    repo_root: &Path,
+    path: &Path,
+    violations: &mut Vec<String>,
+    is_violation: impl Copy + Fn(&str) -> bool,
+) {
     let Ok(metadata) = fs::metadata(path) else {
         return;
     };
@@ -181,7 +231,7 @@ fn collect_provider_env_key_reads(repo_root: &Path, path: &Path, violations: &mu
             .expect("read provider entries");
         entries.sort_by_key(|entry| entry.path());
         for entry in entries {
-            collect_provider_env_key_reads(repo_root, &entry.path(), violations);
+            collect_provider_source_violations(repo_root, &entry.path(), violations, is_violation);
         }
         return;
     }
@@ -197,7 +247,7 @@ fn collect_provider_env_key_reads(repo_root: &Path, path: &Path, violations: &mu
         .replace('\\', "/");
     let content = fs::read_to_string(path).expect("read provider file");
     for (line_index, line) in content.lines().enumerate() {
-        if line.contains("env_keys::env_api_key") || line.contains("env_api_key(") {
+        if is_violation(line) {
             violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
         }
     }

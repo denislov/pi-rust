@@ -35,8 +35,6 @@ impl ApiProvider for BedrockProvider {
         let region = opts
             .as_ref()
             .and_then(|o| o.bedrock_region.clone())
-            .or_else(|| std::env::var("AWS_REGION").ok())
-            .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
             .or_else(|| auth::region_from_endpoint(&model.base_url))
             .unwrap_or_else(|| "us-east-1".into());
 
@@ -78,7 +76,7 @@ impl ApiProvider for BedrockProvider {
                     session_token: None,
                 })
                 .map(Ok)
-                .unwrap_or_else(|| auth::resolve_credentials(None));
+                .unwrap_or_else(|| auth::resolve_credentials_from_options(&opts));
             match credentials {
                 Ok(credentials) => {
                     let (host, uri, query) = match auth::parse_url_for_signing(&url) {

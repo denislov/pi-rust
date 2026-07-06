@@ -42,6 +42,12 @@ pub struct StreamOptions {
     pub bedrock_profile: Option<String>,
     #[serde(rename = "bedrockBearerToken", skip_serializing_if = "Option::is_none")]
     pub bedrock_bearer_token: Option<String>,
+    #[serde(skip)]
+    pub bedrock_access_key_id: Option<String>,
+    #[serde(skip)]
+    pub bedrock_secret_access_key: Option<String>,
+    #[serde(skip)]
+    pub bedrock_session_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<serde_json::Value>,
     #[serde(skip)]

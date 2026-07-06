@@ -23,6 +23,9 @@ pub struct ProviderAuth {
     pub bedrock_region: Option<String>,
     pub bedrock_profile: Option<String>,
     pub bedrock_bearer_token: Option<String>,
+    pub bedrock_access_key_id: Option<String>,
+    pub bedrock_secret_access_key: Option<String>,
+    pub bedrock_session_token: Option<String>,
     pub diagnostics: Vec<ProviderAuthDiagnostic>,
 }
 
@@ -63,7 +66,11 @@ impl ProviderAuthResolver for EnvProviderAuthResolver {
     }
 
     fn resolve_model_auth(&self, model: &Model) -> ProviderAuth {
-        let mut auth = self.resolve_auth(&model.provider);
+        let mut auth = if is_bedrock_model(model) {
+            ProviderAuth::default()
+        } else {
+            self.resolve_auth(&model.provider)
+        };
         if model.provider == "azure-openai-responses" {
             set_auth_from_env(
                 &mut auth.azure_api_version,
@@ -91,16 +98,44 @@ impl ProviderAuthResolver for EnvProviderAuthResolver {
                 ));
             }
         }
-        if model.provider == "amazon-bedrock" || model.api == "bedrock-converse-stream" {
+        if is_bedrock_model(model) {
+            set_first_auth_from_env(
+                &mut auth.bedrock_region,
+                &mut auth.diagnostics,
+                "bedrock_region",
+                &["AWS_REGION", "AWS_DEFAULT_REGION"],
+            );
             set_auth_from_env(
                 &mut auth.bedrock_bearer_token,
                 &mut auth.diagnostics,
                 "bedrock_bearer_token",
                 "AWS_BEARER_TOKEN_BEDROCK",
             );
+            set_auth_from_env(
+                &mut auth.bedrock_access_key_id,
+                &mut auth.diagnostics,
+                "bedrock_access_key_id",
+                "AWS_ACCESS_KEY_ID",
+            );
+            set_auth_from_env(
+                &mut auth.bedrock_secret_access_key,
+                &mut auth.diagnostics,
+                "bedrock_secret_access_key",
+                "AWS_SECRET_ACCESS_KEY",
+            );
+            set_auth_from_env(
+                &mut auth.bedrock_session_token,
+                &mut auth.diagnostics,
+                "bedrock_session_token",
+                "AWS_SESSION_TOKEN",
+            );
         }
         auth
     }
+}
+
+fn is_bedrock_model(model: &Model) -> bool {
+    model.provider == "amazon-bedrock" || model.api == "bedrock-converse-stream"
 }
 
 fn auth_diagnostic(field: impl Into<String>, source: impl Into<String>) -> ProviderAuthDiagnostic {
@@ -119,6 +154,21 @@ fn set_auth_from_env(
     if let Some(value) = non_empty_env(env_name) {
         *target = Some(value);
         diagnostics.push(auth_diagnostic(field, env_name));
+    }
+}
+
+fn set_first_auth_from_env(
+    target: &mut Option<String>,
+    diagnostics: &mut Vec<ProviderAuthDiagnostic>,
+    field: &'static str,
+    env_names: &[&'static str],
+) {
+    for env_name in env_names {
+        if let Some(value) = non_empty_env(env_name) {
+            *target = Some(value);
+            diagnostics.push(auth_diagnostic(field, *env_name));
+            break;
+        }
     }
 }
 
@@ -224,6 +274,9 @@ fn apply_auth_material(
         bedrock_region,
         bedrock_profile,
         bedrock_bearer_token,
+        bedrock_access_key_id,
+        bedrock_secret_access_key,
+        bedrock_session_token,
         diagnostics,
     } = auth;
 
@@ -252,6 +305,18 @@ fn apply_auth_material(
     }
     if fill_if_none(&mut options.bedrock_bearer_token, bedrock_bearer_token) {
         applied_fields.push("bedrock_bearer_token");
+    }
+    if fill_if_none(&mut options.bedrock_access_key_id, bedrock_access_key_id) {
+        applied_fields.push("bedrock_access_key_id");
+    }
+    if fill_if_none(
+        &mut options.bedrock_secret_access_key,
+        bedrock_secret_access_key,
+    ) {
+        applied_fields.push("bedrock_secret_access_key");
+    }
+    if fill_if_none(&mut options.bedrock_session_token, bedrock_session_token) {
+        applied_fields.push("bedrock_session_token");
     }
     options.headers = merge_auth_headers(headers, options.headers.take());
     append_applied_auth_diagnostics(&mut options.auth_diagnostics, diagnostics, &applied_fields);
