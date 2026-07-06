@@ -10,7 +10,6 @@ use crate::stream::EventStream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
-use crate::util::env_keys::env_api_key;
 use crate::util::http::RetryConfig;
 use convert::build_request;
 
@@ -28,7 +27,7 @@ impl GoogleGenerativeAiProvider {
     }
 
     fn resolve_key(&self) -> Option<String> {
-        self.api_key.clone().or_else(|| env_api_key("google"))
+        self.api_key.clone()
     }
 }
 

@@ -8,7 +8,6 @@ use crate::stream::EventStream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
-use crate::util::env_keys::env_api_key;
 use crate::util::http::RetryConfig;
 
 const DEFAULT_AZURE_API_VERSION: &str = "v1";
@@ -33,9 +32,7 @@ impl AzureOpenAIResponsesProvider {
     }
 
     fn resolve_key(&self) -> Option<String> {
-        self.api_key
-            .clone()
-            .or_else(|| env_api_key("azure-openai-responses"))
+        self.api_key.clone()
     }
 }
 

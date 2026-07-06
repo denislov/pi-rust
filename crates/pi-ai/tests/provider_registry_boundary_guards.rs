@@ -74,6 +74,59 @@ fn is_global_provider_mutation(line: &str) -> bool {
 }
 
 #[test]
+fn pi_ai_providers_do_not_read_env_api_keys_directly() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate should live under crates/pi-ai");
+    let providers_root = crate_root.join("src/providers");
+    let mut violations = Vec::new();
+
+    collect_provider_env_key_reads(repo_root, &providers_root, &mut violations);
+
+    assert!(
+        violations.is_empty(),
+        "provider implementations must receive API keys from StreamOptions populated by ProviderAuthResolver instead of reading env_api_key directly:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn collect_provider_env_key_reads(repo_root: &Path, path: &Path, violations: &mut Vec<String>) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+
+    if metadata.is_dir() {
+        let mut entries = fs::read_dir(path)
+            .expect("read providers directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read provider entries");
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries {
+            collect_provider_env_key_reads(repo_root, &entry.path(), violations);
+        }
+        return;
+    }
+
+    if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+        return;
+    }
+
+    let relative = path
+        .strip_prefix(repo_root)
+        .expect("scanned file should be under repo root")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let content = fs::read_to_string(path).expect("read provider file");
+    for (line_index, line) in content.lines().enumerate() {
+        if line.contains("env_keys::env_api_key") || line.contains("env_api_key(") {
+            violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
+        }
+    }
+}
+
+#[test]
 fn pi_ai_api_facade_keeps_global_provider_runtime_helpers_out() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lib_source = fs::read_to_string(crate_root.join("src/lib.rs")).expect("read pi-ai lib.rs");

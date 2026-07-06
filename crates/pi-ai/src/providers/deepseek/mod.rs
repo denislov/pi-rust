@@ -9,7 +9,6 @@ use crate::stream::EventStream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
-use crate::util::env_keys::env_api_key;
 use convert::build_request;
 use process::response_to_events;
 use wire::ChatCompletionResponse;
@@ -28,7 +27,7 @@ impl DeepSeekProvider {
     }
 
     fn resolve_key(&self) -> Option<String> {
-        self.api_key.clone().or_else(|| env_api_key("deepseek"))
+        self.api_key.clone()
     }
 }
 

@@ -11,7 +11,6 @@ use crate::transport::http::send_json_stream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
-use crate::util::env_keys::env_api_key;
 use convert::build_request;
 
 pub struct OpenAICompletionsProvider {
@@ -27,8 +26,8 @@ impl OpenAICompletionsProvider {
         }
     }
 
-    fn resolve_key(&self, provider: &str) -> Option<String> {
-        self.api_key.clone().or_else(|| env_api_key(provider))
+    fn resolve_key(&self) -> Option<String> {
+        self.api_key.clone()
     }
 }
 
@@ -37,7 +36,7 @@ impl ApiProvider for OpenAICompletionsProvider {
         let key = opts
             .as_ref()
             .and_then(|o| o.api_key.clone())
-            .or_else(|| self.resolve_key(&model.provider));
+            .or_else(|| self.resolve_key());
 
         let Some(api_key) = key else {
             let model_id = model.id.clone();

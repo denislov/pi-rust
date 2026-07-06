@@ -11,7 +11,6 @@ use crate::stream::EventStream;
 use crate::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
-use crate::util::env_keys::env_api_key;
 use convert::build_request;
 
 pub struct AnthropicProvider {
@@ -28,7 +27,7 @@ impl AnthropicProvider {
     }
 
     fn resolve_key(&self) -> Option<String> {
-        self.api_key.clone().or_else(|| env_api_key("anthropic"))
+        self.api_key.clone()
     }
 }
 
