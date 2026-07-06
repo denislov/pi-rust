@@ -289,6 +289,65 @@ async fn agent_run_uses_configured_provider_streamer_without_global_registry() {
 }
 
 #[tokio::test]
+async fn runtime_compaction_node_uses_configured_provider_streamer_without_global_registry() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_streamer = calls.clone();
+    let mut config = AgentConfig::new(common::faux_model_with_window(
+        "runtime-compaction-scoped-provider-streamer-only",
+        100,
+    ));
+    config.compaction = Some(CompactionConfig {
+        settings: CompactionSettings {
+            enabled: true,
+            reserve_tokens: 0,
+            keep_recent_tokens: 8,
+        },
+        custom_instructions: None,
+    });
+    config.provider_streamer = Some(Arc::new(move |model, _context, _opts| {
+        assert_eq!(
+            model.api,
+            "runtime-compaction-scoped-provider-streamer-only"
+        );
+        calls_for_streamer.fetch_add(1, Ordering::SeqCst);
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            let mut message = AssistantMessage::empty("scoped", &model_id);
+            message.content.push(ContentBlock::Text {
+                text: "summary through scoped compaction streamer".into(),
+                text_signature: None,
+            });
+            message.stop_reason = StopReason::Stop;
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }));
+
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("old_1", &"old context ".repeat(40)));
+    agent.add_message(user_msg("old_2", &"more old context ".repeat(40)));
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    let mut flow = Flow::new("maybe_compact_runtime_context").unwrap();
+    flow.add_node(
+        "maybe_compact_runtime_context",
+        MaybeCompactRuntimeContextNode,
+    )
+    .unwrap();
+
+    let outcome = flow.run(&mut context).await.unwrap();
+
+    assert_eq!(outcome.last_node.as_str(), "maybe_compact_runtime_context");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        context.runtime_compaction.summary.as_deref(),
+        Some("summary through scoped compaction streamer")
+    );
+}
+
+#[tokio::test]
 async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
     let api = "agent-turn-flow-runtime-compaction";
     let mut config = AgentConfig::new(common::faux_model_with_window(api, 100));

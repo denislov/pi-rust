@@ -8,7 +8,7 @@ use crate::agent::AgentState;
 use crate::ai_runtime::stream_model_with_global_runtime;
 use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
-use crate::compaction::summarize::summarize;
+use crate::compaction::summarize::summarize_with_provider_streamer;
 use crate::hooks::{
     AfterToolCallContext, BeforeProviderRequestContext, BeforeToolCallContext,
     PrepareNextTurnContext, ShouldStopAfterTurnContext,
@@ -82,7 +82,7 @@ fn split_for_compaction_after_usage_anchor(
 async fn compact_before_provider_request(
     state: &Arc<RwLock<AgentState>>,
 ) -> Result<Option<(String, String, u32)>, String> {
-    let (config, messages, model, stream_options, cancel) = {
+    let (config, messages, model, stream_options, cancel, provider_streamer) = {
         let s = state.read().unwrap();
         (
             s.config.compaction.clone(),
@@ -90,6 +90,7 @@ async fn compact_before_provider_request(
             s.config.model.clone(),
             s.config.stream_options.clone(),
             s.cancel_token.clone(),
+            s.config.provider_streamer.clone(),
         )
     };
 
@@ -118,12 +119,13 @@ async fn compact_before_provider_request(
         return Ok(None);
     }
 
-    let summary = summarize(
+    let summary = summarize_with_provider_streamer(
         &model,
         &to_summarize,
         config.custom_instructions.as_deref(),
         stream_options,
         Some(cancel),
+        provider_streamer,
     )
     .await
     .map_err(|err| err.to_string())?;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::ai_runtime::stream_model_with_global_runtime;
 use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
-use crate::compaction::summarize::summarize;
+use crate::compaction::summarize::summarize_with_provider_streamer;
 use crate::convert::convert_to_context;
 use crate::flow::{Action, FlowNode};
 use crate::hooks::{AfterToolCallContext, AfterToolCallHook, BeforeToolCallContext};
@@ -152,12 +152,13 @@ pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result
         return Ok(());
     }
 
-    let summary = summarize(
+    let summary = summarize_with_provider_streamer(
         &ctx.config.model,
         &to_summarize,
         config.custom_instructions.as_deref(),
         ctx.config.stream_options.clone(),
         Some(ctx.cancel_token.clone()),
+        ctx.config.provider_streamer.clone(),
     )
     .await
     .map_err(|err| err.to_string())?;

@@ -1,6 +1,6 @@
-use crate::ai_runtime::stream_model_with_global_runtime;
+use crate::ai_runtime::stream_model_with_provider_streamer;
 use crate::compaction::error::CompactionError;
-use crate::types::AgentMessage;
+use crate::types::{AgentMessage, ProviderStreamer};
 use pi_ai::types::{ContentBlock, Context, Message, Model, StreamOptions};
 use tokio_util::sync::CancellationToken;
 
@@ -199,6 +199,25 @@ pub async fn summarize(
     stream_options: Option<StreamOptions>,
     cancel: Option<CancellationToken>,
 ) -> Result<String, CompactionError> {
+    summarize_with_provider_streamer(
+        model,
+        messages,
+        custom_instructions,
+        stream_options,
+        cancel,
+        None,
+    )
+    .await
+}
+
+pub async fn summarize_with_provider_streamer(
+    model: &Model,
+    messages: &[AgentMessage],
+    custom_instructions: Option<&str>,
+    stream_options: Option<StreamOptions>,
+    cancel: Option<CancellationToken>,
+    provider_streamer: Option<ProviderStreamer>,
+) -> Result<String, CompactionError> {
     let system_prompt = custom_instructions.unwrap_or(
         "You are helping compact conversation history. Summarize the key points, decisions, and actions.",
     );
@@ -209,7 +228,7 @@ pub async fn summarize(
     opts.cancel = cancel;
     opts.max_tokens = Some(4096);
 
-    let stream = stream_model_with_global_runtime(model, ctx, Some(opts));
+    let stream = stream_model_with_provider_streamer(model, ctx, Some(opts), provider_streamer);
     let message = pi_ai::complete(stream)
         .await
         .map_err(|e| CompactionError::SummarizationFailed(format!("complete failed: {}", e)))?;

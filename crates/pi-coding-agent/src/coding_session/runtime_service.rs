@@ -4,7 +4,7 @@ pub(crate) struct RuntimeService;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use pi_agent_core::{Agent, AgentMessage, AgentResources, AgentTool};
+use pi_agent_core::{Agent, AgentMessage, AgentResources, AgentTool, ProviderStreamer};
 use pi_ai::AiClient;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{AssistantMessage, ContentBlock, Context, StopReason, StreamOptions};
@@ -33,12 +33,24 @@ pub(crate) fn stream_model_for_scoped_runtime(
     context: Context,
     opts: Option<StreamOptions>,
 ) -> EventStream {
+    let provider_streamer = scoped_provider_streamer_for_runtime(runtime);
+    provider_streamer(runtime.model(), context, opts)
+}
+
+pub(crate) fn scoped_provider_streamer_for_runtime(runtime: &RuntimeSnapshot) -> ProviderStreamer {
+    let ai_client = scoped_ai_client_for_runtime(runtime);
+    Arc::new(move |model, context, opts| {
+        seed_scoped_ai_client_from_global_test_provider(ai_client.as_ref(), &model.api);
+        ai_client.stream_model(model, context, opts)
+    })
+}
+
+fn scoped_ai_client_for_runtime(runtime: &RuntimeSnapshot) -> Arc<AiClient> {
     let ai_client = AiClient::new();
     if runtime.register_builtins() {
         ai_client.register_builtins();
     }
-    seed_scoped_ai_client_from_global_test_provider(&ai_client, &runtime.model().api);
-    ai_client.stream_model(runtime.model(), context, opts)
+    Arc::new(ai_client)
 }
 
 #[cfg(any(test, feature = "test-harness", debug_assertions))]
@@ -81,11 +93,7 @@ impl RuntimeService {
         runtime: &RuntimeSnapshot,
         plugin_service: &PluginService,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
-        let ai_client = AiClient::new();
-        if runtime.register_builtins() {
-            ai_client.register_builtins();
-        }
-        let ai_client = Arc::new(ai_client);
+        let provider_streamer = scoped_provider_streamer_for_runtime(runtime);
 
         let mut diagnostics = runtime.profile_diagnostics().to_vec();
         let resources = apply_skill_policy(runtime, &mut diagnostics);
@@ -117,13 +125,7 @@ impl RuntimeService {
         {
             config.compaction = Some(pi_agent_core::CompactionConfig::default());
         }
-        config.provider_streamer = Some({
-            let ai_client = ai_client.clone();
-            Arc::new(move |model, context, opts| {
-                seed_scoped_ai_client_from_global_test_provider(ai_client.as_ref(), &model.api);
-                ai_client.stream_model(model, context, opts)
-            })
-        });
+        config.provider_streamer = Some(provider_streamer);
 
         let agent = Agent::new(config);
         for tool in tools.into_iter().chain(policy_tools) {

@@ -1,9 +1,9 @@
-use crate::ai_runtime::stream_model_with_global_runtime;
+use crate::ai_runtime::stream_model_with_provider_streamer;
 use crate::compaction::estimate::estimate_tokens;
 use crate::convert::convert_to_context;
 use crate::errors::{BranchSummaryError, BranchSummaryErrorCode};
 use crate::transcript::{SessionEntry, StoredAgentMessage};
-use crate::types::{AgentMessage, AgentResources};
+use crate::types::{AgentMessage, AgentResources, ProviderStreamer};
 use pi_ai::types::{ContentBlock, Model, StopReason, StreamOptions};
 use std::collections::{BTreeSet, HashMap};
 
@@ -170,6 +170,14 @@ pub async fn generate_branch_summary(
     entries: &[SessionEntry],
     options: BranchSummaryOptions,
 ) -> Result<BranchSummaryResult, BranchSummaryError> {
+    generate_branch_summary_with_provider_streamer(entries, options, None).await
+}
+
+pub async fn generate_branch_summary_with_provider_streamer(
+    entries: &[SessionEntry],
+    options: BranchSummaryOptions,
+    provider_streamer: Option<ProviderStreamer>,
+) -> Result<BranchSummaryResult, BranchSummaryError> {
     let context_window = options.model.context_window.max(options.reserve_tokens);
     let token_budget = context_window.saturating_sub(options.reserve_tokens);
     let preparation = prepare_branch_entries(entries, token_budget);
@@ -201,7 +209,7 @@ pub async fn generate_branch_summary(
         &[],
         &AgentResources::default(),
     );
-    let mut stream = stream_model_with_global_runtime(
+    let mut stream = stream_model_with_provider_streamer(
         &options.model,
         context,
         Some(StreamOptions {
@@ -210,6 +218,7 @@ pub async fn generate_branch_summary(
             max_tokens: Some(2048),
             ..Default::default()
         }),
+        provider_streamer,
     );
 
     let mut assistant = None;

@@ -5,13 +5,13 @@ use std::pin::Pin;
 
 use pi_agent_core::AgentMessage;
 use pi_agent_core::compaction::estimate::estimate_tokens;
-use pi_agent_core::compaction::summarize::summarize;
+use pi_agent_core::compaction::summarize::summarize_with_provider_streamer;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
-use super::runtime_service::RuntimeService;
+use super::runtime_service::{RuntimeService, scoped_provider_streamer_for_runtime};
 use super::session_log::event::SessionEventEnvelope;
 use super::session_log::replay::{SessionReplay, transcript_item_id};
 use crate::runtime::PromptInvocation;
@@ -378,12 +378,13 @@ impl ManualCompactionContext {
         if self.summary.is_some() {
             return Ok(());
         }
-        let summary = summarize(
+        let summary = summarize_with_provider_streamer(
             self.options.runtime().model(),
             &self.summary_messages,
             self.options.custom_instructions(),
             self.stream_options.clone(),
             None,
+            Some(scoped_provider_streamer_for_runtime(self.options.runtime())),
         )
         .await
         .map_err(|error| CodingSessionError::Provider {

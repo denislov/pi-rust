@@ -4,7 +4,7 @@ use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::branch_summary::{
     BranchSummaryOptions, collect_entries_for_branch_summary, generate_branch_summary,
-    prepare_branch_entries,
+    generate_branch_summary_with_provider_streamer, prepare_branch_entries,
 };
 use pi_agent_core::proxy::{
     ProxyAssistantMessageEvent, ProxyMessageState, ProxyStreamOptions, build_proxy_request_body,
@@ -13,13 +13,16 @@ use pi_agent_core::proxy::{
 use pi_agent_core::shell_output::{ShellCaptureOptions, execute_shell_with_capture};
 use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage, StoredUsage};
 use pi_agent_core::truncate::{TruncationLimit, truncate_head, truncate_tail};
-use pi_agent_core::{ExecutionOutput, FileSystem, InMemoryExecutionEnv};
+use pi_agent_core::{ExecutionOutput, FileSystem, InMemoryExecutionEnv, ProviderStreamer};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 fn timestamp() -> String {
     "2026-06-20T00:00:00.000Z".into()
@@ -168,6 +171,55 @@ async fn branch_summary_generation_uses_faux_provider_and_adds_preamble() {
             .starts_with("The user explored a different conversation branch")
     );
     assert!(result.summary.contains("## Goal"));
+}
+
+#[tokio::test]
+async fn branch_summary_generation_uses_provider_streamer_without_global_registry() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_streamer = calls.clone();
+    let provider_streamer: ProviderStreamer = Arc::new(move |model, _context, opts| {
+        assert_eq!(model.api, "m9-branch-summary-scoped-streamer-only");
+        assert_eq!(
+            opts.and_then(|options| options.api_key).as_deref(),
+            Some("scoped-key")
+        );
+        calls_for_streamer.fetch_add(1, Ordering::SeqCst);
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            let mut message = AssistantMessage::empty("scoped", &model_id);
+            message.content.push(ContentBlock::Text {
+                text: "## Goal\nScoped branch summary".into(),
+                text_signature: None,
+            });
+            message.stop_reason = StopReason::Stop;
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    });
+
+    let result = generate_branch_summary_with_provider_streamer(
+        &[user_entry(
+            "u1",
+            None,
+            "read crates/pi-agent-core/src/lib.rs",
+        )],
+        BranchSummaryOptions {
+            model: faux_model("m9-branch-summary-scoped-streamer-only"),
+            api_key: "scoped-key".into(),
+            headers: None,
+            custom_instructions: None,
+            replace_instructions: false,
+            reserve_tokens: 16_384,
+        },
+        Some(provider_streamer),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(result.summary.contains("Scoped branch summary"));
 }
 
 #[test]

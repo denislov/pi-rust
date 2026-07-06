@@ -5,13 +5,13 @@ use std::future::Future;
 use std::pin::Pin;
 
 use pi_agent_core::AgentMessage;
-use pi_agent_core::compaction::summarize::summarize;
+use pi_agent_core::compaction::summarize::summarize_with_provider_streamer;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
 use super::prompt::{PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
-use super::runtime_service::RuntimeService;
+use super::runtime_service::{RuntimeService, scoped_provider_streamer_for_runtime};
 use super::session_log::event::{DiagnosticLevel, PersistedContentBlock, SessionEventEnvelope};
 use super::session_log::replay::{ReplayLeaf, SessionReplay, ToolCallStatus, TranscriptItem};
 
@@ -405,12 +405,13 @@ impl BranchSummaryContext {
                 })?;
         let summary = if let Some(runtime) = self.options.runtime() {
             let instructions = branch_summary_instructions(self.options.custom_instructions());
-            let summary = summarize(
+            let summary = summarize_with_provider_streamer(
                 runtime.model(),
                 &self.summary_messages,
                 Some(instructions.as_str()),
                 self.stream_options.clone(),
                 None,
+                Some(scoped_provider_streamer_for_runtime(runtime)),
             )
             .await
             .map_err(|error| CodingSessionError::Provider {
