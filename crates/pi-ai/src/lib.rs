@@ -32,8 +32,9 @@ pub use registry::{
 pub use stream::{EventStream, complete};
 pub use types::{
     AssistantMessage, AssistantMessageDiagnostic, AssistantMessageEvent, ContentBlock, Context,
-    Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, ProviderResponseInfo,
-    ProviderStreamHooks, StopReason, StreamOptions, ThinkingConfig, Tool, Usage,
+    Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, ProviderAuthDiagnostic,
+    ProviderResponseInfo, ProviderStreamHooks, StopReason, StreamOptions, ThinkingConfig, Tool,
+    Usage,
 };
 pub use util::env_keys::env_api_key;
 
@@ -69,8 +70,9 @@ pub mod api {
     };
     pub use crate::types::{
         AssistantMessage, AssistantMessageDiagnostic, AssistantMessageEvent, ContentBlock, Context,
-        Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, ProviderResponseInfo,
-        ProviderStreamHooks, StopReason, StreamOptions, ThinkingConfig, Tool, Usage,
+        Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, ProviderAuthDiagnostic,
+        ProviderResponseInfo, ProviderStreamHooks, StopReason, StreamOptions, ThinkingConfig, Tool,
+        Usage,
     };
     pub use crate::util::env_keys::env_api_key;
     pub use crate::util::http::{RetryConfig, is_retryable_status, parse_retry_after_ms};

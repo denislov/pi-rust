@@ -32,15 +32,22 @@ fn provider_env_vars(provider: &str) -> &'static [&'static str] {
 }
 
 pub fn env_api_key(provider: &str) -> Option<String> {
+    env_api_key_with_source(provider).map(|(value, _source)| value)
+}
+
+pub fn env_api_key_with_source(provider: &str) -> Option<(String, String)> {
     for var in provider_env_vars(provider) {
         if let Ok(val) = std::env::var(var) {
             if !val.is_empty() {
-                return Some(val);
+                return Some((val, (*var).to_string()));
             }
         }
     }
     if self_auth_present(provider) {
-        return Some("<authenticated>".to_string());
+        return Some((
+            "<authenticated>".to_string(),
+            "credential_chain".to_string(),
+        ));
     }
     None
 }

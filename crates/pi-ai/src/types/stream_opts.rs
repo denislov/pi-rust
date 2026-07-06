@@ -1,6 +1,12 @@
 use crate::types::hooks::ProviderStreamHooks;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderAuthDiagnostic {
+    pub field: String,
+    pub source: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StreamOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,6 +52,8 @@ pub struct StreamOptions {
     pub max_retries: Option<u32>,
     #[serde(rename = "maxRetryDelayMs", skip_serializing_if = "Option::is_none")]
     pub max_retry_delay_ms: Option<u64>,
+    #[serde(default, skip)]
+    pub auth_diagnostics: Vec<ProviderAuthDiagnostic>,
     #[serde(skip)]
     pub hooks: Option<ProviderStreamHooks>,
 }

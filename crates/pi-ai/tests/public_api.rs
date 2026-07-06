@@ -7,13 +7,13 @@ use pi_ai::api::{
     EnvProviderAuthResolver, EventStream, ImageContent, ImageInput, ImageOutput, ImagesContext,
     ImagesModel, ImagesModelCost, ImagesModelOutput, ImagesUsage, Message, Model, ModelCompat,
     ModelCost, ModelInput, OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting,
-    ProviderAuth, ProviderAuthResolver, ProviderError, ProviderErrorKind, ProviderPayloadHook,
-    ProviderPayloadHookFuture, ProviderRegistry, ProviderResponseHook, ProviderResponseHookFuture,
-    ProviderResponseInfo, ProviderStreamHooks, RetryConfig, StopReason, StreamOptions, TextContent,
-    ThinkingConfig, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue, Tool, Usage,
-    VercelGatewayRouting, all_models, builtin_provider_apis, calculate_cost, complete, env_api_key,
-    get_model, get_models, get_providers, is_retryable_status, lookup_model, parse_retry_after_ms,
-    register_builtins_into,
+    ProviderAuth, ProviderAuthDiagnostic, ProviderAuthResolver, ProviderError, ProviderErrorKind,
+    ProviderPayloadHook, ProviderPayloadHookFuture, ProviderRegistry, ProviderResponseHook,
+    ProviderResponseHookFuture, ProviderResponseInfo, ProviderStreamHooks, RetryConfig, StopReason,
+    StreamOptions, TextContent, ThinkingConfig, ThinkingFormat, ThinkingLevelMap,
+    ThinkingLevelValue, Tool, Usage, VercelGatewayRouting, all_models, builtin_provider_apis,
+    calculate_cost, complete, env_api_key, get_model, get_models, get_providers,
+    is_retryable_status, lookup_model, parse_retry_after_ms, register_builtins_into,
 };
 use std::sync::{Arc, Mutex};
 use support::EnvGuard;
@@ -52,6 +52,7 @@ fn public_api_symbols_are_importable_from_api_facade() {
         _openrouter_routing: Option<OpenRouterRouting>,
         _provider_payload_hook: Option<ProviderPayloadHook>,
         _provider_payload_future: Option<ProviderPayloadHookFuture>,
+        _provider_auth_diagnostic: Option<ProviderAuthDiagnostic>,
         _provider_info: Option<ProviderResponseInfo>,
         _provider_response_hook: Option<ProviderResponseHook>,
         _provider_response_future: Option<ProviderResponseHookFuture>,
@@ -74,7 +75,7 @@ fn public_api_symbols_are_importable_from_api_facade() {
     accepts_types(
         None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
         None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-        None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None,
     );
 
     let _ = complete;
@@ -370,6 +371,24 @@ async fn env_auth_resolver_applies_azure_runtime_material_for_model() {
     assert_eq!(options.azure_api_version.as_deref(), Some("2026-02-01"));
     assert_eq!(options.azure_resource_name.as_deref(), Some("env-resource"));
     assert_eq!(options.azure_deployment_name.as_deref(), Some("gpt-4o-env"));
+    let diagnostics = options
+        .auth_diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics,
+        vec![
+            ("api_key", "AZURE_OPENAI_API_KEY"),
+            ("azure_api_version", "AZURE_OPENAI_API_VERSION"),
+            ("azure_resource_name", "AZURE_OPENAI_RESOURCE_NAME"),
+            ("azure_deployment_name", "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",),
+        ]
+    );
+    let diagnostic_json = serde_json::to_string(&options.auth_diagnostics).unwrap();
+    assert!(!diagnostic_json.contains("azure-env-key"));
+    assert!(!diagnostic_json.contains("env-resource"));
+    assert!(!diagnostic_json.contains("gpt-4o-env"));
 }
 
 #[tokio::test]

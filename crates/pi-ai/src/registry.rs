@@ -1,7 +1,8 @@
 use crate::providers;
 use crate::stream::EventStream;
 use crate::types::{
-    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
+    AssistantMessage, AssistantMessageEvent, Context, Model, ProviderAuthDiagnostic, StopReason,
+    StreamOptions,
 };
 use async_stream::stream;
 use std::collections::HashMap;
@@ -22,6 +23,7 @@ pub struct ProviderAuth {
     pub bedrock_region: Option<String>,
     pub bedrock_profile: Option<String>,
     pub bedrock_bearer_token: Option<String>,
+    pub diagnostics: Vec<ProviderAuthDiagnostic>,
 }
 
 pub trait ProviderAuthResolver: Send + Sync {
@@ -49,15 +51,66 @@ impl ProviderAuthResolver for EnvProviderAuthResolver {
         crate::util::env_keys::env_api_key(provider)
     }
 
+    fn resolve_auth(&self, provider: &str) -> ProviderAuth {
+        match crate::util::env_keys::env_api_key_with_source(provider) {
+            Some((api_key, source)) => ProviderAuth {
+                api_key: Some(api_key),
+                diagnostics: vec![auth_diagnostic("api_key", source)],
+                ..ProviderAuth::default()
+            },
+            None => ProviderAuth::default(),
+        }
+    }
+
     fn resolve_model_auth(&self, model: &Model) -> ProviderAuth {
         let mut auth = self.resolve_auth(&model.provider);
         if model.provider == "azure-openai-responses" {
-            auth.azure_api_version = non_empty_env("AZURE_OPENAI_API_VERSION");
-            auth.azure_base_url = non_empty_env("AZURE_OPENAI_BASE_URL");
-            auth.azure_resource_name = non_empty_env("AZURE_OPENAI_RESOURCE_NAME");
-            auth.azure_deployment_name = resolve_azure_deployment_name(&model.id);
+            set_auth_from_env(
+                &mut auth.azure_api_version,
+                &mut auth.diagnostics,
+                "azure_api_version",
+                "AZURE_OPENAI_API_VERSION",
+            );
+            set_auth_from_env(
+                &mut auth.azure_base_url,
+                &mut auth.diagnostics,
+                "azure_base_url",
+                "AZURE_OPENAI_BASE_URL",
+            );
+            set_auth_from_env(
+                &mut auth.azure_resource_name,
+                &mut auth.diagnostics,
+                "azure_resource_name",
+                "AZURE_OPENAI_RESOURCE_NAME",
+            );
+            if let Some(deployment_name) = resolve_azure_deployment_name(&model.id) {
+                auth.azure_deployment_name = Some(deployment_name);
+                auth.diagnostics.push(auth_diagnostic(
+                    "azure_deployment_name",
+                    "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+                ));
+            }
         }
         auth
+    }
+}
+
+fn auth_diagnostic(field: impl Into<String>, source: impl Into<String>) -> ProviderAuthDiagnostic {
+    ProviderAuthDiagnostic {
+        field: field.into(),
+        source: source.into(),
+    }
+}
+
+fn set_auth_from_env(
+    target: &mut Option<String>,
+    diagnostics: &mut Vec<ProviderAuthDiagnostic>,
+    field: &'static str,
+    env_name: &'static str,
+) {
+    if let Some(value) = non_empty_env(env_name) {
+        *target = Some(value);
+        diagnostics.push(auth_diagnostic(field, env_name));
     }
 }
 
@@ -153,26 +206,69 @@ fn apply_auth_material(
         return opts;
     }
 
+    let ProviderAuth {
+        api_key,
+        headers,
+        azure_api_version,
+        azure_resource_name,
+        azure_base_url,
+        azure_deployment_name,
+        bedrock_region,
+        bedrock_profile,
+        bedrock_bearer_token,
+        diagnostics,
+    } = auth;
+
     let options = opts.get_or_insert_with(StreamOptions::default);
-    fill_if_none(&mut options.api_key, auth.api_key);
-    fill_if_none(&mut options.azure_api_version, auth.azure_api_version);
-    fill_if_none(&mut options.azure_resource_name, auth.azure_resource_name);
-    fill_if_none(&mut options.azure_base_url, auth.azure_base_url);
-    fill_if_none(
-        &mut options.azure_deployment_name,
-        auth.azure_deployment_name,
-    );
-    fill_if_none(&mut options.bedrock_region, auth.bedrock_region);
-    fill_if_none(&mut options.bedrock_profile, auth.bedrock_profile);
-    fill_if_none(&mut options.bedrock_bearer_token, auth.bedrock_bearer_token);
-    options.headers = merge_auth_headers(auth.headers, options.headers.take());
+    let mut applied_fields = Vec::new();
+    if fill_if_none(&mut options.api_key, api_key) {
+        applied_fields.push("api_key");
+    }
+    if fill_if_none(&mut options.azure_api_version, azure_api_version) {
+        applied_fields.push("azure_api_version");
+    }
+    if fill_if_none(&mut options.azure_resource_name, azure_resource_name) {
+        applied_fields.push("azure_resource_name");
+    }
+    if fill_if_none(&mut options.azure_base_url, azure_base_url) {
+        applied_fields.push("azure_base_url");
+    }
+    if fill_if_none(&mut options.azure_deployment_name, azure_deployment_name) {
+        applied_fields.push("azure_deployment_name");
+    }
+    if fill_if_none(&mut options.bedrock_region, bedrock_region) {
+        applied_fields.push("bedrock_region");
+    }
+    if fill_if_none(&mut options.bedrock_profile, bedrock_profile) {
+        applied_fields.push("bedrock_profile");
+    }
+    if fill_if_none(&mut options.bedrock_bearer_token, bedrock_bearer_token) {
+        applied_fields.push("bedrock_bearer_token");
+    }
+    options.headers = merge_auth_headers(headers, options.headers.take());
+    append_applied_auth_diagnostics(&mut options.auth_diagnostics, diagnostics, &applied_fields);
     opts
 }
 
-fn fill_if_none(target: &mut Option<String>, value: Option<String>) {
-    if target.is_none() {
+fn fill_if_none(target: &mut Option<String>, value: Option<String>) -> bool {
+    if target.is_none() && value.is_some() {
         *target = value;
+        true
+    } else {
+        false
     }
+}
+
+fn append_applied_auth_diagnostics(
+    target: &mut Vec<ProviderAuthDiagnostic>,
+    diagnostics: Vec<ProviderAuthDiagnostic>,
+    applied_fields: &[&str],
+) {
+    target.extend(
+        diagnostics
+            .into_iter()
+            .filter(|diagnostic| applied_fields.contains(&diagnostic.field.as_str())),
+    );
 }
 
 fn merge_auth_headers(

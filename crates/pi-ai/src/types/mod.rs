@@ -13,5 +13,5 @@ pub use event::AssistantMessageEvent;
 pub use hooks::{ProviderResponseInfo, ProviderStreamHooks};
 pub use message::{AssistantMessage, AssistantMessageDiagnostic, DiagnosticErrorInfo, Message};
 pub use model::{Model, ModelCost, ModelInput};
-pub use stream_opts::{StreamOptions, ThinkingConfig};
+pub use stream_opts::{ProviderAuthDiagnostic, StreamOptions, ThinkingConfig};
 pub use usage::{Cost, StopReason, Usage};
