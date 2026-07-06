@@ -22,7 +22,7 @@ use crate::tools::edit::{EditOperations, RealEditOperations, edit_execute_with_o
 
 use super::CodingSessionError;
 use super::prompt::{PromptTurnOptions, RuntimeSnapshot};
-use super::runtime_service::stream_model_for_global_runtime;
+use super::runtime_service::stream_model_for_scoped_runtime;
 
 const DEFAULT_ACTION: &str = "default";
 
@@ -966,7 +966,7 @@ async fn stream_model_repair(runtime: &RuntimeSnapshot, prompt: String) -> Resul
         tools: None,
     };
     let mut stream =
-        stream_model_for_global_runtime(runtime, context, model_repair_stream_options(runtime));
+        stream_model_for_scoped_runtime(runtime, context, model_repair_stream_options(runtime));
     let mut final_text = None;
     while let Some(event) = stream.next().await {
         match event {

@@ -28,16 +28,17 @@ pub(crate) fn register_builtin_providers_for_global_runtime() {
     pi_ai::providers::register_builtins();
 }
 
-#[allow(deprecated)]
-pub(crate) fn stream_model_for_global_runtime(
+pub(crate) fn stream_model_for_scoped_runtime(
     runtime: &RuntimeSnapshot,
     context: Context,
     opts: Option<StreamOptions>,
 ) -> EventStream {
+    let ai_client = AiClient::new();
     if runtime.register_builtins() {
-        register_builtin_providers_for_global_runtime();
+        ai_client.register_builtins();
     }
-    pi_ai::stream_model(runtime.model(), context, opts)
+    seed_scoped_ai_client_from_global_test_provider(&ai_client, &runtime.model().api);
+    ai_client.stream_model(runtime.model(), context, opts)
 }
 
 #[cfg(any(test, feature = "test-harness", debug_assertions))]

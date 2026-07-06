@@ -238,7 +238,26 @@ fn product_agent_runtime_build_installs_scoped_ai_client_streamer() {
 }
 
 #[test]
-fn runtime_global_stream_model_boundary_acknowledges_deprecated_helper() {
+fn self_healing_model_repair_uses_scoped_runtime_streaming() {
+    let scan = SourceScan::new();
+    let self_healing = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/self_healing_edit_flow.rs"),
+    )
+    .expect("read self-healing edit flow source");
+
+    assert!(
+        self_healing.contains("stream_model_for_scoped_runtime"),
+        "self-healing model repair should use the scoped runtime streaming helper"
+    );
+    assert!(
+        !self_healing.contains("stream_model_for_global_runtime"),
+        "self-healing model repair must not call the global streaming compatibility helper"
+    );
+}
+
+#[test]
+fn scoped_runtime_streaming_helper_uses_ai_client_without_global_stream_model() {
     let scan = SourceScan::new();
     let runtime_service = fs::read_to_string(
         scan.crate_root
@@ -246,21 +265,45 @@ fn runtime_global_stream_model_boundary_acknowledges_deprecated_helper() {
     )
     .expect("read runtime service source");
 
-    let lines = runtime_service.lines().collect::<Vec<_>>();
-    let function_index = lines
-        .iter()
-        .position(|line| line.contains("fn stream_model_for_global_runtime("))
-        .expect("runtime streaming compatibility boundary should exist");
-    let preceding = lines[..function_index]
-        .iter()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .copied()
-        .unwrap_or_default();
-    assert_eq!(
-        preceding.trim(),
-        "#[allow(deprecated)]",
-        "the only allowed product global streaming boundary should explicitly acknowledge the deprecated pi-ai global helper"
+    let start = runtime_service
+        .find("fn stream_model_for_scoped_runtime(")
+        .expect("scoped runtime streaming helper should exist");
+    let end = runtime_service[start..]
+        .find("impl RuntimeService")
+        .map(|offset| start + offset)
+        .expect("scoped runtime helper should be before RuntimeService impl");
+    let helper_body = &runtime_service[start..end];
+
+    assert!(
+        helper_body.contains("AiClient::new()"),
+        "scoped runtime helper should create a scoped AiClient"
+    );
+    assert!(
+        helper_body.contains("ai_client.register_builtins()"),
+        "scoped runtime helper should install builtins into the scoped AiClient"
+    );
+    assert!(
+        !helper_body.contains("pi_ai::stream_model("),
+        "scoped runtime helper must not stream through the global pi-ai compatibility helper"
+    );
+}
+
+#[test]
+fn runtime_service_no_longer_exposes_global_stream_model_helper() {
+    let scan = SourceScan::new();
+    let runtime_service = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/runtime_service.rs"),
+    )
+    .expect("read runtime service source");
+
+    assert!(
+        !runtime_service.contains("fn stream_model_for_global_runtime("),
+        "runtime service should not expose a product global streaming helper"
+    );
+    assert!(
+        !runtime_service.contains("pi_ai::stream_model("),
+        "runtime service should not call the pi-ai global streaming compatibility helper"
     );
 }
 
