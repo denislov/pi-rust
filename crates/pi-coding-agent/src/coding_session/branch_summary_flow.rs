@@ -737,6 +737,7 @@ mod tests {
             prompt: String::new(),
             model: model(api),
             api_key: None,
+            auth_diagnostics: Vec::new(),
             system_prompt: Some("system".into()),
             max_turns: Some(2),
             tools: Vec::new(),

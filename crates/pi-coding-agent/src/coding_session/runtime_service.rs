@@ -9,7 +9,7 @@ use pi_ai::AiClient;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{AssistantMessage, ContentBlock, Context, StopReason, StreamOptions};
 
-use crate::runtime::{SessionMode, build_agent_config};
+use crate::runtime::{SessionMode, build_agent_config_with_auth_diagnostics};
 
 use super::CodingSessionError;
 use super::delegation::delegation_tools;
@@ -106,11 +106,12 @@ impl RuntimeService {
             &mut diagnostics,
         );
 
-        let mut config = build_agent_config(
+        let mut config = build_agent_config_with_auth_diagnostics(
             runtime.model().clone(),
             runtime.system_prompt().map(str::to_owned),
             runtime.max_turns(),
             runtime.api_key().map(str::to_owned),
+            runtime.auth_diagnostics().to_vec(),
             runtime.thinking_level(),
             runtime.tool_execution(),
             resources,
@@ -378,7 +379,7 @@ mod tests {
     use std::sync::Arc;
 
     use pi_agent_core::{AgentResources, AgentTool, ToolExecutionMode};
-    use pi_ai::types::{Model, ModelCost, ModelInput};
+    use pi_ai::types::{Model, ModelCost, ModelInput, ProviderAuthDiagnostic};
 
     use super::*;
     use crate::coding_session::session_log::event::DiagnosticLevel;
@@ -407,10 +408,18 @@ mod tests {
     }
 
     fn runtime_snapshot(api: &str) -> RuntimeSnapshot {
+        runtime_snapshot_with_auth_diagnostics(api, Vec::new())
+    }
+
+    fn runtime_snapshot_with_auth_diagnostics(
+        api: &str,
+        auth_diagnostics: Vec<ProviderAuthDiagnostic>,
+    ) -> RuntimeSnapshot {
         RuntimeSnapshot::from_prompt_run_options(PromptRunOptions {
             prompt: "hello".into(),
             model: model(api),
             api_key: Some("key".into()),
+            auth_diagnostics,
             system_prompt: Some("system".into()),
             max_turns: Some(2),
             tools: Vec::new(),
@@ -439,6 +448,32 @@ mod tests {
         assert_eq!(
             stream_options.and_then(|options| options.api_key),
             Some("key".into())
+        );
+    }
+
+    #[test]
+    fn build_agent_runtime_preserves_prompt_auth_diagnostics() {
+        let service = RuntimeService::new();
+        let snapshot = runtime_snapshot_with_auth_diagnostics(
+            "runtime-service-auth-diagnostics",
+            vec![ProviderAuthDiagnostic {
+                field: "api_key".into(),
+                source: "auth.toml:oauth".into(),
+            }],
+        );
+
+        let agent = service.build_agent_runtime(&snapshot).unwrap();
+
+        let (_context, stream_options) = agent.provider_request_snapshot();
+        let diagnostics = stream_options
+            .expect("auth diagnostics should create stream options")
+            .auth_diagnostics
+            .into_iter()
+            .map(|diagnostic| (diagnostic.field, diagnostic.source))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            diagnostics,
+            vec![("api_key".into(), "auth.toml:oauth".into())]
         );
     }
 

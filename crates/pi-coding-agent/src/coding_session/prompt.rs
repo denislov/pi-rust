@@ -7,7 +7,9 @@ use std::path::Path;
 use pi_agent_core::{
     Agent, AgentEvent, AgentResources, AgentTool, AgentToolResult, ThinkingLevel, ToolExecutionMode,
 };
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, Model};
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Model, ProviderAuthDiagnostic,
+};
 
 use crate::args::CliMode;
 use crate::config::Settings;
@@ -320,6 +322,7 @@ pub(crate) struct DelegationRequest {
 pub(crate) struct RuntimeSnapshot {
     model: Model,
     api_key: Option<String>,
+    auth_diagnostics: Vec<ProviderAuthDiagnostic>,
     system_prompt: Option<String>,
     max_turns: Option<u32>,
     tools: Vec<AgentTool>,
@@ -341,6 +344,7 @@ impl std::fmt::Debug for RuntimeSnapshot {
         f.debug_struct("RuntimeSnapshot")
             .field("model", &self.model)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("auth_diagnostics", &self.auth_diagnostics)
             .field("system_prompt", &self.system_prompt)
             .field("max_turns", &self.max_turns)
             .field("tools_len", &self.tools.len())
@@ -365,6 +369,7 @@ impl RuntimeSnapshot {
             prompt: _,
             model,
             api_key,
+            auth_diagnostics,
             system_prompt,
             max_turns,
             tools,
@@ -382,6 +387,7 @@ impl RuntimeSnapshot {
         Self {
             model,
             api_key,
+            auth_diagnostics,
             system_prompt,
             max_turns,
             tools,
@@ -449,6 +455,10 @@ impl RuntimeSnapshot {
 
     pub(crate) fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref()
+    }
+
+    pub(crate) fn auth_diagnostics(&self) -> &[ProviderAuthDiagnostic] {
+        &self.auth_diagnostics
     }
 
     pub(crate) fn system_prompt(&self) -> Option<&str> {
@@ -1437,6 +1447,7 @@ mod tests {
             prompt: "hello".into(),
             model: model(),
             api_key: Some("key".into()),
+            auth_diagnostics: Vec::new(),
             system_prompt: Some("system".into()),
             max_turns: Some(3),
             tools: Vec::new(),
@@ -1481,6 +1492,7 @@ mod tests {
 
         assert_eq!(snapshot.model().id, "test-model");
         assert_eq!(snapshot.api_key(), Some("key"));
+        assert!(snapshot.auth_diagnostics().is_empty());
         assert_eq!(snapshot.system_prompt(), Some("system"));
         assert_eq!(snapshot.max_turns(), Some(3));
         assert!(snapshot.tools().is_empty());

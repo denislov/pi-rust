@@ -332,7 +332,7 @@ pub async fn run_cli_with_options_and_stdin(
 
     match parsed.mode {
         CliMode::Print => {
-            match run_print_mode(PrintModeOptions::from(session_prompt_options)).await {
+            match print_mode::run_print_prompt_options(session_prompt_options).await {
                 Ok(text) => CliOutput::success(stdout_with_trailing_newline(text))
                     .with_stderr(diagnostic_text),
                 Err(error) => CliOutput::failure(error).with_stderr(diagnostic_text),

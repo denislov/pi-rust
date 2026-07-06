@@ -214,18 +214,24 @@ fn prompt_options_from_delegation_runtime_seed(
     cwd: &Path,
 ) -> Result<PromptTurnOptions, CodingSessionError> {
     let (config, mut diagnostics) = crate::config::load_config(cwd);
-    let api_key = crate::config::auth::resolve_api_key(
+    let resolved_api_key = crate::config::auth::resolve_api_key(
         &seed.model.provider,
         None,
         &config.auth,
         &mut diagnostics,
-    )
-    .map(|key| key.value);
+    );
+    let auth_diagnostics = resolved_api_key
+        .as_ref()
+        .map(|key| key.provider_auth_diagnostic())
+        .into_iter()
+        .collect();
+    let api_key = resolved_api_key.map(|key| key.value);
     let tools = restored_builtin_tools(cwd, &seed.tool_names);
     let options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: String::new(),
         model: seed.model,
         api_key,
+        auth_diagnostics,
         system_prompt: seed.system_prompt,
         max_turns: seed.max_turns,
         tools,

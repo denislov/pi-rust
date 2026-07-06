@@ -220,9 +220,33 @@ pub enum KeySource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthMaterialKind {
+    ApiKey,
+    OauthAccessToken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedKey {
     pub value: String,
     pub source: KeySource,
+    pub material: AuthMaterialKind,
+}
+
+impl ResolvedKey {
+    pub fn provider_auth_diagnostic(&self) -> pi_ai::ProviderAuthDiagnostic {
+        pi_ai::ProviderAuthDiagnostic {
+            field: "api_key".into(),
+            source: match (&self.source, &self.material) {
+                (KeySource::Cli, AuthMaterialKind::ApiKey) => "cli:api_key".into(),
+                (KeySource::Env, AuthMaterialKind::ApiKey) => "env:api_key".into(),
+                (KeySource::AuthFile, AuthMaterialKind::ApiKey) => "auth.toml:api_key".into(),
+                (KeySource::AuthFile, AuthMaterialKind::OauthAccessToken) => {
+                    "auth.toml:oauth".into()
+                }
+                (_, AuthMaterialKind::OauthAccessToken) => "oauth".into(),
+            },
+        }
+    }
 }
 
 pub fn resolve_api_key(
@@ -236,6 +260,7 @@ pub fn resolve_api_key(
             return Some(ResolvedKey {
                 value: key.to_string(),
                 source: KeySource::Cli,
+                material: AuthMaterialKind::ApiKey,
             });
         }
     }
@@ -243,6 +268,7 @@ pub fn resolve_api_key(
         return Some(ResolvedKey {
             value,
             source: KeySource::Env,
+            material: AuthMaterialKind::ApiKey,
         });
     }
     if let Some(raw) = store.api_key_entry(provider) {
@@ -251,6 +277,7 @@ pub fn resolve_api_key(
                 return Some(ResolvedKey {
                     value,
                     source: KeySource::AuthFile,
+                    material: AuthMaterialKind::ApiKey,
                 });
             }
         }
@@ -261,6 +288,7 @@ pub fn resolve_api_key(
                 return Some(ResolvedKey {
                     value,
                     source: KeySource::AuthFile,
+                    material: AuthMaterialKind::OauthAccessToken,
                 });
             }
         }
@@ -449,6 +477,7 @@ expires = 4102444800000
 
         assert_eq!(key.value, "oauth-access");
         assert_eq!(key.source, KeySource::AuthFile);
+        assert_eq!(key.material, AuthMaterialKind::OauthAccessToken);
         assert!(d.is_empty());
     }
 
@@ -471,6 +500,7 @@ access_token = "$COPILOT_TEST_TOKEN"
 
         assert_eq!(key.value, "oauth-from-env-ref");
         assert_eq!(key.source, KeySource::AuthFile);
+        assert_eq!(key.material, AuthMaterialKind::OauthAccessToken);
         assert!(d.is_empty());
     }
 

@@ -1,7 +1,10 @@
+mod support;
+
 use pi_coding_agent::api::{CliRunOptions, SessionRunOptions, builtin_tools, parse_args};
 use pi_coding_agent::request::{resolve_cli_context, resolve_prompt_request};
 use pi_coding_agent::runtime::PromptInvocation;
 use pi_coding_agent::session::ResolvedSessionTarget;
+use support::EnvGuard;
 
 #[test]
 fn resolve_prompt_request_builds_common_headless_context() {
@@ -76,6 +79,70 @@ fn resolve_prompt_request_builds_common_headless_context() {
             .unwrap()
             .contains("global instructions")
     );
+}
+
+#[test]
+fn resolve_prompt_request_preserves_oauth_auth_source_diagnostic() {
+    let env = EnvGuard::new(&["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_KEY"]);
+    env.remove("ANTHROPIC_API_KEY");
+    env.remove("CLAUDE_API_KEY");
+    env.remove("ANTHROPIC_KEY");
+
+    let temp = tempfile::tempdir().unwrap();
+    let global = temp.path().join("global");
+    let cwd = temp.path().join("work");
+    std::fs::create_dir_all(&global).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(
+        global.join("settings.toml"),
+        "default_model = \"claude-haiku-4-5\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        global.join("auth.toml"),
+        "[anthropic]\ntype = \"oauth\"\naccess = \"oauth-access\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            global.join("auth.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+
+    let parsed = parse_args(vec!["-p".into(), "hello".into()]).unwrap();
+
+    let resolved = resolve_prompt_request(
+        parsed,
+        CliRunOptions {
+            tools: builtin_tools(cwd.clone()),
+            register_builtins: false,
+            session: SessionRunOptions::enabled(cwd.clone()),
+            ..CliRunOptions::default()
+        },
+        None,
+        cwd,
+        global,
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved.session_options.api_key.as_deref(),
+        Some("oauth-access")
+    );
+    let diagnostics = resolved
+        .session_options
+        .auth_diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(diagnostics, vec![("api_key", "auth.toml:oauth")]);
+    let diagnostic_json =
+        serde_json::to_string(&resolved.session_options.auth_diagnostics).unwrap();
+    assert!(!diagnostic_json.contains("oauth-access"));
 }
 
 #[test]

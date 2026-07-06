@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use pi_agent_core::AgentResources;
 use pi_agent_core::transcript::create_session_id;
-use pi_ai::types::Model;
+use pi_ai::types::{Model, ProviderAuthDiagnostic};
 #[cfg(test)]
 use pi_tui::{Component, InputEvent, Terminal, visible_width};
 use pi_tui::{KeybindingsManager, ProcessTerminal, TuiTheme, dark_theme, light_theme};
@@ -90,6 +90,7 @@ static INTERACTIVE_ID: AtomicUsize = AtomicUsize::new(1);
 pub(super) struct PromptContext {
     pub(super) model: Model,
     pub(super) api_key: Option<String>,
+    pub(super) auth_diagnostics: Vec<ProviderAuthDiagnostic>,
     pub(super) cli_api_key: Option<String>,
     pub(super) auth: crate::config::AuthStore,
     pub(super) system_prompt: Option<String>,
@@ -170,6 +171,7 @@ pub(super) fn build_prompt_context(
     Ok(PromptContext {
         model: resolved.model,
         api_key: resolved.api_key,
+        auth_diagnostics: resolved.auth_diagnostics,
         cli_api_key: parsed.api_key.clone(),
         auth: resolved.config.auth,
         system_prompt: resolved.system_prompt,
@@ -246,14 +248,23 @@ pub(super) fn resolve_prompt_api_key(
     provider: &str,
     cli_api_key: Option<&str>,
     auth: &crate::config::AuthStore,
-) -> (Option<String>, Vec<crate::request::CliDiagnostic>) {
+) -> (
+    Option<String>,
+    Vec<ProviderAuthDiagnostic>,
+    Vec<crate::request::CliDiagnostic>,
+) {
     let mut key_diags = Vec::new();
     let resolved = config::auth::resolve_api_key(provider, cli_api_key, auth, &mut key_diags);
+    let auth_diagnostics = resolved
+        .as_ref()
+        .map(|resolved| resolved.provider_auth_diagnostic())
+        .into_iter()
+        .collect();
     let diagnostics = key_diags
         .iter()
         .map(crate::request::CliDiagnostic::from_config)
         .collect();
-    (resolved.map(|r| r.value), diagnostics)
+    (resolved.map(|r| r.value), auth_diagnostics, diagnostics)
 }
 
 fn configured_model_choices(

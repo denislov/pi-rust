@@ -74,6 +74,12 @@ impl From<PromptRunOptions> for PrintModeOptions {
 
 pub async fn run_print_mode(options: PrintModeOptions) -> Result<String, CliError> {
     let options = session_prompt_options_from_print_options(options);
+    run_print_prompt_options(options).await
+}
+
+pub(crate) async fn run_print_prompt_options(
+    options: PromptRunOptions,
+) -> Result<String, CliError> {
     let outcome = run_print_mode_with_coding_session(options).await?;
     print_text_from_prompt_outcome(outcome)
 }
@@ -83,6 +89,7 @@ fn session_prompt_options_from_print_options(options: PrintModeOptions) -> Promp
         prompt: options.prompt,
         model: options.model,
         api_key: options.api_key,
+        auth_diagnostics: Vec::new(),
         system_prompt: options.system_prompt,
         max_turns: options.max_turns,
         tools: options.tools,

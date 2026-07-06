@@ -1005,11 +1005,12 @@ async fn stream_model_repair(runtime: &RuntimeSnapshot, prompt: String) -> Resul
 }
 
 fn model_repair_stream_options(runtime: &RuntimeSnapshot) -> Option<StreamOptions> {
-    crate::runtime::build_agent_config(
+    crate::runtime::build_agent_config_with_auth_diagnostics(
         runtime.model().clone(),
         runtime.system_prompt().map(str::to_owned),
         runtime.max_turns(),
         runtime.api_key().map(str::to_owned),
+        runtime.auth_diagnostics().to_vec(),
         runtime.thinking_level(),
         runtime.tool_execution(),
         runtime.resources().clone(),

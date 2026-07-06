@@ -386,6 +386,7 @@ impl RpcState {
             prompt: prompt.clone(),
             model: self.model.clone(),
             api_key: self.api_key.clone(),
+            auth_diagnostics: Vec::new(),
             system_prompt: Some("Return only self-healing edit repair JSON.".into()),
             max_turns: Some(1),
             tools: self.options.tools.clone(),

@@ -782,7 +782,7 @@ fn handle_input_event<T: Terminal>(
     };
 
     if let Some(model) = selected_model {
-        let (api_key, diagnostics) = resolve_prompt_api_key(
+        let (api_key, auth_diagnostics, diagnostics) = resolve_prompt_api_key(
             &model.provider,
             prompt_context.cli_api_key.as_deref(),
             &prompt_context.auth,
@@ -792,6 +792,7 @@ fn handle_input_event<T: Terminal>(
             eprint!("{diagnostic_text}");
         }
         prompt_context.api_key = api_key;
+        prompt_context.auth_diagnostics = auth_diagnostics;
         prompt_context.model = model;
     }
     if let Some(thinking_level) = selected_thinking_level {
@@ -849,7 +850,7 @@ fn handle_input_event<T: Terminal>(
     }
     if let Some(auth) = auth_update {
         prompt_context.auth = auth;
-        let (api_key, diagnostics) = resolve_prompt_api_key(
+        let (api_key, auth_diagnostics, diagnostics) = resolve_prompt_api_key(
             &prompt_context.model.provider,
             prompt_context.cli_api_key.as_deref(),
             &prompt_context.auth,
@@ -859,6 +860,7 @@ fn handle_input_event<T: Terminal>(
             eprint!("{diagnostic_text}");
         }
         prompt_context.api_key = api_key;
+        prompt_context.auth_diagnostics = auth_diagnostics;
     }
 
     // Tree label persistence for Rust-native sessions is not implemented yet.
@@ -1437,6 +1439,7 @@ fn start_prompt_task<T: Terminal>(
     let options = PromptRunOptions {
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1498,6 +1501,7 @@ fn start_agent_invocation_task<T: Terminal>(
         prompt: task_prompt.clone(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1543,6 +1547,7 @@ fn start_agent_team_task<T: Terminal>(
         prompt: task_prompt.clone(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1587,6 +1592,7 @@ fn start_plugin_reload_task<T: Terminal>(
         prompt: String::new(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1621,6 +1627,7 @@ fn interactive_self_healing_model_repair_options(
         prompt: prompt.clone(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: Some("Return only self-healing edit repair JSON.".to_string()),
         max_turns: Some(1),
         tools: prompt_context.tools.clone(),
@@ -1657,6 +1664,7 @@ fn start_self_healing_edit_task<T: Terminal>(
         prompt: String::new(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1714,6 +1722,7 @@ fn start_plugin_command_task<T: Terminal>(
         prompt: String::new(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1767,6 +1776,7 @@ fn start_compact_task<T: Terminal>(
         prompt: String::new(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1819,6 +1829,7 @@ fn start_branch_summary_navigation_task<T: Terminal>(
         prompt: String::new(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),
@@ -1872,6 +1883,7 @@ fn start_branch_summary_task<T: Terminal>(
         prompt: String::new(),
         model: prompt_context.model.clone(),
         api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
         system_prompt: prompt_context.system_prompt.clone(),
         max_turns: prompt_context.max_turns,
         tools: prompt_context.tools.clone(),

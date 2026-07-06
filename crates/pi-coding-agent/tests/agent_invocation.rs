@@ -236,6 +236,7 @@ fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
         prompt: prompt.into(),
         model: fallback_model(api),
         api_key: None,
+        auth_diagnostics: Vec::new(),
         system_prompt: Some("Runtime fallback instructions.".into()),
         max_turns: Some(2),
         tools: vec![echo_tool(), extra_tool()],

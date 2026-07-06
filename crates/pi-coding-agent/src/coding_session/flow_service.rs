@@ -400,6 +400,7 @@ mod tests {
                 prompt: "hello".into(),
                 model: model(api),
                 api_key: None,
+                auth_diagnostics: Vec::new(),
                 system_prompt: None,
                 max_turns: Some(2),
                 tools: Vec::new(),

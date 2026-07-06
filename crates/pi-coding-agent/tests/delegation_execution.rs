@@ -2055,6 +2055,7 @@ fn prompt_options_with_tools(
         prompt: prompt.into(),
         model: fallback_model(api),
         api_key: None,
+        auth_diagnostics: Vec::new(),
         system_prompt: Some("Runtime fallback instructions.".into()),
         max_turns: Some(4),
         tools,

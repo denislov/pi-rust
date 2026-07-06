@@ -11,7 +11,7 @@ use crate::tools::{self, ToolFilter};
 use crate::{CliArgs, CliError};
 use pi_agent_core::types::DiagnosticSeverity as ResourceDiagnosticSeverity;
 use pi_agent_core::{AgentResources, ResourceDiagnostic};
-use pi_ai::types::Model;
+use pi_ai::types::{Model, ProviderAuthDiagnostic};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,7 @@ pub struct ResolvedCliContext {
     pub config_paths: ConfigPaths,
     pub model: Model,
     pub api_key: Option<String>,
+    pub auth_diagnostics: Vec<ProviderAuthDiagnostic>,
     pub loaded_resources: LoadedResources,
     pub system_prompt: Option<String>,
     pub tools: Vec<pi_agent_core::AgentTool>,
@@ -82,7 +83,7 @@ pub fn resolve_cli_context(
     )?;
 
     let provider = model.provider.clone();
-    let api_key = resolve_api_key(
+    let (api_key, auth_diagnostics) = resolve_api_key(
         &provider,
         parsed.api_key.as_deref(),
         &config,
@@ -142,6 +143,7 @@ pub fn resolve_cli_context(
         config_paths,
         model,
         api_key,
+        auth_diagnostics,
         loaded_resources,
         system_prompt,
         tools,
@@ -188,6 +190,7 @@ pub fn resolve_prompt_request(
         },
         model: context.model.clone(),
         api_key: context.api_key.clone(),
+        auth_diagnostics: context.auth_diagnostics.clone(),
         system_prompt: context.system_prompt.clone(),
         max_turns: context.parsed.max_turns,
         tools: context.tools.clone(),
@@ -231,12 +234,17 @@ fn resolve_api_key(
     cli_api_key: Option<&str>,
     config: &Config,
     diagnostics: &mut Vec<CliDiagnostic>,
-) -> Option<String> {
+) -> (Option<String>, Vec<ProviderAuthDiagnostic>) {
     let mut key_diags = Vec::new();
     let resolved =
         config::auth::resolve_api_key(provider, cli_api_key, &config.auth, &mut key_diags);
     diagnostics.extend(key_diags.iter().map(CliDiagnostic::from_config));
-    resolved.map(|resolved| resolved.value)
+    let auth_diagnostics = resolved
+        .as_ref()
+        .map(|resolved| resolved.provider_auth_diagnostic())
+        .into_iter()
+        .collect();
+    (resolved.map(|resolved| resolved.value), auth_diagnostics)
 }
 
 impl CliDiagnostic {

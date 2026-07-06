@@ -3,7 +3,7 @@ use pi_agent_core::{
     AgentConfig, AgentResources, AgentTool, CompactionConfig, CompactionSettings, ThinkingLevel,
     ToolExecutionMode,
 };
-use pi_ai::types::{Model, StreamOptions};
+use pi_ai::types::{Model, ProviderAuthDiagnostic, StreamOptions};
 use std::path::PathBuf;
 
 pub const DEFAULT_MODEL_ID: &str = "claude-sonnet-4-5";
@@ -169,10 +169,40 @@ pub fn build_agent_config(
     resources: AgentResources,
     settings: Option<&crate::config::Settings>,
 ) -> AgentConfig {
+    build_agent_config_with_auth_diagnostics(
+        model,
+        system_prompt,
+        max_turns,
+        api_key,
+        Vec::new(),
+        thinking_level,
+        tool_execution,
+        resources,
+        settings,
+    )
+}
+
+pub(crate) fn build_agent_config_with_auth_diagnostics(
+    model: Model,
+    system_prompt: Option<String>,
+    max_turns: Option<u32>,
+    api_key: Option<String>,
+    auth_diagnostics: Vec<ProviderAuthDiagnostic>,
+    thinking_level: Option<ThinkingLevel>,
+    tool_execution: Option<ToolExecutionMode>,
+    resources: AgentResources,
+    settings: Option<&crate::config::Settings>,
+) -> AgentConfig {
     let mut stream_options = api_key.map(|api_key| StreamOptions {
         api_key: Some(api_key),
         ..Default::default()
     });
+    if !auth_diagnostics.is_empty() {
+        stream_options
+            .get_or_insert_with(StreamOptions::default)
+            .auth_diagnostics
+            .extend(auth_diagnostics);
+    }
     if let Some(settings) = settings
         && settings.retry.enabled
     {
