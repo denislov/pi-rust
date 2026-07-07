@@ -776,3 +776,79 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 17: Route Export Through Sync Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing export operation metadata test**
+
+Added `export_operation_declares_root_read_only_metadata` to prove `Operation::Export` maps to `OperationKind::Export`, `OperationOrigin::ClientRoot`, and `OperationClass::ReadOnly`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent export_operation_declares_root_read_only_metadata --lib
+```
+
+RED result: compile failed because `Operation::Export` did not exist.
+
+- [x] **Step 2: Add the minimal export operation contract**
+
+Added `Operation::Export(ExportOptions)` and mapped it as a root read-only operation. A temporary async-dispatcher placeholder kept the contract compiling until the sync dispatcher consumed the payload.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent export_operation_declares_root_read_only_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before sync dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing sync dispatcher test**
+
+Added `run_sync_operation_export_uses_guard_and_preserves_persistence_error` to require `Operation::Export` to run through a sync dispatcher, preserve the existing non-persistent-session export error, and clear active operation state on error.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_sync_operation_export_uses_guard_and_preserves_persistence_error --lib
+```
+
+RED result: compile failed because `CodingAgentSession::run_sync_operation()` did not exist.
+
+- [x] **Step 4: Move current-session export routing into `run_sync_operation()`**
+
+Changed `CodingAgentSession::export_current()` and `CodingAgentSession::export_current_html()` to call `run_sync_operation(Operation::Export(...))`, and moved the existing persistent-session gate plus export Flow execution into `export_current_inner()`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_sync_operation_export_uses_guard_and_preserves_persistence_error --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 18: Verify Export Operation Slice
+
+- [x] **Step 1: Run operation-focused and export tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_sync_operation_export_uses_guard_and_preserves_persistence_error --lib
+cargo test -p pi-coding-agent export_current_html_uses_export_operation_boundary --lib
+cargo test -p pi-coding-agent export_current_html
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```

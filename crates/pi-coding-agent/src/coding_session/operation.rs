@@ -1,5 +1,6 @@
 use super::agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
 use super::agent_team_flow::{AgentTeamOptions, AgentTeamOutcome};
+use super::export_flow::{ExportOptions, ExportOutcome};
 use super::operation_control::OperationKind;
 use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome};
@@ -19,6 +20,7 @@ pub(crate) enum Operation {
     SelfHealingEdit(SelfHealingEditRequest),
     AgentInvocation(AgentInvocationOptions),
     AgentTeam(AgentTeamOptions),
+    Export(ExportOptions),
 }
 
 impl Operation {
@@ -31,6 +33,7 @@ impl Operation {
             Self::SelfHealingEdit(_) => OperationKind::SelfHealingEdit,
             Self::AgentInvocation(_) => OperationKind::AgentInvocation,
             Self::AgentTeam(_) => OperationKind::AgentTeam,
+            Self::Export(_) => OperationKind::Export,
         }
     }
 
@@ -43,7 +46,8 @@ impl Operation {
             | Self::BranchSummary { .. }
             | Self::SelfHealingEdit(_)
             | Self::AgentInvocation(_)
-            | Self::AgentTeam(_) => OperationOrigin::ClientRoot,
+            | Self::AgentTeam(_)
+            | Self::Export(_) => OperationOrigin::ClientRoot,
         }
     }
 
@@ -56,6 +60,7 @@ impl Operation {
             | Self::SelfHealingEdit(_) => OperationClass::SessionWriteRoot,
             Self::PluginLoad(_) => OperationClass::RuntimeWrite,
             Self::AgentInvocation(_) | Self::AgentTeam(_) => OperationClass::NonSessionRoot,
+            Self::Export(_) => OperationClass::ReadOnly,
         }
     }
 }
@@ -89,6 +94,7 @@ pub(crate) enum OperationOutcome {
     SelfHealingEdit(SelfHealingEditOutcome),
     AgentInvocation(AgentInvocationOutcome),
     AgentTeam(AgentTeamOutcome),
+    Export(ExportOutcome),
 }
 
 #[cfg(test)]
@@ -182,6 +188,15 @@ mod tests {
         assert_eq!(operation.kind(), OperationKind::AgentTeam);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::NonSessionRoot);
+    }
+
+    #[test]
+    fn export_operation_declares_root_read_only_metadata() {
+        let operation = Operation::Export(ExportOptions::view());
+
+        assert_eq!(operation.kind(), OperationKind::Export);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::ReadOnly);
     }
 
     #[test]

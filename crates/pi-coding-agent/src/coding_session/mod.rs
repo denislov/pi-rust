@@ -265,28 +265,57 @@ impl CodingAgentSession {
         &self,
         path: impl AsRef<Path>,
     ) -> Result<PathBuf, CodingSessionError> {
-        let _operation = self.operation_control.begin(OperationKind::Export)?;
-        let SessionPersistence::Persistent(session_service) = &self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "export requires a persistent Rust-native session".into(),
-            });
-        };
-        let mut context = session_service.export_context(ExportOptions::html(path.as_ref()))?;
-        let outcome = self.flow_service.run_export(&mut context)?;
-        outcome.path.ok_or_else(|| CodingSessionError::Session {
-            message: "export completed without a written html path".into(),
-        })
+        match self.run_sync_operation(Operation::Export(ExportOptions::html(path.as_ref())))? {
+            OperationOutcome::Export(outcome) => {
+                outcome.path.ok_or_else(|| CodingSessionError::Session {
+                    message: "export completed without a written html path".into(),
+                })
+            }
+            OperationOutcome::Prompt(_) => unreachable!("export operation returned prompt outcome"),
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("export operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("export operation returned plugin load outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("export operation returned branch summary outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("export operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("export operation returned agent invocation outcome")
+            }
+            OperationOutcome::AgentTeam(_) => {
+                unreachable!("export operation returned agent team outcome")
+            }
+        }
     }
 
     pub fn export_current(&self) -> Result<CodingAgentSessionExport, CodingSessionError> {
-        let _operation = self.operation_control.begin(OperationKind::Export)?;
-        let SessionPersistence::Persistent(session_service) = &self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "export requires a persistent Rust-native session".into(),
-            });
-        };
-        let mut context = session_service.export_context(ExportOptions::view())?;
-        Ok(self.flow_service.run_export(&mut context)?.export)
+        match self.run_sync_operation(Operation::Export(ExportOptions::view()))? {
+            OperationOutcome::Export(outcome) => Ok(outcome.export),
+            OperationOutcome::Prompt(_) => unreachable!("export operation returned prompt outcome"),
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("export operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("export operation returned plugin load outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("export operation returned branch summary outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("export operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("export operation returned agent invocation outcome")
+            }
+            OperationOutcome::AgentTeam(_) => {
+                unreachable!("export operation returned agent team outcome")
+            }
+        }
     }
 
     pub(crate) fn hydrate_current(
@@ -501,6 +530,7 @@ impl CodingAgentSession {
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("prompt operation returned agent team outcome")
             }
+            OperationOutcome::Export(_) => unreachable!("prompt operation returned export outcome"),
         }
     }
 
@@ -530,6 +560,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("manual compaction operation returned agent team outcome")
+            }
+            OperationOutcome::Export(_) => {
+                unreachable!("manual compaction operation returned export outcome")
             }
         }
     }
@@ -570,6 +603,9 @@ impl CodingAgentSession {
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("self-healing edit operation returned agent team outcome")
             }
+            OperationOutcome::Export(_) => {
+                unreachable!("self-healing edit operation returned export outcome")
+            }
         }
     }
 
@@ -600,6 +636,9 @@ impl CodingAgentSession {
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("agent invocation operation returned agent team outcome")
             }
+            OperationOutcome::Export(_) => {
+                unreachable!("agent invocation operation returned export outcome")
+            }
         }
     }
 
@@ -626,6 +665,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::AgentInvocation(_) => {
                 unreachable!("agent team operation returned agent invocation outcome")
+            }
+            OperationOutcome::Export(_) => {
+                unreachable!("agent team operation returned export outcome")
             }
         }
     }
@@ -684,6 +726,9 @@ impl CodingAgentSession {
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("plugin load operation returned agent team outcome")
             }
+            OperationOutcome::Export(_) => {
+                unreachable!("plugin load operation returned export outcome")
+            }
         }
     }
 
@@ -721,6 +766,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("branch summary operation returned agent team outcome")
+            }
+            OperationOutcome::Export(_) => {
+                unreachable!("branch summary operation returned export outcome")
             }
         }
     }
@@ -770,6 +818,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("branch summary operation returned agent team outcome")
+            }
+            OperationOutcome::Export(_) => {
+                unreachable!("branch summary operation returned export outcome")
             }
         }
     }
@@ -838,6 +889,42 @@ impl CodingAgentSession {
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
         })
+    }
+
+    fn run_sync_operation(
+        &self,
+        operation: Operation,
+    ) -> Result<OperationOutcome, CodingSessionError> {
+        let kind = operation.kind();
+        let _operation_guard = self.operation_control.begin(kind)?;
+
+        match operation {
+            Operation::Export(options) => self
+                .export_current_inner(options)
+                .map(OperationOutcome::Export),
+            Operation::Prompt(_)
+            | Operation::ManualCompaction(_)
+            | Operation::PluginLoad(_)
+            | Operation::BranchSummary { .. }
+            | Operation::SelfHealingEdit(_)
+            | Operation::AgentInvocation(_)
+            | Operation::AgentTeam(_) => Err(CodingSessionError::UnsupportedCapability {
+                capability: format!("{} operation requires async dispatcher", kind.as_str()),
+            }),
+        }
+    }
+
+    fn export_current_inner(
+        &self,
+        options: ExportOptions,
+    ) -> Result<export_flow::ExportOutcome, CodingSessionError> {
+        let SessionPersistence::Persistent(session_service) = &self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "export requires a persistent Rust-native session".into(),
+            });
+        };
+        let mut context = session_service.export_context(options)?;
+        self.flow_service.run_export(&mut context)
     }
 
     async fn run_operation(
@@ -941,6 +1028,9 @@ impl CodingAgentSession {
                 .invoke_team_inner(options)
                 .await
                 .map(OperationOutcome::AgentTeam),
+            Operation::Export(_) => Err(CodingSessionError::UnsupportedCapability {
+                capability: "export operation requires sync dispatcher".into(),
+            }),
         }
     }
 
@@ -2003,6 +2093,23 @@ runtime = "lua"
                 .to_string()
                 .contains("agent team invocation requires a non-empty task"),
             "{error}"
+        );
+        assert_eq!(session.operation_control.active(), None);
+    }
+
+    #[tokio::test]
+    async fn run_sync_operation_export_uses_guard_and_preserves_persistence_error() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation = Operation::Export(ExportOptions::view());
+
+        let error = session.run_sync_operation(operation).unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
+        assert_eq!(
+            error.to_string(),
+            "unsupported capability: export requires a persistent Rust-native session"
         );
         assert_eq!(session.operation_control.active(), None);
     }
