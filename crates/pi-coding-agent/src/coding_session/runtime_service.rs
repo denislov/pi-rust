@@ -23,11 +23,6 @@ pub(crate) struct AgentRuntimeBuild {
     pub(crate) diagnostics: Vec<CodingDiagnostic>,
 }
 
-#[allow(deprecated)]
-pub(crate) fn register_builtin_providers_for_global_runtime() {
-    pi_ai::providers::register_builtins();
-}
-
 pub(crate) fn stream_model_for_scoped_runtime(
     runtime: &RuntimeSnapshot,
     context: Context,

@@ -81,7 +81,6 @@ use plugin_load_service::PluginLoadService;
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
-pub(crate) use runtime_service::register_builtin_providers_for_global_runtime;
 pub(crate) use self_healing_edit_flow::{
     ModelSelfHealingEditRepairStrategy, SelfHealingEditContext, SelfHealingEditFlow,
     SelfHealingEditOptions, SelfHealingEditRepairStrategy,

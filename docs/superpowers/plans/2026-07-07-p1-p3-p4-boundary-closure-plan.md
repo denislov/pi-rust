@@ -168,7 +168,7 @@ cargo test -p pi-coding-agent --test product_runtime_boundary_guards adapters_do
 
 Expected: FAIL showing `crates/pi-coding-agent/src/protocol/rpc/state.rs` calls `register_builtin_providers_for_global_runtime()`.
 
-- [ ] **Step 3: Remove adapter-level global registration**
+- [ ] **Step 3: Remove adapter-level global registration and retire the product helper**
 
 In `crates/pi-coding-agent/src/protocol/rpc/state.rs`, remove `coding_session::register_builtin_providers_for_global_runtime` from the grouped import and remove this block from `RpcState::new`:
 
@@ -178,6 +178,23 @@ if options.register_builtins {
 }
 ```
 
+Then remove the now-unused compatibility helper from `crates/pi-coding-agent/src/coding_session/runtime_service.rs`:
+
+```rust
+#[allow(deprecated)]
+pub(crate) fn register_builtin_providers_for_global_runtime() {
+    pi_ai::providers::register_builtins();
+}
+```
+
+Remove its re-export from `crates/pi-coding-agent/src/coding_session/mod.rs`:
+
+```rust
+pub(crate) use runtime_service::register_builtin_providers_for_global_runtime;
+```
+
+Update `crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs` so `runtime_global_builtin_registration_boundary_is_retired` asserts `runtime_service.rs` no longer contains either `fn register_builtin_providers_for_global_runtime()` or `pi_ai::providers::register_builtins()`.
+
 - [ ] **Step 4: Run focused P1 checks**
 
 Run:
@@ -185,7 +202,7 @@ Run:
 ```bash
 cargo test -p pi-coding-agent --test product_runtime_boundary_guards
 cargo test -p pi-coding-agent --test provider_registry_boundary_guards
-cargo test -p pi-coding-agent --test rpc
+cargo test -p pi-coding-agent --test rpc_mode
 ```
 
 Expected: all pass.

@@ -10,6 +10,7 @@ const ALLOWED_DIRECT_MUTATION_FILES: &[&str] = &[
 
 const ALLOWED_GLOBAL_BUILTIN_REGISTRATION_FILES: &[&str] = &[
     "crates/pi-coding-agent/src/coding_session/runtime_service.rs",
+    "crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs",
     "crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs",
 ];
 
@@ -363,7 +364,7 @@ fn runtime_service_no_longer_exposes_global_stream_model_helper() {
 }
 
 #[test]
-fn runtime_global_builtin_registration_boundary_acknowledges_deprecated_helper() {
+fn runtime_global_builtin_registration_boundary_is_retired() {
     let scan = SourceScan::new();
     let runtime_service = fs::read_to_string(
         scan.crate_root
@@ -371,13 +372,13 @@ fn runtime_global_builtin_registration_boundary_acknowledges_deprecated_helper()
     )
     .expect("read runtime service source");
 
-    let function_index = runtime_service
-        .find("fn register_builtin_providers_for_global_runtime()")
-        .expect("runtime compatibility boundary should exist");
-    let preceding = &runtime_service[function_index.saturating_sub(180)..function_index];
     assert!(
-        preceding.contains("#[allow(deprecated)]"),
-        "the only allowed global built-in registration boundary should explicitly acknowledge the deprecated pi-ai global helper"
+        !runtime_service.contains("fn register_builtin_providers_for_global_runtime()"),
+        "pi-coding-agent should not retain a global built-in provider registration compatibility helper"
+    );
+    assert!(
+        !runtime_service.contains("pi_ai::providers::register_builtins()"),
+        "pi-coding-agent product runtime should use scoped AiClient::register_builtins() instead of the global helper"
     );
 }
 
