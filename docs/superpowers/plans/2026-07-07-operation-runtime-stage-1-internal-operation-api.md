@@ -476,3 +476,78 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 9: Route Branch Summary Through Internal Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing branch summary operation metadata test**
+
+Added `branch_summary_operation_declares_root_session_write_metadata` to prove `Operation::BranchSummary` maps to `OperationKind::BranchSummary`, `OperationOrigin::ClientRoot`, and `OperationClass::SessionWriteRoot`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent branch_summary_operation_declares_root_session_write_metadata --lib
+```
+
+RED result: compile failed because `Operation::BranchSummary` did not exist.
+
+- [x] **Step 2: Add the minimal branch summary operation contract**
+
+Added `Operation::BranchSummary { options, source_leaf_id, target_leaf_id, custom_instructions }`, mapped its metadata, and used a temporary dispatcher placeholder so the request contract could compile independently.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent branch_summary_operation_declares_root_session_write_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing branch summary dispatcher test**
+
+Added `run_operation_branch_summary_uses_branch_summary_guard_and_preserves_persistence_error` to require `Operation::BranchSummary` to run through the dispatcher, preserve the existing non-persistent-session error, and clear active operation state on error.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_branch_summary_uses_branch_summary_guard_and_preserves_persistence_error --lib
+```
+
+RED result: the test failed with the temporary dispatcher placeholder error.
+
+- [x] **Step 4: Move branch summary routing into `run_operation()`**
+
+Changed `CodingAgentSession::summarize_branch()` to call `run_operation(Operation::BranchSummary { ... })`. `summarize_branch_for_navigation()` keeps its existing idle/reuse preflight and routes only the non-reused execution path through the dispatcher.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_branch_summary_uses_branch_summary_guard_and_preserves_persistence_error --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 10: Verify Branch Summary Operation Slice
+
+- [x] **Step 1: Run operation-focused and branch summary tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_operation_branch_summary_uses_branch_summary_guard_and_preserves_persistence_error --lib
+cargo test -p pi-coding-agent branch_summary --lib
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```

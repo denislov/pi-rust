@@ -489,6 +489,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("prompt operation returned plugin load outcome")
             }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("prompt operation returned branch summary outcome")
+            }
         }
     }
 
@@ -506,6 +509,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("manual compaction operation returned plugin load outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("manual compaction operation returned branch summary outcome")
             }
         }
     }
@@ -620,6 +626,9 @@ impl CodingAgentSession {
             OperationOutcome::ManualCompaction(_) => {
                 unreachable!("plugin load operation returned manual compaction outcome")
             }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("plugin load operation returned branch summary outcome")
+            }
         }
     }
 
@@ -630,23 +639,26 @@ impl CodingAgentSession {
         target_leaf_id: impl Into<String>,
         custom_instructions: Option<String>,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        let _operation = self.operation_control.begin(OperationKind::BranchSummary)?;
-        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "branch summary without persistent session".into(),
-            });
-        };
-        self.branch_summary_service
-            .run_persistent(
-                session_service,
-                &self.flow_service,
-                &self.event_service,
+        match self
+            .run_operation(Operation::BranchSummary {
                 options,
-                source_leaf_id.into(),
-                target_leaf_id.into(),
+                source_leaf_id: source_leaf_id.into(),
+                target_leaf_id: target_leaf_id.into(),
                 custom_instructions,
-            )
-            .await
+            })
+            .await?
+        {
+            OperationOutcome::BranchSummary(outcome) => Ok(outcome),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("branch summary operation returned prompt outcome")
+            }
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("branch summary operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("branch summary operation returned plugin load outcome")
+            }
+        }
     }
 
     pub(crate) async fn summarize_branch_for_navigation(
@@ -667,23 +679,26 @@ impl CodingAgentSession {
             return Ok(outcome);
         }
 
-        let _operation = self.operation_control.begin(OperationKind::BranchSummary)?;
-        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "branch summary without persistent session".into(),
-            });
-        };
-        self.branch_summary_service
-            .run_persistent(
-                session_service,
-                &self.flow_service,
-                &self.event_service,
+        match self
+            .run_operation(Operation::BranchSummary {
                 options,
                 source_leaf_id,
                 target_leaf_id,
-                None,
-            )
-            .await
+                custom_instructions: None,
+            })
+            .await?
+        {
+            OperationOutcome::BranchSummary(outcome) => Ok(outcome),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("branch summary operation returned prompt outcome")
+            }
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("branch summary operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("branch summary operation returned plugin load outcome")
+            }
+        }
     }
 
     fn from_services(
@@ -786,6 +801,30 @@ impl CodingAgentSession {
                 .load_plugins_inner(options)
                 .await
                 .map(OperationOutcome::PluginLoad),
+            Operation::BranchSummary {
+                options,
+                source_leaf_id,
+                target_leaf_id,
+                custom_instructions,
+            } => {
+                let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability: "branch summary without persistent session".into(),
+                    });
+                };
+                self.branch_summary_service
+                    .run_persistent(
+                        session_service,
+                        &self.flow_service,
+                        &self.event_service,
+                        options,
+                        source_leaf_id,
+                        target_leaf_id,
+                        custom_instructions,
+                    )
+                    .await
+                    .map(OperationOutcome::BranchSummary)
+            }
         }
     }
 
@@ -1827,6 +1866,31 @@ runtime = "lua"
             "{:#?}",
             contexts[1].messages
         );
+    }
+
+    #[tokio::test]
+    async fn run_operation_branch_summary_uses_branch_summary_guard_and_preserves_persistence_error()
+     {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation = Operation::BranchSummary {
+            options: PromptTurnOptions::new(PromptInvocation::Text("summarize".into())),
+            source_leaf_id: "source_leaf".into(),
+            target_leaf_id: "target_leaf".into(),
+            custom_instructions: None,
+        };
+
+        let error = session.run_operation(operation).await.unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
+        assert!(
+            error
+                .to_string()
+                .contains("branch summary without persistent session"),
+            "{error}"
+        );
+        assert_eq!(session.operation_control.active(), None);
     }
 
     #[tokio::test]
