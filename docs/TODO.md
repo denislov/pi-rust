@@ -62,6 +62,8 @@ Do not let this file become historical fiction. If implementation changes the pl
 - [Deterministic offline test boundary hardening plan](superpowers/plans/2026-07-04-deterministic-offline-test-boundary-plan.md)
 - [Flow core abstraction hardening design](superpowers/specs/2026-07-06-flow-core-abstraction-hardening-design.md)
 - [Flow core abstraction hardening plan](superpowers/plans/2026-07-06-flow-core-abstraction-hardening-plan.md)
+- [P1/P3/P4 boundary closure design](superpowers/specs/2026-07-07-p1-p3-p4-boundary-closure-design.md)
+- [P1/P3/P4 boundary closure plan](superpowers/plans/2026-07-07-p1-p3-p4-boundary-closure-plan.md)
 - [Lua plugin host surface](lua-plugin-host.md)
 - [Agent profiles and teams user guide](agent-profiles.md)
 - [Phase 1 guide](superpowers/guides/2026-06-29-phase-1-coding-session-and-session-log-guide.md)
@@ -242,6 +244,7 @@ Plan: [Lua host capabilities metadata](superpowers/plans/2026-07-04-lua-host-cap
 
 ## Progress Log
 
+- 2026-07-07: P1/P3/P4 boundary closure started. The design and plan define guard-backed stop conditions for product runtime ownership, provider-visible tool validation/plugin ingress, and generic TUI/plugin UI routing boundaries.
 - 2026-07-06: P2 scoped auth/runtime boundary (`pi-ai`) closed. Bedrock SigV4 region/access-key/secret/session-token env defaults now resolve through `EnvProviderAuthResolver` into `StreamOptions` with non-secret diagnostics, Bedrock provider code no longer reads AWS env directly, provider modules are guarded against direct process-env reads, and final compatibility-boundary guard coverage passes across `pi-ai`, `pi-agent-core`, and `pi-coding-agent`.
 - 2026-07-06: Clarified the P1-P4 runtime/auth/tool/UI boundary-hardening backlog with explicit scope, current state, remaining work, and stop conditions so the next small stages can be closed without reopening `CodingAgentSession` mechanical splitting.
 - 2026-07-06: P2 scoped auth/runtime boundary (`pi-ai`) advanced for OAuth source diagnostics. Auth-file OAuth access tokens are now tracked as OAuth material, converted to non-secret `api_key` source diagnostics, and carried through `PromptRunOptions`/`RuntimeSnapshot` into provider-visible `StreamOptions` while preserving existing bearer-token-as-api-key provider behavior; remaining P2 work is narrowed to final compatibility-boundary audit.
