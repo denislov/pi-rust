@@ -486,6 +486,9 @@ impl CodingAgentSession {
             OperationOutcome::ManualCompaction(_) => {
                 unreachable!("prompt operation returned manual compaction outcome")
             }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("prompt operation returned plugin load outcome")
+            }
         }
     }
 
@@ -500,6 +503,9 @@ impl CodingAgentSession {
             OperationOutcome::ManualCompaction(outcome) => Ok(outcome),
             OperationOutcome::Prompt(_) => {
                 unreachable!("manual compaction operation returned prompt outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("manual compaction operation returned plugin load outcome")
             }
         }
     }
@@ -606,8 +612,15 @@ impl CodingAgentSession {
         &mut self,
         options: PluginLoadOptions,
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
-        let _operation = self.operation_control.begin(OperationKind::PluginLoad)?;
-        self.load_plugins_inner(options).await
+        match self.run_operation(Operation::PluginLoad(options)).await? {
+            OperationOutcome::PluginLoad(outcome) => Ok(outcome),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("plugin load operation returned prompt outcome")
+            }
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("plugin load operation returned manual compaction outcome")
+            }
+        }
     }
 
     pub async fn summarize_branch(
@@ -769,6 +782,10 @@ impl CodingAgentSession {
                     .await
                     .map(OperationOutcome::ManualCompaction)
             }
+            Operation::PluginLoad(options) => self
+                .load_plugins_inner(options)
+                .await
+                .map(OperationOutcome::PluginLoad),
         }
     }
 
@@ -1810,6 +1827,24 @@ runtime = "lua"
             "{:#?}",
             contexts[1].messages
         );
+    }
+
+    #[tokio::test]
+    async fn run_operation_plugin_load_uses_plugin_load_guard_and_returns_outcome() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation = Operation::PluginLoad(PluginLoadOptions::new());
+
+        let outcome = session.run_operation(operation).await.unwrap();
+
+        let OperationOutcome::PluginLoad(outcome) = outcome else {
+            panic!("expected plugin load outcome");
+        };
+        assert!(outcome.loaded_plugin_ids.is_empty());
+        assert!(outcome.diagnostics.is_empty());
+        assert!(!outcome.capability_changed);
+        assert_eq!(session.operation_control.active(), None);
     }
 
     #[tokio::test]

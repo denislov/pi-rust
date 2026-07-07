@@ -1,10 +1,12 @@
 use super::operation_control::OperationKind;
+use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome};
 
 #[derive(Debug)]
 pub(crate) enum Operation {
     Prompt(PromptTurnOptions),
     ManualCompaction(PromptTurnOptions),
+    PluginLoad(PluginLoadOptions),
 }
 
 impl Operation {
@@ -12,13 +14,16 @@ impl Operation {
         match self {
             Self::Prompt(_) => OperationKind::Prompt,
             Self::ManualCompaction(_) => OperationKind::Compact,
+            Self::PluginLoad(_) => OperationKind::PluginLoad,
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn origin(&self) -> OperationOrigin {
         match self {
-            Self::Prompt(_) | Self::ManualCompaction(_) => OperationOrigin::ClientRoot,
+            Self::Prompt(_) | Self::ManualCompaction(_) | Self::PluginLoad(_) => {
+                OperationOrigin::ClientRoot
+            }
         }
     }
 
@@ -26,6 +31,7 @@ impl Operation {
     pub(crate) fn class(&self) -> OperationClass {
         match self {
             Self::Prompt(_) | Self::ManualCompaction(_) => OperationClass::SessionWriteRoot,
+            Self::PluginLoad(_) => OperationClass::RuntimeWrite,
         }
     }
 }
@@ -54,10 +60,12 @@ pub(crate) enum OperationClass {
 pub(crate) enum OperationOutcome {
     Prompt(PromptTurnOutcome),
     ManualCompaction(PromptTurnOutcome),
+    PluginLoad(PluginLoadOutcome),
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::plugin_load_flow::PluginLoadOptions;
     use super::*;
     use crate::runtime::PromptInvocation;
 
@@ -82,6 +90,15 @@ mod tests {
         assert_eq!(operation.kind(), OperationKind::Compact);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
+    }
+
+    #[test]
+    fn plugin_load_operation_declares_runtime_write_metadata() {
+        let operation = Operation::PluginLoad(PluginLoadOptions::new());
+
+        assert_eq!(operation.kind(), OperationKind::PluginLoad);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::RuntimeWrite);
     }
 
     #[test]

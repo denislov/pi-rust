@@ -402,3 +402,77 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 7: Route Plugin Load Through Internal Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing plugin load operation metadata test**
+
+Added `plugin_load_operation_declares_runtime_write_metadata` to prove `Operation::PluginLoad` maps to `OperationKind::PluginLoad`, `OperationOrigin::ClientRoot`, and `OperationClass::RuntimeWrite`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent plugin_load_operation_declares_runtime_write_metadata --lib
+```
+
+RED result: compile failed because `Operation::PluginLoad` did not exist.
+
+- [x] **Step 2: Add the minimal plugin load operation contract**
+
+Added `Operation::PluginLoad(PluginLoadOptions)`, mapped its metadata, and used a temporary dispatcher placeholder so the request contract could compile independently.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent plugin_load_operation_declares_runtime_write_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing plugin load dispatcher test**
+
+Added `run_operation_plugin_load_uses_plugin_load_guard_and_returns_outcome` to require `Operation::PluginLoad` to run through the dispatcher, return `OperationOutcome::PluginLoad`, and clear active operation state after a successful empty plugin load.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_plugin_load_uses_plugin_load_guard_and_returns_outcome --lib
+```
+
+RED result: compile failed because `OperationOutcome::PluginLoad` did not exist.
+
+- [x] **Step 4: Move plugin load routing into `run_operation()`**
+
+Changed `CodingAgentSession::load_plugins()` to call `run_operation(Operation::PluginLoad(options))`, and moved the existing `load_plugins_inner(options)` execution behind the dispatcher arm.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_plugin_load_uses_plugin_load_guard_and_returns_outcome --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 8: Verify Plugin Load Operation Slice
+
+- [x] **Step 1: Run operation-focused tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_operation_plugin_load_uses_plugin_load_guard_and_returns_outcome --lib
+cargo test -p pi-coding-agent load_plugins --lib
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```
