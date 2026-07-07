@@ -281,6 +281,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("export operation returned plugin command outcome")
             }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("export operation returned delegation approval outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("export operation returned branch summary outcome")
             }
@@ -308,6 +311,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("export operation returned plugin command outcome")
+            }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("export operation returned delegation approval outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("export operation returned branch summary outcome")
@@ -429,67 +435,42 @@ impl CodingAgentSession {
         operation_id: impl AsRef<str>,
         tool_call_id: impl AsRef<str>,
     ) -> Result<(), CodingSessionError> {
-        let operation_id = operation_id.as_ref();
-        let tool_call_id = tool_call_id.as_ref();
-        let now = SystemClock.now_rfc3339();
-        let pending = self.delegation_confirmation_service.active_pending(
-            &self.pending_delegation_confirmations,
-            operation_id,
-            tool_call_id,
-            &now,
-        )?;
-        let operation_kind = match pending.request.target_kind {
-            ProfileKind::Agent => OperationKind::AgentInvocation,
-            ProfileKind::Team => OperationKind::AgentTeam,
-        };
-        let _operation = self.operation_control.begin(operation_kind)?;
-        let mut ids = SystemIdGenerator;
-        let pending = self.delegation_confirmation_service.approve_pending(
-            &mut self.persistence,
-            &mut self.pending_delegation_confirmations,
-            &self.event_service,
-            operation_id,
-            tool_call_id,
-            &now,
-            ids.next_operation_id(),
-        )?;
-        let outcome = match pending.request.target_kind {
-            ProfileKind::Agent => {
-                self.delegation_execution_service
-                    .execute_agent(
-                        &self.flow_service,
-                        self.profile_registry.clone(),
-                        self.plugin_service.clone(),
-                        self.event_service.clone(),
-                        &pending.request,
-                        pending.prompt_options,
-                        pending.child_delegation_depth,
-                        pending.delegation_lineage,
-                    )
-                    .await
+        match self
+            .run_operation(Operation::ApproveDelegationConfirmation {
+                operation_id: operation_id.as_ref().to_owned(),
+                tool_call_id: tool_call_id.as_ref().to_owned(),
+            })
+            .await?
+        {
+            OperationOutcome::DelegationApproval => Ok(()),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("delegation approval operation returned prompt outcome")
             }
-            ProfileKind::Team => {
-                self.delegation_execution_service
-                    .execute_team(
-                        &self.flow_service,
-                        self.profile_registry.clone(),
-                        self.plugin_service.clone(),
-                        self.event_service.clone(),
-                        &pending.request,
-                        pending.prompt_options,
-                        pending.child_delegation_depth,
-                        pending.delegation_lineage,
-                    )
-                    .await
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("delegation approval operation returned manual compaction outcome")
             }
-        };
-        self.delegation_confirmation_service.adopt_pending(
-            &mut self.persistence,
-            &mut self.pending_delegation_confirmations,
-            &self.event_service,
-            outcome.pending_confirmations,
-        )?;
-        outcome.execution.map(|_| ())
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("delegation approval operation returned plugin load outcome")
+            }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("delegation approval operation returned plugin command outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("delegation approval operation returned branch summary outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("delegation approval operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("delegation approval operation returned agent invocation outcome")
+            }
+            OperationOutcome::AgentTeam(_) => {
+                unreachable!("delegation approval operation returned agent team outcome")
+            }
+            OperationOutcome::Export(_) => {
+                unreachable!("delegation approval operation returned export outcome")
+            }
+        }
     }
 
     pub fn reject_delegation_confirmation(
@@ -527,6 +508,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("prompt operation returned plugin command outcome")
             }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("prompt operation returned delegation approval outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("prompt operation returned branch summary outcome")
             }
@@ -560,6 +544,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("manual compaction operation returned plugin command outcome")
+            }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("manual compaction operation returned delegation approval outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("manual compaction operation returned branch summary outcome")
@@ -609,6 +596,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("self-healing edit operation returned plugin command outcome")
             }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("self-healing edit operation returned delegation approval outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("self-healing edit operation returned branch summary outcome")
             }
@@ -645,6 +635,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("agent invocation operation returned plugin command outcome")
             }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("agent invocation operation returned delegation approval outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("agent invocation operation returned branch summary outcome")
             }
@@ -677,6 +670,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("agent team operation returned plugin command outcome")
+            }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("agent team operation returned delegation approval outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("agent team operation returned branch summary outcome")
@@ -724,6 +720,9 @@ impl CodingAgentSession {
             args,
         })? {
             OperationOutcome::PluginCommand(output) => Ok(output),
+            OperationOutcome::DelegationApproval => {
+                unreachable!("plugin command operation returned delegation approval outcome")
+            }
             OperationOutcome::Prompt(_) => {
                 unreachable!("plugin command operation returned prompt outcome")
             }
@@ -759,6 +758,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginLoad(outcome) => Ok(outcome),
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("plugin load operation returned plugin command outcome")
+            }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("plugin load operation returned delegation approval outcome")
             }
             OperationOutcome::Prompt(_) => {
                 unreachable!("plugin load operation returned prompt outcome")
@@ -812,6 +814,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("branch summary operation returned plugin command outcome")
+            }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("branch summary operation returned delegation approval outcome")
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
@@ -867,6 +872,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("branch summary operation returned plugin command outcome")
+            }
+            OperationOutcome::DelegationApproval => {
+                unreachable!("branch summary operation returned delegation approval outcome")
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
@@ -953,7 +961,11 @@ impl CodingAgentSession {
         &self,
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
-        let kind = operation.kind();
+        let Some(kind) = operation.static_kind() else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "dynamic operation requires async dispatcher".into(),
+            });
+        };
         let _operation_guard = self.operation_control.begin(kind)?;
 
         match operation {
@@ -967,6 +979,7 @@ impl CodingAgentSession {
             Operation::Prompt(_)
             | Operation::ManualCompaction(_)
             | Operation::PluginLoad(_)
+            | Operation::ApproveDelegationConfirmation { .. }
             | Operation::BranchSummary { .. }
             | Operation::SelfHealingEdit(_)
             | Operation::AgentInvocation(_)
@@ -989,11 +1002,105 @@ impl CodingAgentSession {
         self.flow_service.run_export(&mut context)
     }
 
+    fn resolve_operation_admission(
+        &self,
+        operation: &Operation,
+    ) -> Result<(OperationKind, Option<String>), CodingSessionError> {
+        match operation {
+            Operation::ApproveDelegationConfirmation {
+                operation_id,
+                tool_call_id,
+            } => {
+                let now = SystemClock.now_rfc3339();
+                let kind = self.delegation_approval_operation_kind(
+                    operation_id.as_str(),
+                    tool_call_id.as_str(),
+                    &now,
+                )?;
+                Ok((kind, Some(now)))
+            }
+            _ => Ok((operation.kind(), None)),
+        }
+    }
+
+    fn delegation_approval_operation_kind(
+        &self,
+        operation_id: &str,
+        tool_call_id: &str,
+        now: &str,
+    ) -> Result<OperationKind, CodingSessionError> {
+        let pending = self.delegation_confirmation_service.active_pending(
+            &self.pending_delegation_confirmations,
+            operation_id,
+            tool_call_id,
+            now,
+        )?;
+        Ok(match pending.request.target_kind {
+            ProfileKind::Agent => OperationKind::AgentInvocation,
+            ProfileKind::Team => OperationKind::AgentTeam,
+        })
+    }
+
+    async fn approve_delegation_confirmation_inner(
+        &mut self,
+        operation_id: String,
+        tool_call_id: String,
+        now: String,
+    ) -> Result<(), CodingSessionError> {
+        let mut ids = SystemIdGenerator;
+        let pending = self.delegation_confirmation_service.approve_pending(
+            &mut self.persistence,
+            &mut self.pending_delegation_confirmations,
+            &self.event_service,
+            operation_id.as_str(),
+            tool_call_id.as_str(),
+            &now,
+            ids.next_operation_id(),
+        )?;
+        let outcome = match pending.request.target_kind {
+            ProfileKind::Agent => {
+                self.delegation_execution_service
+                    .execute_agent(
+                        &self.flow_service,
+                        self.profile_registry.clone(),
+                        self.plugin_service.clone(),
+                        self.event_service.clone(),
+                        &pending.request,
+                        pending.prompt_options,
+                        pending.child_delegation_depth,
+                        pending.delegation_lineage,
+                    )
+                    .await
+            }
+            ProfileKind::Team => {
+                self.delegation_execution_service
+                    .execute_team(
+                        &self.flow_service,
+                        self.profile_registry.clone(),
+                        self.plugin_service.clone(),
+                        self.event_service.clone(),
+                        &pending.request,
+                        pending.prompt_options,
+                        pending.child_delegation_depth,
+                        pending.delegation_lineage,
+                    )
+                    .await
+            }
+        };
+        self.delegation_confirmation_service.adopt_pending(
+            &mut self.persistence,
+            &mut self.pending_delegation_confirmations,
+            &self.event_service,
+            outcome.pending_confirmations,
+        )?;
+        outcome.execution.map(|_| ())
+    }
+
     async fn run_operation(
         &mut self,
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
-        let kind = operation.kind();
+        let (kind, admission_time) = self.resolve_operation_admission(&operation)?;
         let _operation_guard = self.operation_control.begin(kind)?;
 
         match operation {
@@ -1096,6 +1203,17 @@ impl CodingAgentSession {
             Operation::PluginCommand { .. } => Err(CodingSessionError::UnsupportedCapability {
                 capability: "plugin command operation requires sync dispatcher".into(),
             }),
+            Operation::ApproveDelegationConfirmation {
+                operation_id,
+                tool_call_id,
+            } => self
+                .approve_delegation_confirmation_inner(
+                    operation_id,
+                    tool_call_id,
+                    admission_time.expect("delegation approval admission time is resolved"),
+                )
+                .await
+                .map(|_| OperationOutcome::DelegationApproval),
         }
     }
 
@@ -1483,6 +1601,7 @@ mod tests {
 
     use super::delegation::delegation_runtime_seed_from_prompt_options;
     use super::plugin_load_flow::{PluginLoadCandidate, PluginLoadManifest, PluginLoadOptions};
+    use super::prompt::DelegationRequest;
     use super::*;
     use crate::coding_session::session_log::event::{
         PersistedContentBlock, SessionEventData, SessionEventEnvelope,
@@ -1515,6 +1634,27 @@ mod tests {
 
     fn prompt_options(api: &str, prompt: &str) -> PromptTurnOptions {
         prompt_options_with_tools(api, prompt, Vec::new())
+    }
+
+    fn pending_delegation_confirmation_state(
+        target_kind: ProfileKind,
+    ) -> PendingDelegationConfirmationState {
+        PendingDelegationConfirmationState {
+            request: DelegationRequest {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: ProfileId::from("parent"),
+                target_kind,
+                target_id: ProfileId::from("target"),
+                task: "delegate this".into(),
+            },
+            prompt_options: PromptTurnOptions::new(PromptInvocation::Text("delegated task".into())),
+            reason: "requires confirmation".into(),
+            requested_at: SystemClock.now_rfc3339(),
+            child_delegation_depth: 1,
+            delegation_lineage: Vec::new(),
+        }
     }
 
     fn prompt_options_with_tools(
@@ -2197,6 +2337,52 @@ runtime = "lua"
             "plugin error: plugin command not found: missing.command"
         );
         assert_eq!(session.operation_control.active(), None);
+    }
+
+    #[tokio::test]
+    async fn delegation_approval_operation_kind_uses_pending_team_target() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        session
+            .pending_delegation_confirmations
+            .push(pending_delegation_confirmation_state(ProfileKind::Team));
+        let now = SystemClock.now_rfc3339();
+
+        let kind = session
+            .delegation_approval_operation_kind("op_parent", "tool_delegate", &now)
+            .unwrap();
+
+        assert_eq!(kind, OperationKind::AgentTeam);
+    }
+
+    #[tokio::test]
+    async fn run_operation_delegation_approval_preserves_missing_pending_before_busy() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let _operation = session
+            .operation_control
+            .begin(OperationKind::Prompt)
+            .unwrap();
+        let operation = Operation::ApproveDelegationConfirmation {
+            operation_id: "missing_op".into(),
+            tool_call_id: "missing_tool".into(),
+        };
+
+        let error = session.run_operation(operation).await.unwrap_err();
+
+        assert_eq!(error.code(), "input");
+        assert!(
+            error
+                .to_string()
+                .contains("pending delegation confirmation not found"),
+            "{error}"
+        );
+        assert_eq!(
+            session.operation_control.active(),
+            Some(OperationKind::Prompt)
+        );
     }
 
     #[tokio::test]

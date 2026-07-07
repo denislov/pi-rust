@@ -15,6 +15,10 @@ pub(crate) enum Operation {
         command_id: String,
         args: serde_json::Value,
     },
+    ApproveDelegationConfirmation {
+        operation_id: String,
+        tool_call_id: String,
+    },
     BranchSummary {
         options: PromptTurnOptions,
         source_leaf_id: String,
@@ -29,16 +33,22 @@ pub(crate) enum Operation {
 
 impl Operation {
     pub(crate) fn kind(&self) -> OperationKind {
+        self.static_kind()
+            .expect("dynamic operation does not have a static kind")
+    }
+
+    pub(crate) fn static_kind(&self) -> Option<OperationKind> {
         match self {
-            Self::Prompt(_) => OperationKind::Prompt,
-            Self::ManualCompaction(_) => OperationKind::Compact,
-            Self::PluginLoad(_) => OperationKind::PluginLoad,
-            Self::PluginCommand { .. } => OperationKind::PluginCommand,
-            Self::BranchSummary { .. } => OperationKind::BranchSummary,
-            Self::SelfHealingEdit(_) => OperationKind::SelfHealingEdit,
-            Self::AgentInvocation(_) => OperationKind::AgentInvocation,
-            Self::AgentTeam(_) => OperationKind::AgentTeam,
-            Self::Export(_) => OperationKind::Export,
+            Self::Prompt(_) => Some(OperationKind::Prompt),
+            Self::ManualCompaction(_) => Some(OperationKind::Compact),
+            Self::PluginLoad(_) => Some(OperationKind::PluginLoad),
+            Self::PluginCommand { .. } => Some(OperationKind::PluginCommand),
+            Self::ApproveDelegationConfirmation { .. } => None,
+            Self::BranchSummary { .. } => Some(OperationKind::BranchSummary),
+            Self::SelfHealingEdit(_) => Some(OperationKind::SelfHealingEdit),
+            Self::AgentInvocation(_) => Some(OperationKind::AgentInvocation),
+            Self::AgentTeam(_) => Some(OperationKind::AgentTeam),
+            Self::Export(_) => Some(OperationKind::Export),
         }
     }
 
@@ -49,6 +59,7 @@ impl Operation {
             | Self::ManualCompaction(_)
             | Self::PluginLoad(_)
             | Self::PluginCommand { .. }
+            | Self::ApproveDelegationConfirmation { .. }
             | Self::BranchSummary { .. }
             | Self::SelfHealingEdit(_)
             | Self::AgentInvocation(_)
@@ -65,9 +76,10 @@ impl Operation {
             | Self::BranchSummary { .. }
             | Self::SelfHealingEdit(_) => OperationClass::SessionWriteRoot,
             Self::PluginLoad(_) => OperationClass::RuntimeWrite,
-            Self::AgentInvocation(_) | Self::AgentTeam(_) | Self::PluginCommand { .. } => {
-                OperationClass::NonSessionRoot
-            }
+            Self::AgentInvocation(_)
+            | Self::AgentTeam(_)
+            | Self::PluginCommand { .. }
+            | Self::ApproveDelegationConfirmation { .. } => OperationClass::NonSessionRoot,
             Self::Export(_) => OperationClass::ReadOnly,
         }
     }
@@ -99,6 +111,7 @@ pub(crate) enum OperationOutcome {
     ManualCompaction(PromptTurnOutcome),
     PluginLoad(PluginLoadOutcome),
     PluginCommand(String),
+    DelegationApproval,
     BranchSummary(PromptTurnOutcome),
     SelfHealingEdit(SelfHealingEditOutcome),
     AgentInvocation(AgentInvocationOutcome),
@@ -155,6 +168,18 @@ mod tests {
         };
 
         assert_eq!(operation.kind(), OperationKind::PluginCommand);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::NonSessionRoot);
+    }
+
+    #[test]
+    fn delegation_approval_operation_declares_dynamic_root_non_session_metadata() {
+        let operation = Operation::ApproveDelegationConfirmation {
+            operation_id: "op_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+        };
+
+        assert_eq!(operation.static_kind(), None);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::NonSessionRoot);
     }

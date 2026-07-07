@@ -928,3 +928,81 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 21: Route Delegation Approval Through Dynamic Operation Admission
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing dynamic delegation approval operation metadata test**
+
+Added `delegation_approval_operation_declares_dynamic_root_non_session_metadata` to prove `Operation::ApproveDelegationConfirmation` has no static operation kind, while still declaring `OperationOrigin::ClientRoot` and `OperationClass::NonSessionRoot`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent delegation_approval_operation_declares_dynamic_root_non_session_metadata --lib
+```
+
+RED result: compile failed because `Operation::ApproveDelegationConfirmation` did not exist.
+
+- [x] **Step 2: Add the minimal dynamic delegation approval operation contract**
+
+Added `Operation::ApproveDelegationConfirmation { operation_id, tool_call_id }` and `Operation::static_kind()`. Static operations continue to expose `kind()`, while delegation approval returns no static kind because its admission kind depends on the pending confirmation target.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent delegation_approval_operation_declares_dynamic_root_non_session_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing dynamic admission dispatcher tests**
+
+Added `delegation_approval_operation_kind_uses_pending_team_target` to require pending team confirmations to resolve to `OperationKind::AgentTeam`, and `run_operation_delegation_approval_preserves_missing_pending_before_busy` to preserve the existing pending-not-found error before acquiring any busy guard.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent delegation_approval_operation_kind_uses_pending_team_target --lib
+cargo test -p pi-coding-agent run_operation_delegation_approval_preserves_missing_pending_before_busy --lib
+```
+
+RED result: compile failed because the dynamic admission resolver did not exist.
+
+- [x] **Step 4: Move delegation approval routing into `run_operation()`**
+
+Changed `CodingAgentSession::approve_delegation_confirmation()` to call `run_operation(Operation::ApproveDelegationConfirmation { ... })`. Added dynamic admission resolution that reads the active pending confirmation first, maps agent targets to `OperationKind::AgentInvocation` and team targets to `OperationKind::AgentTeam`, then acquires the operation guard and executes the existing approval/delegated execution flow through an inner method.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent delegation_approval_operation_kind_uses_pending_team_target --lib
+cargo test -p pi-coding-agent run_operation_delegation_approval_preserves_missing_pending_before_busy --lib
+```
+
+GREEN result: both dynamic admission tests passed.
+
+### Task 22: Verify Delegation Approval Operation Slice
+
+- [x] **Step 1: Run operation-focused and delegation approval tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent delegation_approval --lib
+cargo test -p pi-coding-agent delegation_execution
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+rg -n "operation_control\.begin" crates/pi-coding-agent/src/coding_session crates/pi-coding-agent/src/interactive crates/pi-coding-agent/src/protocol
+git status --short
+```
