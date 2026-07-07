@@ -15,6 +15,7 @@ mod export_flow;
 mod flow_service;
 mod manual_compaction_flow;
 mod manual_compaction_service;
+mod operation;
 mod operation_control;
 mod plugin_load_flow;
 mod plugin_load_service;
@@ -74,6 +75,7 @@ use export_flow::ExportOptions;
 use flow_service::FlowService;
 use manual_compaction_flow::ManualCompactionOptions;
 use manual_compaction_service::ManualCompactionService;
+use operation::{Operation, OperationOutcome};
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::PluginLoadOptions;
@@ -479,10 +481,9 @@ impl CodingAgentSession {
         &mut self,
         options: PromptTurnOptions,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        let _operation = self.operation_control.begin(OperationKind::Prompt)?;
-        let result = self.prompt_inner(options).await;
-        self.operation_control.clear_prompt_control_receiver();
-        result
+        match self.run_operation(Operation::Prompt(options)).await? {
+            OperationOutcome::Prompt(outcome) => Ok(outcome),
+        }
     }
 
     pub async fn compact(
@@ -739,6 +740,22 @@ impl CodingAgentSession {
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
         })
+    }
+
+    async fn run_operation(
+        &mut self,
+        operation: Operation,
+    ) -> Result<OperationOutcome, CodingSessionError> {
+        let kind = operation.kind();
+        let _operation_guard = self.operation_control.begin(kind)?;
+
+        match operation {
+            Operation::Prompt(options) => {
+                let result = self.prompt_inner(options).await;
+                self.operation_control.clear_prompt_control_receiver();
+                result.map(OperationOutcome::Prompt)
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -1779,6 +1796,22 @@ runtime = "lua"
             "{:#?}",
             contexts[1].messages
         );
+    }
+
+    #[tokio::test]
+    async fn run_operation_prompt_uses_prompt_guard_and_preserves_prompt_error() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation = Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+            "hello".into(),
+        )));
+
+        let error = session.run_operation(operation).await.unwrap_err();
+
+        assert_eq!(error.code(), "config");
+        assert!(error.to_string().contains("runtime snapshot"), "{error}");
+        assert_eq!(session.operation_control.active(), None);
     }
 
     #[tokio::test]

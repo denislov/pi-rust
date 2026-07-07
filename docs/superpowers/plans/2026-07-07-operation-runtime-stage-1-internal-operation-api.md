@@ -1,0 +1,330 @@
+# Operation Runtime Stage 1 Internal Operation API Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Establish the first internal `Operation` boundary in `pi-coding-agent` and route the existing prompt entrypoint through it without changing public adapter behavior.
+
+**Architecture:** Add a small `coding_session::operation` module that owns operation request/outcome typing, origin, and scheduler class metadata. Keep `CodingAgentSession` as the owner, and add a private `run_operation()` dispatcher that initially supports only `Operation::Prompt` by reusing the current prompt path. This is a vertical slice for the operation contract; it does not introduce the full IntentRouter, ProductEvent family split, or scheduler.
+
+**Tech Stack:** Rust 2024, existing `pi-coding-agent` module tests, `cargo test -p pi-coding-agent operation`, `cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable`, `cargo fmt --check`.
+
+---
+
+### Task 1: Add Internal Operation Contract
+
+**Files:**
+- Create: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Test: `crates/pi-coding-agent/src/coding_session/operation.rs`
+
+- [x] **Step 1: Write the failing operation metadata tests**
+
+Create `crates/pi-coding-agent/src/coding_session/operation.rs` with only the test module and imports that describe the desired API:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::PromptInvocation;
+
+    #[test]
+    fn prompt_operation_declares_root_session_write_metadata() {
+        let operation = Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+            "hello".into(),
+        )));
+
+        assert_eq!(operation.kind(), OperationKind::Prompt);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
+    }
+
+    #[test]
+    fn prompt_operation_outcome_exposes_prompt_payload() {
+        let outcome = OperationOutcome::Prompt(PromptTurnOutcome::Aborted {
+            operation_id: "op_test".into(),
+            turn_id: Some("turn_test".into()),
+            reason: "user cancelled".into(),
+            session_id: None,
+        });
+
+        assert!(matches!(
+            outcome,
+            OperationOutcome::Prompt(PromptTurnOutcome::Aborted { reason, .. })
+                if reason == "user cancelled"
+        ));
+    }
+}
+```
+
+Add `mod operation;` to the module list in `crates/pi-coding-agent/src/coding_session/mod.rs` so the test compiles far enough to fail on missing types.
+
+- [x] **Step 2: Run the operation test and verify RED**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+```
+
+Expected: FAIL to compile because `Operation`, `OperationOrigin`, `OperationClass`, and `OperationOutcome` are not defined yet.
+
+- [x] **Step 3: Implement the minimal operation contract**
+
+Replace `crates/pi-coding-agent/src/coding_session/operation.rs` with:
+
+```rust
+use super::operation_control::OperationKind;
+use super::prompt::{PromptTurnOptions, PromptTurnOutcome};
+
+#[derive(Debug)]
+pub(crate) enum Operation {
+    Prompt(PromptTurnOptions),
+}
+
+impl Operation {
+    pub(crate) fn kind(&self) -> OperationKind {
+        match self {
+            Self::Prompt(_) => OperationKind::Prompt,
+        }
+    }
+
+    pub(crate) fn origin(&self) -> OperationOrigin {
+        match self {
+            Self::Prompt(_) => OperationOrigin::ClientRoot,
+        }
+    }
+
+    pub(crate) fn class(&self) -> OperationClass {
+        match self {
+            Self::Prompt(_) => OperationClass::SessionWriteRoot,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationOrigin {
+    ClientRoot,
+    ParentChild,
+    RuntimeInternal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationClass {
+    Query,
+    ReadOnly,
+    SessionWriteRoot,
+    NonSessionRoot,
+    RuntimeWrite,
+    Child,
+    Control,
+}
+
+#[derive(Debug)]
+pub(crate) enum OperationOutcome {
+    Prompt(PromptTurnOutcome),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::PromptInvocation;
+
+    #[test]
+    fn prompt_operation_declares_root_session_write_metadata() {
+        let operation = Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+            "hello".into(),
+        )));
+
+        assert_eq!(operation.kind(), OperationKind::Prompt);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
+    }
+
+    #[test]
+    fn prompt_operation_outcome_exposes_prompt_payload() {
+        let outcome = OperationOutcome::Prompt(PromptTurnOutcome::Aborted {
+            operation_id: "op_test".into(),
+            turn_id: Some("turn_test".into()),
+            reason: "user cancelled".into(),
+            session_id: None,
+        });
+
+        assert!(matches!(
+            outcome,
+            OperationOutcome::Prompt(PromptTurnOutcome::Aborted { reason, .. })
+                if reason == "user cancelled"
+        ));
+    }
+}
+```
+
+- [x] **Step 4: Run the operation test and verify GREEN**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+```
+
+Expected: PASS for the new operation tests.
+
+### Task 2: Route Prompt Through Internal Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Test: `crates/pi-coding-agent/src/coding_session/mod.rs`
+
+- [x] **Step 1: Write the failing routing test**
+
+In the existing `#[cfg(test)] mod tests` in `crates/pi-coding-agent/src/coding_session/mod.rs`, add this test near the other prompt/session tests:
+
+```rust
+#[tokio::test]
+async fn run_operation_prompt_uses_prompt_guard_and_preserves_prompt_error() {
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let operation = Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+        "hello".into(),
+    )));
+
+    let error = session.run_operation(operation).await.unwrap_err();
+
+    assert_eq!(error.code(), "config");
+    assert!(error.to_string().contains("runtime snapshot"), "{error}");
+    assert_eq!(session.operation_control.active(), None);
+}
+```
+
+Import the new operation types in `mod.rs` for production and tests:
+
+```rust
+use operation::{Operation, OperationOutcome};
+```
+
+- [x] **Step 2: Run the routing test and verify RED**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent run_operation_prompt_uses_prompt_guard_and_preserves_prompt_error --lib
+```
+
+Expected: FAIL to compile because `CodingAgentSession::run_operation` does not exist yet.
+
+- [x] **Step 3: Implement minimal dispatcher and route `prompt()` through it**
+
+In `impl CodingAgentSession`, replace the current `prompt()` body with:
+
+```rust
+pub async fn prompt(
+    &mut self,
+    options: PromptTurnOptions,
+) -> Result<PromptTurnOutcome, CodingSessionError> {
+    match self.run_operation(Operation::Prompt(options)).await? {
+        OperationOutcome::Prompt(outcome) => Ok(outcome),
+    }
+}
+```
+
+Add this private dispatcher near `prompt_inner()`:
+
+```rust
+async fn run_operation(
+    &mut self,
+    operation: Operation,
+) -> Result<OperationOutcome, CodingSessionError> {
+    let kind = operation.kind();
+    let _operation_guard = self.operation_control.begin(kind)?;
+
+    match operation {
+        Operation::Prompt(options) => {
+            let result = self.prompt_inner(options).await;
+            self.operation_control.clear_prompt_control_receiver();
+            result.map(OperationOutcome::Prompt)
+        }
+    }
+}
+```
+
+The prompt-control receiver cleanup stays in the prompt operation arm so existing prompt abort/steer/follow-up behavior is preserved.
+
+- [x] **Step 4: Run the routing test and verify GREEN**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent run_operation_prompt_uses_prompt_guard_and_preserves_prompt_error --lib
+```
+
+Expected: PASS.
+
+- [x] **Step 5: Run focused prompt/public API checks**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+Expected: both commands pass.
+
+### Task 3: Update Architecture TODO For Stage 1 Start
+
+**Files:**
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-operation-runtime-stage-1-internal-operation-api.md`
+
+- [x] **Step 1: Mark Stage 1 as the active cut in TODO**
+
+Update the existing operation runtime reference architecture TODO line to mention that Stage 1 has started with the internal operation API and prompt routing slice.
+
+Use wording like:
+
+```markdown
+- [~] Adopt the operation runtime reference architecture as the next simplification target. The 2026-07-07 reference architecture now records a current-state-aware contract for narrowing `CodingAgentSession`, normalizing operation admission, grouping product events, defining snapshot semantics, and hardening SessionEvent/ProductEvent boundaries. Stage 1 has started with an internal `Operation`/`OperationOutcome` contract and the prompt entrypoint routing through that operation dispatcher while preserving current public behavior.
+```
+
+- [x] **Step 2: Mark completed plan steps**
+
+After executing each task, update this plan file's checkboxes for the steps that were actually completed.
+
+### Task 4: Verification
+
+**Files:**
+- Verify: Rust code and markdown docs
+
+- [x] **Step 1: Format check**
+
+Run:
+
+```bash
+cargo fmt --check
+```
+
+Expected: PASS. If it fails only due to formatting, run `cargo fmt`, then rerun `cargo fmt --check`.
+
+- [x] **Step 2: Focused crate checks**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_operation_prompt_uses_prompt_guard_and_preserves_prompt_error --lib
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+cargo check -p pi-coding-agent
+```
+
+Expected: all commands pass.
+
+- [x] **Step 3: Diff hygiene**
+
+Run:
+
+```bash
+git diff --check
+git status --short
+```
+
+Expected: no diff-check errors; status shows only the intended docs and `pi-coding-agent` files.
