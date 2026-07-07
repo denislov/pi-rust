@@ -284,6 +284,9 @@ impl CodingAgentSession {
             OperationOutcome::DelegationApproval => {
                 unreachable!("export operation returned delegation approval outcome")
             }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("export operation returned delegation rejection outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("export operation returned branch summary outcome")
             }
@@ -314,6 +317,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::DelegationApproval => {
                 unreachable!("export operation returned delegation approval outcome")
+            }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("export operation returned delegation rejection outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("export operation returned branch summary outcome")
@@ -443,6 +449,9 @@ impl CodingAgentSession {
             .await?
         {
             OperationOutcome::DelegationApproval => Ok(()),
+            OperationOutcome::DelegationRejection => {
+                unreachable!("delegation approval operation returned delegation rejection outcome")
+            }
             OperationOutcome::Prompt(_) => {
                 unreachable!("delegation approval operation returned prompt outcome")
             }
@@ -479,18 +488,43 @@ impl CodingAgentSession {
         tool_call_id: impl AsRef<str>,
         reason: impl Into<String>,
     ) -> Result<(), CodingSessionError> {
-        let operation_id = operation_id.as_ref();
-        let tool_call_id = tool_call_id.as_ref();
-        let now = SystemClock.now_rfc3339();
-        self.delegation_confirmation_service.reject_pending(
-            &mut self.persistence,
-            &mut self.pending_delegation_confirmations,
-            &self.event_service,
-            operation_id,
-            tool_call_id,
-            &now,
-            reason.into(),
-        )
+        match self.run_sync_mut_operation(Operation::RejectDelegationConfirmation {
+            operation_id: operation_id.as_ref().to_owned(),
+            tool_call_id: tool_call_id.as_ref().to_owned(),
+            reason: reason.into(),
+        })? {
+            OperationOutcome::DelegationRejection => Ok(()),
+            OperationOutcome::DelegationApproval => {
+                unreachable!("delegation rejection operation returned delegation approval outcome")
+            }
+            OperationOutcome::Prompt(_) => {
+                unreachable!("delegation rejection operation returned prompt outcome")
+            }
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("delegation rejection operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("delegation rejection operation returned plugin load outcome")
+            }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("delegation rejection operation returned plugin command outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("delegation rejection operation returned branch summary outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("delegation rejection operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("delegation rejection operation returned agent invocation outcome")
+            }
+            OperationOutcome::AgentTeam(_) => {
+                unreachable!("delegation rejection operation returned agent team outcome")
+            }
+            OperationOutcome::Export(_) => {
+                unreachable!("delegation rejection operation returned export outcome")
+            }
+        }
     }
 
     pub async fn prompt(
@@ -510,6 +544,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::DelegationApproval => {
                 unreachable!("prompt operation returned delegation approval outcome")
+            }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("prompt operation returned delegation rejection outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("prompt operation returned branch summary outcome")
@@ -547,6 +584,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::DelegationApproval => {
                 unreachable!("manual compaction operation returned delegation approval outcome")
+            }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("manual compaction operation returned delegation rejection outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("manual compaction operation returned branch summary outcome")
@@ -599,6 +639,9 @@ impl CodingAgentSession {
             OperationOutcome::DelegationApproval => {
                 unreachable!("self-healing edit operation returned delegation approval outcome")
             }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("self-healing edit operation returned delegation rejection outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("self-healing edit operation returned branch summary outcome")
             }
@@ -638,6 +681,9 @@ impl CodingAgentSession {
             OperationOutcome::DelegationApproval => {
                 unreachable!("agent invocation operation returned delegation approval outcome")
             }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("agent invocation operation returned delegation rejection outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("agent invocation operation returned branch summary outcome")
             }
@@ -673,6 +719,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::DelegationApproval => {
                 unreachable!("agent team operation returned delegation approval outcome")
+            }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("agent team operation returned delegation rejection outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("agent team operation returned branch summary outcome")
@@ -723,6 +772,9 @@ impl CodingAgentSession {
             OperationOutcome::DelegationApproval => {
                 unreachable!("plugin command operation returned delegation approval outcome")
             }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("plugin command operation returned delegation rejection outcome")
+            }
             OperationOutcome::Prompt(_) => {
                 unreachable!("plugin command operation returned prompt outcome")
             }
@@ -761,6 +813,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::DelegationApproval => {
                 unreachable!("plugin load operation returned delegation approval outcome")
+            }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("plugin load operation returned delegation rejection outcome")
             }
             OperationOutcome::Prompt(_) => {
                 unreachable!("plugin load operation returned prompt outcome")
@@ -817,6 +872,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::DelegationApproval => {
                 unreachable!("branch summary operation returned delegation approval outcome")
+            }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("branch summary operation returned delegation rejection outcome")
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
@@ -875,6 +933,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::DelegationApproval => {
                 unreachable!("branch summary operation returned delegation approval outcome")
+            }
+            OperationOutcome::DelegationRejection => {
+                unreachable!("branch summary operation returned delegation rejection outcome")
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
@@ -976,6 +1037,60 @@ impl CodingAgentSession {
                 .plugin_service
                 .run_command(&command_id, args)
                 .map(OperationOutcome::PluginCommand),
+            Operation::RejectDelegationConfirmation { .. } => {
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability:
+                        "delegation confirmation operation requires sync mutable dispatcher".into(),
+                })
+            }
+            Operation::Prompt(_)
+            | Operation::ManualCompaction(_)
+            | Operation::PluginLoad(_)
+            | Operation::ApproveDelegationConfirmation { .. }
+            | Operation::BranchSummary { .. }
+            | Operation::SelfHealingEdit(_)
+            | Operation::AgentInvocation(_)
+            | Operation::AgentTeam(_) => Err(CodingSessionError::UnsupportedCapability {
+                capability: format!("{} operation requires async dispatcher", kind.as_str()),
+            }),
+        }
+    }
+
+    fn run_sync_mut_operation(
+        &mut self,
+        operation: Operation,
+    ) -> Result<OperationOutcome, CodingSessionError> {
+        let Some(kind) = operation.static_kind() else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "dynamic operation requires async dispatcher".into(),
+            });
+        };
+        let _operation_guard = self.operation_control.begin(kind)?;
+
+        match operation {
+            Operation::RejectDelegationConfirmation {
+                operation_id,
+                tool_call_id,
+                reason,
+            } => {
+                let now = SystemClock.now_rfc3339();
+                self.delegation_confirmation_service.reject_pending(
+                    &mut self.persistence,
+                    &mut self.pending_delegation_confirmations,
+                    &self.event_service,
+                    operation_id.as_str(),
+                    tool_call_id.as_str(),
+                    &now,
+                    reason,
+                )?;
+                Ok(OperationOutcome::DelegationRejection)
+            }
+            Operation::Export(_) => Err(CodingSessionError::UnsupportedCapability {
+                capability: "export operation requires read-only sync dispatcher".into(),
+            }),
+            Operation::PluginCommand { .. } => Err(CodingSessionError::UnsupportedCapability {
+                capability: "plugin command operation requires read-only sync dispatcher".into(),
+            }),
             Operation::Prompt(_)
             | Operation::ManualCompaction(_)
             | Operation::PluginLoad(_)
@@ -1203,6 +1318,12 @@ impl CodingAgentSession {
             Operation::PluginCommand { .. } => Err(CodingSessionError::UnsupportedCapability {
                 capability: "plugin command operation requires sync dispatcher".into(),
             }),
+            Operation::RejectDelegationConfirmation { .. } => {
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability:
+                        "delegation confirmation operation requires sync mutable dispatcher".into(),
+                })
+            }
             Operation::ApproveDelegationConfirmation {
                 operation_id,
                 tool_call_id,
@@ -2379,6 +2500,36 @@ runtime = "lua"
                 .contains("pending delegation confirmation not found"),
             "{error}"
         );
+        assert_eq!(
+            session.operation_control.active(),
+            Some(OperationKind::Prompt)
+        );
+    }
+
+    #[tokio::test]
+    async fn reject_delegation_confirmation_reports_busy_before_mutating_pending_confirmation() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        session
+            .pending_delegation_confirmations
+            .push(pending_delegation_confirmation_state(ProfileKind::Agent));
+        let _operation = session
+            .operation_control
+            .begin(OperationKind::Prompt)
+            .unwrap();
+
+        let error = session
+            .reject_delegation_confirmation("op_parent", "tool_delegate", "not now")
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            CodingSessionError::Busy {
+                operation: "prompt".into(),
+            }
+        );
+        assert_eq!(session.pending_delegation_confirmations().len(), 1);
         assert_eq!(
             session.operation_control.active(),
             Some(OperationKind::Prompt)

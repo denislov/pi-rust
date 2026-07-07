@@ -19,6 +19,11 @@ pub(crate) enum Operation {
         operation_id: String,
         tool_call_id: String,
     },
+    RejectDelegationConfirmation {
+        operation_id: String,
+        tool_call_id: String,
+        reason: String,
+    },
     BranchSummary {
         options: PromptTurnOptions,
         source_leaf_id: String,
@@ -44,6 +49,9 @@ impl Operation {
             Self::PluginLoad(_) => Some(OperationKind::PluginLoad),
             Self::PluginCommand { .. } => Some(OperationKind::PluginCommand),
             Self::ApproveDelegationConfirmation { .. } => None,
+            Self::RejectDelegationConfirmation { .. } => {
+                Some(OperationKind::DelegationConfirmation)
+            }
             Self::BranchSummary { .. } => Some(OperationKind::BranchSummary),
             Self::SelfHealingEdit(_) => Some(OperationKind::SelfHealingEdit),
             Self::AgentInvocation(_) => Some(OperationKind::AgentInvocation),
@@ -60,6 +68,7 @@ impl Operation {
             | Self::PluginLoad(_)
             | Self::PluginCommand { .. }
             | Self::ApproveDelegationConfirmation { .. }
+            | Self::RejectDelegationConfirmation { .. }
             | Self::BranchSummary { .. }
             | Self::SelfHealingEdit(_)
             | Self::AgentInvocation(_)
@@ -80,6 +89,7 @@ impl Operation {
             | Self::AgentTeam(_)
             | Self::PluginCommand { .. }
             | Self::ApproveDelegationConfirmation { .. } => OperationClass::NonSessionRoot,
+            Self::RejectDelegationConfirmation { .. } => OperationClass::Control,
             Self::Export(_) => OperationClass::ReadOnly,
         }
     }
@@ -112,6 +122,7 @@ pub(crate) enum OperationOutcome {
     PluginLoad(PluginLoadOutcome),
     PluginCommand(String),
     DelegationApproval,
+    DelegationRejection,
     BranchSummary(PromptTurnOutcome),
     SelfHealingEdit(SelfHealingEditOutcome),
     AgentInvocation(AgentInvocationOutcome),
@@ -182,6 +193,19 @@ mod tests {
         assert_eq!(operation.static_kind(), None);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::NonSessionRoot);
+    }
+
+    #[test]
+    fn delegation_rejection_operation_declares_root_control_metadata() {
+        let operation = Operation::RejectDelegationConfirmation {
+            operation_id: "op_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            reason: "not needed".into(),
+        };
+
+        assert_eq!(operation.kind(), OperationKind::DelegationConfirmation);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::Control);
     }
 
     #[test]

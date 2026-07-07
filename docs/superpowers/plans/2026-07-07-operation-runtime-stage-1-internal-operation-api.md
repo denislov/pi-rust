@@ -1006,3 +1006,80 @@ git diff --check
 rg -n "operation_control\.begin" crates/pi-coding-agent/src/coding_session crates/pi-coding-agent/src/interactive crates/pi-coding-agent/src/protocol
 git status --short
 ```
+
+### Task 23: Route Delegation Rejection Through Sync-Mutable Operation Admission
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/operation_control.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing delegation rejection operation metadata test**
+
+Added `delegation_rejection_operation_declares_root_control_metadata` to prove `Operation::RejectDelegationConfirmation` maps to `OperationKind::DelegationConfirmation`, `OperationOrigin::ClientRoot`, and `OperationClass::Control`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent delegation_rejection_operation_declares_root_control_metadata --lib
+```
+
+RED result: compile failed because `Operation::RejectDelegationConfirmation` and `OperationKind::DelegationConfirmation` did not exist.
+
+- [x] **Step 2: Add the minimal delegation rejection operation contract**
+
+Added `Operation::RejectDelegationConfirmation { operation_id, tool_call_id, reason }`, `OperationKind::DelegationConfirmation`, and the root-control operation metadata. Temporary dispatcher placeholders kept the contract compiling until routing consumed the payload.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent delegation_rejection_operation_declares_root_control_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing guarded rejection test**
+
+Added `reject_delegation_confirmation_reports_busy_before_mutating_pending_confirmation` to require the public rejection entrypoint to observe the operation guard before mutating the pending confirmation queue.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent reject_delegation_confirmation_reports_busy_before_mutating_pending_confirmation --lib
+```
+
+RED result: the test failed because the existing public rejection method bypassed operation admission and directly removed the pending confirmation.
+
+- [x] **Step 4: Move delegation rejection routing into a sync-mutable dispatcher**
+
+Changed `CodingAgentSession::reject_delegation_confirmation()` to call `run_sync_mut_operation(Operation::RejectDelegationConfirmation { ... })`. Added the sync-mutable dispatcher for synchronous operations that need `&mut self`, acquired the operation guard before queue/session mutation, and returned `OperationOutcome::DelegationRejection`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent reject_delegation_confirmation_reports_busy_before_mutating_pending_confirmation --lib
+```
+
+GREEN result: the guarded rejection test passed and the operation payload is consumed by the dispatcher.
+
+### Task 24: Verify Delegation Rejection Operation Slice
+
+- [x] **Step 1: Run operation-focused and delegation rejection tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent reject_delegation_confirmation_reports_busy_before_mutating_pending_confirmation --lib
+cargo test -p pi-coding-agent delegation_execution
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+rg -n "operation_control\.begin" crates/pi-coding-agent/src/coding_session crates/pi-coding-agent/src/interactive crates/pi-coding-agent/src/protocol
+git status --short
+```
