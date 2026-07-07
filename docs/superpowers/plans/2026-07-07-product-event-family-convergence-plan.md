@@ -455,3 +455,52 @@ git status --short
 ```
 
 GREEN result: event_service, operation, crate check, formatting, adapter compatibility, public API smoke, and diff hygiene checks passed before committing this slice.
+
+
+### Task 7: Add Internal ProductEvent Subscription Stream
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/event_service.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing ProductEvent subscription test**
+
+Added `event_service_publishes_internal_product_events_alongside_compatibility_stream` to require one `EventService::emit()` call to publish the same internal `ProductEvent` returned by `emit()` to a crate-internal product-event receiver while preserving the existing `CodingAgentEventReceiver` compatibility stream.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent event_service_publishes_internal_product_events_alongside_compatibility_stream --lib
+```
+
+RED result: compile failed because `EventService::subscribe_product_events()` did not exist.
+
+- [x] **Step 2: Add minimal internal ProductEvent receiver**
+
+Added a second `broadcast::Sender<ProductEvent>` owned by `EventService`, a crate-internal `ProductEventReceiver`, and `EventService::subscribe_product_events()`. `EventService::emit()` now sends the cloned internal `ProductEvent` to the product stream before sending the unchanged compatibility `CodingAgentEvent` to existing subscribers. The public `CodingAgentEventReceiver` and adapter-visible event stream remain unchanged.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent event_service_publishes_internal_product_events_alongside_compatibility_stream --lib
+cargo test -p pi-coding-agent event_service --lib
+cargo check -p pi-coding-agent
+```
+
+GREEN result: the focused product-event stream test, the full event_service test set, and crate check passed.
+
+- [x] **Step 3: Run focused compatibility and hygiene checks**
+
+```bash
+cargo fmt --check
+cargo test -p pi-coding-agent event_service --lib
+cargo test -p pi-coding-agent operation --lib
+cargo check -p pi-coding-agent
+cargo test -p pi-coding-agent protocol_events
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+git diff --check
+git status --short
+```
+
+GREEN result: formatting, event_service, operation, crate check, adapter compatibility, public API smoke, and diff hygiene checks passed before committing this slice.

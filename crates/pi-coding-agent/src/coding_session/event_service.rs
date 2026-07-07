@@ -25,6 +25,7 @@ const EVENT_CHANNEL_CAPACITY: usize = 128;
 #[derive(Debug, Clone)]
 pub(crate) struct EventService {
     sender: broadcast::Sender<CodingAgentEvent>,
+    product_sender: broadcast::Sender<ProductEvent>,
     next_sequence: Arc<AtomicU64>,
 }
 
@@ -63,8 +64,10 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
 impl EventService {
     pub(crate) fn new() -> Self {
         let (sender, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let (product_sender, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Self {
             sender,
+            product_sender,
             next_sequence: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -72,6 +75,7 @@ impl EventService {
     pub(crate) fn emit(&self, event: CodingAgentEvent) -> ProductEvent {
         let sequence = ProductEventSequence(self.next_sequence.fetch_add(1, Ordering::Relaxed));
         let product_event = ProductEvent::from_compat_event(sequence, event);
+        let _ = self.product_sender.send(product_event.clone());
         let _ = self
             .sender
             .send(product_event.compatibility_event().clone());
@@ -593,6 +597,12 @@ impl EventService {
             inner: self.sender.subscribe(),
         }
     }
+
+    pub(crate) fn subscribe_product_events(&self) -> ProductEventReceiver {
+        ProductEventReceiver {
+            inner: self.product_sender.subscribe(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -855,6 +865,30 @@ fn parse_delegation_target_kind(kind: &str) -> Option<ProfileKind> {
 }
 
 #[derive(Debug)]
+pub(crate) struct ProductEventReceiver {
+    inner: broadcast::Receiver<ProductEvent>,
+}
+
+impl ProductEventReceiver {
+    pub(crate) async fn recv(&mut self) -> Result<ProductEvent, CodingSessionError> {
+        self.inner.recv().await.map_err(map_recv_error)
+    }
+
+    pub(crate) fn try_recv(&mut self) -> Result<Option<ProductEvent>, CodingSessionError> {
+        match self.inner.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(broadcast::error::TryRecvError::Empty) => Ok(None),
+            Err(broadcast::error::TryRecvError::Closed) => Err(CodingSessionError::Cancelled),
+            Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                Err(CodingSessionError::Resource {
+                    message: format!("event receiver lagged by {skipped} events"),
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct CodingAgentEventReceiver {
     inner: broadcast::Receiver<CodingAgentEvent>,
 }
@@ -897,8 +931,8 @@ mod tests {
     use serde_json::json;
 
     use super::super::event::{
-        ProductEventDurability, ProductEventFamily, ProductEventSequence,
-        ProductEventTerminalStatus,
+        ProductEventDurability, ProductEventFamily, ProductEventKind, ProductEventSequence,
+        ProductEventTerminalStatus, WorkflowProductEventKind,
     };
     use super::*;
 
@@ -970,6 +1004,39 @@ mod tests {
             receiver.try_recv().unwrap(),
             Some(CodingAgentEvent::CapabilityChanged)
         ));
+    }
+
+    #[test]
+    fn event_service_publishes_internal_product_events_alongside_compatibility_stream() {
+        let service = EventService::new();
+        let mut product_receiver = service.subscribe_product_events();
+        let mut compatibility_receiver = service.subscribe();
+
+        let emitted = service.emit(CodingAgentEvent::PromptCompleted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+        });
+
+        let product_event = product_receiver
+            .try_recv()
+            .unwrap()
+            .expect("product event is published");
+        assert_eq!(product_event, emitted);
+        assert_eq!(product_event.sequence, ProductEventSequence(1));
+        assert_eq!(
+            product_event.kind,
+            ProductEventKind::Workflow(WorkflowProductEventKind::PromptCompleted)
+        );
+        assert_eq!(product_event.operation_id.as_deref(), Some("op_1"));
+        assert_eq!(
+            product_event.terminal_status,
+            Some(ProductEventTerminalStatus::Completed)
+        );
+        assert!(matches!(
+            compatibility_receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptCompleted { .. })
+        ));
+        assert_eq!(product_receiver.try_recv().unwrap(), None);
     }
 
     #[test]
