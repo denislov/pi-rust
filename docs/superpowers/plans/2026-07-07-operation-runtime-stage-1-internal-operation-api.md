@@ -701,3 +701,78 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 15: Route Team Invocation Through Internal Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing team invocation operation metadata test**
+
+Added `agent_team_operation_declares_root_non_session_metadata` to prove `Operation::AgentTeam` maps to `OperationKind::AgentTeam`, `OperationOrigin::ClientRoot`, and `OperationClass::NonSessionRoot`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent agent_team_operation_declares_root_non_session_metadata --lib
+```
+
+RED result: compile failed because `Operation::AgentTeam` did not exist.
+
+- [x] **Step 2: Add the minimal team invocation operation contract**
+
+Added `Operation::AgentTeam(AgentTeamOptions)`, mapped its metadata, and used a temporary dispatcher placeholder so the request contract could compile independently.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent agent_team_operation_declares_root_non_session_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing team invocation dispatcher test**
+
+Added `run_operation_agent_team_uses_guard_and_preserves_input_error` to require `Operation::AgentTeam` to run through the dispatcher, preserve the existing empty-task input error, and clear active operation state on error.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_agent_team_uses_guard_and_preserves_input_error --lib
+```
+
+RED result: the test failed with the temporary dispatcher placeholder error.
+
+- [x] **Step 4: Move team invocation routing into `run_operation()`**
+
+Changed `CodingAgentSession::invoke_team()` to call `run_operation(Operation::AgentTeam(options))`, and moved the existing `invoke_team_inner(options)` execution into the dispatcher arm.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_agent_team_uses_guard_and_preserves_input_error --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 16: Verify Team Invocation Operation Slice
+
+- [x] **Step 1: Run operation-focused and team invocation tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_operation_agent_team_uses_guard_and_preserves_input_error --lib
+cargo test -p pi-coding-agent agent_team
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```
