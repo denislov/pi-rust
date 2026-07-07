@@ -1,6 +1,7 @@
 use super::operation_control::OperationKind;
 use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome};
+use super::self_healing_edit_flow::{SelfHealingEditOutcome, SelfHealingEditRequest};
 
 #[derive(Debug)]
 pub(crate) enum Operation {
@@ -13,6 +14,7 @@ pub(crate) enum Operation {
         target_leaf_id: String,
         custom_instructions: Option<String>,
     },
+    SelfHealingEdit(SelfHealingEditRequest),
 }
 
 impl Operation {
@@ -22,6 +24,7 @@ impl Operation {
             Self::ManualCompaction(_) => OperationKind::Compact,
             Self::PluginLoad(_) => OperationKind::PluginLoad,
             Self::BranchSummary { .. } => OperationKind::BranchSummary,
+            Self::SelfHealingEdit(_) => OperationKind::SelfHealingEdit,
         }
     }
 
@@ -31,16 +34,18 @@ impl Operation {
             Self::Prompt(_)
             | Self::ManualCompaction(_)
             | Self::PluginLoad(_)
-            | Self::BranchSummary { .. } => OperationOrigin::ClientRoot,
+            | Self::BranchSummary { .. }
+            | Self::SelfHealingEdit(_) => OperationOrigin::ClientRoot,
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn class(&self) -> OperationClass {
         match self {
-            Self::Prompt(_) | Self::ManualCompaction(_) | Self::BranchSummary { .. } => {
-                OperationClass::SessionWriteRoot
-            }
+            Self::Prompt(_)
+            | Self::ManualCompaction(_)
+            | Self::BranchSummary { .. }
+            | Self::SelfHealingEdit(_) => OperationClass::SessionWriteRoot,
             Self::PluginLoad(_) => OperationClass::RuntimeWrite,
         }
     }
@@ -72,11 +77,15 @@ pub(crate) enum OperationOutcome {
     ManualCompaction(PromptTurnOutcome),
     PluginLoad(PluginLoadOutcome),
     BranchSummary(PromptTurnOutcome),
+    SelfHealingEdit(SelfHealingEditOutcome),
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::plugin_load_flow::PluginLoadOptions;
+    use super::super::self_healing_edit_flow::{
+        SelfHealingEditReplacement, SelfHealingEditRequest,
+    };
     use super::*;
     use crate::runtime::PromptInvocation;
 
@@ -122,6 +131,18 @@ mod tests {
         };
 
         assert_eq!(operation.kind(), OperationKind::BranchSummary);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
+    }
+
+    #[test]
+    fn self_healing_edit_operation_declares_root_session_write_metadata() {
+        let operation = Operation::SelfHealingEdit(SelfHealingEditRequest::new(
+            "src/lib.rs",
+            vec![SelfHealingEditReplacement::new("old", "new")],
+        ));
+
+        assert_eq!(operation.kind(), OperationKind::SelfHealingEdit);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
     }

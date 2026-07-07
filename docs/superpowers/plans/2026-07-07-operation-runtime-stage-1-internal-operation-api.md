@@ -551,3 +551,78 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 11: Route Self-Healing Edit Through Internal Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing self-healing edit operation metadata test**
+
+Added `self_healing_edit_operation_declares_root_session_write_metadata` to prove `Operation::SelfHealingEdit` maps to `OperationKind::SelfHealingEdit`, `OperationOrigin::ClientRoot`, and `OperationClass::SessionWriteRoot`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent self_healing_edit_operation_declares_root_session_write_metadata --lib
+```
+
+RED result: compile failed because `Operation::SelfHealingEdit` did not exist.
+
+- [x] **Step 2: Add the minimal self-healing edit operation contract**
+
+Added `Operation::SelfHealingEdit(SelfHealingEditRequest)`, mapped its metadata, and used a temporary dispatcher placeholder so the request contract could compile independently.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent self_healing_edit_operation_declares_root_session_write_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing self-healing edit dispatcher test**
+
+Added `run_operation_self_healing_edit_uses_guard_and_preserves_persistence_error` to require `Operation::SelfHealingEdit` to run through the dispatcher, preserve the existing non-persistent-session error, and clear active operation state on error.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_self_healing_edit_uses_guard_and_preserves_persistence_error --lib
+```
+
+RED result: the test failed with the temporary dispatcher placeholder error.
+
+- [x] **Step 4: Move self-healing edit routing into `run_operation()`**
+
+Changed `CodingAgentSession::self_healing_edit_with_options()` to call `run_operation(Operation::SelfHealingEdit(request))`, and moved the existing request decomposition, repair-policy validation, model-repair policy construction, persistent-session gate, service execution, and finalized session-write event emission into the dispatcher arm.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_self_healing_edit_uses_guard_and_preserves_persistence_error --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 12: Verify Self-Healing Edit Operation Slice
+
+- [x] **Step 1: Run operation-focused and self-healing edit tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_operation_self_healing_edit_uses_guard_and_preserves_persistence_error --lib
+cargo test -p pi-coding-agent self_healing_edit --lib
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```

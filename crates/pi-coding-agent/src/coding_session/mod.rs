@@ -492,6 +492,9 @@ impl CodingAgentSession {
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("prompt operation returned branch summary outcome")
             }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("prompt operation returned self-healing edit outcome")
+            }
         }
     }
 
@@ -513,6 +516,9 @@ impl CodingAgentSession {
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("manual compaction operation returned branch summary outcome")
             }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("manual compaction operation returned self-healing edit outcome")
+            }
         }
     }
 
@@ -529,39 +535,24 @@ impl CodingAgentSession {
         &mut self,
         request: SelfHealingEditRequest,
     ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
-        let _operation = self
-            .operation_control
-            .begin(OperationKind::SelfHealingEdit)?;
-        let (path, replacements, check_command, repair_attempts, model_repair) =
-            request.into_parts();
-        if !repair_attempts.is_empty() && model_repair.is_some() {
-            return Err(CodingSessionError::Input {
-                message: "configure either planned repair attempts or model repair, not both"
-                    .into(),
-            });
+        match self
+            .run_operation(Operation::SelfHealingEdit(request))
+            .await?
+        {
+            OperationOutcome::SelfHealingEdit(outcome) => Ok(outcome),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("self-healing edit operation returned prompt outcome")
+            }
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("self-healing edit operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("self-healing edit operation returned plugin load outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("self-healing edit operation returned branch summary outcome")
+            }
         }
-        let model_repair_policy = self.self_healing_model_repair_policy(model_repair)?;
-        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "self-healing edit requires a persistent Rust-native session".into(),
-            });
-        };
-        let outcome = self
-            .self_healing_edit_service
-            .run_persistent(
-                session_service,
-                &self.flow_service,
-                self.event_service.clone(),
-                path,
-                replacements,
-                check_command,
-                repair_attempts,
-                model_repair_policy,
-            )
-            .await?;
-        self.event_service
-            .emit_session_write_events(&outcome.finalized);
-        outcome.result
     }
 
     pub async fn invoke_agent(
@@ -629,6 +620,9 @@ impl CodingAgentSession {
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("plugin load operation returned branch summary outcome")
             }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("plugin load operation returned self-healing edit outcome")
+            }
         }
     }
 
@@ -657,6 +651,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("branch summary operation returned plugin load outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("branch summary operation returned self-healing edit outcome")
             }
         }
     }
@@ -697,6 +694,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("branch summary operation returned plugin load outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("branch summary operation returned self-healing edit outcome")
             }
         }
     }
@@ -824,6 +824,40 @@ impl CodingAgentSession {
                     )
                     .await
                     .map(OperationOutcome::BranchSummary)
+            }
+            Operation::SelfHealingEdit(request) => {
+                let (path, replacements, check_command, repair_attempts, model_repair) =
+                    request.into_parts();
+                if !repair_attempts.is_empty() && model_repair.is_some() {
+                    return Err(CodingSessionError::Input {
+                        message:
+                            "configure either planned repair attempts or model repair, not both"
+                                .into(),
+                    });
+                }
+                let model_repair_policy = self.self_healing_model_repair_policy(model_repair)?;
+                let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability: "self-healing edit requires a persistent Rust-native session"
+                            .into(),
+                    });
+                };
+                let outcome = self
+                    .self_healing_edit_service
+                    .run_persistent(
+                        session_service,
+                        &self.flow_service,
+                        self.event_service.clone(),
+                        path,
+                        replacements,
+                        check_command,
+                        repair_attempts,
+                        model_repair_policy,
+                    )
+                    .await?;
+                self.event_service
+                    .emit_session_write_events(&outcome.finalized);
+                outcome.result.map(OperationOutcome::SelfHealingEdit)
             }
         }
     }
@@ -1866,6 +1900,28 @@ runtime = "lua"
             "{:#?}",
             contexts[1].messages
         );
+    }
+
+    #[tokio::test]
+    async fn run_operation_self_healing_edit_uses_guard_and_preserves_persistence_error() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation = Operation::SelfHealingEdit(SelfHealingEditRequest::new(
+            "src/lib.rs",
+            vec![SelfHealingEditReplacement::new("old", "new")],
+        ));
+
+        let error = session.run_operation(operation).await.unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
+        assert!(
+            error
+                .to_string()
+                .contains("self-healing edit requires a persistent Rust-native session"),
+            "{error}"
+        );
+        assert_eq!(session.operation_control.active(), None);
     }
 
     #[tokio::test]
