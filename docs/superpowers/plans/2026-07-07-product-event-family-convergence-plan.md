@@ -17,7 +17,7 @@
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
 
-- [ ] **Step 1: Write failing family classification tests**
+- [x] **Step 1: Write failing family classification tests**
 
 Add these tests at the bottom of `crates/pi-coding-agent/src/coding_session/event.rs`:
 
@@ -134,53 +134,51 @@ mod tests {
 
     #[test]
     fn coding_agent_events_report_operation_correlation_and_terminal_status() {
-        let completed = CodingAgentEvent::PromptCompleted {
+        let completed_event = CodingAgentEvent::PromptCompleted {
             operation_id: "op_prompt".into(),
             turn_id: "turn_1".into(),
-        }
-        .classification();
+        };
+        let completed = completed_event.classification();
         assert_eq!(completed.operation_id, Some("op_prompt"));
         assert_eq!(
             completed.terminal_status,
             Some(ProductEventTerminalStatus::Completed)
         );
 
-        let failed = CodingAgentEvent::SelfHealingEditFailed {
+        let failed_event = CodingAgentEvent::SelfHealingEditFailed {
             operation_id: "op_edit".into(),
             path: "src/lib.rs".into(),
-            error: CodingSessionError::SelfHealingEditFailed {
-                message: "check failed".into(),
-                diagnostics: Vec::new(),
-                check_output: None,
+            error: CodingSessionError::Provider {
+                message: "provider failed".into(),
             },
-        }
-        .classification();
+        };
+        let failed = failed_event.classification();
         assert_eq!(failed.operation_id, Some("op_edit"));
         assert_eq!(
             failed.terminal_status,
             Some(ProductEventTerminalStatus::Failed)
         );
 
-        let aborted = CodingAgentEvent::AgentInvocationAborted {
+        let aborted_event = CodingAgentEvent::AgentInvocationAborted {
             operation_id: "op_agent".into(),
             child_operation_id: "op_child".into(),
             profile_id: profile_id("agent-main"),
             reason: "cancelled".into(),
-        }
-        .classification();
+        };
+        let aborted = aborted_event.classification();
         assert_eq!(aborted.operation_id, Some("op_agent"));
         assert_eq!(
             aborted.terminal_status,
             Some(ProductEventTerminalStatus::Aborted)
         );
 
-        let progress = CodingAgentEvent::AssistantMessageDelta {
+        let progress_event = CodingAgentEvent::AssistantMessageDelta {
             operation_id: "op_prompt".into(),
             turn_id: "turn_1".into(),
             message_id: Some("msg_1".into()),
             text: "hello".into(),
-        }
-        .classification();
+        };
+        let progress = progress_event.classification();
         assert_eq!(progress.operation_id, Some("op_prompt"));
         assert_eq!(progress.terminal_status, None);
 
@@ -191,7 +189,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -199,13 +197,14 @@ Run:
 cargo test -p pi-coding-agent coding_agent_events_report_internal_product_families --lib
 ```
 
-Expected: compile fails because `classification`, `ProductEventFamily`, `ProductEventTerminalStatus`, and `ProductEventClassification` do not exist.
+RED result: compile failed because `classification`, `ProductEventFamily`, `ProductEventTerminalStatus`, and `ProductEventClassification` did not exist.
 
-- [ ] **Step 3: Add the minimal internal classification model**
+- [x] **Step 3: Add the minimal internal classification model**
 
 Add these crate-internal types near the top of `crates/pi-coding-agent/src/coding_session/event.rs`, after `CodingAgentEvent` imports and before the enum:
 
 ```rust
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProductEventClassification<'event> {
     pub(crate) family: ProductEventFamily,
@@ -213,6 +212,7 @@ pub(crate) struct ProductEventClassification<'event> {
     pub(crate) terminal_status: Option<ProductEventTerminalStatus>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProductEventFamily {
     Session,
@@ -228,6 +228,7 @@ pub(crate) enum ProductEventFamily {
     Capability,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProductEventTerminalStatus {
     Completed,
@@ -238,7 +239,7 @@ pub(crate) enum ProductEventTerminalStatus {
 
 Add an `impl CodingAgentEvent` block that returns a `ProductEventClassification<'_>` for every current enum variant. The match must be exhaustive: adding a future `CodingAgentEvent` variant should require choosing a family and terminal status before it compiles.
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 Run:
 
@@ -247,7 +248,7 @@ cargo test -p pi-coding-agent coding_agent_events_report_internal_product_famili
 cargo test -p pi-coding-agent coding_agent_events_report_operation_correlation_and_terminal_status --lib
 ```
 
-Expected: both tests pass.
+GREEN result: both tests passed.
 
 ### Task 2: Verify Adapter Compatibility For The Classification Slice
 
@@ -255,7 +256,7 @@ Expected: both tests pass.
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
 
-- [ ] **Step 1: Run existing protocol adapter coverage**
+- [x] **Step 1: Run existing protocol adapter coverage**
 
 Run:
 
@@ -267,9 +268,9 @@ cargo test -p pi-coding-agent interactive_event_bridge
 cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
 ```
 
-Expected: all tests pass, proving the internal classification did not alter adapter-visible protocol behavior.
+GREEN result: all listed adapter compatibility tests passed, proving the internal classification did not alter adapter-visible protocol behavior.
 
-- [ ] **Step 2: Run operation/event focused checks**
+- [x] **Step 2: Run operation/event focused checks**
 
 Run:
 
@@ -282,9 +283,9 @@ git diff --check
 git status --short
 ```
 
-Expected: all checks pass and the worktree contains only the classification slice, TODO update, and this plan update.
+GREEN result: all listed event/operation, crate, format, and diff hygiene checks passed.
 
-- [ ] **Step 3: Commit the classification slice**
+- [x] **Step 3: Commit the classification slice**
 
 Run:
 
