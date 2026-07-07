@@ -4,26 +4,28 @@ use super::prompt::{PromptTurnOptions, PromptTurnOutcome};
 #[derive(Debug)]
 pub(crate) enum Operation {
     Prompt(PromptTurnOptions),
+    ManualCompaction(PromptTurnOptions),
 }
 
 impl Operation {
     pub(crate) fn kind(&self) -> OperationKind {
         match self {
             Self::Prompt(_) => OperationKind::Prompt,
+            Self::ManualCompaction(_) => OperationKind::Compact,
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn origin(&self) -> OperationOrigin {
         match self {
-            Self::Prompt(_) => OperationOrigin::ClientRoot,
+            Self::Prompt(_) | Self::ManualCompaction(_) => OperationOrigin::ClientRoot,
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn class(&self) -> OperationClass {
         match self {
-            Self::Prompt(_) => OperationClass::SessionWriteRoot,
+            Self::Prompt(_) | Self::ManualCompaction(_) => OperationClass::SessionWriteRoot,
         }
     }
 }
@@ -51,6 +53,7 @@ pub(crate) enum OperationClass {
 #[derive(Debug)]
 pub(crate) enum OperationOutcome {
     Prompt(PromptTurnOutcome),
+    ManualCompaction(PromptTurnOutcome),
 }
 
 #[cfg(test)]
@@ -65,6 +68,18 @@ mod tests {
         )));
 
         assert_eq!(operation.kind(), OperationKind::Prompt);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
+    }
+
+    #[test]
+    fn manual_compaction_operation_declares_root_session_write_metadata() {
+        let operation =
+            Operation::ManualCompaction(PromptTurnOptions::new(PromptInvocation::Compact {
+                custom_instructions: None,
+            }));
+
+        assert_eq!(operation.kind(), OperationKind::Compact);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
     }

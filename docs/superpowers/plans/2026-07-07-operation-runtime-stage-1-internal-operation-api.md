@@ -328,3 +328,77 @@ git status --short
 ```
 
 Expected: no diff-check errors; status shows only the intended docs and `pi-coding-agent` files.
+
+### Task 5: Route Manual Compaction Through Internal Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing manual compaction operation metadata test**
+
+Added `manual_compaction_operation_declares_root_session_write_metadata` to prove `Operation::ManualCompaction` maps to `OperationKind::Compact`, `OperationOrigin::ClientRoot`, and `OperationClass::SessionWriteRoot`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent manual_compaction_operation_declares_root_session_write_metadata --lib
+```
+
+RED result: compile failed because `Operation::ManualCompaction` did not exist.
+
+- [x] **Step 2: Add the minimal manual compaction operation contract**
+
+Added `Operation::ManualCompaction(PromptTurnOptions)` and `OperationOutcome::ManualCompaction(PromptTurnOutcome)`, then updated `kind()`, `origin()`, and `class()`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent manual_compaction_operation_declares_root_session_write_metadata --lib
+```
+
+GREEN result: the metadata test passed after adding temporary exhaustive handling in `CodingAgentSession`.
+
+- [x] **Step 3: Write the failing manual compaction dispatcher test**
+
+Added `run_operation_manual_compaction_uses_compact_guard_and_preserves_config_error` to require `Operation::ManualCompaction` to run through the dispatcher, use the compact guard, preserve the existing missing-runtime config error, and clear active operation state on error.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_manual_compaction_uses_compact_guard_and_preserves_config_error --lib
+```
+
+RED result: the test failed with `unsupported_capability` from the temporary dispatcher placeholder.
+
+- [x] **Step 4: Move manual compaction routing into `run_operation()`**
+
+Changed `CodingAgentSession::compact()` to call `run_operation(Operation::ManualCompaction(options))`, and moved the existing `ManualCompactionOptions` conversion plus persistent-session execution path into the dispatcher arm.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_manual_compaction_uses_compact_guard_and_preserves_config_error --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 6: Verify Manual Compaction Operation Slice
+
+- [x] **Step 1: Run operation-focused tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_operation_prompt_uses_prompt_guard_and_preserves_prompt_error --lib
+cargo test -p pi-coding-agent run_operation_manual_compaction_uses_compact_guard_and_preserves_config_error --lib
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```

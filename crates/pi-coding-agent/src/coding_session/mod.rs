@@ -483,6 +483,9 @@ impl CodingAgentSession {
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
         match self.run_operation(Operation::Prompt(options)).await? {
             OperationOutcome::Prompt(outcome) => Ok(outcome),
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("prompt operation returned manual compaction outcome")
+            }
         }
     }
 
@@ -490,21 +493,15 @@ impl CodingAgentSession {
         &mut self,
         options: PromptTurnOptions,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        let _operation = self.operation_control.begin(OperationKind::Compact)?;
-        let options = ManualCompactionOptions::from_prompt_turn_options(&options)?;
-        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "manual compaction without persistent session".into(),
-            });
-        };
-        self.manual_compaction_service
-            .run_persistent(
-                session_service,
-                &self.flow_service,
-                &self.event_service,
-                options,
-            )
-            .await
+        match self
+            .run_operation(Operation::ManualCompaction(options))
+            .await?
+        {
+            OperationOutcome::ManualCompaction(outcome) => Ok(outcome),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("manual compaction operation returned prompt outcome")
+            }
+        }
     }
 
     pub async fn self_healing_edit(
@@ -754,6 +751,23 @@ impl CodingAgentSession {
                 let result = self.prompt_inner(options).await;
                 self.operation_control.clear_prompt_control_receiver();
                 result.map(OperationOutcome::Prompt)
+            }
+            Operation::ManualCompaction(options) => {
+                let options = ManualCompactionOptions::from_prompt_turn_options(&options)?;
+                let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability: "manual compaction without persistent session".into(),
+                    });
+                };
+                self.manual_compaction_service
+                    .run_persistent(
+                        session_service,
+                        &self.flow_service,
+                        &self.event_service,
+                        options,
+                    )
+                    .await
+                    .map(OperationOutcome::ManualCompaction)
             }
         }
     }
@@ -1796,6 +1810,28 @@ runtime = "lua"
             "{:#?}",
             contexts[1].messages
         );
+    }
+
+    #[tokio::test]
+    async fn run_operation_manual_compaction_uses_compact_guard_and_preserves_config_error() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation =
+            Operation::ManualCompaction(PromptTurnOptions::new(PromptInvocation::Compact {
+                custom_instructions: None,
+            }));
+
+        let error = session.run_operation(operation).await.unwrap_err();
+
+        assert_eq!(error.code(), "config");
+        assert!(
+            error
+                .to_string()
+                .contains("compact operation options do not include a runtime snapshot"),
+            "{error}"
+        );
+        assert_eq!(session.operation_control.active(), None);
     }
 
     #[tokio::test]
