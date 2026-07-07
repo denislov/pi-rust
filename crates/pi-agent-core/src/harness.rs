@@ -729,8 +729,8 @@ fn make_provider_request_hook(
             let mut stream_options = request.stream_options;
             let model = request.model;
 
-            if let Some(base_hook) = base_hook {
-                if let Some(update) = base_hook(LoopBeforeProviderRequest {
+            if let Some(base_hook) = base_hook
+                && let Some(update) = base_hook(LoopBeforeProviderRequest {
                     model: model.clone(),
                     context: context.clone(),
                     stream_options: stream_options.clone(),
@@ -744,7 +744,6 @@ fn make_provider_request_hook(
                         stream_options = updated_stream_options;
                     }
                 }
-            }
 
             if let Some(auth_hook) = hooks.get_api_key_and_headers.as_ref() {
                 let auth = auth_hook(model.clone()).await.map_err(|err| err.message)?;

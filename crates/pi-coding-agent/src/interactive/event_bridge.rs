@@ -57,14 +57,13 @@ pub enum UiEvent {
     },
 }
 
-#[derive(Debug, Default)]
-pub struct CodingEventBridge {
-    total_input: u32,
-    total_output: u32,
-    total_cache_read: u32,
-    total_cache_write: u32,
-    total_cost: f64,
-}
+/// Stateless event bridge: converts `CodingAgentEvent` to `Vec<UiEvent>`.
+///
+/// No longer accumulates tokens — `UiEvent::UsageUpdate` carries per-event
+/// delta values. The receiver (`InteractiveRoot::apply_events`) accumulates
+/// them into `FooterStats`.
+#[derive(Debug, Clone)]
+pub struct CodingEventBridge;
 
 /// Estimate current context size from a usage snapshot.
 /// Mirrors `pi-agent-core::compaction::estimate::calculate_context_tokens`
@@ -81,9 +80,15 @@ fn calculate_context_tokens(usage: &Usage) -> u32 {
     }
 }
 
+impl Default for CodingEventBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodingEventBridge {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     pub fn handle(&mut self, event: &CodingAgentEvent) -> Vec<UiEvent> {
@@ -96,14 +101,7 @@ impl CodingEventBridge {
                 vec![UiEvent::ThinkingDelta { text: text.clone() }]
             }
             CodingAgentEvent::AssistantMessageCompleted { usage, .. } => {
-                self.total_input = self.total_input.saturating_add(usage.input);
-                self.total_output = self.total_output.saturating_add(usage.output);
-                self.total_cache_read = self.total_cache_read.saturating_add(usage.cache_read);
-                self.total_cache_write = self.total_cache_write.saturating_add(usage.cache_write);
-                self.total_cost += usage.cost.input
-                    + usage.cost.output
-                    + usage.cost.cache_read
-                    + usage.cost.cache_write;
+                // Emit per-event delta values. The receiver accumulates.
                 let context_tokens = match calculate_context_tokens(usage) {
                     0 => None,
                     tokens => Some(tokens),
@@ -111,11 +109,14 @@ impl CodingEventBridge {
                 vec![
                     UiEvent::AssistantDone,
                     UiEvent::UsageUpdate {
-                        input: self.total_input,
-                        output: self.total_output,
-                        cache_read: self.total_cache_read,
-                        cache_write: self.total_cache_write,
-                        cost: self.total_cost,
+                        input: usage.input,
+                        output: usage.output,
+                        cache_read: usage.cache_read,
+                        cache_write: usage.cache_write,
+                        cost: usage.cost.input
+                            + usage.cost.output
+                            + usage.cost.cache_read
+                            + usage.cost.cache_write,
                         context_tokens,
                     },
                 ]
@@ -140,21 +141,14 @@ impl CodingEventBridge {
             }
             CodingAgentEvent::ToolCallUpdated {
                 tool_call_id,
-                name,
+                name: _,
                 message,
                 ..
             } => {
-                if is_delegation_tool(name) {
-                    vec![UiEvent::ToolUpdated {
-                        call_id: tool_call_id.clone(),
-                        result: message.clone(),
-                    }]
-                } else {
-                    vec![UiEvent::ToolUpdated {
-                        call_id: tool_call_id.clone(),
-                        result: message.clone(),
-                    }]
-                }
+                vec![UiEvent::ToolUpdated {
+                    call_id: tool_call_id.clone(),
+                    result: message.clone(),
+                }]
             }
             CodingAgentEvent::ToolCallCompleted {
                 tool_call_id,
@@ -205,12 +199,14 @@ impl CodingEventBridge {
                 UiEvent::CompactionNotice {
                     summary: summary.clone(),
                 },
+                // Compaction doesn't consume tokens — emit zero delta.
+                // Only context_tokens is reset to None.
                 UiEvent::UsageUpdate {
-                    input: self.total_input,
-                    output: self.total_output,
-                    cache_read: self.total_cache_read,
-                    cache_write: self.total_cache_write,
-                    cost: self.total_cost,
+                    input: 0,
+                    output: 0,
+                    cache_read: 0,
+                    cache_write: 0,
+                    cost: 0.0,
                     context_tokens: None,
                 },
             ],

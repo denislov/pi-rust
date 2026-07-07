@@ -1,3 +1,8 @@
+#![allow(clippy::result_large_err)]
+#![allow(clippy::large_enum_variant)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::collapsible_if)]
+
 mod coding_session;
 mod plugins;
 

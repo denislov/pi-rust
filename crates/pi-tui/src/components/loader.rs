@@ -115,11 +115,10 @@ impl Component for CancellableLoader {
 
     fn handle_input(&mut self, event: &InputEvent) {
         match event {
-            InputEvent::Key(key_event) if key_event.kind != KeyEventKind::Release => {
-                if self.keybindings.matches(event, "tui.select.cancel") {
+            InputEvent::Key(key_event) if key_event.kind != KeyEventKind::Release
+                && self.keybindings.matches(event, "tui.select.cancel") => {
                     self.abort_once();
                 }
-            }
             _ => {}
         }
     }

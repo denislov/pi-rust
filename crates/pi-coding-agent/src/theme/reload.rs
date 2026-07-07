@@ -137,7 +137,7 @@ impl ThemeWatcher {
                 pending_changed.notify_one();
             }
         })
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
 
         let mut watcher = watcher;
         // Watch the directory (inotify watches files via the dir on Linux).

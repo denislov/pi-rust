@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::path::Path;
 
 use pi_agent_core::{
@@ -159,29 +158,25 @@ impl PromptTurnOptions {
     }
 }
 
-impl TryFrom<&ResolvedPromptRequest> for PromptTurnOptions {
-    type Error = Infallible;
-
-    fn try_from(request: &ResolvedPromptRequest) -> Result<Self, Self::Error> {
-        Ok(Self {
+impl From<&ResolvedPromptRequest> for PromptTurnOptions {
+    fn from(request: &ResolvedPromptRequest) -> Self {
+        Self {
             invocation: request.invocation.clone(),
             mode: request.context.parsed.mode.into(),
             session_target: request.context.session_target.clone(),
             session_name: request.context.session_name.clone(),
             runtime: None,
-        })
+        }
     }
 }
 
-impl TryFrom<ResolvedPromptRequest> for PromptTurnOptions {
-    type Error = Infallible;
-
-    fn try_from(request: ResolvedPromptRequest) -> Result<Self, Self::Error> {
-        let mut options = PromptTurnOptions::try_from(&request)?;
+impl From<ResolvedPromptRequest> for PromptTurnOptions {
+    fn from(request: ResolvedPromptRequest) -> Self {
+        let mut options = PromptTurnOptions::from(&request);
         options.runtime = Some(RuntimeSnapshot::from_prompt_run_options(
             request.session_options,
         ));
-        Ok(options)
+        options
     }
 }
 
@@ -594,7 +589,7 @@ impl PromptTurnContext {
         ids: PromptTurnIds,
         request: ResolvedPromptRequest,
     ) -> Result<Self, CodingSessionError> {
-        let options = PromptTurnOptions::try_from(request).map_err(|error| match error {})?;
+        let options = PromptTurnOptions::from(request);
         Ok(Self::new(ids, options))
     }
 

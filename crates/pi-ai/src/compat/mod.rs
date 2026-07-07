@@ -11,6 +11,7 @@ pub use openai_completions::{OpenAICompletionsCompat, OpenRouterRouting, VercelG
 pub use openai_responses::OpenAIResponsesCompat;
 pub use thinking::{CacheControlFormat, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelCompat {
     OpenAICompletions(OpenAICompletionsCompat),

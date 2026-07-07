@@ -65,17 +65,15 @@ impl ApiProvider for AnthropicProvider {
             .header("accept", "text/event-stream")
             .json(&req_body);
 
-        if let Some(opts) = &opts {
-            if let Some(ref headers) = opts.headers {
-                if let Some(obj) = headers.as_object() {
+        if let Some(opts) = &opts
+            && let Some(ref headers) = opts.headers
+                && let Some(obj) = headers.as_object() {
                     for (k, v) in obj {
                         if let Some(val) = v.as_str() {
                             request = request.header(k.as_str(), val);
                         }
                     }
                 }
-            }
-        }
 
         let model = model.clone();
         let model_id = model.id.clone();

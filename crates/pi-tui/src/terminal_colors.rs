@@ -1,9 +1,10 @@
 /// Terminal color query/response support.
 ///
 /// Mirrors TS `pi/packages/tui/src/terminal-colors.ts`
+///
 /// - OSC 11 background color query/response
 /// - OSC 997 terminal color scheme report (dark/light)
-
+///
 /// Parsed RGB color
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RgbColor {
@@ -49,11 +50,7 @@ pub fn parse_osc11_background_color(data: &str) -> Option<RgbColor> {
     // RGB format: rgb:rrrr/gggg/bbbb or rgba:rrrr/gggg/bbbb/aaaa
     let rgb_value = if let Some(v) = value.strip_prefix("rgba:") {
         v
-    } else if let Some(v) = value.strip_prefix("rgb:") {
-        v
-    } else {
-        return None;
-    };
+    } else { value.strip_prefix("rgb:")? };
 
     let mut parts = rgb_value.splitn(3, '/');
     let r = parse_osc_hex_channel(parts.next()?)?;

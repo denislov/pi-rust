@@ -33,19 +33,10 @@ impl Default for ImageResizeOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ImageProcessingOptions {
     pub resize: ImageResizeOptions,
     pub block_images: bool,
-}
-
-impl Default for ImageProcessingOptions {
-    fn default() -> Self {
-        Self {
-            resize: ImageResizeOptions::default(),
-            block_images: false,
-        }
-    }
 }
 
 impl ImageProcessingOptions {

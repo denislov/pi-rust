@@ -314,7 +314,7 @@ fn rotation_model_choices(
     let Some(ref models_arg) = models_arg else {
         return Ok(Vec::new());
     };
-    let rotation = crate::models::parse_model_rotation(&models_arg)?;
+    let rotation = crate::models::parse_model_rotation(models_arg)?;
     let mut candidates = pi_ai::all_models().to_vec();
     candidates.sort_by(|left, right| left.id.cmp(&right.id));
     if let Some(provider) = provider {
@@ -931,8 +931,8 @@ mod tests {
             "footer should show output tokens after UsageUpdate: {footer1}"
         );
 
-        // A second UsageUpdate carries the bridge's accumulated totals plus the
-        // latest context estimate; footer must reflect the new values.
+        // A second UsageUpdate carries a delta from another assistant message;
+        // the root accumulates it onto the existing stats.
         root.apply_events(vec![UiEvent::UsageUpdate {
             input: 130,
             output: 70,
@@ -943,12 +943,12 @@ mod tests {
         }]);
         let footer2 = root.footer(80).join("\n");
         assert!(
-            footer2.contains("↑130"),
-            "footer should show accumulated input tokens: {footer2}"
+            footer2.contains("↑230"),
+            "footer should show accumulated input tokens 100+130=230: {footer2}"
         );
         assert!(
-            footer2.contains("↓70"),
-            "footer should show accumulated output tokens: {footer2}"
+            footer2.contains("↓120"),
+            "footer should show accumulated output tokens 50+70=120: {footer2}"
         );
     }
 

@@ -346,10 +346,12 @@ fn apply_replacements(
     offset: usize,
 ) -> String {
     let mut result = content.to_string();
-    // Apply in reverse offset order so prior replacements don't shift later
+    use std::cmp::Reverse;
+
+// Apply in reverse offset order so prior replacements don't shift later
     // offsets. Sort by match_index descending.
     let mut ordered: Vec<TextReplacement<'_>> = replacements.to_vec();
-    ordered.sort_by(|a, b| b.match_index.cmp(&a.match_index));
+    ordered.sort_by_key(|r| Reverse(r.match_index));
     for replacement in ordered {
         let match_index = replacement.match_index - offset;
         let before = &result[..match_index];

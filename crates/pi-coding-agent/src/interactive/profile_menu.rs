@@ -209,13 +209,13 @@ impl ProfileMenuState {
                 keybindings,
                 event,
                 agent_items(registry, default_agent_profile_id),
-                |id| ProfileMenuOutcome::SetDefaultAgent(id),
+                ProfileMenuOutcome::SetDefaultAgent,
             ),
             ProfileMenuScreen::AgentRun => self.handle_selector_input(
                 keybindings,
                 event,
                 agent_items(registry, default_agent_profile_id),
-                |id| ProfileMenuOutcome::BeginAgentTask(id),
+                ProfileMenuOutcome::BeginAgentTask,
             ),
             ProfileMenuScreen::TeamRun => self.handle_selector_input(
                 keybindings,

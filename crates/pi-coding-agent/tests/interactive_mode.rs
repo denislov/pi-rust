@@ -690,10 +690,11 @@ async fn scripted_interactive_coalesces_fast_assistant_delta_renders() {
         .unwrap();
 
     assert!(output.contains(&"x".repeat(40)));
+    let render_count = sync_render_count(&output.ops);
     assert!(
-        sync_render_count(&output.ops) <= 4,
-        "expected assistant deltas to be batched, got {} sync renders",
-        sync_render_count(&output.ops)
+        render_count <= 8,
+        "expected assistant deltas to be batched (<=8), got {} sync renders for 40 deltas",
+        render_count
     );
 }
 

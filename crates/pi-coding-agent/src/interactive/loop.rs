@@ -1924,11 +1924,33 @@ fn apply_prompt_task_event<T: Terminal>(
 ) -> Result<RenderRequest, CliError> {
     let PromptTaskEvent::Coding(event) = event;
     let ui_events = coding_bridge.handle(&event);
+    let force_render = ui_events.iter().any(ui_event_updates_visible_block);
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
     root.apply_events(ui_events);
     let after = root.render_state();
-    Ok(RenderRequest::changed(before != after))
+    let changed = before != after;
+    Ok(if changed && force_render {
+        RenderRequest::FORCE
+    } else {
+        RenderRequest::changed(changed)
+    })
+}
+
+fn ui_event_updates_visible_block(event: &UiEvent) -> bool {
+    matches!(
+        event,
+        UiEvent::AssistantDelta { .. }
+            | UiEvent::ThinkingDelta { .. }
+            | UiEvent::AssistantDone
+            | UiEvent::ToolStarted { .. }
+            | UiEvent::ToolFinished { .. }
+            | UiEvent::ToolUpdated { .. }
+            | UiEvent::AgentError { .. }
+            | UiEvent::SystemNotice { .. }
+            | UiEvent::DelegationBlock { .. }
+            | UiEvent::CompactionNotice { .. }
+    )
 }
 
 fn finish_prompt<T: Terminal>(
@@ -2060,6 +2082,158 @@ fn finish_prompt<T: Terminal>(
     }
     root.set_status(InteractiveStatus::Idle);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coding_session::CodingAgentEvent;
+    use pi_ai::types::Usage;
+    use pi_tui::VirtualTerminal;
+
+    fn test_tui() -> (Tui<VirtualTerminal>, usize) {
+        let mut tui = Tui::new(VirtualTerminal::new(80, 24));
+        let root_id = tui.add_child_with_id(Box::new(InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        )));
+        (tui, root_id)
+    }
+
+    fn prompt_event(event: CodingAgentEvent) -> PromptTaskEvent {
+        PromptTaskEvent::Coding(event)
+    }
+
+    fn base_assistant_delta() -> CodingAgentEvent {
+        CodingAgentEvent::AssistantMessageDelta {
+            operation_id: "op_1".to_string(),
+            turn_id: "turn_1".to_string(),
+            message_id: Some("msg_1".to_string()),
+            text: "hello".to_string(),
+        }
+    }
+
+    fn tool_started() -> CodingAgentEvent {
+        CodingAgentEvent::ToolCallStarted {
+            operation_id: "op_1".to_string(),
+            turn_id: "turn_1".to_string(),
+            tool_call_id: "tool_1".to_string(),
+            name: "read".to_string(),
+            arguments_json: "{}".to_string(),
+        }
+    }
+
+    fn assert_event_forces_render(setup: Vec<CodingAgentEvent>, event: CodingAgentEvent) {
+        let mut bridge = CodingEventBridge::new();
+        let (mut tui, root_id) = test_tui();
+        for setup_event in setup {
+            apply_prompt_task_event(&mut tui, root_id, &mut bridge, prompt_event(setup_event))
+                .unwrap();
+        }
+
+        let request =
+            apply_prompt_task_event(&mut tui, root_id, &mut bridge, prompt_event(event)).unwrap();
+
+        assert_eq!(
+            request,
+            RenderRequest::FORCE,
+            "transcript block events should flush the footer immediately"
+        );
+    }
+
+    #[test]
+    fn prompt_block_events_request_forced_render() {
+        let cases = vec![
+            (Vec::new(), base_assistant_delta()),
+            (
+                Vec::new(),
+                CodingAgentEvent::AssistantThinkingDelta {
+                    operation_id: "op_1".to_string(),
+                    turn_id: "turn_1".to_string(),
+                    message_id: Some("msg_1".to_string()),
+                    text: "thinking".to_string(),
+                },
+            ),
+            (
+                vec![base_assistant_delta()],
+                CodingAgentEvent::AssistantMessageCompleted {
+                    operation_id: "op_1".to_string(),
+                    turn_id: "turn_1".to_string(),
+                    message_id: Some("msg_1".to_string()),
+                    final_text: "hello".to_string(),
+                    usage: Usage::default(),
+                },
+            ),
+            (Vec::new(), tool_started()),
+            (
+                vec![tool_started()],
+                CodingAgentEvent::ToolCallUpdated {
+                    operation_id: "op_1".to_string(),
+                    turn_id: "turn_1".to_string(),
+                    tool_call_id: "tool_1".to_string(),
+                    name: "read".to_string(),
+                    message: "partial".to_string(),
+                },
+            ),
+            (
+                vec![tool_started()],
+                CodingAgentEvent::ToolCallCompleted {
+                    operation_id: "op_1".to_string(),
+                    turn_id: "turn_1".to_string(),
+                    tool_call_id: "tool_1".to_string(),
+                    name: "read".to_string(),
+                    summary: "done".to_string(),
+                },
+            ),
+            (
+                vec![tool_started()],
+                CodingAgentEvent::ToolCallFailed {
+                    operation_id: "op_1".to_string(),
+                    turn_id: "turn_1".to_string(),
+                    tool_call_id: "tool_1".to_string(),
+                    name: "read".to_string(),
+                    message: "failed".to_string(),
+                },
+            ),
+            (
+                Vec::new(),
+                CodingAgentEvent::DelegationRequested {
+                    operation_id: "op_1".to_string(),
+                    turn_id: "turn_1".to_string(),
+                    tool_call_id: "tool_1".to_string(),
+                    requesting_profile_id: crate::coding_session::ProfileId::from("planner"),
+                    target_kind: crate::coding_session::ProfileKind::Agent,
+                    target_id: crate::coding_session::ProfileId::from("coder"),
+                    task: "help".to_string(),
+                },
+            ),
+        ];
+
+        for (setup, event) in cases {
+            assert_event_forces_render(setup, event);
+        }
+    }
+
+    #[test]
+    fn prompt_events_without_visible_ui_do_not_request_render() {
+        let mut bridge = CodingEventBridge::new();
+        let (mut tui, root_id) = test_tui();
+
+        let request = apply_prompt_task_event(
+            &mut tui,
+            root_id,
+            &mut bridge,
+            prompt_event(CodingAgentEvent::AssistantMessageStarted {
+                operation_id: "op_1".to_string(),
+                turn_id: "turn_1".to_string(),
+                message_id: Some("msg_1".to_string()),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(request, RenderRequest::NONE);
+    }
 }
 
 fn plugin_reload_notice_lines(outcome: &PluginLoadOutcome) -> Vec<String> {

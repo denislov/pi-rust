@@ -227,8 +227,8 @@ fn handle_event(
         });
     }
 
-    if let Some(start) = event.content_block_start {
-        if let Some(tool_use) = start.start.get("toolUse") {
+    if let Some(start) = event.content_block_start
+        && let Some(tool_use) = start.start.get("toolUse") {
             let id = tool_use
                 .get("toolUseId")
                 .and_then(|v| v.as_str())
@@ -255,7 +255,6 @@ fn handle_event(
                 partial: partial.clone(),
             });
         }
-    }
 
     if let Some(delta) = event.content_block_delta {
         let content_block_index = delta.content_block_index;
@@ -311,8 +310,8 @@ fn handle_event(
                     partial: partial.clone(),
                 });
             }
-        } else if let Some(tool_use) = delta.delta.get("toolUse") {
-            if let Some(index) = state.block_map.get(&content_block_index).copied() {
+        } else if let Some(tool_use) = delta.delta.get("toolUse")
+            && let Some(index) = state.block_map.get(&content_block_index).copied() {
                 let input = tool_use
                     .get("input")
                     .and_then(|v| v.as_str())
@@ -333,7 +332,6 @@ fn handle_event(
                     partial: partial.clone(),
                 });
             }
-        }
     }
 
     if let Some(stop) = event.content_block_stop

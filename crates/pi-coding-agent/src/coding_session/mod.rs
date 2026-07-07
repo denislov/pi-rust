@@ -967,6 +967,7 @@ impl CodingAgentSession {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn self_healing_model_repair_policy(
         &self,
         model_repair: Option<SelfHealingEditModelRepairOptions>,

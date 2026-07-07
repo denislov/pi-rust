@@ -4,7 +4,7 @@ use crate::types::{
     SourcedSkill,
 };
 use ignore::WalkBuilder;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn load_skills(paths: &[PathBuf]) -> (Vec<Skill>, Vec<ResourceDiagnostic>) {
     let mut skills = Vec::new();
@@ -17,16 +17,14 @@ pub fn load_skills(paths: &[PathBuf]) -> (Vec<Skill>, Vec<ResourceDiagnostic>) {
 
         if root.is_dir() {
             load_skills_from_dir(root, &mut skills, &mut diagnostics);
-        } else if root.is_file() {
-            if let Some(ext) = root.extension() {
-                if ext == "md" {
+        } else if root.is_file()
+            && let Some(ext) = root.extension()
+                && ext == "md" {
                     let path = root.clone();
                     if let Some(skill) = load_skill_file(&path, &mut diagnostics, false) {
                         skills.push(skill);
                     }
                 }
-            }
-        }
     }
 
     (skills, diagnostics)
@@ -66,11 +64,10 @@ fn load_skills_from_dir(
 ) {
     // Load SKILL.md at the directory level
     let skill_md = root.join("SKILL.md");
-    if skill_md.exists() {
-        if let Some(skill) = load_skill_file(&skill_md, diagnostics, false) {
+    if skill_md.exists()
+        && let Some(skill) = load_skill_file(&skill_md, diagnostics, false) {
             skills.push(skill);
         }
-    }
 
     // Walk subdirectories for additional SKILL.md files
     let walker = WalkBuilder::new(root)
@@ -83,11 +80,10 @@ fn load_skills_from_dir(
         if path == *root || path == skill_md {
             continue;
         }
-        if entry.file_name() == "SKILL.md" {
-            if let Some(skill) = load_skill_file(&path, diagnostics, false) {
+        if entry.file_name() == "SKILL.md"
+            && let Some(skill) = load_skill_file(&path, diagnostics, false) {
                 skills.push(skill);
             }
-        }
     }
 
     // Load direct .md files in root
@@ -97,13 +93,11 @@ fn load_skills_from_dir(
             if path == skill_md {
                 continue;
             }
-            if let Some(ext) = path.extension() {
-                if ext == "md" {
-                    if let Some(skill) = load_skill_file(&path, diagnostics, false) {
+            if let Some(ext) = path.extension()
+                && ext == "md"
+                    && let Some(skill) = load_skill_file(&path, diagnostics, false) {
                         skills.push(skill);
                     }
-                }
-            }
         }
     }
 }
@@ -146,8 +140,8 @@ fn load_skill_file(
         .unwrap_or_else(|| fallback_name(path));
 
     // Validate name against TS `validateName` rules.
-    if let Some(ref parent_name) = parent_dir_name {
-        if let Some(ref fm_name) = frontmatter_name
+    if let Some(ref parent_name) = parent_dir_name
+        && let Some(ref fm_name) = frontmatter_name
             && fm_name.as_str() != parent_name.as_str()
         {
             diagnostics.push(ResourceDiagnostic {
@@ -159,7 +153,6 @@ fn load_skill_file(
                 path: path.clone(),
             });
         }
-    }
     for error in validate_skill_name(&name) {
         diagnostics.push(ResourceDiagnostic {
             severity: DiagnosticSeverity::Warning,
@@ -175,7 +168,7 @@ fn load_skill_file(
     });
 
     // Reject skills with empty description (TS behavior).
-    if description.as_deref().map_or(true, |d| d.trim().is_empty()) {
+    if description.as_deref().is_none_or(|d| d.trim().is_empty()) {
         diagnostics.push(ResourceDiagnostic {
             severity: DiagnosticSeverity::Warning,
             code: "invalid_metadata".into(),
@@ -241,19 +234,18 @@ fn validate_skill_name(name: &str) -> Vec<String> {
     errors
 }
 
-fn fallback_name(path: &PathBuf) -> String {
+fn fallback_name(path: &Path) -> String {
     if let Some(stem) = path.file_stem() {
         let s = stem.to_string_lossy();
         let capped: String = s.chars().take(64).collect();
         return capped;
     }
-    if let Some(parent) = path.parent() {
-        if let Some(name) = parent.file_name() {
+    if let Some(parent) = path.parent()
+        && let Some(name) = parent.file_name() {
             let s = name.to_string_lossy();
             let capped: String = s.chars().take(64).collect();
             return capped;
         }
-    }
     "unnamed".to_string()
 }
 

@@ -105,8 +105,10 @@ fn coding_event_bridge_maps_assistant_events() {
         ]
     );
 
-    // A second assistant message accumulates usage; context_tokens reflects
-    // the latest message (mirrors TS getContextUsage using the most recent usage).
+    // A second assistant message is a separate delta; the bridge no longer
+    // accumulates (the receiver does). Each UsageUpdate carries per-event
+    // usage only; context_tokens reflects the latest message (mirrors TS
+    // getContextUsage using the most recent usage).
     let done2 = bridge.handle(&CodingAgentEvent::AssistantMessageCompleted {
         operation_id: "op_1".to_string(),
         turn_id: "turn_1".to_string(),
@@ -131,11 +133,11 @@ fn coding_event_bridge_maps_assistant_events() {
         vec![
             UiEvent::AssistantDone,
             UiEvent::UsageUpdate {
-                input: 130,
-                output: 70,
+                input: 30,
+                output: 20,
                 cache_read: 5,
                 cache_write: 0,
-                cost: 0.375,
+                cost: 0.125,
                 context_tokens: Some(55),
             },
         ]

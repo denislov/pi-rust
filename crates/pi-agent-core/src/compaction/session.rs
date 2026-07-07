@@ -2,6 +2,7 @@ use crate::transcript::SessionEntry;
 use serde_json::{Map, Value};
 
 impl SessionEntry {
+    #[allow(clippy::too_many_arguments)]
     pub fn compaction(
         id: String,
         parent_id: Option<String>,

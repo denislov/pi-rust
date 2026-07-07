@@ -631,7 +631,7 @@ fn markdown_to_lines(
     for block in blocks {
         if block.starts_with(SKIP_WRAP) {
             // Pre-styled code-block line; do not word-wrap.
-            lines.push(block[SKIP_WRAP.len()..].to_string());
+            lines.push(block.strip_prefix(SKIP_WRAP).unwrap_or(&block).to_string());
             continue;
         }
         for source_line in block.split('\n') {
@@ -644,6 +644,7 @@ fn markdown_to_lines(
     lines
 }
 
+#[derive(Default)]
 struct BlockContext {
     heading: bool,
     in_quote: bool,
@@ -665,26 +666,6 @@ struct BlockContext {
     list_depth: usize,
 }
 
-impl Default for BlockContext {
-    fn default() -> Self {
-        Self {
-            heading: false,
-            in_quote: false,
-            in_code_block: false,
-            code_block_lang: None,
-            inline_spans: Vec::new(),
-            strong_starts: Vec::new(),
-            emphasis_starts: Vec::new(),
-            strikethrough_starts: Vec::new(),
-            link_starts: Vec::new(),
-            table: None,
-            in_table_cell: false,
-            base_style: None,
-            last_block: None,
-            list_depth: 0,
-        }
-    }
-}
 
 #[derive(Clone)]
 struct InlineSpan {
@@ -823,7 +804,7 @@ fn apply_inline_spans(
 ) -> String {
     let base_prefix = base_style
         .filter(|_| color_enabled())
-        .and_then(|s| ansi_prefix(s))
+        .and_then(ansi_prefix)
         .unwrap_or_default();
 
     if spans.is_empty() {
@@ -1047,11 +1028,10 @@ fn render_table(
     let cell_visible = |raw: &str| -> usize { visible_width(raw.trim_end()) };
     let longest_word = |raw: &str| -> usize {
         raw.split_whitespace()
-            .map(|w| visible_width(w))
+            .map(visible_width)
             .max()
             .unwrap_or(0)
-            .max(1)
-            .min(MAX_UNBROKEN_WORD)
+            .clamp(1, MAX_UNBROKEN_WORD)
     };
 
     let mut natural_widths = vec![0usize; num_cols];

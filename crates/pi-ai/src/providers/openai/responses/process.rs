@@ -72,37 +72,34 @@ impl SseEventHandler for ResponsesHandler {
                 }
             }
 
-            wire::ResponseStreamEvent::OutputItemAdded { item } => match item.item_type.as_str() {
-                "function_call" => {
-                    if let Some(ci) = self.tool_content_index {
-                        let parsed = try_parse_streaming_json(&self.accumulated_tool_args)
-                            .map_err(|e| format!("Malformed final tool arguments: {e}"))?;
-                        if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                            partial.content.get_mut(ci as usize)
-                        {
-                            *arguments = parsed;
-                        }
-                        events.push(AssistantMessageEvent::ToolcallEnd {
-                            content_index: ci,
-                            partial: partial.clone(),
-                        });
+            wire::ResponseStreamEvent::OutputItemAdded { item } => if item.item_type.as_str() == "function_call" {
+                if let Some(ci) = self.tool_content_index {
+                    let parsed = try_parse_streaming_json(&self.accumulated_tool_args)
+                        .map_err(|e| format!("Malformed final tool arguments: {e}"))?;
+                    if let Some(ContentBlock::ToolCall { arguments, .. }) =
+                        partial.content.get_mut(ci as usize)
+                    {
+                        *arguments = parsed;
                     }
-                    self.tool_content_index = Some(partial.content.len() as u32);
-                    let call_id = item.call_id.unwrap_or(item.id.clone());
-                    let call_name = item.name.unwrap_or_default();
-                    self.accumulated_tool_args.clear();
-                    partial.content.push(ContentBlock::ToolCall {
-                        id: call_id,
-                        name: call_name,
-                        arguments: serde_json::json!({}),
-                        thought_signature: None,
-                    });
-                    events.push(AssistantMessageEvent::ToolcallStart {
-                        content_index: self.tool_content_index.unwrap(),
+                    events.push(AssistantMessageEvent::ToolcallEnd {
+                        content_index: ci,
                         partial: partial.clone(),
                     });
                 }
-                _ => {}
+                self.tool_content_index = Some(partial.content.len() as u32);
+                let call_id = item.call_id.unwrap_or(item.id.clone());
+                let call_name = item.name.unwrap_or_default();
+                self.accumulated_tool_args.clear();
+                partial.content.push(ContentBlock::ToolCall {
+                    id: call_id,
+                    name: call_name,
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                });
+                events.push(AssistantMessageEvent::ToolcallStart {
+                    content_index: self.tool_content_index.unwrap(),
+                    partial: partial.clone(),
+                });
             },
 
             wire::ResponseStreamEvent::ContentPartAdded { .. } => {

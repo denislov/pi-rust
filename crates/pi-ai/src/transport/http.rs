@@ -58,8 +58,8 @@ where
         let mut last_error: Option<ProviderError> = None;
 
         for attempt in 0..=retry_cfg.max_retries {
-            if let Some(ref token) = cancel {
-                if token.is_cancelled() {
+            if let Some(ref token) = cancel
+                && token.is_cancelled() {
                     let err = ProviderError::cancelled(&api_name, &model_id, &provider);
                     let mut msg = error_event(&api_name, &model_id, &provider, &err);
                     msg.stop_reason = StopReason::Aborted;
@@ -69,7 +69,6 @@ where
                     };
                     return;
                 }
-            }
 
             let Some(request) = request.try_clone() else {
                 last_error = Some(ProviderError::network(
@@ -205,7 +204,7 @@ fn should_retry(error: &Option<ProviderError>, cfg: &RetryConfig, attempt: u32) 
             super::error::ProviderErrorKind::Timeout => true,
             super::error::ProviderErrorKind::HttpStatus => e
                 .status
-                .map_or(false, |s| crate::util::http::is_retryable_status(s)),
+                .is_some_and(crate::util::http::is_retryable_status),
             _ => false,
         },
         None => false,

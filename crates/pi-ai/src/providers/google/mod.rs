@@ -45,9 +45,7 @@ impl ApiProvider for GoogleGenerativeAiProvider {
             return Box::pin(stream! {
                 let mut msg = AssistantMessage::empty("google-generative-ai", &model_id);
                 msg.provider = Some(provider);
-                msg.error_message = Some(format!(
-                    "No Google API key found. Set GEMINI_API_KEY or GOOGLE_API_KEY or pass apiKey in options."
-                ));
+                msg.error_message = Some("No Google API key found. Set GEMINI_API_KEY or GOOGLE_API_KEY or pass apiKey in options.".to_string());
                 msg.stop_reason = StopReason::Error;
                 yield AssistantMessageEvent::Error {
                     reason: StopReason::Error,
@@ -70,17 +68,15 @@ impl ApiProvider for GoogleGenerativeAiProvider {
             .header("accept", "text/event-stream")
             .json(&req_body);
 
-        if let Some(opts) = &opts {
-            if let Some(ref headers) = opts.headers {
-                if let Some(obj) = headers.as_object() {
+        if let Some(opts) = &opts
+            && let Some(ref headers) = opts.headers
+                && let Some(obj) = headers.as_object() {
                     for (k, v) in obj {
                         if let Some(val) = v.as_str() {
                             request = request.header(k.as_str(), val);
                         }
                     }
                 }
-            }
-        }
 
         let model = model.clone();
         let model_id = model.id.clone();

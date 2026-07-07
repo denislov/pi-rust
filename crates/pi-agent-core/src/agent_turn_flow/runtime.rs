@@ -952,8 +952,8 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                         },
                                     };
 
-                                    if !is_blocked {
-                                        if let Some(hook) = &after_hook {
+                                    if !is_blocked
+                                        && let Some(hook) = &after_hook {
                                             let ctx = AfterToolCallContext {
                                                 assistant_message: asst.clone(),
                                                 tool_call_id: p.tool_id.clone(),
@@ -980,7 +980,6 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
                                                 _ => {}
                                             }
                                         }
-                                    }
                                     ToolCallExecution {
                                         index: p.index,
                                         tool_call_id: p.tool_id,

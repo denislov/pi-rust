@@ -143,6 +143,7 @@ fn load_context_file_from_dir(dir: &Path) -> Option<ContextFile> {
     None
 }
 
+#[allow(clippy::type_complexity)]
 pub fn load_cli_resources(
     skills_dirs: &[String],
     template_paths: &[String],

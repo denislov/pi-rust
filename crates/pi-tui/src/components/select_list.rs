@@ -25,6 +25,9 @@ impl SelectItem {
     }
 }
 
+type OnConfirm = Box<dyn FnMut(&SelectItem)>;
+type OnCancel = Box<dyn FnMut()>;
+
 pub struct SelectList {
     items: Vec<SelectItem>,
     filtered_indices: Vec<usize>,
@@ -33,8 +36,8 @@ pub struct SelectList {
     filter: String,
     keybindings: KeybindingsManager,
     theme: SelectListTheme,
-    on_confirm: Option<Box<dyn FnMut(&SelectItem)>>,
-    on_cancel: Option<Box<dyn FnMut()>>,
+    on_confirm: Option<OnConfirm>,
+    on_cancel: Option<OnCancel>,
 }
 
 impl SelectList {

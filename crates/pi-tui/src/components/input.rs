@@ -4,13 +4,16 @@ use crate::{
     CURSOR_MARKER, Component, InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager,
 };
 
+type OnSubmit = Box<dyn FnMut(&str)>;
+type OnEscape = Box<dyn FnMut()>;
+
 pub struct Input {
     value: String,
     cursor: usize,
     focused: bool,
     keybindings: KeybindingsManager,
-    on_submit: Option<Box<dyn FnMut(&str)>>,
-    on_escape: Option<Box<dyn FnMut()>>,
+    on_submit: Option<OnSubmit>,
+    on_escape: Option<OnEscape>,
 }
 
 impl Input {
@@ -164,7 +167,7 @@ impl Component for Input {
 fn previous_grapheme_boundary(text: &str, cursor: usize) -> usize {
     text[..cursor]
         .grapheme_indices(true)
-        .last()
+        .next_back()
         .map(|(index, _)| index)
         .unwrap_or(0)
 }

@@ -44,6 +44,7 @@ enum AutocompleteState {
 }
 
 type OnChange = Box<dyn FnMut(&str)>;
+type OnNoArgFnMut = Box<dyn FnMut()>;
 
 pub struct Editor {
     text: String,
@@ -60,11 +61,11 @@ pub struct Editor {
     redo_stack: UndoStack<EditorSnapshot>,
     last_action: Option<LastAction>,
     last_yank: Option<(usize, usize)>,
-    on_submit: Option<Box<dyn FnMut(&str)>>,
+    on_submit: Option<OnChange>,
     on_change: Option<OnChange>,
     disable_submit: bool,
-    on_scroll_page_up: Option<Box<dyn FnMut()>>,
-    on_scroll_page_down: Option<Box<dyn FnMut()>>,
+    on_scroll_page_up: Option<OnNoArgFnMut>,
+    on_scroll_page_down: Option<OnNoArgFnMut>,
     history: Vec<String>,
     history_index: Option<usize>,
     jump_mode: Option<JumpDirection>,
@@ -139,7 +140,7 @@ impl Editor {
         }
     }
 
-    pub fn set_on_submit(&mut self, callback: Box<dyn FnMut(&str)>) {
+    pub fn set_on_submit(&mut self, callback: OnChange) {
         self.on_submit = Some(callback);
     }
 
@@ -190,11 +191,11 @@ impl Editor {
         self.show_border = show_border;
     }
 
-    pub fn set_on_scroll_page_up(&mut self, callback: Box<dyn FnMut()>) {
+    pub fn set_on_scroll_page_up(&mut self, callback: OnNoArgFnMut) {
         self.on_scroll_page_up = Some(callback);
     }
 
-    pub fn set_on_scroll_page_down(&mut self, callback: Box<dyn FnMut()>) {
+    pub fn set_on_scroll_page_down(&mut self, callback: OnNoArgFnMut) {
         self.on_scroll_page_down = Some(callback);
     }
 
@@ -478,13 +479,11 @@ impl Editor {
         }
 
         let mut filtered = filtered;
-        if starts_like_path(&filtered) {
-            if let Some(before) = self.text[..self.cursor].chars().next_back() {
-                if before == '_' || before.is_alphanumeric() {
+        if starts_like_path(&filtered)
+            && let Some(before) = self.text[..self.cursor].chars().next_back()
+                && (before == '_' || before.is_alphanumeric()) {
                     filtered.insert(0, ' ');
                 }
-            }
-        }
 
         let line_count = filtered.split('\n').count();
         let char_count = filtered.chars().count();
@@ -530,8 +529,8 @@ impl Editor {
         if key_event.kind == KeyEventKind::Release {
             return true;
         }
-        if let Key::Char(text) = &key_event.key {
-            if !key_event
+        if let Key::Char(text) = &key_event.key
+            && !key_event
                 .modifiers
                 .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER)
             {
@@ -540,7 +539,6 @@ impl Editor {
                 self.jump_to_char(target, direction);
                 return true;
             }
-        }
         if key_event.key == Key::Space
             && !key_event
                 .modifiers
@@ -637,8 +635,8 @@ impl Editor {
         let (lines, cursor_line, cursor_col) = self.lines_and_cursor();
         let current_line = lines.get(cursor_line).map(String::as_str).unwrap_or("");
         let before_cursor = &current_line[..cursor_col.min(current_line.len())];
-        let force = !(before_cursor.trim_start().starts_with('/')
-            && !before_cursor.trim_start().contains(char::is_whitespace));
+        let force = !before_cursor.trim_start().starts_with('/')
+            || before_cursor.trim_start().contains(char::is_whitespace);
         self.request_autocomplete(force, true);
     }
 
@@ -1174,12 +1172,12 @@ fn decode_csi_u_control_bytes(text: &str) -> String {
         };
         let code = &after_start[..end];
         if let Ok(codepoint) = code.parse::<u8>() {
-            if (b'a'..=b'z').contains(&codepoint) {
+            if codepoint.is_ascii_lowercase() {
                 out.push(char::from(codepoint - b'a' + 1));
                 rest = &after_start[end + 3..];
                 continue;
             }
-            if (b'A'..=b'Z').contains(&codepoint) {
+            if codepoint.is_ascii_uppercase() {
                 out.push(char::from(codepoint - b'A' + 1));
                 rest = &after_start[end + 3..];
                 continue;
@@ -1253,7 +1251,7 @@ fn best_autocomplete_match(items: &[AutocompleteItem], prefix: &str) -> Option<u
 fn previous_grapheme_boundary(text: &str, cursor: usize) -> usize {
     text[..cursor]
         .grapheme_indices(true)
-        .last()
+        .next_back()
         .map(|(index, _)| index)
         .unwrap_or(0)
 }

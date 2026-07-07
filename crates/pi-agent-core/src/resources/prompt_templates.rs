@@ -15,25 +15,22 @@ pub fn load_prompt_templates(paths: &[PathBuf]) -> (Vec<PromptTemplate>, Vec<Res
         }
 
         if path.is_file() {
-            if path.extension().map_or(false, |e| e == "md") {
-                if let Some(t) = load_template_file(path, &mut diagnostics) {
+            if path.extension().is_some_and(|e| e == "md")
+                && let Some(t) = load_template_file(path, &mut diagnostics) {
                     templates.push(t);
                 }
-            }
-        } else if path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(path) {
+        } else if path.is_dir()
+            && let Ok(entries) = std::fs::read_dir(path) {
                 let mut files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
                 files.sort_by_key(|e| e.file_name());
                 for entry in files {
                     let p = entry.path();
-                    if p.extension().map_or(false, |e| e == "md") {
-                        if let Some(t) = load_template_file(&p, &mut diagnostics) {
+                    if p.extension().is_some_and(|e| e == "md")
+                        && let Some(t) = load_template_file(&p, &mut diagnostics) {
                             templates.push(t);
                         }
-                    }
                 }
             }
-        }
     }
 
     // Deduplicate by name (first wins, TS behavior). Duplicates produce

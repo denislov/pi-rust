@@ -414,10 +414,10 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<Action, String> {
         return default_action();
     }
 
-    return Err(CodingSessionError::Session {
+    Err(CodingSessionError::Session {
         message: "prompt turn cannot finalize before a session is opened".into(),
     }
-    .to_string());
+    .to_string())
 }
 
 fn emit_completion(ctx: &mut PromptTurnContext) -> Result<Action, String> {

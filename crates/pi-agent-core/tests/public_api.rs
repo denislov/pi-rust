@@ -282,7 +282,7 @@ fn transcript_types_are_importable_from_neutral_module() {
     let _ = std::any::type_name::<StoredAgentMessage>();
     let _ = std::any::type_name::<StoredUsage>();
     let _ = std::any::type_name::<StoredUsageCost>();
-    assert_eq!(TreeFilterMode::from_str("all"), TreeFilterMode::All);
+    assert_eq!(TreeFilterMode::from_str_name("all"), TreeFilterMode::All);
     assert!(!create_session_id().is_empty());
     assert!(create_timestamp().ends_with('Z'));
     let existing = std::collections::HashSet::new();

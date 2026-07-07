@@ -461,13 +461,12 @@ fn parse_kitty_csi_u(data: &str) -> Option<KeyEvent> {
     // Normalize uppercase ASCII letters: when SHIFT is held and the terminal
     // reports the uppercase codepoint, convert to lowercase and keep SHIFT.
     // This matches TS normalizeShiftedLetterIdentityCodepoint.
-    if let Key::Char(character) = &mut key {
-        if modifiers.contains(KeyModifiers::SHIFT)
+    if let Key::Char(character) = &mut key
+        && modifiers.contains(KeyModifiers::SHIFT)
             && character.chars().all(|ch| ch.is_ascii_uppercase())
         {
             *character = character.to_ascii_lowercase();
         }
-    }
 
     Some(modified(key, modifiers, event_type))
 }

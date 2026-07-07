@@ -29,8 +29,8 @@ pub fn response_to_events(
         return events;
     };
 
-    if let Some(reasoning) = choice.message.reasoning_content {
-        if !reasoning.is_empty() {
+    if let Some(reasoning) = choice.message.reasoning_content
+        && !reasoning.is_empty() {
             partial.content.push(ContentBlock::Thinking {
                 thinking: reasoning.clone(),
                 thinking_signature: None,
@@ -50,10 +50,9 @@ pub fn response_to_events(
                 partial: partial.clone(),
             });
         }
-    }
 
-    if let Some(text) = choice.message.content {
-        if !text.is_empty() {
+    if let Some(text) = choice.message.content
+        && !text.is_empty() {
             let content_index = partial.content.len() as u32;
             partial.content.push(ContentBlock::Text {
                 text: text.clone(),
@@ -73,7 +72,6 @@ pub fn response_to_events(
                 partial: partial.clone(),
             });
         }
-    }
 
     partial.stop_reason = map_finish_reason(choice.finish_reason.as_deref());
     partial.usage = response_usage(response.usage, model);

@@ -86,5 +86,5 @@ pub fn register_builtins_into(registry: &ProviderRegistry) {
     note = "use register_builtins_into with a scoped ProviderRegistry or AiClient::register_builtins"
 )]
 pub fn register_builtins() {
-    register_each_builtin(|api, provider| registry::register(api, provider));
+    register_each_builtin(registry::register);
 }

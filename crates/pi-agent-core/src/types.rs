@@ -284,19 +284,12 @@ impl Default for CompactionSettings {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct CompactionConfig {
     pub settings: CompactionSettings,
     pub custom_instructions: Option<String>,
 }
 
-impl Default for CompactionConfig {
-    fn default() -> Self {
-        Self {
-            settings: CompactionSettings::default(),
-            custom_instructions: None,
-        }
-    }
-}
 
 // ── AgentMessage ───────────────────────────────────
 
@@ -530,6 +523,7 @@ pub struct ProviderRequestSnapshot {
 
 // ── AgentEvent ─────────────────────────────────────
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     TurnStart {

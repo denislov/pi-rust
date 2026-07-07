@@ -122,32 +122,22 @@ impl ProfileDiagnostic {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SupervisionPolicy {
+    #[default]
     Session,
     SelfReview,
     LlmSupervisor,
 }
 
-impl Default for SupervisionPolicy {
-    fn default() -> Self {
-        Self::Session
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DelegationConfirmationMode {
     Never,
+    #[default]
     Writes,
     Always,
-}
-
-impl Default for DelegationConfirmationMode {
-    fn default() -> Self {
-        Self::Writes
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -198,16 +188,11 @@ impl<'de> Deserialize<'de> for TeamSupervisor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TeamStrategy {
+    #[default]
     PlanExecuteReview,
-}
-
-impl Default for TeamStrategy {
-    fn default() -> Self {
-        Self::PlanExecuteReview
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

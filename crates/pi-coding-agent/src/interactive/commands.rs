@@ -46,13 +46,12 @@ pub(super) fn expand_skill_command(text: &str, skills: &[Skill]) -> String {
         return text.to_string();
     };
 
-    let skill_block = pi_agent_core::resources::format_skill_invocation(
+    pi_agent_core::resources::format_skill_invocation(
         &skill.name,
         &skill.location,
         &skill.content,
         if args.is_empty() { None } else { Some(&args) },
-    );
-    skill_block
+    )
 }
 
 /// Expand a /templatename command with arg substitution.
@@ -887,7 +886,7 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
                     .push(TranscriptItem::system("No entries in session"));
                 return;
             }
-            let filter_mode = pi_agent_core::transcript::TreeFilterMode::from_str(
+            let filter_mode = pi_agent_core::transcript::TreeFilterMode::from_str_name(
                 &root.settings.tree_filter_mode,
             );
             let selector = crate::interactive::tree_selector::TreeSelectorState::new(

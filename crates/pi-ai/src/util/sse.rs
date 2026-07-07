@@ -23,9 +23,9 @@ pub fn process_chunk(chunk: &[u8], buf: &mut Vec<u8>) -> Vec<ServerSentEvent> {
             None => break,
         };
         let mut line = buf.drain(..=line_end).collect::<Vec<u8>>();
-        if line.ends_with(&[b'\r', b'\n']) {
+        if line.ends_with(b"\r\n") {
             line.truncate(line.len() - 2);
-        } else if line.ends_with(&[b'\n']) {
+        } else if line.ends_with(b"\n") {
             line.pop();
         }
 

@@ -188,7 +188,7 @@ pub enum TreeFilterMode {
 }
 
 impl TreeFilterMode {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str_name(s: &str) -> Self {
         match s {
             "default" => Self::Default,
             "no-tools" => Self::NoTools,
@@ -222,22 +222,22 @@ mod tests {
 
     #[test]
     fn tree_filter_mode_from_str() {
-        assert_eq!(TreeFilterMode::from_str("default"), TreeFilterMode::Default);
+        assert_eq!(TreeFilterMode::from_str_name("default"), TreeFilterMode::Default);
         assert_eq!(
-            TreeFilterMode::from_str("no-tools"),
+            TreeFilterMode::from_str_name("no-tools"),
             TreeFilterMode::NoTools
         );
         assert_eq!(
-            TreeFilterMode::from_str("user-only"),
+            TreeFilterMode::from_str_name("user-only"),
             TreeFilterMode::UserOnly
         );
         assert_eq!(
-            TreeFilterMode::from_str("labeled-only"),
+            TreeFilterMode::from_str_name("labeled-only"),
             TreeFilterMode::LabeledOnly
         );
-        assert_eq!(TreeFilterMode::from_str("all"), TreeFilterMode::All);
-        assert_eq!(TreeFilterMode::from_str("invalid"), TreeFilterMode::Default);
-        assert_eq!(TreeFilterMode::from_str(""), TreeFilterMode::Default);
+        assert_eq!(TreeFilterMode::from_str_name("all"), TreeFilterMode::All);
+        assert_eq!(TreeFilterMode::from_str_name("invalid"), TreeFilterMode::Default);
+        assert_eq!(TreeFilterMode::from_str_name(""), TreeFilterMode::Default);
     }
 
     #[test]

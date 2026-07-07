@@ -3,8 +3,8 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use pi_tui::{
-    Color, Component, ERROR, Loader, Markdown, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, USER,
-    paint_with, truncate_to_width, visible_width, wrap_text_with_ansi,
+    Color, Component, ERROR, Loader, Markdown, MarkdownTheme, SYSTEM, Style, TOOL_ERROR, TOOL_NAME,
+    USER, paint_with, truncate_to_width, visible_width, wrap_text_with_ansi,
 };
 
 use crate::interactive::transcript::{Transcript, TranscriptItem, TranscriptRenderKey};
@@ -108,6 +108,37 @@ fn to_color(color: ResolvedColor) -> Color {
         ResolvedColor::Default => Color::Default,
         ResolvedColor::Hex(r, g, b) => Color::Rgb(r, g, b),
         ResolvedColor::Ansi256(n) => Color::Ansi256(n),
+    }
+}
+
+/// Build a [`MarkdownTheme`] from a [`ResolvedTheme`], mirroring TS
+/// `getMarkdownTheme()` (theme.ts). Each `md*` token maps to its resolved
+/// color; `bold`/`italic`/`underline`/`strikethrough` are attribute-only
+/// (fg=Default) to match TS `theme.bold`/`theme.italic`/... which inherit
+/// the surrounding foreground rather than imposing a fixed color. No `.dim()`
+/// is layered on — dark.json's `gray`/`dimGray` vars already carry the
+/// intended lightness, and stacking `dim` would diverge from TS.
+///
+/// `highlight_code` is left `None`; the caller (root `markdown_theme()`)
+/// mounts the syntax-highlight callback separately.
+pub(super) fn markdown_theme_from_resolved(theme: &ResolvedTheme) -> MarkdownTheme {
+    let fg = |token: ThemeColor| Style::fg(to_color(theme.fg(token)));
+    MarkdownTheme {
+        heading: fg(ThemeColor::MdHeading).bold(),
+        link: fg(ThemeColor::MdLink),
+        link_url: fg(ThemeColor::MdLinkUrl),
+        code: fg(ThemeColor::MdCode),
+        code_block: fg(ThemeColor::MdCodeBlock),
+        code_block_border: fg(ThemeColor::MdCodeBlockBorder),
+        quote: fg(ThemeColor::MdQuote),
+        quote_border: fg(ThemeColor::MdQuoteBorder),
+        hr: fg(ThemeColor::MdHr),
+        list_bullet: fg(ThemeColor::MdListBullet),
+        bold: Style::fg(Color::Default).bold(),
+        italic: Style::fg(Color::Default).italic(),
+        underline: Style::fg(Color::Default).underline(),
+        strikethrough: Style::fg(Color::Default).strikethrough(),
+        highlight_code: None,
     }
 }
 
@@ -1338,6 +1369,49 @@ mod tests {
         assert_eq!(styles.bash_mode.fg, Color::Rgb(0xb5, 0xbd, 0x68));
         assert!(styles.bash_mode.bold);
         assert_eq!(styles.warning.fg, Color::Rgb(0xff, 0xff, 0x00));
+    }
+
+    #[test]
+    fn markdown_theme_uses_resolved_colors() {
+        // Regression: `markdown_theme()` must derive its colors from the
+        // ResolvedTheme (dark.json), not the pi-tui palette (Ansi16/256 +
+        // dim). Before the fix, assistant markdown bodies rendered with
+        // `Ansi256(244)` + `dim` while user/tool blocks used vivid RGB from
+        // the same dark.json — splitting the transcript into "dim text vs.
+        // bright blocks". Now every md* token resolves through the theme,
+        // so the whole transcript shares one palette.
+        let resolved = builtin_dark()
+            .resolve_colors()
+            .expect("dark theme resolves");
+        let md = markdown_theme_from_resolved(&resolved);
+
+        // mdHeading -> #f0c674 (not pi-tui Cyan)
+        assert_eq!(md.heading.fg, Color::Rgb(0xf0, 0xc6, 0x74));
+        assert!(md.heading.bold);
+        // mdCodeBlock -> green #b5bd68 (not Ansi256(244) + dim)
+        assert_eq!(md.code_block.fg, Color::Rgb(0xb5, 0xbd, 0x68));
+        assert!(!md.code_block.dim);
+        // mdQuote -> gray #808080 (not Ansi256(244) + dim)
+        assert_eq!(md.quote.fg, Color::Rgb(0x80, 0x80, 0x80));
+        assert!(!md.quote.dim);
+        // mdCode (inline) -> accent #8abeb7 (not Yellow)
+        assert_eq!(md.code.fg, Color::Rgb(0x8a, 0xbe, 0xb7));
+        // mdLink -> #81a2be (not Cyan)
+        assert_eq!(md.link.fg, Color::Rgb(0x81, 0xa2, 0xbe));
+        // mdHr -> gray #808080
+        assert_eq!(md.hr.fg, Color::Rgb(0x80, 0x80, 0x80));
+        // bold/italic/underline/strikethrough are attribute-only (fg=Default),
+        // mirroring TS theme.bold/italic/underline (inherit surrounding fg).
+        assert_eq!(md.bold.fg, Color::Default);
+        assert!(md.bold.bold);
+        assert_eq!(md.italic.fg, Color::Default);
+        assert!(md.italic.italic);
+        assert_eq!(md.underline.fg, Color::Default);
+        assert!(md.underline.underline);
+        assert_eq!(md.strikethrough.fg, Color::Default);
+        assert!(md.strikethrough.strikethrough);
+        // highlight_code is left for the caller to mount.
+        assert!(md.highlight_code.is_none());
     }
 
     /// Build render options with no resolved theme (fallback palette) and

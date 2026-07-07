@@ -64,23 +64,21 @@ impl ApiProvider for DeepSeekProvider {
             .header("accept", "application/json")
             .json(&request_body);
 
-        if let Some(opts) = &opts {
-            if let Some(headers) = &opts.headers {
-                if let Some(obj) = headers.as_object() {
+        if let Some(opts) = &opts
+            && let Some(headers) = &opts.headers
+                && let Some(obj) = headers.as_object() {
                     for (key, value) in obj {
                         if let Some(value) = value.as_str() {
                             request = request.header(key.as_str(), value);
                         }
                     }
                 }
-            }
-        }
 
         let model = model.clone();
         let model_id = model.id.clone();
         Box::pin(stream! {
-            if let Some(token) = &cancel {
-                if token.is_cancelled() {
+            if let Some(token) = &cancel
+                && token.is_cancelled() {
                     let mut msg = AssistantMessage::empty("deepseek-chat-completions", &model_id);
                     msg.provider = Some("deepseek".into());
                     msg.error_message = Some("cancelled".into());
@@ -91,7 +89,6 @@ impl ApiProvider for DeepSeekProvider {
                     };
                     return;
                 }
-            }
 
             let response = match request.send().await {
                 Ok(response) => response,

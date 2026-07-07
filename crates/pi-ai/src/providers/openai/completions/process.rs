@@ -65,14 +65,13 @@ impl SseEventHandler for CompletionsHandler {
         }
 
         for choice in chunk.choices {
-            if let Some(fr) = choice.finish_reason.as_deref() {
-                if !fr.is_empty() && fr != "null" {
+            if let Some(fr) = choice.finish_reason.as_deref()
+                && !fr.is_empty() && fr != "null" {
                     self.finish_reason = choice.finish_reason.clone();
                 }
-            }
 
-            if let Some(text_delta) = &choice.delta.content {
-                if !text_delta.is_empty() {
+            if let Some(text_delta) = &choice.delta.content
+                && !text_delta.is_empty() {
                     if self.text_content_index.is_none() {
                         self.text_content_index = Some(partial.content.len() as u32);
                         partial.content.push(ContentBlock::Text {
@@ -96,10 +95,9 @@ impl SseEventHandler for CompletionsHandler {
                         partial: partial.clone(),
                     });
                 }
-            }
 
-            if let Some(reasoning_delta) = first_reasoning_delta(&choice.delta) {
-                if !reasoning_delta.is_empty() {
+            if let Some(reasoning_delta) = first_reasoning_delta(&choice.delta)
+                && !reasoning_delta.is_empty() {
                     if self.thinking_content_index.is_none() {
                         self.thinking_content_index = Some(partial.content.len() as u32);
                         partial.content.push(ContentBlock::Thinking {
@@ -124,7 +122,6 @@ impl SseEventHandler for CompletionsHandler {
                         partial: partial.clone(),
                     });
                 }
-            }
 
             if let Some(tc_deltas) = &choice.delta.tool_calls {
                 for tc in tc_deltas {
@@ -148,16 +145,15 @@ impl SseEventHandler for CompletionsHandler {
                         }
                     };
 
-                    if let Some(ref id) = tc.id {
-                        if let Some(ContentBlock::ToolCall { id: block_id, .. }) =
+                    if let Some(ref id) = tc.id
+                        && let Some(ContentBlock::ToolCall { id: block_id, .. }) =
                             partial.content.get_mut(content_pos as usize)
                         {
                             *block_id = id.clone();
                         }
-                    }
                     if let Some(ref func) = tc.function {
-                        if let Some(ref name) = func.name {
-                            if let Some(ContentBlock::ToolCall {
+                        if let Some(ref name) = func.name
+                            && let Some(ContentBlock::ToolCall {
                                 name: block_name,
                                 id: block_id,
                                 ..
@@ -168,7 +164,6 @@ impl SseEventHandler for CompletionsHandler {
                                     *block_id = id.clone();
                                 }
                             }
-                        }
                         if let Some(ref args) = func.arguments {
                             let acc = self.tool_args_acc.entry(openai_idx).or_default();
                             acc.push_str(args);
@@ -272,8 +267,15 @@ fn map_usage(usage: &wire::ChatUsage, model: &Model) -> Usage {
         .map(|d| d.cached_tokens)
         .unwrap_or(0);
 
+    // OpenAI's `prompt_tokens` is the *total* prompt size and already includes
+    // the cached subset reported in `cached_tokens`. To match Anthropic-side
+    // semantics where `input` excludes cache hits (and to avoid double-billing
+    // the cached portion at both input and cache_read rates), subtract the
+    // cached tokens from `input`.
+    let non_cached_input = usage.prompt_tokens.saturating_sub(cache_tokens);
+
     let mut result = Usage {
-        input: usage.prompt_tokens,
+        input: non_cached_input,
         output: usage.completion_tokens,
         cache_read: cache_tokens,
         cache_write: 0,
@@ -286,4 +288,66 @@ fn map_usage(usage: &wire::ChatUsage, model: &Model) -> Usage {
     };
     calculate_cost(model, &mut result);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ModelCost, ModelInput};
+
+    fn test_model() -> Model {
+        Model {
+            id: "gpt-4o".into(),
+            name: "GPT-4o".into(),
+            api: "openai".into(),
+            provider: "openai".into(),
+            base_url: "https://api.openai.com".into(),
+            reasoning: false,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost {
+                input: 5.0,
+                output: 15.0,
+                cache_read: 2.5,
+                cache_write: 0.0,
+            },
+            context_window: 128_000,
+            max_tokens: 16_384,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    #[test]
+    fn map_usage_excludes_cached_tokens_from_input() {
+        // OpenAI's `prompt_tokens` includes the cached subset. `input` must
+        // hold only the non-cached portion so it isn't double-billed at both
+        // the input and cache_read rates.
+        let usage = wire::ChatUsage {
+            prompt_tokens: 1000,
+            completion_tokens: 200,
+            total_tokens: 1200,
+            prompt_tokens_details: Some(wire::PromptTokensDetails { cached_tokens: 800 }),
+            completion_tokens_details: None,
+        };
+        let mapped = map_usage(&usage, &test_model());
+        assert_eq!(mapped.input, 200, "input should exclude cached tokens");
+        assert_eq!(mapped.cache_read, 800);
+        assert_eq!(mapped.output, 200);
+        assert_eq!(mapped.total_tokens, 1200);
+    }
+
+    #[test]
+    fn map_usage_without_cache_details_keeps_full_input() {
+        let usage = wire::ChatUsage {
+            prompt_tokens: 1000,
+            completion_tokens: 200,
+            total_tokens: 1200,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+        };
+        let mapped = map_usage(&usage, &test_model());
+        assert_eq!(mapped.input, 1000);
+        assert_eq!(mapped.cache_read, 0);
+    }
 }

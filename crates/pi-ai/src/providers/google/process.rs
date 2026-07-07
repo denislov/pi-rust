@@ -57,11 +57,10 @@ impl SseEventHandler for GoogleHandler {
         }
 
         for candidate in &response.candidates {
-            if let Some(fr) = &candidate.finish_reason {
-                if !fr.is_empty() {
+            if let Some(fr) = &candidate.finish_reason
+                && !fr.is_empty() {
                     partial.stop_reason = map_finish_reason(fr);
                 }
-            }
 
             if let Some(content) = &candidate.content {
                 for part in &content.parts {

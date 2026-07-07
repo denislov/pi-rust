@@ -28,7 +28,7 @@ pub fn build_request(
         input: ctx
             .messages
             .iter()
-            .flat_map(|m| convert_message(m))
+            .flat_map(convert_message)
             .collect(),
         tools,
         max_output_tokens: max_tokens,

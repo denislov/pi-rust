@@ -136,7 +136,7 @@ async fn run_non_persistent_print_mode(
         .session
         .as_ref()
         .map(|session| CodingAgentSessionOptions::new().with_cwd(session.cwd.clone()))
-        .unwrap_or_else(CodingAgentSessionOptions::new);
+        .unwrap_or_default();
     let mut session = CodingAgentSession::non_persistent(coding_options).await?;
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
     Ok(session.prompt(prompt_options).await?)

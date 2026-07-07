@@ -40,10 +40,9 @@ impl RpcState {
 
     pub(super) fn capabilities(&self) -> CodingAgentCapabilities {
         let plugin_capabilities = PluginCapabilities::new();
-        let active_operation = match &self.running {
-            Some(RunningPrompt::Coding(running)) => Some(running.operation_kind),
-            None => None,
-        };
+        let active_operation = self.running.as_ref().map(|running| match running {
+            RunningPrompt::Coding(running) => running.operation_kind,
+        });
         CodingAgentCapabilities::from_runtime_state(
             active_operation,
             &plugin_capabilities,

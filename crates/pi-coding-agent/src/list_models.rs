@@ -78,14 +78,14 @@ fn model_row(model: &Model) -> ModelRow {
 fn format_token_count(count: u32) -> String {
     if count >= 1_000_000 {
         let millions = count as f64 / 1_000_000.0;
-        if count % 1_000_000 == 0 {
+        if count.is_multiple_of(1_000_000) {
             format!("{}M", count / 1_000_000)
         } else {
             format!("{millions:.1}M")
         }
     } else if count >= 1_000 {
         let thousands = count as f64 / 1_000.0;
-        if count % 1_000 == 0 {
+        if count.is_multiple_of(1_000) {
             format!("{}K", count / 1_000)
         } else {
             format!("{thousands:.1}K")

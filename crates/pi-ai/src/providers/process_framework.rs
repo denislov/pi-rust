@@ -43,8 +43,8 @@ where
         futures::pin_mut!(sse);
 
         loop {
-            if let Some(ref token) = cancel {
-                if token.is_cancelled() {
+            if let Some(ref token) = cancel
+                && token.is_cancelled() {
                     partial.stop_reason = StopReason::Aborted;
                     partial.error_message = Some("cancelled".into());
                     yield AssistantMessageEvent::Error {
@@ -53,7 +53,6 @@ where
                     };
                     return;
                 }
-            }
 
             let sse_event = match sse.next().await {
                 Some(Ok(e)) => e,

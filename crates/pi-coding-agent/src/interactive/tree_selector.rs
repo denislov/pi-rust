@@ -301,9 +301,7 @@ impl TreeSelectorState {
                 .cloned()
                 .unwrap_or_default();
             let multiple_children = children.len() > 1;
-            let child_indent = if multiple_children {
-                indent + 1
-            } else if just_branched && indent > 0 {
+            let child_indent = if multiple_children || (just_branched && indent > 0) {
                 indent + 1
             } else {
                 indent
@@ -874,7 +872,7 @@ fn build_active_path_ids(
     };
 
     // Recursively find the path.
-    fn find_path<'a>(nodes: &'a [SessionTreeNode], target: &str, path: &mut Vec<String>) -> bool {
+    fn find_path(nodes: &[SessionTreeNode], target: &str, path: &mut Vec<String>) -> bool {
         for node in nodes {
             path.push(node.entry.id.clone());
             if node.entry.id == target {
@@ -1161,10 +1159,10 @@ fn passes_default_filter(n: &FlatTreeNode) -> bool {
         }
     }
 
-    match n.entry_type.as_str() {
-        "label" | "custom" | "model_change" | "thinking_level_change" | "session_info" => false,
-        _ => true,
-    }
+    !matches!(
+        n.entry_type.as_str(),
+        "label" | "custom" | "model_change" | "thinking_level_change" | "session_info"
+    )
 }
 
 fn is_tool_result(n: &FlatTreeNode) -> bool {

@@ -77,7 +77,7 @@ pub async fn write_execute_with_operations(
     let ops = ops.clone();
     with_file_mutation_queue(&abs, move || async move {
         ops.write_file(&target, content.as_bytes()).await?;
-        let n = content.as_bytes().len();
+        let n = content.len();
         Ok(vec![ContentBlock::Text {
             text: format!("Successfully wrote {n} bytes to {path}"),
             text_signature: None,

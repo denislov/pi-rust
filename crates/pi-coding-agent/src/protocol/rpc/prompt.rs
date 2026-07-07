@@ -644,13 +644,10 @@ impl RpcState {
                 loop {
                     tokio::select! {
                         event = receiver.recv() => {
-                            match event {
-                                Ok(event) => {
-                                    if event_tx.send(event).is_err() {
-                                        continue;
-                                    }
+                            if let Ok(event) = event {
+                                if event_tx.send(event).is_err() {
+                                    continue;
                                 }
-                                Err(_) => {}
                             }
                         }
                         outcome = &mut prompt => {

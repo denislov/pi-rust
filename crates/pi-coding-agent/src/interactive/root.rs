@@ -31,7 +31,8 @@ use crate::interactive::profile_menu::{
 };
 use crate::interactive::render::{
     TranscriptRenderCache, TranscriptRenderOptions, TranscriptRowSnapshot, TranscriptStyles,
-    WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens, running_status_text,
+    WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens,
+    markdown_theme_from_resolved, running_status_text,
 };
 use crate::interactive::session_actions::{HydratedSession, SessionChoice};
 use crate::interactive::session_selector;
@@ -1588,14 +1589,16 @@ impl InteractiveRoot {
                     cost,
                     context_tokens,
                 } => {
-                    self.stats = FooterStats {
-                        input,
-                        output,
-                        cache_read,
-                        cache_write,
-                        cost,
-                        context_tokens,
-                    };
+                    // Accumulate delta values from the stateless bridge.
+                    // This ensures hydration-seeded stats are preserved:
+                    //   root.stats starts at 0 (fresh) or at the hydrated
+                    //   cumulative value, and each UsageUpdate adds to it.
+                    self.stats.input = self.stats.input.saturating_add(input);
+                    self.stats.output = self.stats.output.saturating_add(output);
+                    self.stats.cache_read = self.stats.cache_read.saturating_add(cache_read);
+                    self.stats.cache_write = self.stats.cache_write.saturating_add(cache_write);
+                    self.stats.cost += cost;
+                    self.stats.context_tokens = context_tokens;
                 }
                 other => mutation.extend(self.transcript.apply_event_with_mutation(other)),
             }
@@ -2068,7 +2071,7 @@ impl InteractiveRoot {
                 self.settings.compaction.enabled = value == "on";
                 self.settings_delta
                     .compaction
-                    .get_or_insert_with(|| crate::config::settings::PartialCompaction::default())
+                    .get_or_insert_with(crate::config::settings::PartialCompaction::default)
                     .enabled = Some(value == "on");
             }
             "transport" => {
@@ -2087,14 +2090,14 @@ impl InteractiveRoot {
                 self.settings.terminal.show_images = value == "on";
                 self.settings_delta
                     .terminal
-                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .show_images = Some(value == "on");
             }
             "show_progress" => {
                 self.settings.terminal.show_progress = value == "on";
                 self.settings_delta
                     .terminal
-                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .show_progress = Some(value == "on");
             }
             "image_width_cells" => {
@@ -2102,7 +2105,7 @@ impl InteractiveRoot {
                     self.settings.terminal.image_width_cells = width;
                     self.settings_delta
                         .terminal
-                        .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                        .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                         .image_width_cells = Some(width);
                 }
             }
@@ -2110,14 +2113,14 @@ impl InteractiveRoot {
                 self.settings.terminal.auto_resize_images = value == "on";
                 self.settings_delta
                     .terminal
-                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .auto_resize_images = Some(value == "on");
             }
             "block_images" => {
                 self.settings.terminal.block_images = value == "on";
                 self.settings_delta
                     .terminal
-                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .block_images = Some(value == "on");
             }
             "enable_skill_commands" => {
@@ -2140,7 +2143,7 @@ impl InteractiveRoot {
                 self.settings.terminal.clear_on_shrink = value == "on";
                 self.settings_delta
                     .terminal
-                    .get_or_insert_with(|| crate::config::settings::PartialTerminal::default())
+                    .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .clear_on_shrink = Some(value == "on");
             }
             "double_escape_action" => {
@@ -2155,7 +2158,7 @@ impl InteractiveRoot {
                 self.settings.warnings.anthropic_extra_usage = value == "on";
                 self.settings_delta
                     .warnings
-                    .get_or_insert_with(|| crate::config::settings::PartialWarnings::default())
+                    .get_or_insert_with(crate::config::settings::PartialWarnings::default)
                     .anthropic_extra_usage = Some(value == "on");
             }
             "default_thinking_level" => {
@@ -2214,7 +2217,10 @@ impl InteractiveRoot {
     /// Falls back to the palette theme's markdown styles when no resolved
     /// theme is set.
     fn markdown_theme(&self) -> MarkdownTheme {
-        let mut md = self.theme.markdown.clone();
+        let mut md = match &self.resolved_theme {
+            Some(resolved) => markdown_theme_from_resolved(resolved),
+            None => self.theme.markdown.clone(),
+        };
         if let Some(resolved) = &self.resolved_theme {
             let resolved = resolved.clone();
             md.highlight_code = Some(std::sync::Arc::new(

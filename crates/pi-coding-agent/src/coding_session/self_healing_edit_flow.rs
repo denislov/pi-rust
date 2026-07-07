@@ -146,6 +146,7 @@ impl SelfHealingEditRequest {
         self.model_repair.as_ref()
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn into_parts(
         self,
     ) -> (

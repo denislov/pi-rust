@@ -237,7 +237,7 @@ impl CombinedAutocompleteProvider {
         let current_line = lines.get(cursor_line).map(String::as_str).unwrap_or("");
         let cursor_col = cursor_col.min(current_line.len());
         let text_before_cursor = current_line[..cursor_col].trim();
-        !(text_before_cursor.starts_with('/') && !text_before_cursor.contains(' '))
+        !text_before_cursor.starts_with('/') || text_before_cursor.contains(' ')
     }
 
     fn env_suggestions(&self, prefix: &str) -> Vec<AutocompleteItem> {
@@ -492,11 +492,10 @@ fn expand_home(path: &str) -> String {
     if path == "~" {
         return std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
     }
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME") {
             return Path::new(&home).join(rest).to_string_lossy().to_string();
         }
-    }
     path.to_string()
 }
 

@@ -677,15 +677,7 @@ pub(crate) fn map_agent_event(
             }
             events
         }
-        AgentEvent::AgentDone { message } => {
-            vec![CodingAgentEvent::AssistantMessageCompleted {
-                operation_id: context.operation_id.clone(),
-                turn_id: context.turn_id.clone(),
-                message_id: context.assistant_message_id.clone(),
-                final_text: assistant_text(&message.content),
-                usage: message.usage.clone(),
-            }]
-        }
+        AgentEvent::AgentDone { .. } => Vec::new(),
         AgentEvent::AgentError { error } => vec![CodingAgentEvent::PromptFailed {
             operation_id: context.operation_id.clone(),
             error: CodingSessionError::Provider {
@@ -746,8 +738,16 @@ fn map_assistant_event(
                     .unwrap_or_else(|| "assistant stream failed".into()),
             },
         }],
-        AssistantMessageEvent::Done { .. }
-        | AssistantMessageEvent::TextEnd { .. }
+        AssistantMessageEvent::Done { message, .. } => {
+            vec![CodingAgentEvent::AssistantMessageCompleted {
+                operation_id: context.operation_id.clone(),
+                turn_id: context.turn_id.clone(),
+                message_id: context.assistant_message_id.clone(),
+                final_text: assistant_text(&message.content),
+                usage: message.usage.clone(),
+            }]
+        }
+        AssistantMessageEvent::TextEnd { .. }
         | AssistantMessageEvent::ThinkingEnd { .. }
         | AssistantMessageEvent::ToolcallStart { .. }
         | AssistantMessageEvent::ToolcallDelta { .. }
@@ -1020,9 +1020,10 @@ mod tests {
         assert_eq!(
             map_agent_event(
                 &context,
-                &AgentEvent::AgentDone {
+                &AgentEvent::LlmEvent(AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
                     message: assistant_message("done"),
-                },
+                }),
             ),
             vec![CodingAgentEvent::AssistantMessageCompleted {
                 operation_id: "op_1".into(),
@@ -1031,6 +1032,18 @@ mod tests {
                 final_text: "done".into(),
                 usage: Usage::default(),
             }]
+        );
+        // AgentDone no longer emits AssistantMessageCompleted — that is now
+        // handled by AssistantMessageEvent::Done, which fires for every
+        // completed assistant message (including intermediate ToolUse ones).
+        assert_eq!(
+            map_agent_event(
+                &context,
+                &AgentEvent::AgentDone {
+                    message: assistant_message("done"),
+                }
+            ),
+            Vec::new(),
         );
     }
 

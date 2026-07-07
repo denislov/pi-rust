@@ -20,7 +20,7 @@ pub fn parse_frontmatter(content: &str) -> (Value, String, Vec<ResourceDiagnosti
             if rest[..pos].ends_with('\n')
                 || rest
                     .get(pos + end_marker.len()..)
-                    .map_or(true, |s| s.starts_with('\n') || s.is_empty()) =>
+                    .is_none_or(|s| s.starts_with('\n') || s.is_empty()) =>
         {
             pos
         }
