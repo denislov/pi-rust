@@ -43,56 +43,141 @@ impl Operation {
     }
 
     pub(crate) fn static_kind(&self) -> Option<OperationKind> {
-        match self {
-            Self::Prompt(_) => Some(OperationKind::Prompt),
-            Self::ManualCompaction(_) => Some(OperationKind::Compact),
-            Self::PluginLoad(_) => Some(OperationKind::PluginLoad),
-            Self::PluginCommand { .. } => Some(OperationKind::PluginCommand),
-            Self::ApproveDelegationConfirmation { .. } => None,
-            Self::RejectDelegationConfirmation { .. } => {
-                Some(OperationKind::DelegationConfirmation)
-            }
-            Self::BranchSummary { .. } => Some(OperationKind::BranchSummary),
-            Self::SelfHealingEdit(_) => Some(OperationKind::SelfHealingEdit),
-            Self::AgentInvocation(_) => Some(OperationKind::AgentInvocation),
-            Self::AgentTeam(_) => Some(OperationKind::AgentTeam),
-            Self::Export(_) => Some(OperationKind::Export),
-        }
+        self.metadata().static_kind
     }
 
     #[allow(dead_code)]
     pub(crate) fn origin(&self) -> OperationOrigin {
-        match self {
-            Self::Prompt(_)
-            | Self::ManualCompaction(_)
-            | Self::PluginLoad(_)
-            | Self::PluginCommand { .. }
-            | Self::ApproveDelegationConfirmation { .. }
-            | Self::RejectDelegationConfirmation { .. }
-            | Self::BranchSummary { .. }
-            | Self::SelfHealingEdit(_)
-            | Self::AgentInvocation(_)
-            | Self::AgentTeam(_)
-            | Self::Export(_) => OperationOrigin::ClientRoot,
-        }
+        self.metadata().origin
     }
 
     #[allow(dead_code)]
     pub(crate) fn class(&self) -> OperationClass {
+        self.metadata().class
+    }
+
+    pub(crate) fn metadata(&self) -> OperationMetadata {
         match self {
-            Self::Prompt(_)
-            | Self::ManualCompaction(_)
-            | Self::BranchSummary { .. }
-            | Self::SelfHealingEdit(_) => OperationClass::SessionWriteRoot,
-            Self::PluginLoad(_) => OperationClass::RuntimeWrite,
-            Self::AgentInvocation(_)
-            | Self::AgentTeam(_)
-            | Self::PluginCommand { .. }
-            | Self::ApproveDelegationConfirmation { .. } => OperationClass::NonSessionRoot,
-            Self::RejectDelegationConfirmation { .. } => OperationClass::Control,
-            Self::Export(_) => OperationClass::ReadOnly,
+            Self::Prompt(_) => OperationMetadata::new(
+                Some(OperationKind::Prompt),
+                OperationOrigin::ClientRoot,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
+            ),
+            Self::ManualCompaction(_) => OperationMetadata::new(
+                Some(OperationKind::Compact),
+                OperationOrigin::ClientRoot,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
+            ),
+            Self::PluginLoad(_) => OperationMetadata::new(
+                Some(OperationKind::PluginLoad),
+                OperationOrigin::ClientRoot,
+                OperationClass::RuntimeWrite,
+                OperationDispatchMode::Async,
+            ),
+            Self::PluginCommand { .. } => OperationMetadata::new(
+                Some(OperationKind::PluginCommand),
+                OperationOrigin::ClientRoot,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::SyncReadOnly,
+            ),
+            Self::ApproveDelegationConfirmation { .. } => OperationMetadata::new(
+                None,
+                OperationOrigin::ClientRoot,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::Async,
+            ),
+            Self::RejectDelegationConfirmation { .. } => OperationMetadata::new(
+                Some(OperationKind::DelegationConfirmation),
+                OperationOrigin::ClientRoot,
+                OperationClass::Control,
+                OperationDispatchMode::SyncMutable,
+            ),
+            Self::BranchSummary { .. } => OperationMetadata::new(
+                Some(OperationKind::BranchSummary),
+                OperationOrigin::ClientRoot,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
+            ),
+            Self::SelfHealingEdit(_) => OperationMetadata::new(
+                Some(OperationKind::SelfHealingEdit),
+                OperationOrigin::ClientRoot,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
+            ),
+            Self::AgentInvocation(_) => OperationMetadata::new(
+                Some(OperationKind::AgentInvocation),
+                OperationOrigin::ClientRoot,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::Async,
+            ),
+            Self::AgentTeam(_) => OperationMetadata::new(
+                Some(OperationKind::AgentTeam),
+                OperationOrigin::ClientRoot,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::Async,
+            ),
+            Self::Export(_) => OperationMetadata::new(
+                Some(OperationKind::Export),
+                OperationOrigin::ClientRoot,
+                OperationClass::ReadOnly,
+                OperationDispatchMode::SyncReadOnly,
+            ),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OperationMetadata {
+    pub(crate) static_kind: Option<OperationKind>,
+    pub(crate) origin: OperationOrigin,
+    pub(crate) class: OperationClass,
+    pub(crate) dispatch_mode: OperationDispatchMode,
+}
+
+impl OperationMetadata {
+    fn new(
+        static_kind: Option<OperationKind>,
+        origin: OperationOrigin,
+        class: OperationClass,
+        dispatch_mode: OperationDispatchMode,
+    ) -> Self {
+        Self {
+            static_kind,
+            origin,
+            class,
+            dispatch_mode,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OperationAdmission {
+    pub(crate) kind: OperationKind,
+    pub(crate) metadata: OperationMetadata,
+    pub(crate) admitted_at: Option<String>,
+}
+
+impl OperationAdmission {
+    pub(crate) fn new(
+        kind: OperationKind,
+        metadata: OperationMetadata,
+        admitted_at: Option<String>,
+    ) -> Self {
+        Self {
+            kind,
+            metadata,
+            admitted_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationDispatchMode {
+    Async,
+    SyncReadOnly,
+    SyncMutable,
 }
 
 #[allow(dead_code)]
@@ -193,6 +278,33 @@ mod tests {
         assert_eq!(operation.static_kind(), None);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::NonSessionRoot);
+    }
+
+    #[test]
+    fn operation_metadata_exposes_static_contract_and_dispatch_mode() {
+        let operation = Operation::Export(ExportOptions::view());
+
+        let metadata = operation.metadata();
+
+        assert_eq!(metadata.static_kind, Some(OperationKind::Export));
+        assert_eq!(metadata.origin, OperationOrigin::ClientRoot);
+        assert_eq!(metadata.class, OperationClass::ReadOnly);
+        assert_eq!(metadata.dispatch_mode, OperationDispatchMode::SyncReadOnly);
+    }
+
+    #[test]
+    fn dynamic_operation_metadata_exposes_dispatch_without_static_kind() {
+        let operation = Operation::ApproveDelegationConfirmation {
+            operation_id: "op_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+        };
+
+        let metadata = operation.metadata();
+
+        assert_eq!(metadata.static_kind, None);
+        assert_eq!(metadata.origin, OperationOrigin::ClientRoot);
+        assert_eq!(metadata.class, OperationClass::NonSessionRoot);
+        assert_eq!(metadata.dispatch_mode, OperationDispatchMode::Async);
     }
 
     #[test]

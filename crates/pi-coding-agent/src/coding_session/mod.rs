@@ -75,7 +75,7 @@ use export_flow::ExportOptions;
 use flow_service::FlowService;
 use manual_compaction_flow::ManualCompactionOptions;
 use manual_compaction_service::ManualCompactionService;
-use operation::{Operation, OperationOutcome};
+use operation::{Operation, OperationAdmission, OperationOutcome};
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::PluginLoadOptions;
@@ -1022,7 +1022,8 @@ impl CodingAgentSession {
         &self,
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
-        let Some(kind) = operation.static_kind() else {
+        let metadata = operation.metadata();
+        let Some(kind) = metadata.static_kind else {
             return Err(CodingSessionError::UnsupportedCapability {
                 capability: "dynamic operation requires async dispatcher".into(),
             });
@@ -1060,7 +1061,8 @@ impl CodingAgentSession {
         &mut self,
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
-        let Some(kind) = operation.static_kind() else {
+        let metadata = operation.metadata();
+        let Some(kind) = metadata.static_kind else {
             return Err(CodingSessionError::UnsupportedCapability {
                 capability: "dynamic operation requires async dispatcher".into(),
             });
@@ -1120,7 +1122,8 @@ impl CodingAgentSession {
     fn resolve_operation_admission(
         &self,
         operation: &Operation,
-    ) -> Result<(OperationKind, Option<String>), CodingSessionError> {
+    ) -> Result<OperationAdmission, CodingSessionError> {
+        let metadata = operation.metadata();
         match operation {
             Operation::ApproveDelegationConfirmation {
                 operation_id,
@@ -1132,9 +1135,16 @@ impl CodingAgentSession {
                     tool_call_id.as_str(),
                     &now,
                 )?;
-                Ok((kind, Some(now)))
+                Ok(OperationAdmission::new(kind, metadata, Some(now)))
             }
-            _ => Ok((operation.kind(), None)),
+            _ => {
+                if metadata.static_kind.is_none() {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability: "dynamic operation requires async dispatcher".into(),
+                    });
+                }
+                Ok(OperationAdmission::new(operation.kind(), metadata, None))
+            }
         }
     }
 
@@ -1215,8 +1225,8 @@ impl CodingAgentSession {
         &mut self,
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
-        let (kind, admission_time) = self.resolve_operation_admission(&operation)?;
-        let _operation_guard = self.operation_control.begin(kind)?;
+        let admission = self.resolve_operation_admission(&operation)?;
+        let _operation_guard = self.operation_control.begin(admission.kind)?;
 
         match operation {
             Operation::Prompt(options) => {
@@ -1331,7 +1341,9 @@ impl CodingAgentSession {
                 .approve_delegation_confirmation_inner(
                     operation_id,
                     tool_call_id,
-                    admission_time.expect("delegation approval admission time is resolved"),
+                    admission
+                        .admitted_at
+                        .expect("delegation approval admission time is resolved"),
                 )
                 .await
                 .map(|_| OperationOutcome::DelegationApproval),
@@ -2475,6 +2487,55 @@ runtime = "lua"
             .unwrap();
 
         assert_eq!(kind, OperationKind::AgentTeam);
+    }
+
+    #[tokio::test]
+    async fn resolve_operation_admission_returns_structured_dynamic_contract() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        session
+            .pending_delegation_confirmations
+            .push(pending_delegation_confirmation_state(ProfileKind::Team));
+        let operation = Operation::ApproveDelegationConfirmation {
+            operation_id: "op_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+        };
+
+        let admission = session.resolve_operation_admission(&operation).unwrap();
+
+        assert_eq!(admission.kind, OperationKind::AgentTeam);
+        assert_eq!(admission.metadata.static_kind, None);
+        assert_eq!(
+            admission.metadata.dispatch_mode,
+            operation::OperationDispatchMode::Async
+        );
+        assert!(admission.admitted_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_operation_admission_returns_structured_static_contract() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation = Operation::RejectDelegationConfirmation {
+            operation_id: "op_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+            reason: "not now".into(),
+        };
+
+        let admission = session.resolve_operation_admission(&operation).unwrap();
+
+        assert_eq!(admission.kind, OperationKind::DelegationConfirmation);
+        assert_eq!(
+            admission.metadata.static_kind,
+            Some(OperationKind::DelegationConfirmation)
+        );
+        assert_eq!(
+            admission.metadata.dispatch_mode,
+            operation::OperationDispatchMode::SyncMutable
+        );
+        assert_eq!(admission.admitted_at, None);
     }
 
     #[tokio::test]

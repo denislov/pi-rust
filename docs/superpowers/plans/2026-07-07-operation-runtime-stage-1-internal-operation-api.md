@@ -1083,3 +1083,81 @@ git diff --check
 rg -n "operation_control\.begin" crates/pi-coding-agent/src/coding_session crates/pi-coding-agent/src/interactive crates/pi-coding-agent/src/protocol
 git status --short
 ```
+
+### Task 25: Structure Operation Metadata And Admission
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write failing structured metadata tests**
+
+Added `operation_metadata_exposes_static_contract_and_dispatch_mode` and `dynamic_operation_metadata_exposes_dispatch_without_static_kind` to require one `Operation::metadata()` API to expose static kind, origin, class, and dispatch mode for both static and dynamic operations.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent operation_metadata_exposes_static_contract_and_dispatch_mode --lib
+```
+
+RED result: compile failed because `Operation::metadata()` and `OperationDispatchMode` did not exist.
+
+- [x] **Step 2: Add `OperationMetadata` and `OperationDispatchMode`**
+
+Added structured operation metadata and made the existing `kind()`, `static_kind()`, `origin()`, and `class()` helpers derive from `metadata()` instead of maintaining separate mappings.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent operation_metadata_exposes_static_contract_and_dispatch_mode --lib
+cargo test -p pi-coding-agent dynamic_operation_metadata_exposes_dispatch_without_static_kind --lib
+```
+
+GREEN result: both metadata tests passed.
+
+- [x] **Step 3: Write failing structured admission tests**
+
+Added `resolve_operation_admission_returns_structured_dynamic_contract` and `resolve_operation_admission_returns_structured_static_contract` to require admission resolution to return kind, metadata, and dynamic admitted-at state instead of a tuple.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent resolve_operation_admission_returns_structured_dynamic_contract --lib
+```
+
+RED result: compile failed because `resolve_operation_admission()` still returned a tuple.
+
+- [x] **Step 4: Add `OperationAdmission` and use it in dispatchers**
+
+Added `OperationAdmission { kind, metadata, admitted_at }`, changed dynamic approval and static operation admission to return this structure, and updated async dispatch to use the structured kind/admitted-at values while preserving current public behavior.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent resolve_operation_admission_returns_structured_dynamic_contract --lib
+cargo test -p pi-coding-agent resolve_operation_admission_returns_structured_static_contract --lib
+```
+
+GREEN result: both structured admission tests passed.
+
+### Task 26: Verify Structured Operation Metadata Slice
+
+- [x] **Step 1: Run operation-focused and admission tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent resolve_operation_admission_returns_structured_dynamic_contract --lib
+cargo test -p pi-coding-agent resolve_operation_admission_returns_structured_static_contract --lib
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+rg -n "operation_control\.begin" crates/pi-coding-agent/src/coding_session crates/pi-coding-agent/src/interactive crates/pi-coding-agent/src/protocol
+git status --short
+```
