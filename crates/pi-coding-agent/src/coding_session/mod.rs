@@ -278,6 +278,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("export operation returned plugin load outcome")
             }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("export operation returned plugin command outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("export operation returned branch summary outcome")
             }
@@ -302,6 +305,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("export operation returned plugin load outcome")
+            }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("export operation returned plugin command outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("export operation returned branch summary outcome")
@@ -518,6 +524,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("prompt operation returned plugin load outcome")
             }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("prompt operation returned plugin command outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("prompt operation returned branch summary outcome")
             }
@@ -548,6 +557,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("manual compaction operation returned plugin load outcome")
+            }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("manual compaction operation returned plugin command outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("manual compaction operation returned branch summary outcome")
@@ -594,6 +606,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("self-healing edit operation returned plugin load outcome")
             }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("self-healing edit operation returned plugin command outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("self-healing edit operation returned branch summary outcome")
             }
@@ -627,6 +642,9 @@ impl CodingAgentSession {
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("agent invocation operation returned plugin load outcome")
             }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("agent invocation operation returned plugin command outcome")
+            }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("agent invocation operation returned branch summary outcome")
             }
@@ -656,6 +674,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("agent team operation returned plugin load outcome")
+            }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("agent team operation returned plugin command outcome")
             }
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("agent team operation returned branch summary outcome")
@@ -698,8 +719,36 @@ impl CodingAgentSession {
         command_id: &str,
         args: serde_json::Value,
     ) -> Result<String, CodingSessionError> {
-        let _operation = self.operation_control.begin(OperationKind::PluginCommand)?;
-        self.plugin_service.run_command(command_id, args)
+        match self.run_sync_operation(Operation::PluginCommand {
+            command_id: command_id.to_owned(),
+            args,
+        })? {
+            OperationOutcome::PluginCommand(output) => Ok(output),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("plugin command operation returned prompt outcome")
+            }
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("plugin command operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("plugin command operation returned plugin load outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("plugin command operation returned branch summary outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("plugin command operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("plugin command operation returned agent invocation outcome")
+            }
+            OperationOutcome::AgentTeam(_) => {
+                unreachable!("plugin command operation returned agent team outcome")
+            }
+            OperationOutcome::Export(_) => {
+                unreachable!("plugin command operation returned export outcome")
+            }
+        }
     }
 
     pub(crate) async fn load_plugins(
@@ -708,6 +757,9 @@ impl CodingAgentSession {
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
         match self.run_operation(Operation::PluginLoad(options)).await? {
             OperationOutcome::PluginLoad(outcome) => Ok(outcome),
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("plugin load operation returned plugin command outcome")
+            }
             OperationOutcome::Prompt(_) => {
                 unreachable!("plugin load operation returned prompt outcome")
             }
@@ -757,6 +809,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("branch summary operation returned plugin load outcome")
+            }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("branch summary operation returned plugin command outcome")
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
@@ -809,6 +864,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::PluginLoad(_) => {
                 unreachable!("branch summary operation returned plugin load outcome")
+            }
+            OperationOutcome::PluginCommand(_) => {
+                unreachable!("branch summary operation returned plugin command outcome")
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
@@ -902,6 +960,10 @@ impl CodingAgentSession {
             Operation::Export(options) => self
                 .export_current_inner(options)
                 .map(OperationOutcome::Export),
+            Operation::PluginCommand { command_id, args } => self
+                .plugin_service
+                .run_command(&command_id, args)
+                .map(OperationOutcome::PluginCommand),
             Operation::Prompt(_)
             | Operation::ManualCompaction(_)
             | Operation::PluginLoad(_)
@@ -1030,6 +1092,9 @@ impl CodingAgentSession {
                 .map(OperationOutcome::AgentTeam),
             Operation::Export(_) => Err(CodingSessionError::UnsupportedCapability {
                 capability: "export operation requires sync dispatcher".into(),
+            }),
+            Operation::PluginCommand { .. } => Err(CodingSessionError::UnsupportedCapability {
+                capability: "plugin command operation requires sync dispatcher".into(),
             }),
         }
     }
@@ -2110,6 +2175,26 @@ runtime = "lua"
         assert_eq!(
             error.to_string(),
             "unsupported capability: export requires a persistent Rust-native session"
+        );
+        assert_eq!(session.operation_control.active(), None);
+    }
+
+    #[tokio::test]
+    async fn run_sync_operation_plugin_command_uses_guard_and_preserves_plugin_error() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let operation = Operation::PluginCommand {
+            command_id: "missing.command".into(),
+            args: serde_json::Value::Null,
+        };
+
+        let error = session.run_sync_operation(operation).unwrap_err();
+
+        assert_eq!(error.code(), "plugin");
+        assert_eq!(
+            error.to_string(),
+            "plugin error: plugin command not found: missing.command"
         );
         assert_eq!(session.operation_control.active(), None);
     }

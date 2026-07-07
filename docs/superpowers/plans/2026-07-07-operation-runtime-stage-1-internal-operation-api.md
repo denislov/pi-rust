@@ -852,3 +852,79 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 19: Route Plugin Command Through Sync Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing plugin command operation metadata test**
+
+Added `plugin_command_operation_declares_root_non_session_metadata` to prove `Operation::PluginCommand` maps to `OperationKind::PluginCommand`, `OperationOrigin::ClientRoot`, and `OperationClass::NonSessionRoot`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent plugin_command_operation_declares_root_non_session_metadata --lib
+```
+
+RED result: compile failed because `Operation::PluginCommand` did not exist.
+
+- [x] **Step 2: Add the minimal plugin command operation contract**
+
+Added `Operation::PluginCommand { command_id, args }` and mapped it as a root non-session operation. Temporary dispatcher placeholders kept the contract compiling until the sync dispatcher consumed the payload.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent plugin_command_operation_declares_root_non_session_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before sync dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing sync dispatcher test**
+
+Added `run_sync_operation_plugin_command_uses_guard_and_preserves_plugin_error` to require `Operation::PluginCommand` to run through the sync dispatcher, preserve the existing missing-command plugin error, and clear active operation state on error.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_sync_operation_plugin_command_uses_guard_and_preserves_plugin_error --lib
+```
+
+RED result: the test failed with the temporary unsupported-capability placeholder instead of the plugin-service error.
+
+- [x] **Step 4: Move plugin command routing into `run_sync_operation()`**
+
+Changed `CodingAgentSession::run_plugin_command()` to call `run_sync_operation(Operation::PluginCommand { ... })`, and moved the existing plugin service command execution behind the dispatcher arm.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_sync_operation_plugin_command_uses_guard_and_preserves_plugin_error --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 20: Verify Plugin Command Operation Slice
+
+- [x] **Step 1: Run operation-focused and plugin command tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_sync_operation_plugin_command_uses_guard_and_preserves_plugin_error --lib
+cargo test -p pi-coding-agent run_plugin_command
+cargo test -p pi-coding-agent plugin_command
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```

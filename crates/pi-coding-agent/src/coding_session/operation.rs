@@ -11,6 +11,10 @@ pub(crate) enum Operation {
     Prompt(PromptTurnOptions),
     ManualCompaction(PromptTurnOptions),
     PluginLoad(PluginLoadOptions),
+    PluginCommand {
+        command_id: String,
+        args: serde_json::Value,
+    },
     BranchSummary {
         options: PromptTurnOptions,
         source_leaf_id: String,
@@ -29,6 +33,7 @@ impl Operation {
             Self::Prompt(_) => OperationKind::Prompt,
             Self::ManualCompaction(_) => OperationKind::Compact,
             Self::PluginLoad(_) => OperationKind::PluginLoad,
+            Self::PluginCommand { .. } => OperationKind::PluginCommand,
             Self::BranchSummary { .. } => OperationKind::BranchSummary,
             Self::SelfHealingEdit(_) => OperationKind::SelfHealingEdit,
             Self::AgentInvocation(_) => OperationKind::AgentInvocation,
@@ -43,6 +48,7 @@ impl Operation {
             Self::Prompt(_)
             | Self::ManualCompaction(_)
             | Self::PluginLoad(_)
+            | Self::PluginCommand { .. }
             | Self::BranchSummary { .. }
             | Self::SelfHealingEdit(_)
             | Self::AgentInvocation(_)
@@ -59,7 +65,9 @@ impl Operation {
             | Self::BranchSummary { .. }
             | Self::SelfHealingEdit(_) => OperationClass::SessionWriteRoot,
             Self::PluginLoad(_) => OperationClass::RuntimeWrite,
-            Self::AgentInvocation(_) | Self::AgentTeam(_) => OperationClass::NonSessionRoot,
+            Self::AgentInvocation(_) | Self::AgentTeam(_) | Self::PluginCommand { .. } => {
+                OperationClass::NonSessionRoot
+            }
             Self::Export(_) => OperationClass::ReadOnly,
         }
     }
@@ -90,6 +98,7 @@ pub(crate) enum OperationOutcome {
     Prompt(PromptTurnOutcome),
     ManualCompaction(PromptTurnOutcome),
     PluginLoad(PluginLoadOutcome),
+    PluginCommand(String),
     BranchSummary(PromptTurnOutcome),
     SelfHealingEdit(SelfHealingEditOutcome),
     AgentInvocation(AgentInvocationOutcome),
@@ -136,6 +145,18 @@ mod tests {
         assert_eq!(operation.kind(), OperationKind::PluginLoad);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::RuntimeWrite);
+    }
+
+    #[test]
+    fn plugin_command_operation_declares_root_non_session_metadata() {
+        let operation = Operation::PluginCommand {
+            command_id: "plugin.echo".into(),
+            args: serde_json::Value::Null,
+        };
+
+        assert_eq!(operation.kind(), OperationKind::PluginCommand);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::NonSessionRoot);
     }
 
     #[test]
