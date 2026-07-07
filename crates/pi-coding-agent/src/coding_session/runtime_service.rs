@@ -125,7 +125,11 @@ impl RuntimeService {
 
         let agent = Agent::new(config);
         for tool in tools.into_iter().chain(policy_tools) {
-            agent.add_tool(tool);
+            agent
+                .try_add_tool(tool)
+                .map_err(|error| CodingSessionError::Tool {
+                    message: error.to_string(),
+                })?;
         }
         Ok(AgentRuntimeBuild { agent, diagnostics })
     }
@@ -497,6 +501,31 @@ mod tests {
         }
     }
 
+    struct InvalidRuntimeToolProvider;
+
+    impl crate::plugins::ToolProvider for InvalidRuntimeToolProvider {
+        fn metadata(&self) -> crate::plugins::PluginMetadata {
+            crate::plugins::PluginMetadata::new(
+                crate::plugins::PluginId::new("invalid-runtime-plugin"),
+                "invalid-runtime-plugin",
+                "0.1.0",
+                crate::plugins::PluginSource::FirstParty,
+            )
+        }
+
+        fn tools(
+            &self,
+            _host: &crate::plugins::ToolRegistrationHost,
+        ) -> Result<Vec<AgentTool>, crate::plugins::PluginError> {
+            Ok(vec![AgentTool::new_text(
+                " ",
+                "invalid empty-name plugin tool",
+                serde_json::json!({"type": "object"}),
+                |_| async { Ok("plugin output".to_string()) },
+            )])
+        }
+    }
+
     #[test]
     fn build_agent_runtime_with_plugins_merges_plugin_tools_into_provider_context() {
         let service = RuntimeService::new();
@@ -517,6 +546,23 @@ mod tests {
             .map(|tool| tool.name)
             .collect();
         assert_eq!(tool_names, vec!["plugin_echo"]);
+    }
+
+    #[test]
+    fn build_agent_runtime_rejects_invalid_plugin_tools() {
+        let service = RuntimeService::new();
+        let runtime = runtime_snapshot("runtime-invalid-plugin-tools");
+        let mut registry = crate::plugins::PluginRegistry::new();
+        registry.register_tool_provider(Arc::new(InvalidRuntimeToolProvider));
+        let plugin_service = super::super::plugin_service::PluginService::with_registry(registry);
+
+        let error = match service.build_agent_runtime_with_plugins(&runtime, &plugin_service) {
+            Ok(_) => panic!("invalid plugin tool should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, CodingSessionError::Tool { .. }));
+        assert!(error.to_string().contains("tool name"));
     }
 
     #[test]
