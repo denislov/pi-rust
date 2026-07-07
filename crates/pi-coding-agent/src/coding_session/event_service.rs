@@ -945,7 +945,7 @@ mod tests {
         let second = service.clone().emit(CodingAgentEvent::CapabilityChanged);
 
         assert_eq!(first.sequence, ProductEventSequence(1));
-        assert_eq!(first.family, ProductEventFamily::Workflow);
+        assert_eq!(first.family(), ProductEventFamily::Workflow);
         assert_eq!(first.operation_id.as_deref(), Some("op_1"));
         assert_eq!(
             first.terminal_status,
@@ -962,7 +962,7 @@ mod tests {
         ));
 
         assert_eq!(second.sequence, ProductEventSequence(2));
-        assert_eq!(second.family, ProductEventFamily::Capability);
+        assert_eq!(second.family(), ProductEventFamily::Capability);
         assert_eq!(second.operation_id, None);
         assert_eq!(second.terminal_status, None);
         assert_eq!(second.durability, ProductEventDurability::LiveOnly);

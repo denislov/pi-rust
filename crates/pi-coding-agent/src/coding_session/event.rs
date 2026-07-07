@@ -30,6 +30,265 @@ pub(crate) enum ProductEventFamily {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProductEventKind {
+    Session(SessionProductEventKind),
+    Profile(ProfileProductEventKind),
+    Agent(AgentProductEventKind),
+    Team(TeamProductEventKind),
+    Message(MessageProductEventKind),
+    Tool(ToolProductEventKind),
+    Runtime(RuntimeProductEventKind),
+    Delegation(DelegationProductEventKind),
+    Workflow(WorkflowProductEventKind),
+    Diagnostic(DiagnosticProductEventKind),
+    Capability(CapabilityProductEventKind),
+}
+
+#[allow(dead_code)]
+impl ProductEventKind {
+    pub(crate) fn from_compat_event(event: &CodingAgentEvent) -> Self {
+        match event {
+            CodingAgentEvent::SessionOpened { .. } => {
+                Self::Session(SessionProductEventKind::Opened)
+            }
+            CodingAgentEvent::SessionWritePending { .. } => {
+                Self::Session(SessionProductEventKind::WritePending)
+            }
+            CodingAgentEvent::SessionWriteCommitted { .. } => {
+                Self::Session(SessionProductEventKind::WriteCommitted)
+            }
+            CodingAgentEvent::SessionWriteSkipped { .. } => {
+                Self::Session(SessionProductEventKind::WriteSkipped)
+            }
+            CodingAgentEvent::SessionCompactionCompleted { .. } => {
+                Self::Session(SessionProductEventKind::CompactionCompleted)
+            }
+            CodingAgentEvent::DefaultAgentProfileChanged { .. } => {
+                Self::Profile(ProfileProductEventKind::DefaultChanged)
+            }
+            CodingAgentEvent::AgentInvocationStarted { .. } => {
+                Self::Agent(AgentProductEventKind::InvocationStarted)
+            }
+            CodingAgentEvent::AgentInvocationCompleted { .. } => {
+                Self::Agent(AgentProductEventKind::InvocationCompleted)
+            }
+            CodingAgentEvent::AgentInvocationFailed { .. } => {
+                Self::Agent(AgentProductEventKind::InvocationFailed)
+            }
+            CodingAgentEvent::AgentInvocationAborted { .. } => {
+                Self::Agent(AgentProductEventKind::InvocationAborted)
+            }
+            CodingAgentEvent::AgentTurnStarted { .. } => {
+                Self::Agent(AgentProductEventKind::TurnStarted)
+            }
+            CodingAgentEvent::ProviderRequestStarted { .. } => {
+                Self::Agent(AgentProductEventKind::ProviderRequestStarted)
+            }
+            CodingAgentEvent::AgentTeamStarted { .. } => Self::Team(TeamProductEventKind::Started),
+            CodingAgentEvent::AgentTeamMemberStarted { .. } => {
+                Self::Team(TeamProductEventKind::MemberStarted)
+            }
+            CodingAgentEvent::AgentTeamMemberCompleted { .. } => {
+                Self::Team(TeamProductEventKind::MemberCompleted)
+            }
+            CodingAgentEvent::AgentTeamCompleted { .. } => {
+                Self::Team(TeamProductEventKind::Completed)
+            }
+            CodingAgentEvent::AgentTeamFailed { .. } => Self::Team(TeamProductEventKind::Failed),
+            CodingAgentEvent::AgentTeamAborted { .. } => Self::Team(TeamProductEventKind::Aborted),
+            CodingAgentEvent::AssistantMessageStarted { .. } => {
+                Self::Message(MessageProductEventKind::Started)
+            }
+            CodingAgentEvent::AssistantMessageDelta { .. } => {
+                Self::Message(MessageProductEventKind::Delta)
+            }
+            CodingAgentEvent::AssistantThinkingDelta { .. } => {
+                Self::Message(MessageProductEventKind::ThinkingDelta)
+            }
+            CodingAgentEvent::AssistantMessageCompleted { .. } => {
+                Self::Message(MessageProductEventKind::Completed)
+            }
+            CodingAgentEvent::ToolCallStarted { .. } => Self::Tool(ToolProductEventKind::Started),
+            CodingAgentEvent::ToolCallUpdated { .. } => Self::Tool(ToolProductEventKind::Updated),
+            CodingAgentEvent::ToolCallCompleted { .. } => {
+                Self::Tool(ToolProductEventKind::Completed)
+            }
+            CodingAgentEvent::ToolCallFailed { .. } => Self::Tool(ToolProductEventKind::Failed),
+            CodingAgentEvent::RuntimeCompactionCompleted { .. } => {
+                Self::Runtime(RuntimeProductEventKind::CompactionCompleted)
+            }
+            CodingAgentEvent::DelegationRequested { .. } => {
+                Self::Delegation(DelegationProductEventKind::Requested)
+            }
+            CodingAgentEvent::DelegationRejected { .. } => {
+                Self::Delegation(DelegationProductEventKind::Rejected)
+            }
+            CodingAgentEvent::DelegationApproved { .. } => {
+                Self::Delegation(DelegationProductEventKind::Approved)
+            }
+            CodingAgentEvent::DelegationConfirmationRequired { .. } => {
+                Self::Delegation(DelegationProductEventKind::ConfirmationRequired)
+            }
+            CodingAgentEvent::DelegationStarted { .. } => {
+                Self::Delegation(DelegationProductEventKind::Started)
+            }
+            CodingAgentEvent::DelegationCompleted { .. } => {
+                Self::Delegation(DelegationProductEventKind::Completed)
+            }
+            CodingAgentEvent::DelegationFailed { .. } => {
+                Self::Delegation(DelegationProductEventKind::Failed)
+            }
+            CodingAgentEvent::SelfHealingEditStarted { .. } => {
+                Self::Workflow(WorkflowProductEventKind::SelfHealingEditStarted)
+            }
+            CodingAgentEvent::SelfHealingEditRepairAttempted { .. } => {
+                Self::Workflow(WorkflowProductEventKind::SelfHealingEditRepairAttempted)
+            }
+            CodingAgentEvent::SelfHealingEditCompleted { .. } => {
+                Self::Workflow(WorkflowProductEventKind::SelfHealingEditCompleted)
+            }
+            CodingAgentEvent::SelfHealingEditFailed { .. } => {
+                Self::Workflow(WorkflowProductEventKind::SelfHealingEditFailed)
+            }
+            CodingAgentEvent::PromptStarted { .. } => {
+                Self::Workflow(WorkflowProductEventKind::PromptStarted)
+            }
+            CodingAgentEvent::PromptCompleted { .. } => {
+                Self::Workflow(WorkflowProductEventKind::PromptCompleted)
+            }
+            CodingAgentEvent::PromptFailed { .. } => {
+                Self::Workflow(WorkflowProductEventKind::PromptFailed)
+            }
+            CodingAgentEvent::PromptAborted { .. } => {
+                Self::Workflow(WorkflowProductEventKind::PromptAborted)
+            }
+            CodingAgentEvent::Diagnostic { .. } => {
+                Self::Diagnostic(DiagnosticProductEventKind::Diagnostic)
+            }
+            CodingAgentEvent::CapabilityChanged => {
+                Self::Capability(CapabilityProductEventKind::Changed)
+            }
+        }
+    }
+
+    pub(crate) fn family(self) -> ProductEventFamily {
+        match self {
+            Self::Session(_) => ProductEventFamily::Session,
+            Self::Profile(_) => ProductEventFamily::Profile,
+            Self::Agent(_) => ProductEventFamily::Agent,
+            Self::Team(_) => ProductEventFamily::Team,
+            Self::Message(_) => ProductEventFamily::Message,
+            Self::Tool(_) => ProductEventFamily::Tool,
+            Self::Runtime(_) => ProductEventFamily::Runtime,
+            Self::Delegation(_) => ProductEventFamily::Delegation,
+            Self::Workflow(_) => ProductEventFamily::Workflow,
+            Self::Diagnostic(_) => ProductEventFamily::Diagnostic,
+            Self::Capability(_) => ProductEventFamily::Capability,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionProductEventKind {
+    Opened,
+    WritePending,
+    WriteCommitted,
+    WriteSkipped,
+    CompactionCompleted,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProfileProductEventKind {
+    DefaultChanged,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentProductEventKind {
+    InvocationStarted,
+    InvocationCompleted,
+    InvocationFailed,
+    InvocationAborted,
+    TurnStarted,
+    ProviderRequestStarted,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TeamProductEventKind {
+    Started,
+    MemberStarted,
+    MemberCompleted,
+    Completed,
+    Failed,
+    Aborted,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MessageProductEventKind {
+    Started,
+    Delta,
+    ThinkingDelta,
+    Completed,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolProductEventKind {
+    Started,
+    Updated,
+    Completed,
+    Failed,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeProductEventKind {
+    CompactionCompleted,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DelegationProductEventKind {
+    Requested,
+    Rejected,
+    Approved,
+    ConfirmationRequired,
+    Started,
+    Completed,
+    Failed,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkflowProductEventKind {
+    SelfHealingEditStarted,
+    SelfHealingEditRepairAttempted,
+    SelfHealingEditCompleted,
+    SelfHealingEditFailed,
+    PromptStarted,
+    PromptCompleted,
+    PromptFailed,
+    PromptAborted,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiagnosticProductEventKind {
+    Diagnostic,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CapabilityProductEventKind {
+    Changed,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProductEventTerminalStatus {
     Completed,
     Failed,
@@ -40,7 +299,7 @@ pub(crate) enum ProductEventTerminalStatus {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ProductEvent {
     pub(crate) sequence: ProductEventSequence,
-    pub(crate) family: ProductEventFamily,
+    pub(crate) kind: ProductEventKind,
     pub(crate) operation_id: Option<String>,
     pub(crate) terminal_status: Option<ProductEventTerminalStatus>,
     pub(crate) durability: ProductEventDurability,
@@ -53,18 +312,23 @@ impl ProductEvent {
         compatibility_event: CodingAgentEvent,
     ) -> Self {
         let classification = compatibility_event.classification();
-        let family = classification.family;
+        let kind = ProductEventKind::from_compat_event(&compatibility_event);
         let operation_id = classification.operation_id.map(str::to_owned);
         let terminal_status = classification.terminal_status;
         let durability = ProductEventDurability::from_compat_event(&compatibility_event);
         Self {
             sequence,
-            family,
+            kind,
             operation_id,
             terminal_status,
             durability,
             compatibility_event,
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn family(&self) -> ProductEventFamily {
+        self.kind.family()
     }
 
     pub(crate) fn compatibility_event(&self) -> &CodingAgentEvent {
@@ -422,52 +686,7 @@ impl CodingAgentEvent {
     }
 
     fn family(&self) -> ProductEventFamily {
-        match self {
-            Self::SessionOpened { .. }
-            | Self::SessionWritePending { .. }
-            | Self::SessionWriteCommitted { .. }
-            | Self::SessionWriteSkipped { .. }
-            | Self::SessionCompactionCompleted { .. } => ProductEventFamily::Session,
-            Self::DefaultAgentProfileChanged { .. } => ProductEventFamily::Profile,
-            Self::AgentInvocationStarted { .. }
-            | Self::AgentInvocationCompleted { .. }
-            | Self::AgentInvocationFailed { .. }
-            | Self::AgentInvocationAborted { .. }
-            | Self::AgentTurnStarted { .. }
-            | Self::ProviderRequestStarted { .. } => ProductEventFamily::Agent,
-            Self::AgentTeamStarted { .. }
-            | Self::AgentTeamMemberStarted { .. }
-            | Self::AgentTeamMemberCompleted { .. }
-            | Self::AgentTeamCompleted { .. }
-            | Self::AgentTeamFailed { .. }
-            | Self::AgentTeamAborted { .. } => ProductEventFamily::Team,
-            Self::AssistantMessageStarted { .. }
-            | Self::AssistantMessageDelta { .. }
-            | Self::AssistantThinkingDelta { .. }
-            | Self::AssistantMessageCompleted { .. } => ProductEventFamily::Message,
-            Self::ToolCallStarted { .. }
-            | Self::ToolCallUpdated { .. }
-            | Self::ToolCallCompleted { .. }
-            | Self::ToolCallFailed { .. } => ProductEventFamily::Tool,
-            Self::RuntimeCompactionCompleted { .. } => ProductEventFamily::Runtime,
-            Self::DelegationRequested { .. }
-            | Self::DelegationRejected { .. }
-            | Self::DelegationApproved { .. }
-            | Self::DelegationConfirmationRequired { .. }
-            | Self::DelegationStarted { .. }
-            | Self::DelegationCompleted { .. }
-            | Self::DelegationFailed { .. } => ProductEventFamily::Delegation,
-            Self::SelfHealingEditStarted { .. }
-            | Self::SelfHealingEditRepairAttempted { .. }
-            | Self::SelfHealingEditCompleted { .. }
-            | Self::SelfHealingEditFailed { .. }
-            | Self::PromptStarted { .. }
-            | Self::PromptCompleted { .. }
-            | Self::PromptFailed { .. }
-            | Self::PromptAborted { .. } => ProductEventFamily::Workflow,
-            Self::Diagnostic { .. } => ProductEventFamily::Diagnostic,
-            Self::CapabilityChanged => ProductEventFamily::Capability,
-        }
+        ProductEventKind::from_compat_event(self).family()
     }
 
     fn operation_id(&self) -> Option<&str> {
@@ -759,7 +978,7 @@ mod tests {
             ProductEvent::from_compat_event(ProductEventSequence(42), event.clone());
 
         assert_eq!(product_event.sequence, ProductEventSequence(42));
-        assert_eq!(product_event.family, ProductEventFamily::Workflow);
+        assert_eq!(product_event.family(), ProductEventFamily::Workflow);
         assert_eq!(product_event.operation_id.as_deref(), Some("op_prompt"));
         assert_eq!(
             product_event.terminal_status,
@@ -811,5 +1030,50 @@ mod tests {
             },
         );
         assert_eq!(skipped.durability, ProductEventDurability::LiveOnly);
+    }
+
+    #[test]
+    fn product_event_wrapper_exposes_family_specific_kind() {
+        let prompt = ProductEvent::from_compat_event(
+            ProductEventSequence(10),
+            CodingAgentEvent::PromptCompleted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_1".into(),
+            },
+        );
+        assert_eq!(
+            prompt.kind,
+            ProductEventKind::Workflow(WorkflowProductEventKind::PromptCompleted)
+        );
+        assert_eq!(prompt.family(), ProductEventFamily::Workflow);
+
+        let tool = ProductEvent::from_compat_event(
+            ProductEventSequence(11),
+            CodingAgentEvent::ToolCallCompleted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                name: "read".into(),
+                summary: "ok".into(),
+            },
+        );
+        assert_eq!(
+            tool.kind,
+            ProductEventKind::Tool(ToolProductEventKind::Completed)
+        );
+        assert_eq!(tool.family(), ProductEventFamily::Tool);
+
+        let session = ProductEvent::from_compat_event(
+            ProductEventSequence(12),
+            CodingAgentEvent::SessionWriteCommitted {
+                operation_id: "op_prompt".into(),
+                session_id: "session_1".into(),
+            },
+        );
+        assert_eq!(
+            session.kind,
+            ProductEventKind::Session(SessionProductEventKind::WriteCommitted)
+        );
+        assert_eq!(session.family(), ProductEventFamily::Session);
     }
 }

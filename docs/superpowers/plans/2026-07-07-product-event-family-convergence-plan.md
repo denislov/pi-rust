@@ -404,3 +404,54 @@ git status --short
 ```
 
 GREEN result: event_service, operation, crate check, formatting, and diff hygiene checks passed.
+
+
+### Task 6: Add Family-Specific ProductEventKind
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/event.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/event_service.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing ProductEventKind wrapper test**
+
+Added `product_event_wrapper_exposes_family_specific_kind` to require `ProductEvent::from_compat_event()` to expose a family-specific kind for representative workflow, tool, and session events, and to derive `ProductEventFamily` from that internal kind.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_exposes_family_specific_kind --lib
+```
+
+RED result: compile failed because `ProductEvent` had no `kind` field, `ProductEventKind` and the family-specific kind enums did not exist, and `ProductEvent::family()` did not exist.
+
+- [x] **Step 2: Add minimal family-specific kind model**
+
+Added crate-internal `ProductEventKind` plus family-specific enums for session, profile, agent, team, message, tool, runtime, delegation, workflow, diagnostic, and capability events. `ProductEvent::from_compat_event()` now stores `ProductEventKind::from_compat_event(&CodingAgentEvent)`, and `ProductEvent::family()` derives the family from the kind instead of carrying a separate flat family field. Current adapters still receive the unchanged compatibility `CodingAgentEvent` stream through `EventService`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_exposes_family_specific_kind --lib
+cargo test -p pi-coding-agent product_event_wrapper_owns_compatibility_event_and_metadata --lib
+cargo test -p pi-coding-agent product_event_wrapper_marks_session_write_durability --lib
+cargo test -p pi-coding-agent event_service_wraps_emitted_events_with_sequence_and_preserves_compatibility_receiver --lib
+```
+
+GREEN result: the new kind mapping, existing wrapper metadata, durability mapping, and EventService compatibility boundary tests passed.
+
+- [x] **Step 3: Run focused compatibility and hygiene checks**
+
+```bash
+cargo test -p pi-coding-agent event_service --lib
+cargo test -p pi-coding-agent operation --lib
+cargo check -p pi-coding-agent
+cargo fmt --check
+cargo test -p pi-coding-agent protocol_events
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+git diff --check
+git status --short
+```
+
+GREEN result: event_service, operation, crate check, formatting, adapter compatibility, public API smoke, and diff hygiene checks passed before committing this slice.
