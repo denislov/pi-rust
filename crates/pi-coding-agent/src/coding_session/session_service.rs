@@ -31,7 +31,7 @@ pub(crate) struct SessionService {
     handle: SessionHandle,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FinalizedSessionWrite {
     pub(crate) events: Vec<CodingAgentEvent>,
     pub(crate) session_id: Option<String>,

@@ -2,8 +2,9 @@ use super::{
     CodingSessionError, ProfileId, ProfileKind, SelfHealingEditCheckOutput,
     SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
+use pi_ai::types::Usage;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CodingAgentEvent {
     SessionOpened {
         session_id: String,
@@ -212,6 +213,7 @@ pub enum CodingAgentEvent {
         turn_id: String,
         message_id: Option<String>,
         final_text: String,
+        usage: Usage,
     },
     ToolCallStarted {
         operation_id: String,

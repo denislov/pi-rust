@@ -1,4 +1,5 @@
 use crate::coding_session::{CodingAgentEvent, ProfileKind};
+use pi_ai::types::Usage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
@@ -65,6 +66,21 @@ pub struct CodingEventBridge {
     total_cost: f64,
 }
 
+/// Estimate current context size from a usage snapshot.
+/// Mirrors `pi-agent-core::compaction::estimate::calculate_context_tokens`
+/// and the TS `getContextUsage` use of the latest assistant usage.
+fn calculate_context_tokens(usage: &Usage) -> u32 {
+    if usage.total_tokens > 0 {
+        usage.total_tokens
+    } else {
+        usage
+            .input
+            .saturating_add(usage.output)
+            .saturating_add(usage.cache_read)
+            .saturating_add(usage.cache_write)
+    }
+}
+
 impl CodingEventBridge {
     pub fn new() -> Self {
         Self::default()
@@ -79,7 +95,28 @@ impl CodingEventBridge {
             CodingAgentEvent::AssistantThinkingDelta { text, .. } => {
                 vec![UiEvent::ThinkingDelta { text: text.clone() }]
             }
-            CodingAgentEvent::AssistantMessageCompleted { .. } => vec![UiEvent::AssistantDone],
+            CodingAgentEvent::AssistantMessageCompleted { usage, .. } => {
+                self.total_input = self.total_input.saturating_add(usage.input);
+                self.total_output = self.total_output.saturating_add(usage.output);
+                self.total_cache_read = self.total_cache_read.saturating_add(usage.cache_read);
+                self.total_cache_write = self.total_cache_write.saturating_add(usage.cache_write);
+                self.total_cost += usage.cost.input
+                    + usage.cost.output
+                    + usage.cost.cache_read
+                    + usage.cost.cache_write;
+                let context_tokens = calculate_context_tokens(usage);
+                vec![
+                    UiEvent::AssistantDone,
+                    UiEvent::UsageUpdate {
+                        input: self.total_input,
+                        output: self.total_output,
+                        cache_read: self.total_cache_read,
+                        cache_write: self.total_cache_write,
+                        cost: self.total_cost,
+                        context_tokens: Some(context_tokens),
+                    },
+                ]
+            }
             CodingAgentEvent::ToolCallStarted {
                 tool_call_id,
                 name,

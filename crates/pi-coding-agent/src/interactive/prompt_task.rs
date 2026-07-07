@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crate::CliError;
 use crate::coding_session::{
-    AgentInvocationOptions, AgentInvocationOutcome, AgentTeamOptions, AgentTeamOutcome,
-    CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    PluginLoadOutcome, ProfileId, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome,
+    AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentEvent,
+    CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PluginLoadOutcome,
+    ProfileId, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome,
     SelfHealingEditRequest,
 };
 use crate::interactive::root::{
@@ -32,14 +32,12 @@ pub(super) enum PromptTaskResult {
 pub(super) struct CodingPromptTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: PromptTurnOutcome,
-    pub(super) update_usage: bool,
     pub(super) completion_notice: Option<String>,
     pub(super) hydrate_transcript: bool,
 }
 
 pub(super) struct AgentInvocationTaskResult {
     pub(super) session: CodingAgentSession,
-    pub(super) outcome: AgentInvocationOutcome,
 }
 
 pub(super) struct AgentTeamTaskResult {
@@ -665,7 +663,6 @@ async fn run_coding_prompt_task(
     Ok(CodingPromptTaskResult {
         session,
         outcome,
-        update_usage: true,
         completion_notice: None,
         hydrate_transcript: false,
     })
@@ -699,7 +696,7 @@ async fn run_coding_agent_invocation_task(
         PromptTurnOptions::from_prompt_run_options(options),
     );
 
-    let outcome = {
+    {
         let mut invocation = Box::pin(session.invoke_agent(invocation_options));
         let mut abort_requested = false;
         let mut controls_open = true;
@@ -739,7 +736,7 @@ async fn run_coding_agent_invocation_task(
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
     }
 
-    Ok(AgentInvocationTaskResult { session, outcome })
+    Ok(AgentInvocationTaskResult { session })
 }
 
 async fn run_coding_agent_team_task(
@@ -884,7 +881,6 @@ async fn run_coding_compact_task(
     Ok(CodingPromptTaskResult {
         session,
         outcome,
-        update_usage: false,
         completion_notice: None,
         hydrate_transcript: false,
     })
@@ -1196,7 +1192,6 @@ async fn run_coding_branch_summary_task(
     Ok(CodingPromptTaskResult {
         session,
         outcome,
-        update_usage: false,
         completion_notice: None,
         hydrate_transcript: false,
     })
@@ -1258,7 +1253,6 @@ async fn run_coding_branch_summary_navigation_task(
     Ok(CodingPromptTaskResult {
         session: forked_session,
         outcome,
-        update_usage: false,
         completion_notice: Some("Navigated to selected point".to_string()),
         hydrate_transcript: true,
     })

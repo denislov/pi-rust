@@ -683,6 +683,7 @@ pub(crate) fn map_agent_event(
                 turn_id: context.turn_id.clone(),
                 message_id: context.assistant_message_id.clone(),
                 final_text: assistant_text(&message.content),
+                usage: message.usage.clone(),
             }]
         }
         AgentEvent::AgentError { error } => vec![CodingAgentEvent::PromptFailed {
@@ -879,7 +880,7 @@ mod tests {
     use pi_agent_core::{AgentEvent, AgentToolOutput, AgentToolResult, ProviderRequestSnapshot};
     use pi_ai::types::{
         AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost,
-        ModelInput, StopReason, StreamOptions,
+        ModelInput, StopReason, StreamOptions, Usage,
     };
     use serde_json::json;
 
@@ -1028,6 +1029,7 @@ mod tests {
                 turn_id: "turn_1".into(),
                 message_id: Some("msg_1".into()),
                 final_text: "done".into(),
+                usage: Usage::default(),
             }]
         );
     }

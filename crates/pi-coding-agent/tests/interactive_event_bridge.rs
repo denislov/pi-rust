@@ -1,3 +1,4 @@
+use pi_ai::types::{Cost, Usage};
 use pi_coding_agent::api::{
     CodingAgentEvent, CodingSessionError, ProfileKind, SelfHealingEditCheckOutput,
     SelfHealingEditDiagnostic, SelfHealingEditReplacement,
@@ -75,8 +76,70 @@ fn coding_event_bridge_maps_assistant_events() {
         turn_id: "turn_1".to_string(),
         message_id: Some("msg_1".to_string()),
         final_text: "hello".to_string(),
+        usage: Usage {
+            input: 100,
+            output: 50,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 150,
+            cost: Cost {
+                input: 0.125,
+                output: 0.125,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+        },
     });
-    assert_eq!(done, vec![UiEvent::AssistantDone]);
+    assert_eq!(
+        done,
+        vec![
+            UiEvent::AssistantDone,
+            UiEvent::UsageUpdate {
+                input: 100,
+                output: 50,
+                cache_read: 0,
+                cache_write: 0,
+                cost: 0.25,
+                context_tokens: Some(150),
+            },
+        ]
+    );
+
+    // A second assistant message accumulates usage; context_tokens reflects
+    // the latest message (mirrors TS getContextUsage using the most recent usage).
+    let done2 = bridge.handle(&CodingAgentEvent::AssistantMessageCompleted {
+        operation_id: "op_1".to_string(),
+        turn_id: "turn_1".to_string(),
+        message_id: Some("msg_2".to_string()),
+        final_text: "world".to_string(),
+        usage: Usage {
+            input: 30,
+            output: 20,
+            cache_read: 5,
+            cache_write: 0,
+            total_tokens: 55,
+            cost: Cost {
+                input: 0.0625,
+                output: 0.0625,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+        },
+    });
+    assert_eq!(
+        done2,
+        vec![
+            UiEvent::AssistantDone,
+            UiEvent::UsageUpdate {
+                input: 130,
+                output: 70,
+                cache_read: 5,
+                cache_write: 0,
+                cost: 0.375,
+                context_tokens: Some(55),
+            },
+        ]
+    );
 }
 
 #[test]

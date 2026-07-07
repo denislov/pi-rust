@@ -897,6 +897,62 @@ mod tests {
     }
 
     #[test]
+    fn footer_reflects_realtime_usage_update() {
+        // The bridge emits UiEvent::UsageUpdate on each AssistantMessageCompleted;
+        // apply_events must update footer stats immediately, without waiting for
+        // the prompt turn to finish (mirrors TS message_end + pull re-render).
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+
+        let footer0 = root.footer(80).join("\n");
+        assert!(
+            !footer0.contains("↑100"),
+            "footer should not yet show input tokens: {footer0}"
+        );
+
+        root.apply_events(vec![UiEvent::UsageUpdate {
+            input: 100,
+            output: 50,
+            cache_read: 0,
+            cache_write: 0,
+            cost: 0.25,
+            context_tokens: Some(150),
+        }]);
+        let footer1 = root.footer(80).join("\n");
+        assert!(
+            footer1.contains("↑100"),
+            "footer should show input tokens after UsageUpdate: {footer1}"
+        );
+        assert!(
+            footer1.contains("↓50"),
+            "footer should show output tokens after UsageUpdate: {footer1}"
+        );
+
+        // A second UsageUpdate carries the bridge's accumulated totals plus the
+        // latest context estimate; footer must reflect the new values.
+        root.apply_events(vec![UiEvent::UsageUpdate {
+            input: 130,
+            output: 70,
+            cache_read: 5,
+            cache_write: 0,
+            cost: 0.375,
+            context_tokens: Some(55),
+        }]);
+        let footer2 = root.footer(80).join("\n");
+        assert!(
+            footer2.contains("↑130"),
+            "footer should show accumulated input tokens: {footer2}"
+        );
+        assert!(
+            footer2.contains("↓70"),
+            "footer should show accumulated output tokens: {footer2}"
+        );
+    }
+
+    #[test]
     fn running_status_text_uses_loader_sequence() {
         assert_eq!(running_status_text(0), "⠋ running");
         assert_eq!(running_status_text(1), "⠙ running");

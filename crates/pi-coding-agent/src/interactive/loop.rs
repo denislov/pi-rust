@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use pi_agent_core::AgentResources;
 use pi_agent_core::transcript::create_session_id;
-use pi_ai::types::Usage;
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };
@@ -1952,18 +1951,13 @@ fn finish_prompt<T: Terminal>(
                         completion_notice,
                     );
                 } else {
-                    finish_coding_prompt(
-                        root,
-                        &result.session,
-                        result.outcome,
-                        result.update_usage,
-                    );
+                    finish_coding_prompt(root, &result.session, result.outcome);
                     if let Some(notice) = completion_notice {
                         root.transcript.push(TranscriptItem::system(notice));
                     }
                 }
             } else {
-                finish_coding_prompt(root, &result.session, result.outcome, result.update_usage);
+                finish_coding_prompt(root, &result.session, result.outcome);
                 if let Some(notice) = completion_notice {
                     root.transcript.push(TranscriptItem::system(notice));
                 }
@@ -1974,7 +1968,6 @@ fn finish_prompt<T: Terminal>(
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );
-            apply_success_usage(root, &result.outcome.final_message.usage);
             if let Ok(Some(hydration)) = result.session.hydrate_current() {
                 let hydrated = hydrated_session_from_rust_native(hydration);
                 let mut choice = hydrated.choice;
@@ -2089,7 +2082,6 @@ fn finish_coding_prompt(
     root: &mut InteractiveRoot,
     session: &CodingAgentSession,
     outcome: PromptTurnOutcome,
-    update_usage: bool,
 ) {
     root.set_default_agent_profile_id(session.view().default_agent_profile_id.clone());
     root.clear_active_session();
@@ -2097,12 +2089,8 @@ fn finish_coding_prompt(
         PromptTurnOutcome::Success {
             session_id,
             leaf_id,
-            final_message,
             ..
         } => {
-            if update_usage {
-                apply_success_usage(root, &final_message.usage);
-            }
             if let Some(session_id) = session_id {
                 root.session_label = session_id;
                 root.active_leaf_id = leaf_id;
@@ -2122,28 +2110,6 @@ fn finish_coding_prompt(
             choice.active_leaf_id = root.active_leaf_id.clone();
         }
         root.set_active_session_choice(choice);
-    }
-}
-
-fn apply_success_usage(root: &mut InteractiveRoot, usage: &Usage) {
-    root.stats.input = root.stats.input.saturating_add(usage.input);
-    root.stats.output = root.stats.output.saturating_add(usage.output);
-    root.stats.cache_read = root.stats.cache_read.saturating_add(usage.cache_read);
-    root.stats.cache_write = root.stats.cache_write.saturating_add(usage.cache_write);
-    root.stats.cost +=
-        usage.cost.input + usage.cost.output + usage.cost.cache_read + usage.cost.cache_write;
-    root.stats.context_tokens = Some(calculate_context_tokens(usage));
-}
-
-fn calculate_context_tokens(usage: &Usage) -> u32 {
-    if usage.total_tokens > 0 {
-        usage.total_tokens
-    } else {
-        usage
-            .input
-            .saturating_add(usage.output)
-            .saturating_add(usage.cache_read)
-            .saturating_add(usage.cache_write)
     }
 }
 

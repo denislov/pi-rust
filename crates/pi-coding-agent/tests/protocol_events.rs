@@ -1,5 +1,5 @@
 use pi_agent_core::transcript::StoredAgentMessage;
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason};
+use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason, Usage};
 use pi_coding_agent::api::{
     CodingAgentEvent, CodingSessionError, ProfileKind, SelfHealingEditCheckOutput,
     SelfHealingEditDiagnostic, SelfHealingEditReplacement,
@@ -73,6 +73,7 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
             turn_id: "turn_1".into(),
             message_id: Some("msg_1".into()),
             final_text: "hello".into(),
+            usage: Usage::default(),
         },
         CodingAgentEvent::PromptCompleted {
             operation_id: "op_1".into(),
@@ -152,6 +153,7 @@ fn product_event_protocol_adapter_does_not_emit_flow_node_fields() {
             turn_id: "turn_prompt".into(),
             message_id: Some("msg_prompt".into()),
             final_text: "hello".into(),
+            usage: Usage::default(),
         },
         CodingAgentEvent::PromptCompleted {
             operation_id: "op_prompt".into(),

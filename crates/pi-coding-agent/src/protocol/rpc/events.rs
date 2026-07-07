@@ -23,7 +23,7 @@ mod tests {
     use super::*;
     use crate::coding_session::{CodingAgentEvent, CodingSessionError};
     use pi_agent_core::transcript::StoredAgentMessage;
-    use pi_ai::types::StopReason;
+    use pi_ai::types::{StopReason, Usage};
 
     fn adapter() -> RpcCodingEventAdapter {
         RpcCodingEventAdapter::new_with_provider(
@@ -55,6 +55,7 @@ mod tests {
                 turn_id: "turn_1".into(),
                 message_id: Some("msg_1".into()),
                 final_text: "hello".into(),
+                usage: Usage::default(),
             },
             CodingAgentEvent::PromptCompleted {
                 operation_id: "op_1".into(),
