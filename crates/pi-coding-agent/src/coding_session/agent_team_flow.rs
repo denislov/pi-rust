@@ -4,13 +4,12 @@ use std::pin::Pin;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use pi_ai::types::AssistantMessage;
 
-use super::agent_invocation_flow::{
-    AgentInvocationContext, AgentInvocationFlow, AgentInvocationOptions,
-};
+use super::agent_invocation_flow::{AgentInvocationContext, AgentInvocationOptions};
 use super::delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
 };
 use super::event_service::EventService;
+use super::flow_service::FlowService;
 use super::plugin_service::PluginService;
 use super::profiles::{
     AgentProfile, ProfileId, ProfileKind, ProfileRegistry, TeamProfile, TeamSupervisor,
@@ -19,7 +18,6 @@ use super::prompt::{
     CodingDiagnostic, DelegationRequest, PromptTurnContext, PromptTurnIds, PromptTurnOptions,
     PromptTurnOutcome,
 };
-use super::prompt_flow::PromptTurnFlow;
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::PromptInvocation;
@@ -446,7 +444,10 @@ impl AgentTeamContext {
         child_context.enable_live_events(self.event_service.clone());
 
         let mut finished_outcome = None;
-        let child_delegations = match PromptTurnFlow::new()?.run(&mut child_context).await {
+        let child_delegations = match FlowService::new()
+            .run_prompt_subflow_for_agent_team_member(&mut child_context)
+            .await
+        {
             Ok(_) => Some((
                 child_context
                     .authorize_delegation_requests_with_lineage(
@@ -610,13 +611,11 @@ impl AgentTeamContext {
         let child_operation_id = context.operation_id().to_owned();
         self.event_service
             .emit_delegation_started(request, child_operation_id.clone());
-        let result = AgentInvocationFlow::new()?.run(&mut context).await;
+        let outcome = FlowService::new()
+            .run_agent_invocation_subflow(&mut context)
+            .await;
         self.pending_delegation_confirmations
             .extend(context.take_pending_delegation_confirmations());
-        let outcome = match result {
-            Ok(_) => context.finish_success(),
-            Err(error) => Err(context.take_failure_error().unwrap_or(error)),
-        };
         match outcome {
             Ok(outcome) => {
                 self.event_service.emit_delegation_completed(
@@ -661,13 +660,11 @@ impl AgentTeamContext {
         let child_operation_id = context.operation_id().to_owned();
         self.event_service
             .emit_delegation_started(request, child_operation_id.clone());
-        let result = AgentTeamFlow::new()?.run(&mut context).await;
+        let outcome = FlowService::new()
+            .run_agent_team_subflow(&mut context)
+            .await;
         self.pending_delegation_confirmations
             .extend(context.take_pending_delegation_confirmations());
-        let outcome = match result {
-            Ok(_) => context.finish_success(),
-            Err(error) => Err(context.take_failure_error().unwrap_or(error)),
-        };
         match outcome {
             Ok(outcome) => {
                 self.event_service.emit_delegation_completed(

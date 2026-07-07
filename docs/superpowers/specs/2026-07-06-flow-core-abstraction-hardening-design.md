@@ -282,6 +282,10 @@ Capability-scoped plugins can eventually attach to defined flow extension points
 
 Graph-level tests can lock paths and transitions. Node-level tests can lock individual behavior. Product adapter tests can continue ignoring Flow internals.
 
+## Implementation Closure
+
+As of 2026-07-06, this hardening slice is implemented. `AgentTurnFlow::run_state` uses the graph-backed runtime path, high-repetition product flows share linear edge construction, nested agent invocation/team execution uses explicit `FlowService` subflow runners, and parallel tool execution has a named deterministic aggregation helper. The implementation keeps helpers small and keeps Flow node IDs inside internal tests and services rather than adapter or protocol payloads.
+
 ## Success Criteria
 
 The hardening effort is complete when:

@@ -10,6 +10,19 @@
 
 ---
 
+## Current Execution Status
+
+This status block reconciles the original plan with the current repository state before continuing execution.
+
+- [x] Task 1: graph-shape and runtime-entrypoint gap tests exist.
+- [x] Task 2: `AgentTurnFlow` builds a real `Flow<AgentTurnContext>` graph.
+- [x] Task 3: missing turn graph nodes and focused node behavior tests are in place.
+- [x] Task 4: `Agent::run()` executes through the graph-backed `AgentTurnFlow::run_state` path.
+- [x] Task 5: shared product Flow construction helpers are in place for export, manual compaction, and branch summary flows.
+- [x] Task 6: nested invocation/team subflow execution is routed through explicit `FlowService` subflow runners.
+- [x] Task 7: deterministic parallel tool aggregation is extracted into a named helper while preserving completion-order events and assistant-order transcript results.
+- [x] Task 8: final verification and documentation closeout are complete.
+
 ## File Structure
 
 - Modify: `crates/pi-agent-core/src/agent_turn_flow/runtime.rs`

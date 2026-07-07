@@ -438,9 +438,7 @@ impl ManualCompactionFlow {
             flow.add_node(spec.id, ManualCompactionNode::new(spec.name, spec.kind))
                 .map_err(flow_error)?;
         }
-        for pair in MANUAL_COMPACTION_NODE_IDS.windows(2) {
-            flow.edge(pair[0], pair[1]).map_err(flow_error)?;
-        }
+        super::flow_service::add_linear_edges(&mut flow, MANUAL_COMPACTION_NODE_IDS)?;
         Ok(Self { flow })
     }
 

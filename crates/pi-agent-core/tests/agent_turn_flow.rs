@@ -52,6 +52,20 @@ fn agent_turn_flow_exposes_real_graph_shape() {
     );
 }
 
+#[test]
+fn parallel_tool_execution_uses_named_ordered_aggregation_helper() {
+    let nodes_source = include_str!("../src/agent_turn_flow/nodes.rs");
+
+    assert!(
+        nodes_source.contains("async fn collect_parallel_tool_executions("),
+        "parallel tool execution should use a named helper for ordered result aggregation"
+    );
+    assert!(
+        nodes_source.contains("executions.sort_by_key(|execution| execution.index)"),
+        "parallel tool aggregation should sort final results by assistant tool-call index"
+    );
+}
+
 #[derive(Clone)]
 struct ToolProbe {
     started: UnboundedSender<String>,

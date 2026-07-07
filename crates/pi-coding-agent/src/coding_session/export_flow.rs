@@ -248,9 +248,7 @@ impl ExportFlow {
             flow.add_node(spec.id, ExportNode::new(spec.name, spec.kind))
                 .map_err(flow_error)?;
         }
-        for pair in EXPORT_NODE_IDS.windows(2) {
-            flow.edge(pair[0], pair[1]).map_err(flow_error)?;
-        }
+        super::flow_service::add_linear_edges(&mut flow, EXPORT_NODE_IDS)?;
         Ok(Self { flow })
     }
 

@@ -752,49 +752,8 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
             prepared.push((call, tool, blocked));
         }
 
-        let mut futures: FuturesUnordered<_> = prepared
-            .into_iter()
-            .map(|(call, tool, blocked)| {
-                let after_hook = after_hook.clone();
-                let assistant_message = assistant_message.clone();
-                let messages = messages.clone();
-                async move {
-                    let result = match blocked {
-                        Some(result) => result,
-                        None => {
-                            let result =
-                                execute_tool(tool, call.name.clone(), call.arguments.clone()).await;
-                            apply_after_tool_hook(
-                                after_hook,
-                                assistant_message,
-                                messages,
-                                &call,
-                                result,
-                            )
-                            .await
-                        }
-                    };
-                    ToolCallExecution {
-                        index: call.index,
-                        tool_call_id: call.id,
-                        tool_name: call.name,
-                        result,
-                    }
-                }
-            })
-            .collect();
-
-        let mut executions = Vec::new();
-        while let Some(execution) = futures.next().await {
-            ctx.emit(AgentEvent::ToolCallEnd {
-                tool_call_id: execution.tool_call_id.clone(),
-                tool_name: execution.tool_name.clone(),
-                result: execution.result.clone(),
-            });
-            executions.push(execution);
-        }
-        executions.sort_by_key(|execution| execution.index);
-        executions
+        collect_parallel_tool_executions(ctx, prepared, after_hook, assistant_message, messages)
+            .await
     };
 
     let all_terminate = !executions.is_empty()
@@ -808,6 +767,58 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
     ctx.tool_results_all_terminate = all_terminate;
 
     Action::new("continue").map_err(|err| err.to_string())
+}
+
+async fn collect_parallel_tool_executions(
+    ctx: &mut AgentTurnContext,
+    prepared: Vec<(PendingToolCall, Option<AgentTool>, Option<AgentToolResult>)>,
+    after_hook: Option<AfterToolCallHook>,
+    assistant_message: Option<AssistantMessage>,
+    messages: Vec<AgentMessage>,
+) -> Vec<ToolCallExecution> {
+    let mut futures: FuturesUnordered<_> = prepared
+        .into_iter()
+        .map(|(call, tool, blocked)| {
+            let after_hook = after_hook.clone();
+            let assistant_message = assistant_message.clone();
+            let messages = messages.clone();
+            async move {
+                let result = match blocked {
+                    Some(result) => result,
+                    None => {
+                        let result =
+                            execute_tool(tool, call.name.clone(), call.arguments.clone()).await;
+                        apply_after_tool_hook(
+                            after_hook,
+                            assistant_message,
+                            messages,
+                            &call,
+                            result,
+                        )
+                        .await
+                    }
+                };
+                ToolCallExecution {
+                    index: call.index,
+                    tool_call_id: call.id,
+                    tool_name: call.name,
+                    result,
+                }
+            }
+        })
+        .collect();
+
+    let mut executions = Vec::new();
+    while let Some(execution) = futures.next().await {
+        ctx.emit(AgentEvent::ToolCallEnd {
+            tool_call_id: execution.tool_call_id.clone(),
+            tool_name: execution.tool_name.clone(),
+            result: execution.result.clone(),
+        });
+        executions.push(execution);
+    }
+    executions.sort_by_key(|execution| execution.index);
+    executions
 }
 
 async fn before_tool_result(

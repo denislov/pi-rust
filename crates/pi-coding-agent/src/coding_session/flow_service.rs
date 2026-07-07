@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use pi_agent_core::flow::FlowOutcome;
+use pi_agent_core::flow::{Flow, FlowOutcome};
 
 use super::CodingSessionError;
 use super::agent_invocation_flow::{
@@ -18,6 +18,19 @@ use super::prompt_flow::PromptTurnFlow;
 use super::self_healing_edit_flow::{
     SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOutcome,
 };
+
+pub(crate) fn add_linear_edges<C>(
+    flow: &mut Flow<C>,
+    node_ids: &[&str],
+) -> Result<(), CodingSessionError> {
+    for pair in node_ids.windows(2) {
+        flow.edge(pair[0], pair[1])
+            .map_err(|error| CodingSessionError::Flow {
+                message: format!("flow graph configuration failed: {error}"),
+            })?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct FlowService;
@@ -127,6 +140,34 @@ impl FlowService {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
+    }
+
+    pub(crate) async fn run_prompt_subflow_for_agent_invocation(
+        &self,
+        ctx: &mut PromptTurnContext,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        self.run_prompt_turn_graph(ctx).await
+    }
+
+    pub(crate) async fn run_prompt_subflow_for_agent_team_member(
+        &self,
+        ctx: &mut PromptTurnContext,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        self.run_prompt_turn_graph(ctx).await
+    }
+
+    pub(crate) async fn run_agent_invocation_subflow(
+        &self,
+        ctx: &mut AgentInvocationContext,
+    ) -> Result<AgentInvocationOutcome, CodingSessionError> {
+        self.run_agent_invocation(ctx).await
+    }
+
+    pub(crate) async fn run_agent_team_subflow(
+        &self,
+        ctx: &mut AgentTeamContext,
+    ) -> Result<AgentTeamOutcome, CodingSessionError> {
+        self.run_agent_team(ctx).await
     }
 
     pub(crate) async fn run_plugin_load_graph(
@@ -260,6 +301,43 @@ mod tests {
             headers: None,
             compat: None,
         }
+    }
+
+    struct NoopFlowNode;
+
+    impl pi_agent_core::flow::FlowNode<()> for NoopFlowNode {
+        fn name(&self) -> &str {
+            "NoopFlowNode"
+        }
+
+        fn run<'a>(
+            &'a self,
+            _ctx: &'a mut (),
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<pi_agent_core::flow::Action, String>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Ok(pi_agent_core::flow::Action::default()) })
+        }
+    }
+
+    #[test]
+    fn add_linear_edges_maps_configuration_errors_to_coding_session_error() {
+        let mut flow = pi_agent_core::flow::Flow::new("start").unwrap();
+        flow.add_node("start", NoopFlowNode).unwrap();
+
+        let error = add_linear_edges(&mut flow, &["start", "missing"]).unwrap_err();
+
+        assert!(matches!(error, CodingSessionError::Flow { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("flow graph configuration failed: unknown flow node: missing"),
+            "{error}"
+        );
     }
 
     #[derive(Debug)]

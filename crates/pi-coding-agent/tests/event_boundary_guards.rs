@@ -3,6 +3,7 @@ const AGENT_TEAM_FLOW: &str = include_str!("../src/coding_session/agent_team_flo
 const BRANCH_SUMMARY_SERVICE: &str =
     include_str!("../src/coding_session/branch_summary_service.rs");
 const CODING_SESSION_OWNER: &str = include_str!("../src/coding_session/mod.rs");
+const FLOW_SERVICE: &str = include_str!("../src/coding_session/flow_service.rs");
 const MANUAL_COMPACTION_SERVICE: &str =
     include_str!("../src/coding_session/manual_compaction_service.rs");
 const PROMPT_CONTEXT: &str = include_str!("../src/coding_session/prompt.rs");
@@ -18,6 +19,36 @@ fn workflow_flows_emit_diagnostics_through_event_service_helpers() {
             !source.contains("self.event_service.emit(CodingAgentEvent::Diagnostic"),
             "{name} constructs diagnostic events directly instead of using EventService::emit_diagnostic"
         );
+    }
+}
+
+#[test]
+fn nested_workflows_use_explicit_subflow_runners() {
+    for method in [
+        "run_prompt_subflow_for_agent_invocation",
+        "run_agent_invocation_subflow",
+        "run_agent_team_subflow",
+    ] {
+        assert!(
+            FLOW_SERVICE.contains(method),
+            "FlowService should expose explicit nested workflow subflow runner `{method}`"
+        );
+    }
+
+    for (name, source) in [
+        ("agent_invocation_flow", AGENT_INVOCATION_FLOW),
+        ("agent_team_flow", AGENT_TEAM_FLOW),
+    ] {
+        for needle in [
+            "PromptTurnFlow::new()?.run",
+            "AgentInvocationFlow::new()?.run",
+            "AgentTeamFlow::new()?.run",
+        ] {
+            assert!(
+                !source.contains(needle),
+                "{name} should route nested workflow execution through FlowService subflow runners instead of `{needle}`"
+            );
+        }
     }
 }
 

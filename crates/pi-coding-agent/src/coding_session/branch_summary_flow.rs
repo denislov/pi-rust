@@ -476,9 +476,7 @@ impl BranchSummaryFlow {
             flow.add_node(spec.id, BranchSummaryNode::new(spec.name, spec.kind))
                 .map_err(flow_error)?;
         }
-        for pair in BRANCH_SUMMARY_NODE_IDS.windows(2) {
-            flow.edge(pair[0], pair[1]).map_err(flow_error)?;
-        }
+        super::flow_service::add_linear_edges(&mut flow, BRANCH_SUMMARY_NODE_IDS)?;
         Ok(Self { flow })
     }
 
