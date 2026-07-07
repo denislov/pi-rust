@@ -81,18 +81,29 @@ pub struct CodingAgentSessionSummary {
     pub active_leaf_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CodingAgentSessionHydration {
     pub(crate) summary: CodingAgentSessionSummary,
     pub(crate) cwd: Option<String>,
     pub(crate) transcript: Vec<CodingAgentSessionTranscriptItem>,
     pub(crate) diagnostics: Vec<CodingAgentSessionDiagnostic>,
+    pub(crate) usage: CodingAgentSessionUsageSummary,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CodingAgentSessionTree {
     pub(crate) tree: Vec<SessionTreeNode>,
     pub(crate) active_leaf_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct CodingAgentSessionUsageSummary {
+    pub(crate) input: u32,
+    pub(crate) output: u32,
+    pub(crate) cache_read: u32,
+    pub(crate) cache_write: u32,
+    pub(crate) cost: f64,
+    pub(crate) last_context_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

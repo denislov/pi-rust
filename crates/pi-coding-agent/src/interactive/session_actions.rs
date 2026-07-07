@@ -153,7 +153,14 @@ pub(super) fn hydrated_session_from_rust_native(
             .map(transcript_item_from_rust_native)
             .collect(),
         leaf_id: hydration.summary.active_leaf_id,
-        cumulative_usage: CumulativeUsage::default(),
+        cumulative_usage: CumulativeUsage {
+            input: hydration.usage.input,
+            output: hydration.usage.output,
+            cache_read: hydration.usage.cache_read,
+            cache_write: hydration.usage.cache_write,
+            cost: hydration.usage.cost,
+            last_context_tokens: hydration.usage.last_context_tokens,
+        },
     }
 }
 

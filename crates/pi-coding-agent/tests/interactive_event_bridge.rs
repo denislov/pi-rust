@@ -143,6 +143,34 @@ fn coding_event_bridge_maps_assistant_events() {
 }
 
 #[test]
+fn coding_event_bridge_marks_zero_usage_context_unknown() {
+    let mut bridge = CodingEventBridge::new();
+
+    let done = bridge.handle(&CodingAgentEvent::AssistantMessageCompleted {
+        operation_id: "op_1".to_string(),
+        turn_id: "turn_1".to_string(),
+        message_id: Some("msg_1".to_string()),
+        final_text: "hello".to_string(),
+        usage: Usage::default(),
+    });
+
+    assert_eq!(
+        done,
+        vec![
+            UiEvent::AssistantDone,
+            UiEvent::UsageUpdate {
+                input: 0,
+                output: 0,
+                cache_read: 0,
+                cache_write: 0,
+                cost: 0.0,
+                context_tokens: None,
+            },
+        ]
+    );
+}
+
+#[test]
 fn coding_event_bridge_maps_tool_events() {
     let mut bridge = CodingEventBridge::new();
 

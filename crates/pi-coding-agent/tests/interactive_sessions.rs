@@ -1453,6 +1453,31 @@ async fn interactive_resume_loads_existing_rust_native_session_messages() {
 }
 
 #[tokio::test]
+async fn interactive_resume_restores_rust_native_footer_usage() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("usage answer")]);
+    run_scripted_interactive_with_session_dir(provider, temp.path(), "usage prompt\r")
+        .await
+        .unwrap();
+
+    let mut args = CliArgs::default();
+    args.resume = true;
+    let provider = FauxProvider::new(Vec::new());
+    let result =
+        run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), "")
+            .await
+            .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("usage prompt"), "{frame}");
+    assert!(frame.contains("usage answer"), "{frame}");
+    assert!(
+        frame.contains("↑10") && frame.contains("↓20"),
+        "resume footer should restore cumulative usage from the persisted Rust-native session: {frame}"
+    );
+}
+
+#[tokio::test]
 async fn interactive_resume_command_ignores_legacy_jsonl_sessions() {
     let temp = tempfile::tempdir().unwrap();
     write_legacy_session(

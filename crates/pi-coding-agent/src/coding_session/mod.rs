@@ -36,7 +36,7 @@ pub use context::{
 };
 pub(crate) use context::{
     CodingAgentSessionDiagnostic, CodingAgentSessionHydration, CodingAgentSessionTranscriptItem,
-    CodingAgentSessionTree,
+    CodingAgentSessionTree, CodingAgentSessionUsageSummary,
 };
 pub use delegation::PendingDelegationConfirmation;
 pub use error::CodingSessionError;

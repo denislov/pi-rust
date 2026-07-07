@@ -371,6 +371,7 @@ impl BranchSummaryContext {
             transcript: self.selected_transcript.clone(),
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            usage: Default::default(),
         };
         let service = RuntimeService::new();
         let agent = service.build_agent_runtime(runtime)?;
@@ -792,6 +793,7 @@ mod tests {
             ],
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            usage: Default::default(),
         }
     }
 
@@ -854,6 +856,7 @@ mod tests {
             ],
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            usage: Default::default(),
         };
         let transaction = service.begin_branch_summary_transaction();
         let mut context = BranchSummaryContext::new(

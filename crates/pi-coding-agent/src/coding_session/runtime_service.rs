@@ -623,6 +623,7 @@ mod tests {
                 message: "ignored".into(),
             }],
             pending_delegation_confirmations: Vec::new(),
+            usage: Default::default(),
         };
 
         service.hydrate_agent_runtime(&agent, &runtime, &replay);

@@ -725,6 +725,7 @@ mod tests {
                     message_id: "msg_1".into(),
                     content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     finish_reason: Some("stop".into()),
+                    usage: Default::default(),
                 },
             )
             .with_operation_id("op_1")

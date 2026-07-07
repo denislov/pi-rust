@@ -117,7 +117,7 @@ Current stable event kinds:
 | `turn.started` | Marks a prompt turn boundary |
 | `turn.input.recorded` | Persists normalized user input content |
 | `message.started` | Opens a message id/role boundary |
-| `message.completed` | Persists final message content and optional finish reason |
+| `message.completed` | Persists final message content, optional finish reason, and provider usage when available |
 | `message.cancelled` | Cancels an open message |
 | `tool.call.started` | Persists tool call name and JSON arguments |
 | `tool.call.updated` | Persists tool execution update text |
@@ -140,6 +140,11 @@ Persisted content blocks use tagged JSON:
 
 Persisted roles are `user`, `assistant`, `tool`, and `system`.
 
+Completed assistant message events may include a `usage` object with input,
+output, cache-read, cache-write, total-token, and cost components. This field
+is additive and backward compatible: replay treats missing usage as zero usage
+for older event logs.
+
 Tool results use tagged JSON:
 
 ```json
@@ -155,6 +160,10 @@ Tool results use tagged JSON:
 Current product behavior depends on these invariants:
 
 - Completed assistant/user/tool content is restored from committed events, not from live UI deltas.
+- Replay folds assistant `message.completed.usage` into cumulative token/cost
+  stats for hydrated adapters. Context-token display uses the latest valid
+  assistant usage after the latest session compaction; immediately after
+  compaction it is unknown until the next valid assistant usage.
 - Successful persistent prompt operations create new replay leaves through `operation.committed { new_leaf_id }` and update `session.json.active_leaf_id`.
 - Replay records each committed prompt leaf with its parent leaf plus transcript start/end range. The parent is the active leaf at commit time.
 - `active_leaf.changed` switches the active leaf to an existing committed leaf without creating a new leaf. `SessionService::switch_active_leaf()` validates the target leaf, appends the event, and updates `session.json.active_leaf_id`.

@@ -4,6 +4,7 @@ use serde_json::Value;
 use crate::coding_session::delegation::DelegationLineageEntry;
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use pi_ai::types::Model;
+use pi_ai::types::Usage;
 
 use super::manifest::{EVENT_SCHEMA, EVENT_VERSION};
 
@@ -173,6 +174,8 @@ pub(crate) enum SessionEventData {
         message_id: String,
         content: Vec<PersistedContentBlock>,
         finish_reason: Option<String>,
+        #[serde(default)]
+        usage: Usage,
     },
     #[serde(rename = "message.cancelled")]
     MessageCancelled { message_id: String, reason: String },
@@ -559,6 +562,7 @@ mod tests {
                     message_id: "msg_1".into(),
                     content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     finish_reason: None,
+                    usage: Default::default(),
                 },
                 "message.completed",
             ),

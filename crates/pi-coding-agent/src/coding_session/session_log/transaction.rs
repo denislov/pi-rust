@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use pi_ai::types::Usage;
 use serde_json::Value;
 
 use super::event::{
@@ -121,6 +122,7 @@ where
         message_id: impl Into<String>,
         content: Vec<PersistedContentBlock>,
         finish_reason: Option<String>,
+        usage: Usage,
     ) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
         let message_id = message_id.into();
@@ -130,6 +132,7 @@ where
             message_id,
             content,
             finish_reason,
+            usage,
         });
         Ok(())
     }
@@ -620,6 +623,7 @@ mod tests {
             &message_id,
             vec![PersistedContentBlock::Text { text: "hi".into() }],
             Some("stop".into()),
+            Default::default(),
         )
         .unwrap();
         let tool_call_id = tx
@@ -936,7 +940,7 @@ mod tests {
         let (_temp, store, handle) = setup();
         let mut tx = begin(&store, handle);
         let message_id = tx.start_assistant_message().unwrap();
-        tx.complete_assistant_message(&message_id, Vec::new(), None)
+        tx.complete_assistant_message(&message_id, Vec::new(), None, Default::default())
             .unwrap();
         let tool_call_id = tx
             .record_tool_started("read", serde_json::json!({}))
@@ -944,7 +948,7 @@ mod tests {
         tx.record_tool_failed(&tool_call_id, "not found").unwrap();
 
         let message_error = tx
-            .complete_assistant_message(&message_id, Vec::new(), None)
+            .complete_assistant_message(&message_id, Vec::new(), None, Default::default())
             .unwrap_err();
         let tool_error = tx
             .record_tool_completed(

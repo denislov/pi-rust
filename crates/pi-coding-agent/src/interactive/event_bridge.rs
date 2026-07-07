@@ -104,7 +104,10 @@ impl CodingEventBridge {
                     + usage.cost.output
                     + usage.cost.cache_read
                     + usage.cost.cache_write;
-                let context_tokens = calculate_context_tokens(usage);
+                let context_tokens = match calculate_context_tokens(usage) {
+                    0 => None,
+                    tokens => Some(tokens),
+                };
                 vec![
                     UiEvent::AssistantDone,
                     UiEvent::UsageUpdate {
@@ -113,7 +116,7 @@ impl CodingEventBridge {
                         cache_read: self.total_cache_read,
                         cache_write: self.total_cache_write,
                         cost: self.total_cost,
-                        context_tokens: Some(context_tokens),
+                        context_tokens,
                     },
                 ]
             }

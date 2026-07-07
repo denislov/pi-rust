@@ -756,6 +756,7 @@ impl PromptTurnContext {
             transcript,
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            usage: Default::default(),
         });
     }
 
@@ -1183,7 +1184,12 @@ impl PromptTurnContext {
         let message_id = self.ensure_assistant_session_message_started()?;
         let content = persisted_assistant_content_blocks(&message.content);
         self.transaction_mut_required()?
-            .complete_assistant_message(message_id.clone(), content, stop_reason_string(message))?;
+            .complete_assistant_message(
+                message_id.clone(),
+                content,
+                stop_reason_string(message),
+                message.usage.clone(),
+            )?;
         self.assistant_session_message_id = None;
         self.completed_assistant_session_message_id = Some(message_id);
         Ok(())

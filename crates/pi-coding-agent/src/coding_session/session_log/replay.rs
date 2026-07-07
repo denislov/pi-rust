@@ -5,6 +5,8 @@ use super::event::{
     PersistedDelegationStatus, PersistedToolResult, SessionEventData, SessionEventEnvelope,
 };
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
+use pi_agent_core::compaction::estimate::calculate_context_tokens;
+use pi_ai::types::Usage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionReplay {
@@ -15,6 +17,17 @@ pub(crate) struct SessionReplay {
     pub(crate) transcript: Vec<TranscriptItem>,
     pub(crate) diagnostics: Vec<ReplayDiagnostic>,
     pub(crate) pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
+    pub(crate) usage: ReplayUsageSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct ReplayUsageSummary {
+    pub(crate) input: u32,
+    pub(crate) output: u32,
+    pub(crate) cache_read: u32,
+    pub(crate) cache_write: u32,
+    pub(crate) cost: f64,
+    pub(crate) last_context_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +131,7 @@ struct ReplayBuilder {
     operation_kinds: HashMap<String, super::event::OperationKind>,
     operation_transcript_starts: HashMap<String, usize>,
     pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
+    usage: ReplayUsageSummary,
 }
 
 pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
@@ -150,6 +164,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         transcript: builder.transcript,
         diagnostics: builder.diagnostics,
         pending_delegation_confirmations: builder.pending_delegation_confirmations,
+        usage: builder.usage,
     }
 }
 
@@ -233,6 +248,7 @@ impl ReplayBuilder {
                 first_kept_message_id,
                 tokens_before,
             } => {
+                self.usage.last_context_tokens = None;
                 self.apply_compaction_completed(summary, first_kept_message_id, *tokens_before);
             }
             SessionEventData::BranchSummaryCreated {
@@ -358,7 +374,9 @@ impl ReplayBuilder {
                 message_id,
                 content,
                 finish_reason: _,
+                usage,
             } => {
+                self.record_assistant_usage(usage);
                 if self.complete_message(message_id, content.clone()).is_err() {
                     self.warn(format!(
                         "message completion references unknown message: {message_id}"
@@ -484,6 +502,20 @@ impl ReplayBuilder {
             transcript_start,
             transcript_end: self.transcript.len(),
         });
+    }
+
+    fn record_assistant_usage(&mut self, usage: &Usage) {
+        self.usage.input = self.usage.input.saturating_add(usage.input);
+        self.usage.output = self.usage.output.saturating_add(usage.output);
+        self.usage.cache_read = self.usage.cache_read.saturating_add(usage.cache_read);
+        self.usage.cache_write = self.usage.cache_write.saturating_add(usage.cache_write);
+        self.usage.cost +=
+            usage.cost.input + usage.cost.output + usage.cost.cache_read + usage.cost.cache_write;
+
+        let context_tokens = calculate_context_tokens(usage);
+        if context_tokens > 0 {
+            self.usage.last_context_tokens = Some(context_tokens);
+        }
     }
 
     fn add_pending_delegation_confirmation(
@@ -916,6 +948,7 @@ mod tests {
                     message_id: "msg_1".into(),
                     content: vec![PersistedContentBlock::Text { text: "hi".into() }],
                     finish_reason: Some("stop".into()),
+                    usage: Default::default(),
                 },
             ),
             op_event(
@@ -1359,6 +1392,7 @@ mod tests {
                         text: "old answer".into(),
                     }],
                     finish_reason: Some("stop".into()),
+                    usage: Default::default(),
                 },
             ),
             op_event(
@@ -1376,6 +1410,7 @@ mod tests {
                         text: "kept answer".into(),
                     }],
                     finish_reason: Some("stop".into()),
+                    usage: Default::default(),
                 },
             ),
             op_event(

@@ -602,6 +602,7 @@ mod tests {
                     text: "first answer".into(),
                 }],
                 Some("stop".into()),
+                Default::default(),
             )
             .unwrap();
         service

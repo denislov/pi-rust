@@ -1220,6 +1220,29 @@ mod tests {
     }
 
     #[test]
+    fn render_state_changes_with_footer_stats() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        let before = root.render_state();
+        root.apply_events(vec![UiEvent::UsageUpdate {
+            input: 100,
+            output: 50,
+            cache_read: 10,
+            cache_write: 5,
+            cost: 0.125,
+            context_tokens: Some(165),
+        }]);
+        let after = root.render_state();
+        assert_ne!(
+            before, after,
+            "render_state should differ when footer stats change so UsageUpdate requests a redraw"
+        );
+    }
+
+    #[test]
     fn slash_registry_contains_typescript_builtin_commands() {
         let names: Vec<String> = builtin_slash_commands()
             .iter()

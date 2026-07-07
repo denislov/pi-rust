@@ -20,8 +20,9 @@ use super::session_log::transaction::TurnTransaction;
 use super::{
     CodingAgentEvent, CodingAgentSessionDiagnostic, CodingAgentSessionHydration,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionTranscriptItem,
-    CodingAgentSessionTree, CodingAgentSessionView, CodingSessionError, ProfileId, ProfileKind,
-    SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+    CodingAgentSessionTree, CodingAgentSessionUsageSummary, CodingAgentSessionView,
+    CodingSessionError, ProfileId, ProfileKind, SelfHealingEditOutcome,
+    SelfHealingEditRepairAttempt,
 };
 
 #[derive(Debug)]
@@ -744,6 +745,14 @@ impl SessionService {
                     message: diagnostic.message,
                 })
                 .collect(),
+            usage: CodingAgentSessionUsageSummary {
+                input: replay.usage.input,
+                output: replay.usage.output,
+                cache_read: replay.usage.cache_read,
+                cache_write: replay.usage.cache_write,
+                cost: replay.usage.cost,
+                last_context_tokens: replay.usage.last_context_tokens,
+            },
         })
     }
 
