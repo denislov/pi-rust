@@ -495,6 +495,9 @@ impl CodingAgentSession {
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("prompt operation returned self-healing edit outcome")
             }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("prompt operation returned agent invocation outcome")
+            }
         }
     }
 
@@ -518,6 +521,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("manual compaction operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("manual compaction operation returned agent invocation outcome")
             }
         }
     }
@@ -552,6 +558,9 @@ impl CodingAgentSession {
             OperationOutcome::BranchSummary(_) => {
                 unreachable!("self-healing edit operation returned branch summary outcome")
             }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("self-healing edit operation returned agent invocation outcome")
+            }
         }
     }
 
@@ -559,12 +568,27 @@ impl CodingAgentSession {
         &mut self,
         options: AgentInvocationOptions,
     ) -> Result<AgentInvocationOutcome, CodingSessionError> {
-        let _operation = self
-            .operation_control
-            .begin(OperationKind::AgentInvocation)?;
-        let result = self.invoke_agent_inner(options).await;
-        self.operation_control.clear_prompt_control_receiver();
-        result
+        match self
+            .run_operation(Operation::AgentInvocation(options))
+            .await?
+        {
+            OperationOutcome::AgentInvocation(outcome) => Ok(outcome),
+            OperationOutcome::Prompt(_) => {
+                unreachable!("agent invocation operation returned prompt outcome")
+            }
+            OperationOutcome::ManualCompaction(_) => {
+                unreachable!("agent invocation operation returned manual compaction outcome")
+            }
+            OperationOutcome::PluginLoad(_) => {
+                unreachable!("agent invocation operation returned plugin load outcome")
+            }
+            OperationOutcome::BranchSummary(_) => {
+                unreachable!("agent invocation operation returned branch summary outcome")
+            }
+            OperationOutcome::SelfHealingEdit(_) => {
+                unreachable!("agent invocation operation returned self-healing edit outcome")
+            }
+        }
     }
 
     pub async fn invoke_team(
@@ -623,6 +647,9 @@ impl CodingAgentSession {
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("plugin load operation returned self-healing edit outcome")
             }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("plugin load operation returned agent invocation outcome")
+            }
         }
     }
 
@@ -654,6 +681,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("branch summary operation returned agent invocation outcome")
             }
         }
     }
@@ -697,6 +727,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::SelfHealingEdit(_) => {
                 unreachable!("branch summary operation returned self-healing edit outcome")
+            }
+            OperationOutcome::AgentInvocation(_) => {
+                unreachable!("branch summary operation returned agent invocation outcome")
             }
         }
     }
@@ -858,6 +891,11 @@ impl CodingAgentSession {
                 self.event_service
                     .emit_session_write_events(&outcome.finalized);
                 outcome.result.map(OperationOutcome::SelfHealingEdit)
+            }
+            Operation::AgentInvocation(options) => {
+                let result = self.invoke_agent_inner(options).await;
+                self.operation_control.clear_prompt_control_receiver();
+                result.map(OperationOutcome::AgentInvocation)
             }
         }
     }
@@ -1900,6 +1938,31 @@ runtime = "lua"
             "{:#?}",
             contexts[1].messages
         );
+    }
+
+    #[tokio::test]
+    async fn run_operation_agent_invocation_uses_guard_and_preserves_input_error() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let _handle = session.operation_control.prompt_control_handle().unwrap();
+        let operation = Operation::AgentInvocation(AgentInvocationOptions::new(
+            "helper",
+            "",
+            PromptTurnOptions::new(PromptInvocation::Text("task".into())),
+        ));
+
+        let error = session.run_operation(operation).await.unwrap_err();
+
+        assert_eq!(error.code(), "input");
+        assert!(
+            error
+                .to_string()
+                .contains("agent invocation requires a non-empty task"),
+            "{error}"
+        );
+        assert_eq!(session.operation_control.active(), None);
+        assert!(session.operation_control.prompt_control_handle().is_ok());
     }
 
     #[tokio::test]

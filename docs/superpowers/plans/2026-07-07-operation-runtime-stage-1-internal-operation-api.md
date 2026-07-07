@@ -626,3 +626,78 @@ cargo check -p pi-coding-agent
 git diff --check
 git status --short
 ```
+
+### Task 13: Route Agent Invocation Through Internal Operation Dispatcher
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+
+- [x] **Step 1: Write the failing agent invocation operation metadata test**
+
+Added `agent_invocation_operation_declares_root_non_session_metadata` to prove `Operation::AgentInvocation` maps to `OperationKind::AgentInvocation`, `OperationOrigin::ClientRoot`, and `OperationClass::NonSessionRoot`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent agent_invocation_operation_declares_root_non_session_metadata --lib
+```
+
+RED result: compile failed because `Operation::AgentInvocation` did not exist.
+
+- [x] **Step 2: Add the minimal agent invocation operation contract**
+
+Added `Operation::AgentInvocation(AgentInvocationOptions)`, mapped its metadata, and used a temporary dispatcher placeholder so the request contract could compile independently.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent agent_invocation_operation_declares_root_non_session_metadata --lib
+```
+
+GREEN result: the metadata test passed, with the expected temporary dead-code warning before dispatcher routing consumed the payload.
+
+- [x] **Step 3: Write the failing agent invocation dispatcher test**
+
+Added `run_operation_agent_invocation_uses_guard_and_preserves_input_error` to require `Operation::AgentInvocation` to run through the dispatcher, preserve the existing empty-task input error, clear active operation state, and leave prompt-control receiver lifecycle reusable after the operation.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_agent_invocation_uses_guard_and_preserves_input_error --lib
+```
+
+RED result: the test failed with the temporary dispatcher placeholder error.
+
+- [x] **Step 4: Move agent invocation routing into `run_operation()`**
+
+Changed `CodingAgentSession::invoke_agent()` to call `run_operation(Operation::AgentInvocation(options))`, and moved the existing `invoke_agent_inner(options)` execution plus prompt-control receiver cleanup into the dispatcher arm.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent run_operation_agent_invocation_uses_guard_and_preserves_input_error --lib
+```
+
+GREEN result: the dispatcher test passed.
+
+### Task 14: Verify Agent Invocation Operation Slice
+
+- [x] **Step 1: Run operation-focused and agent invocation tests**
+
+```bash
+cargo test -p pi-coding-agent operation --lib
+cargo test -p pi-coding-agent run_operation_agent_invocation_uses_guard_and_preserves_input_error --lib
+cargo test -p pi-coding-agent agent_invocation
+cargo test -p pi-coding-agent coding_session_public_api_symbols_are_importable
+```
+
+- [x] **Step 2: Run formatting, crate check, and diff hygiene**
+
+```bash
+cargo fmt --check
+cargo check -p pi-coding-agent
+git diff --check
+git status --short
+```
