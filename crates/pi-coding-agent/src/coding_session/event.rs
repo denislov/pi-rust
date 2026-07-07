@@ -36,6 +36,51 @@ pub(crate) enum ProductEventTerminalStatus {
     Aborted,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ProductEvent {
+    pub(crate) sequence: ProductEventSequence,
+    pub(crate) family: ProductEventFamily,
+    pub(crate) operation_id: Option<String>,
+    pub(crate) terminal_status: Option<ProductEventTerminalStatus>,
+    pub(crate) durability: ProductEventDurability,
+    compatibility_event: CodingAgentEvent,
+}
+
+impl ProductEvent {
+    pub(crate) fn from_compat_event(
+        sequence: ProductEventSequence,
+        compatibility_event: CodingAgentEvent,
+    ) -> Self {
+        let classification = compatibility_event.classification();
+        let family = classification.family;
+        let operation_id = classification.operation_id.map(str::to_owned);
+        let terminal_status = classification.terminal_status;
+        Self {
+            sequence,
+            family,
+            operation_id,
+            terminal_status,
+            durability: ProductEventDurability::LiveOnly,
+            compatibility_event,
+        }
+    }
+
+    pub(crate) fn compatibility_event(&self) -> &CodingAgentEvent {
+        &self.compatibility_event
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProductEventSequence(pub(crate) u64);
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProductEventDurability {
+    LiveOnly,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CodingAgentEvent {
     SessionOpened {
@@ -641,5 +686,28 @@ mod tests {
         let uncorrelated = CodingAgentEvent::CapabilityChanged.classification();
         assert_eq!(uncorrelated.operation_id, None);
         assert_eq!(uncorrelated.terminal_status, None);
+    }
+
+    #[test]
+    fn product_event_wrapper_owns_compatibility_event_and_metadata() {
+        let event = CodingAgentEvent::PromptFailed {
+            operation_id: "op_prompt".into(),
+            error: CodingSessionError::Provider {
+                message: "provider failed".into(),
+            },
+        };
+
+        let product_event =
+            ProductEvent::from_compat_event(ProductEventSequence(42), event.clone());
+
+        assert_eq!(product_event.sequence, ProductEventSequence(42));
+        assert_eq!(product_event.family, ProductEventFamily::Workflow);
+        assert_eq!(product_event.operation_id.as_deref(), Some("op_prompt"));
+        assert_eq!(
+            product_event.terminal_status,
+            Some(ProductEventTerminalStatus::Failed)
+        );
+        assert_eq!(product_event.durability, ProductEventDurability::LiveOnly);
+        assert_eq!(product_event.compatibility_event(), &event);
     }
 }

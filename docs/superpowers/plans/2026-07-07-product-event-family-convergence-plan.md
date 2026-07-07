@@ -302,10 +302,59 @@ Expected: one focused commit containing the Stage 2 classification model and ver
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
 
-- [ ] **Step 1: Record the next Stage 2 boundary after classification lands**
+- [x] **Step 1: Record the next Stage 2 boundary after classification lands**
 
 After Task 1 and Task 2 are committed, update `docs/TODO.md` to state that Stage 2 has an internal family/status classifier and that the next cut is a non-public `ProductEvent` wrapper or EventService publication boundary.
 
-- [ ] **Step 2: Keep wrapper implementation out of this commit**
+- [x] **Step 2: Keep wrapper implementation out of this commit**
 
 Do not introduce `ProductEvent` publication or adapter migration in the classification commit. The first Stage 2 commit must remain behavior-preserving and easy to revert.
+
+Completed by keeping the classification commit focused and starting this wrapper boundary in a later commit.
+
+### Task 4: Add Internal ProductEvent Wrapper And Live Sequence Boundary
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/event.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/event_service.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing wrapper and EventService boundary tests**
+
+Added `product_event_wrapper_owns_compatibility_event_and_metadata` to require a non-public `ProductEvent` wrapper to own the compatibility event plus sequence, family, operation id, terminal status, and durability. Added `event_service_wraps_emitted_events_with_sequence_and_preserves_compatibility_receiver` to require `EventService::emit()` to allocate strictly increasing live sequence values while still broadcasting the original `CodingAgentEvent` stream to existing receivers.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_owns_compatibility_event_and_metadata --lib
+```
+
+RED result: compile failed because `ProductEvent`, `ProductEventSequence`, and `ProductEventDurability` did not exist, and `EventService::emit()` still returned `()`.
+
+- [x] **Step 2: Add the minimal internal wrapper and live sequence publisher**
+
+Added crate-internal `ProductEvent`, `ProductEventSequence`, and `ProductEventDurability::LiveOnly`. `ProductEvent::from_compat_event()` now derives owned metadata from the existing `CodingAgentEvent::classification()` contract. `EventService` now owns a shared atomic live sequence counter, returns the internal `ProductEvent` from `emit()`, and broadcasts `product_event.compatibility_event().clone()` so current adapters remain unchanged.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_owns_compatibility_event_and_metadata --lib
+cargo test -p pi-coding-agent event_service_wraps_emitted_events_with_sequence_and_preserves_compatibility_receiver --lib
+cargo test -p pi-coding-agent event_service --lib
+```
+
+GREEN result: the wrapper, EventService boundary, and full event_service tests passed.
+
+- [x] **Step 3: Verify adapter compatibility and crate hygiene**
+
+```bash
+cargo test -p pi-coding-agent protocol_events
+cargo test -p pi-coding-agent interactive_event_bridge
+cargo check -p pi-coding-agent
+cargo fmt --check
+git diff --check
+git status --short
+```
+
+GREEN result: protocol and interactive adapter compatibility tests passed, `cargo check -p pi-coding-agent` passed, and final format/diff hygiene was clean after applying rustfmt.

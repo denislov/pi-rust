@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use futures::future::{BoxFuture, FutureExt};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
 use pi_agent_core::AgentEvent;
@@ -8,6 +10,7 @@ use pi_ai::types::{AssistantMessageEvent, ContentBlock};
 
 use super::{
     CodingAgentEvent, CodingSessionError, ProfileId, ProfileKind,
+    event::{ProductEvent, ProductEventSequence},
     manual_compaction_flow::ManualCompactionOutcome,
     plugin_load_flow::PluginLoadOutcome,
     prompt::{DelegationRequest, PromptTurnOutcome},
@@ -22,6 +25,7 @@ const EVENT_CHANNEL_CAPACITY: usize = 128;
 #[derive(Debug, Clone)]
 pub(crate) struct EventService {
     sender: broadcast::Sender<CodingAgentEvent>,
+    next_sequence: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,11 +63,19 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
 impl EventService {
     pub(crate) fn new() -> Self {
         let (sender, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-        Self { sender }
+        Self {
+            sender,
+            next_sequence: Arc::new(AtomicU64::new(1)),
+        }
     }
 
-    pub(crate) fn emit(&self, event: CodingAgentEvent) {
-        let _ = self.sender.send(event);
+    pub(crate) fn emit(&self, event: CodingAgentEvent) -> ProductEvent {
+        let sequence = ProductEventSequence(self.next_sequence.fetch_add(1, Ordering::Relaxed));
+        let product_event = ProductEvent::from_compat_event(sequence, event);
+        let _ = self
+            .sender
+            .send(product_event.compatibility_event().clone());
+        product_event
     }
 
     pub(crate) fn emit_agent_event(
@@ -884,6 +896,10 @@ mod tests {
     };
     use serde_json::json;
 
+    use super::super::event::{
+        ProductEventDurability, ProductEventFamily, ProductEventSequence,
+        ProductEventTerminalStatus,
+    };
     use super::*;
 
     fn mapping_context() -> AgentEventMappingContext {
@@ -915,6 +931,45 @@ mod tests {
             text_signature: None,
         });
         message
+    }
+
+    #[test]
+    fn event_service_wraps_emitted_events_with_sequence_and_preserves_compatibility_receiver() {
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+
+        let first = service.emit(CodingAgentEvent::PromptCompleted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+        });
+        let second = service.clone().emit(CodingAgentEvent::CapabilityChanged);
+
+        assert_eq!(first.sequence, ProductEventSequence(1));
+        assert_eq!(first.family, ProductEventFamily::Workflow);
+        assert_eq!(first.operation_id.as_deref(), Some("op_1"));
+        assert_eq!(
+            first.terminal_status,
+            Some(ProductEventTerminalStatus::Completed)
+        );
+        assert_eq!(first.durability, ProductEventDurability::LiveOnly);
+        assert!(matches!(
+            first.compatibility_event(),
+            CodingAgentEvent::PromptCompleted { .. }
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::PromptCompleted { .. })
+        ));
+
+        assert_eq!(second.sequence, ProductEventSequence(2));
+        assert_eq!(second.family, ProductEventFamily::Capability);
+        assert_eq!(second.operation_id, None);
+        assert_eq!(second.terminal_status, None);
+        assert_eq!(second.durability, ProductEventDurability::LiveOnly);
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            Some(CodingAgentEvent::CapabilityChanged)
+        ));
     }
 
     #[test]
