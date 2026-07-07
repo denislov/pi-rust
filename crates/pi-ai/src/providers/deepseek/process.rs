@@ -30,48 +30,50 @@ pub fn response_to_events(
     };
 
     if let Some(reasoning) = choice.message.reasoning_content
-        && !reasoning.is_empty() {
-            partial.content.push(ContentBlock::Thinking {
-                thinking: reasoning.clone(),
-                thinking_signature: None,
-                redacted: None,
-            });
-            events.push(AssistantMessageEvent::ThinkingStart {
-                content_index: 0,
-                partial: partial.clone(),
-            });
-            events.push(AssistantMessageEvent::ThinkingDelta {
-                content_index: 0,
-                delta: reasoning,
-                partial: partial.clone(),
-            });
-            events.push(AssistantMessageEvent::ThinkingEnd {
-                content_index: 0,
-                partial: partial.clone(),
-            });
-        }
+        && !reasoning.is_empty()
+    {
+        partial.content.push(ContentBlock::Thinking {
+            thinking: reasoning.clone(),
+            thinking_signature: None,
+            redacted: None,
+        });
+        events.push(AssistantMessageEvent::ThinkingStart {
+            content_index: 0,
+            partial: partial.clone(),
+        });
+        events.push(AssistantMessageEvent::ThinkingDelta {
+            content_index: 0,
+            delta: reasoning,
+            partial: partial.clone(),
+        });
+        events.push(AssistantMessageEvent::ThinkingEnd {
+            content_index: 0,
+            partial: partial.clone(),
+        });
+    }
 
     if let Some(text) = choice.message.content
-        && !text.is_empty() {
-            let content_index = partial.content.len() as u32;
-            partial.content.push(ContentBlock::Text {
-                text: text.clone(),
-                text_signature: None,
-            });
-            events.push(AssistantMessageEvent::TextStart {
-                content_index,
-                partial: partial.clone(),
-            });
-            events.push(AssistantMessageEvent::TextDelta {
-                content_index,
-                delta: text,
-                partial: partial.clone(),
-            });
-            events.push(AssistantMessageEvent::TextEnd {
-                content_index,
-                partial: partial.clone(),
-            });
-        }
+        && !text.is_empty()
+    {
+        let content_index = partial.content.len() as u32;
+        partial.content.push(ContentBlock::Text {
+            text: text.clone(),
+            text_signature: None,
+        });
+        events.push(AssistantMessageEvent::TextStart {
+            content_index,
+            partial: partial.clone(),
+        });
+        events.push(AssistantMessageEvent::TextDelta {
+            content_index,
+            delta: text,
+            partial: partial.clone(),
+        });
+        events.push(AssistantMessageEvent::TextEnd {
+            content_index,
+            partial: partial.clone(),
+        });
+    }
 
     partial.stop_reason = map_finish_reason(choice.finish_reason.as_deref());
     partial.usage = response_usage(response.usage, model);

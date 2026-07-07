@@ -202,9 +202,9 @@ fn should_retry(error: &Option<ProviderError>, cfg: &RetryConfig, attempt: u32) 
         Some(e) => match e.kind {
             super::error::ProviderErrorKind::Network => true,
             super::error::ProviderErrorKind::Timeout => true,
-            super::error::ProviderErrorKind::HttpStatus => e
-                .status
-                .is_some_and(crate::util::http::is_retryable_status),
+            super::error::ProviderErrorKind::HttpStatus => {
+                e.status.is_some_and(crate::util::http::is_retryable_status)
+            }
             _ => false,
         },
         None => false,

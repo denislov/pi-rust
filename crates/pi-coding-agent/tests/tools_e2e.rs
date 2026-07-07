@@ -140,7 +140,7 @@ async fn run_scripted_read(
             contexts,
         )),
     );
-    let out = run_print_mode(PrintModeOptions {
+    run_print_mode(PrintModeOptions {
         prompt: "read it".into(),
         model: faux_model(api),
         api_key: None,
@@ -158,8 +158,7 @@ async fn run_scripted_read(
         invocation: pi_coding_agent::PromptInvocation::Text("read it".into()),
     })
     .await
-    .unwrap();
-    out
+    .unwrap()
 }
 
 #[test]

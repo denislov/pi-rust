@@ -810,7 +810,7 @@ fn heading_as_last_block_has_no_trailing_blank_line() {
     let lines = md.render(80);
     let plain = plain_lines(&lines);
     assert!(
-        !plain.last().map_or(false, |l| l.trim().is_empty()),
+        !plain.last().is_some_and(|l| l.trim().is_empty()),
         "last line should not be blank: {plain:?}"
     );
 }
@@ -821,7 +821,7 @@ fn code_block_as_last_block_has_no_trailing_blank_line() {
     let lines = md.render(80);
     let plain = plain_lines(&lines);
     assert!(
-        !plain.last().map_or(false, |l| l.trim().is_empty()),
+        !plain.last().is_some_and(|l| l.trim().is_empty()),
         "last line should not be blank: {plain:?}"
     );
 }

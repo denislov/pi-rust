@@ -46,8 +46,10 @@ fn paint_with_enabled_dim() {
 
 #[test]
 fn paint_with_enabled_bg() {
-    let mut style = Style::default();
-    style.bg = Color::Blue;
+    let style = Style {
+        bg: Color::Blue,
+        ..Default::default()
+    };
     assert_eq!(paint_with("hi", &style, true), "\x1b[44mhi\x1b[0m");
 }
 

@@ -666,7 +666,6 @@ struct BlockContext {
     list_depth: usize,
 }
 
-
 #[derive(Clone)]
 struct InlineSpan {
     start: usize,

@@ -348,7 +348,7 @@ fn apply_replacements(
     let mut result = content.to_string();
     use std::cmp::Reverse;
 
-// Apply in reverse offset order so prior replacements don't shift later
+    // Apply in reverse offset order so prior replacements don't shift later
     // offsets. Sort by match_index descending.
     let mut ordered: Vec<TextReplacement<'_>> = replacements.to_vec();
     ordered.sort_by_key(|r| Reverse(r.match_index));

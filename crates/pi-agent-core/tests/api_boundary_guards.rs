@@ -17,13 +17,13 @@ fn root_public_modules_are_marked_migration_private() {
                 .trim_end_matches('{')
                 .split_whitespace()
                 .next()
-        }) {
-            if module != "api" && previous_non_empty != "#[doc(hidden)]" {
-                violations.push(format!(
-                    "src/lib.rs:{}: root module `{module}` should be marked #[doc(hidden)] migration-private",
-                    line_index + 1
-                ));
-            }
+        }) && module != "api"
+            && previous_non_empty != "#[doc(hidden)]"
+        {
+            violations.push(format!(
+                "src/lib.rs:{}: root module `{module}` should be marked #[doc(hidden)] migration-private",
+                line_index + 1
+            ));
         }
 
         if !trimmed.is_empty() {

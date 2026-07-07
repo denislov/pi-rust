@@ -66,13 +66,14 @@ impl ApiProvider for DeepSeekProvider {
 
         if let Some(opts) = &opts
             && let Some(headers) = &opts.headers
-                && let Some(obj) = headers.as_object() {
-                    for (key, value) in obj {
-                        if let Some(value) = value.as_str() {
-                            request = request.header(key.as_str(), value);
-                        }
-                    }
+            && let Some(obj) = headers.as_object()
+        {
+            for (key, value) in obj {
+                if let Some(value) = value.as_str() {
+                    request = request.header(key.as_str(), value);
                 }
+            }
+        }
 
         let model = model.clone();
         let model_id = model.id.clone();

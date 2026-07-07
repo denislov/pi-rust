@@ -222,7 +222,10 @@ mod tests {
 
     #[test]
     fn tree_filter_mode_from_str() {
-        assert_eq!(TreeFilterMode::from_str_name("default"), TreeFilterMode::Default);
+        assert_eq!(
+            TreeFilterMode::from_str_name("default"),
+            TreeFilterMode::Default
+        );
         assert_eq!(
             TreeFilterMode::from_str_name("no-tools"),
             TreeFilterMode::NoTools
@@ -236,7 +239,10 @@ mod tests {
             TreeFilterMode::LabeledOnly
         );
         assert_eq!(TreeFilterMode::from_str_name("all"), TreeFilterMode::All);
-        assert_eq!(TreeFilterMode::from_str_name("invalid"), TreeFilterMode::Default);
+        assert_eq!(
+            TreeFilterMode::from_str_name("invalid"),
+            TreeFilterMode::Default
+        );
         assert_eq!(TreeFilterMode::from_str_name(""), TreeFilterMode::Default);
     }
 

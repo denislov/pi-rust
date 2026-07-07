@@ -228,33 +228,34 @@ fn handle_event(
     }
 
     if let Some(start) = event.content_block_start
-        && let Some(tool_use) = start.start.get("toolUse") {
-            let id = tool_use
-                .get("toolUseId")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let name = tool_use
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let index = partial.content.len();
-            partial.content.push(ContentBlock::ToolCall {
-                id,
-                name,
-                arguments: serde_json::Value::Object(serde_json::Map::new()),
-                thought_signature: None,
-            });
-            state.block_map.insert(start.content_block_index, index);
-            state
-                .tool_arg_buffers
-                .insert(start.content_block_index, String::new());
-            events.push(AssistantMessageEvent::ToolcallStart {
-                content_index: index as u32,
-                partial: partial.clone(),
-            });
-        }
+        && let Some(tool_use) = start.start.get("toolUse")
+    {
+        let id = tool_use
+            .get("toolUseId")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let name = tool_use
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let index = partial.content.len();
+        partial.content.push(ContentBlock::ToolCall {
+            id,
+            name,
+            arguments: serde_json::Value::Object(serde_json::Map::new()),
+            thought_signature: None,
+        });
+        state.block_map.insert(start.content_block_index, index);
+        state
+            .tool_arg_buffers
+            .insert(start.content_block_index, String::new());
+        events.push(AssistantMessageEvent::ToolcallStart {
+            content_index: index as u32,
+            partial: partial.clone(),
+        });
+    }
 
     if let Some(delta) = event.content_block_delta {
         let content_block_index = delta.content_block_index;
@@ -311,27 +312,26 @@ fn handle_event(
                 });
             }
         } else if let Some(tool_use) = delta.delta.get("toolUse")
-            && let Some(index) = state.block_map.get(&content_block_index).copied() {
-                let input = tool_use
-                    .get("input")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                let args = state
-                    .tool_arg_buffers
-                    .entry(content_block_index)
-                    .or_default();
-                args.push_str(input);
-                if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                    partial.content.get_mut(index)
-                {
-                    *arguments = parse_streaming_json(args);
-                }
-                events.push(AssistantMessageEvent::ToolcallDelta {
-                    content_index: index as u32,
-                    delta: input.to_string(),
-                    partial: partial.clone(),
-                });
+            && let Some(index) = state.block_map.get(&content_block_index).copied()
+        {
+            let input = tool_use
+                .get("input")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let args = state
+                .tool_arg_buffers
+                .entry(content_block_index)
+                .or_default();
+            args.push_str(input);
+            if let Some(ContentBlock::ToolCall { arguments, .. }) = partial.content.get_mut(index) {
+                *arguments = parse_streaming_json(args);
             }
+            events.push(AssistantMessageEvent::ToolcallDelta {
+                content_index: index as u32,
+                delta: input.to_string(),
+                partial: partial.clone(),
+            });
+        }
     }
 
     if let Some(stop) = event.content_block_stop

@@ -71,9 +71,11 @@ impl SseEventHandler for MistralHandler {
 
         for choice in chunk.choices {
             if let Some(reason) = choice.finish_reason.as_deref()
-                && !reason.is_empty() && reason != "null" {
-                    self.finish_reason = choice.finish_reason.clone();
-                }
+                && !reason.is_empty()
+                && reason != "null"
+            {
+                self.finish_reason = choice.finish_reason.clone();
+            }
 
             if let Some(content) = choice.delta.content {
                 match content {
@@ -144,18 +146,18 @@ impl SseEventHandler for MistralHandler {
                     if let Some(id) = tool_call.id
                         && let Some(ContentBlock::ToolCall { id: block_id, .. }) =
                             partial.content.get_mut(content_pos as usize)
-                        {
-                            *block_id = id;
-                        }
+                    {
+                        *block_id = id;
+                    }
 
                     if let Some(function) = tool_call.function {
                         if let Some(name) = function.name
                             && let Some(ContentBlock::ToolCall {
                                 name: block_name, ..
                             }) = partial.content.get_mut(content_pos as usize)
-                            {
-                                *block_name = name;
-                            }
+                        {
+                            *block_name = name;
+                        }
                         if let Some(args) = function.arguments {
                             let acc = self.tool_args_acc.entry(provider_index).or_default();
                             acc.push_str(&args);

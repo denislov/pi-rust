@@ -220,12 +220,13 @@ fn append_context_entry(
             if let Some(message) = entry
                 .field("message")
                 .and_then(|value| serde_json::from_value::<StoredAgentMessage>(value.clone()).ok())
-                && let Some(mut agent_message) = stored_to_agent_message(&entry.id, message) {
-                    if clear_pre_compaction_usage {
-                        clear_assistant_usage(&mut agent_message);
-                    }
-                    context.messages.push(agent_message);
+                && let Some(mut agent_message) = stored_to_agent_message(&entry.id, message)
+            {
+                if clear_pre_compaction_usage {
+                    clear_assistant_usage(&mut agent_message);
                 }
+                context.messages.push(agent_message);
+            }
         }
         "branch_summary" => {
             if let Some(summary) = entry.field("summary").and_then(|value| value.as_str()) {

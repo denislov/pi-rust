@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Completed status, 2026-07-07: env-dependent `pi-coding-agent` tests now use restoring `EnvGuard` helpers and the cross-cutting deterministic/offline TODO is closed. This plan is retained as implementation history.
+
 **Goal:** Remove unguarded process-wide environment mutation from `pi-coding-agent` tests so env-dependent tests serialize and restore caller state.
 
 **Architecture:** Keep production env reads unchanged. Add a restoring `EnvGuard` to crate-local `#[cfg(test)]` support for unit tests, and add a matching integration-test `tests/support` helper because each integration test file compiles as a separate crate. Convert tests from hand-written `std::env::set_var/remove_var` cleanup to scoped guard calls, leaving product code and normal env reads alone.
@@ -16,7 +18,7 @@
 - Inspect: `crates/pi-coding-agent/src/**/*.rs`
 - Inspect: `crates/pi-coding-agent/tests/**/*.rs`
 
-- [ ] **Step 1: Run the mutation audit before code changes**
+- [x] **Step 1: Run the mutation audit before code changes**
 
 Run:
 
@@ -26,7 +28,7 @@ rg -n "std::env::(set_var|remove_var)" crates/pi-coding-agent/tests crates/pi-co
 
 Expected: FAIL-style evidence for this hardening task: direct `std::env::set_var/remove_var` calls appear in integration tests and crate-local `#[cfg(test)]` modules outside shared support.
 
-- [ ] **Step 2: Classify allowed final hits**
+- [x] **Step 2: Classify allowed final hits**
 
 The final audit should allow direct mutation only inside:
 
@@ -43,7 +45,7 @@ Product env reads such as `std::env::var` and `std::env::var_os` remain allowed 
 - Modify: `crates/pi-coding-agent/src/lib.rs`
 - Add: `crates/pi-coding-agent/tests/support/mod.rs`
 
-- [ ] **Step 1: Upgrade crate-local test support**
+- [x] **Step 1: Upgrade crate-local test support**
 
 Replace the existing `#[cfg(test)] pub(crate) mod test_support` body in `src/lib.rs` with a support module that keeps `env_lock()` for existing non-mutating callers and adds `EnvGuard`:
 
@@ -110,7 +112,7 @@ pub(crate) mod test_support {
 }
 ```
 
-- [ ] **Step 2: Add integration-test support**
+- [x] **Step 2: Add integration-test support**
 
 Create `crates/pi-coding-agent/tests/support/mod.rs` with the same public helper for integration tests:
 
@@ -171,7 +173,7 @@ impl Drop for EnvGuard<'_> {
 }
 ```
 
-- [ ] **Step 3: Run helper format/check smoke**
+- [x] **Step 3: Run helper format/check smoke**
 
 Run:
 
@@ -194,7 +196,7 @@ Expected: format passes and existing unit test still compiles with upgraded supp
 - Modify: `crates/pi-coding-agent/tests/interactive_mode.rs`
 - Modify: `crates/pi-coding-agent/tests/rpc_mode.rs`
 
-- [ ] **Step 1: Replace per-file PI_RUST_DIR guards**
+- [x] **Step 1: Replace per-file PI_RUST_DIR guards**
 
 For files with local `struct EnvGuard`, add:
 
@@ -217,7 +219,7 @@ let _env_guard = EnvGuard::new(&["PI_RUST_DIR"]);
 _env_guard.set_pi_rust_dir(global);
 ```
 
-- [ ] **Step 2: Convert direct integration env mutation blocks**
+- [x] **Step 2: Convert direct integration env mutation blocks**
 
 Replace hand-written save/set/remove blocks with scoped guards. Examples:
 
@@ -245,7 +247,7 @@ env.remove("CLAUDE_API_KEY");
 env.remove("ANTHROPIC_KEY");
 ```
 
-- [ ] **Step 3: Run integration RED-to-GREEN audit**
+- [x] **Step 3: Run integration RED-to-GREEN audit**
 
 Run:
 
@@ -255,7 +257,7 @@ rg -n "std::env::(set_var|remove_var)" crates/pi-coding-agent/tests -g '*.rs'
 
 Expected after conversion: only `crates/pi-coding-agent/tests/support/mod.rs` contains direct set/remove calls.
 
-- [ ] **Step 4: Run focused integration tests**
+- [x] **Step 4: Run focused integration tests**
 
 Run:
 
@@ -282,7 +284,7 @@ Expected: all pass without warnings.
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 - Modify: `crates/pi-coding-agent/src/interactive/app.rs`
 
-- [ ] **Step 1: Replace env_lock mutation tests with EnvGuard**
+- [x] **Step 1: Replace env_lock mutation tests with EnvGuard**
 
 For tests that mutate env, replace:
 
@@ -313,11 +315,11 @@ env.set_pi_rust_dir(dir.path());
 env.remove("PI_SESSION_DIR");
 ```
 
-- [ ] **Step 2: Preserve non-mutating env_lock callers**
+- [x] **Step 2: Preserve non-mutating env_lock callers**
 
 Leave `crate::test_support::env_lock()` in tests that need serialization but do not mutate env directly, to avoid widening the diff.
 
-- [ ] **Step 3: Run source mutation audit**
+- [x] **Step 3: Run source mutation audit**
 
 Run:
 
@@ -327,7 +329,7 @@ rg -n "std::env::(set_var|remove_var)" crates/pi-coding-agent/src -g '*.rs'
 
 Expected after conversion: only `crates/pi-coding-agent/src/lib.rs` contains direct set/remove calls in the test support implementation.
 
-- [ ] **Step 4: Run focused unit tests**
+- [x] **Step 4: Run focused unit tests**
 
 Run:
 
@@ -348,7 +350,7 @@ Expected: all pass without warnings.
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-04-pi-coding-agent-env-guard-hardening-plan.md`
 
-- [ ] **Step 1: Update TODO source documents**
+- [x] **Step 1: Update TODO source documents**
 
 Add the new plan under `## Source Documents`:
 
@@ -356,15 +358,15 @@ Add the new plan under `## Source Documents`:
 - [pi-coding-agent env guard hardening plan](superpowers/plans/2026-07-04-pi-coding-agent-env-guard-hardening-plan.md)
 ```
 
-- [ ] **Step 2: Update cross-cutting test-boundary note**
+- [x] **Step 2: Update cross-cutting test-boundary note**
 
 Update the deterministic/offline cross-cutting item to say the `pi-coding-agent` env-mutation follow-up is hardened, while timing-sensitive assertions remain a separate follow-up if still present.
 
-- [ ] **Step 3: Mark this plan complete**
+- [x] **Step 3: Mark this plan complete**
 
 Mark each checkbox complete as implementation and verification finish.
 
-- [ ] **Step 4: Run final verification**
+- [x] **Step 4: Run final verification**
 
 Run:
 

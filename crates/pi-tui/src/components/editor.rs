@@ -481,9 +481,10 @@ impl Editor {
         let mut filtered = filtered;
         if starts_like_path(&filtered)
             && let Some(before) = self.text[..self.cursor].chars().next_back()
-                && (before == '_' || before.is_alphanumeric()) {
-                    filtered.insert(0, ' ');
-                }
+            && (before == '_' || before.is_alphanumeric())
+        {
+            filtered.insert(0, ' ');
+        }
 
         let line_count = filtered.split('\n').count();
         let char_count = filtered.chars().count();
@@ -533,12 +534,12 @@ impl Editor {
             && !key_event
                 .modifiers
                 .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER)
-            {
-                let target = text.as_str();
-                self.jump_mode = None;
-                self.jump_to_char(target, direction);
-                return true;
-            }
+        {
+            let target = text.as_str();
+            self.jump_mode = None;
+            self.jump_to_char(target, direction);
+            return true;
+        }
         if key_event.key == Key::Space
             && !key_event
                 .modifiers

@@ -1,6 +1,6 @@
 # Self-Healing Edit Capability Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the self-healing edit workflow to public/RPC capability reporting and reserve an operation kind for the future session-owner entrypoint.
 

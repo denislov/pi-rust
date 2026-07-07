@@ -463,10 +463,10 @@ fn parse_kitty_csi_u(data: &str) -> Option<KeyEvent> {
     // This matches TS normalizeShiftedLetterIdentityCodepoint.
     if let Key::Char(character) = &mut key
         && modifiers.contains(KeyModifiers::SHIFT)
-            && character.chars().all(|ch| ch.is_ascii_uppercase())
-        {
-            *character = character.to_ascii_lowercase();
-        }
+        && character.chars().all(|ch| ch.is_ascii_uppercase())
+    {
+        *character = character.to_ascii_lowercase();
+    }
 
     Some(modified(key, modifiers, event_type))
 }

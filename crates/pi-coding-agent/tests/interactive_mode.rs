@@ -622,12 +622,7 @@ async fn scripted_interactive_keeps_cursor_after_first_typed_character() {
     let output = run_scripted_idle_interactive("a").await.unwrap();
 
     assert_eq!(output.cursor_col, 3);
-    assert!(
-        output
-            .ops
-            .iter()
-            .any(|op| *op == TerminalOp::MoveToColumn(3))
-    );
+    assert!(output.ops.contains(&TerminalOp::MoveToColumn(3)));
     assert!(!output.ops.contains(&TerminalOp::ClearScreen));
 }
 
@@ -655,12 +650,7 @@ async fn scripted_interactive_left_arrow_moves_cursor_within_prompt() {
     let output = run_scripted_idle_interactive("ab\x1b[D").await.unwrap();
 
     assert_eq!(output.cursor_col, 3);
-    assert!(
-        output
-            .ops
-            .iter()
-            .any(|op| *op == TerminalOp::MoveToColumn(3))
-    );
+    assert!(output.ops.contains(&TerminalOp::MoveToColumn(3)));
 }
 
 #[tokio::test]

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Completed status, 2026-07-07: P1/P3/P4 boundary closure is recorded in `docs/TODO.md`. Product runtime, provider-visible tool, and generic TUI/plugin UI boundaries now have guard-backed stop conditions and focused verification.
+
 **Goal:** Close the remaining P1 product runtime, P3 tool, and P4 UI boundary TODO items with guard-backed evidence and minimal runtime cleanup.
 
 **Architecture:** Add focused source-guard tests around the existing Flow-centered architecture, then make the small production changes those guards expose: remove adapter-level global provider registration and validate product/plugin tools before they enter `Agent`. Keep `CodingAgentSession` as product owner, `pi-agent-core` as low-level runtime/tool owner, and `pi-tui` as generic terminal UI primitives.
@@ -30,7 +32,7 @@
 - Create: `docs/superpowers/specs/2026-07-07-p1-p3-p4-boundary-closure-design.md`
 - Create: `docs/superpowers/plans/2026-07-07-p1-p3-p4-boundary-closure-plan.md`
 
-- [ ] **Step 1: Add source document links**
+- [x] **Step 1: Add source document links**
 
 Add these under `## Source Documents`:
 
@@ -39,7 +41,7 @@ Add these under `## Source Documents`:
 - [P1/P3/P4 boundary closure plan](superpowers/plans/2026-07-07-p1-p3-p4-boundary-closure-plan.md)
 ```
 
-- [ ] **Step 2: Add a progress note**
+- [x] **Step 2: Add a progress note**
 
 Append this under `## Progress Log`:
 
@@ -47,7 +49,7 @@ Append this under `## Progress Log`:
 - 2026-07-07: P1/P3/P4 boundary closure started. The design and plan define guard-backed stop conditions for product runtime ownership, provider-visible tool validation/plugin ingress, and generic TUI/plugin UI routing boundaries.
 ```
 
-- [ ] **Step 3: Verify docs**
+- [x] **Step 3: Verify docs**
 
 Run:
 
@@ -57,7 +59,7 @@ git diff -- docs/TODO.md docs/superpowers/specs/2026-07-07-p1-p3-p4-boundary-clo
 
 Expected: only the new docs, source-document links, and progress note.
 
-- [ ] **Step 4: Commit docs slice**
+- [x] **Step 4: Commit docs slice**
 
 ```bash
 git add docs/TODO.md docs/superpowers/specs/2026-07-07-p1-p3-p4-boundary-closure-design.md docs/superpowers/plans/2026-07-07-p1-p3-p4-boundary-closure-plan.md
@@ -70,7 +72,7 @@ git commit -m "docs: plan p1 p3 p4 boundary closure"
 - Create: `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs`
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/state.rs`
 
-- [ ] **Step 1: Write the failing source guard**
+- [x] **Step 1: Write the failing source guard**
 
 Create `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs` with source-scan helpers that:
 
@@ -158,7 +160,7 @@ fn collect_source_violations(
 }
 ```
 
-- [ ] **Step 2: Run the guard and verify it fails**
+- [x] **Step 2: Run the guard and verify it fails**
 
 Run:
 
@@ -168,7 +170,7 @@ cargo test -p pi-coding-agent --test product_runtime_boundary_guards adapters_do
 
 Expected: FAIL showing `crates/pi-coding-agent/src/protocol/rpc/state.rs` calls `register_builtin_providers_for_global_runtime()`.
 
-- [ ] **Step 3: Remove adapter-level global registration and retire the product helper**
+- [x] **Step 3: Remove adapter-level global registration and retire the product helper**
 
 In `crates/pi-coding-agent/src/protocol/rpc/state.rs`, remove `coding_session::register_builtin_providers_for_global_runtime` from the grouped import and remove this block from `RpcState::new`:
 
@@ -195,7 +197,7 @@ pub(crate) use runtime_service::register_builtin_providers_for_global_runtime;
 
 Update `crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs` so `runtime_global_builtin_registration_boundary_is_retired` asserts `runtime_service.rs` no longer contains either `fn register_builtin_providers_for_global_runtime()` or `pi_ai::providers::register_builtins()`.
 
-- [ ] **Step 4: Run focused P1 checks**
+- [x] **Step 4: Run focused P1 checks**
 
 Run:
 
@@ -207,7 +209,7 @@ cargo test -p pi-coding-agent --test rpc_mode
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit P1 guard slice**
+- [x] **Step 5: Commit P1 guard slice**
 
 ```bash
 git add crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs crates/pi-coding-agent/src/protocol/rpc/state.rs
@@ -221,7 +223,7 @@ git commit -m "refactor(coding-agent): guard product runtime ownership"
 - Create: `crates/pi-coding-agent/tests/tool_boundary_guards.rs`
 - Create: `crates/pi-agent-core/tests/tool_boundary_guards.rs`
 
-- [ ] **Step 1: Write the failing product guard**
+- [x] **Step 1: Write the failing product guard**
 
 Create `crates/pi-coding-agent/tests/tool_boundary_guards.rs` with a source guard asserting `RuntimeService` uses `try_add_tool` and no longer calls `agent.add_tool(tool)` inside `build_agent_runtime_with_plugins_and_diagnostics`.
 
@@ -251,7 +253,7 @@ fn plugin_tool_hosts_remain_capability_scoped() {
 }
 ```
 
-- [ ] **Step 2: Verify the product guard fails**
+- [x] **Step 2: Verify the product guard fails**
 
 Run:
 
@@ -261,7 +263,7 @@ cargo test -p pi-coding-agent --test tool_boundary_guards runtime_service_valida
 
 Expected: FAIL because `RuntimeService` still uses `agent.add_tool(tool)`.
 
-- [ ] **Step 3: Write the low-level core guard**
+- [x] **Step 3: Write the low-level core guard**
 
 Create `crates/pi-agent-core/tests/tool_boundary_guards.rs`:
 
@@ -305,7 +307,7 @@ cargo test -p pi-agent-core --test tool_boundary_guards
 
 Expected: PASS; this is a regression guard for the low-level boundary.
 
-- [ ] **Step 4: Change RuntimeService to validate tools**
+- [x] **Step 4: Change RuntimeService to validate tools**
 
 Replace this loop in `crates/pi-coding-agent/src/coding_session/runtime_service.rs`:
 
@@ -325,7 +327,7 @@ for tool in tools.into_iter().chain(policy_tools) {
 }
 ```
 
-- [ ] **Step 5: Run focused P3 checks**
+- [x] **Step 5: Run focused P3 checks**
 
 Run:
 
@@ -338,7 +340,7 @@ cargo test -p pi-agent-core --test agent_turn_flow
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit P3 slice**
+- [x] **Step 6: Commit P3 slice**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/runtime_service.rs crates/pi-coding-agent/tests/tool_boundary_guards.rs crates/pi-agent-core/tests/tool_boundary_guards.rs
@@ -351,7 +353,7 @@ git commit -m "refactor: harden provider-visible tool boundary"
 - Create: `crates/pi-tui/tests/ui_boundary_guards.rs`
 - Create: `crates/pi-coding-agent/tests/plugin_ui_boundary_guards.rs`
 
-- [ ] **Step 1: Add generic TUI source guard**
+- [x] **Step 1: Add generic TUI source guard**
 
 Create `crates/pi-tui/tests/ui_boundary_guards.rs`:
 
@@ -389,7 +391,7 @@ fn collect_product_terms(repo_root: &Path, path: &Path, violations: &mut Vec<Str
 }
 ```
 
-- [ ] **Step 2: Add plugin UI routing guard**
+- [x] **Step 2: Add plugin UI routing guard**
 
 Create `crates/pi-coding-agent/tests/plugin_ui_boundary_guards.rs`:
 
@@ -456,7 +458,7 @@ fn collect_plugin_ui_terms(
 }
 ```
 
-- [ ] **Step 3: Run focused P4 checks**
+- [x] **Step 3: Run focused P4 checks**
 
 Run:
 
@@ -469,7 +471,7 @@ cargo test -p pi-coding-agent --test interactive_sessions interactive_plugin_key
 
 Expected: all pass.
 
-- [ ] **Step 4: Commit P4 slice**
+- [x] **Step 4: Commit P4 slice**
 
 ```bash
 git add crates/pi-tui/tests/ui_boundary_guards.rs crates/pi-coding-agent/tests/plugin_ui_boundary_guards.rs
@@ -481,7 +483,7 @@ git commit -m "test: guard generic tui plugin ui boundary"
 **Files:**
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Update P1/P3/P4 TODO entries**
+- [x] **Step 1: Update P1/P3/P4 TODO entries**
 
 Change the three active `[~]` lines to `[x]` and summarize the evidence:
 
@@ -489,7 +491,7 @@ Change the three active `[~]` lines to `[x]` and summarize the evidence:
 - P3: validated product tool ingress with `try_add_tool`, plugin host scoped guard, core/product separation guard.
 - P4: generic TUI source guard, product-free keybinding guard, plugin UI routing guard, existing interactive plugin UI tests.
 
-- [ ] **Step 2: Run formatting**
+- [x] **Step 2: Run formatting**
 
 ```bash
 cargo fmt --check
@@ -497,7 +499,7 @@ cargo fmt --check
 
 Expected: exit 0.
 
-- [ ] **Step 3: Run focused boundary checks**
+- [x] **Step 3: Run focused boundary checks**
 
 ```bash
 cargo test -p pi-coding-agent --test product_runtime_boundary_guards
@@ -513,7 +515,7 @@ cargo test -p pi-coding-agent --test plugin_ui_boundary_guards
 
 Expected: all pass.
 
-- [ ] **Step 4: Run broader crate checks**
+- [x] **Step 4: Run broader crate checks**
 
 ```bash
 cargo test -p pi-agent-core
@@ -524,7 +526,7 @@ cargo check --workspace
 
 Expected: all pass.
 
-- [ ] **Step 5: Run workspace and diff checks**
+- [x] **Step 5: Run workspace and diff checks**
 
 ```bash
 cargo test --workspace
@@ -533,7 +535,7 @@ git diff --check
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit closure**
+- [x] **Step 6: Commit closure**
 
 ```bash
 git add docs/TODO.md

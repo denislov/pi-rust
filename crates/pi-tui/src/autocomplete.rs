@@ -493,9 +493,10 @@ fn expand_home(path: &str) -> String {
         return std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
     }
     if let Some(rest) = path.strip_prefix("~/")
-        && let Ok(home) = std::env::var("HOME") {
-            return Path::new(&home).join(rest).to_string_lossy().to_string();
-        }
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return Path::new(&home).join(rest).to_string_lossy().to_string();
+    }
     path.to_string()
 }
 

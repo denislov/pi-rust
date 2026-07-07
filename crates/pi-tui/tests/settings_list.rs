@@ -129,10 +129,10 @@ impl Component for DoneSubmenu {
     }
 
     fn handle_input(&mut self, event: &InputEvent) {
-        if matches_key(event, "enter") {
-            if let Some(mut done) = self.done.take() {
-                done(Some("light".to_string()));
-            }
+        if matches_key(event, "enter")
+            && let Some(mut done) = self.done.take()
+        {
+            done(Some("light".to_string()));
         }
     }
 }

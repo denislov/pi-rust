@@ -108,7 +108,7 @@ async fn thinking_and_tool_use_stream() {
         AssistantMessageEvent::Done { reason, message } => {
             assert_eq!(*reason, StopReason::ToolUse);
             let has_complete_tool = message.content.iter().any(|b| {
-                matches!(b, ContentBlock::ToolCall { arguments, .. } if arguments.as_object().map_or(false, |o| o.contains_key("city")))
+                matches!(b, ContentBlock::ToolCall { arguments, .. } if arguments.as_object().is_some_and(|o| o.contains_key("city")))
             });
             assert!(has_complete_tool, "tool call should have parsed arguments");
         }

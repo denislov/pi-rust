@@ -52,6 +52,7 @@ use pi_tui::{
 
 #[test]
 fn generic_tui_symbols_are_importable_from_api_facade() {
+    #[allow(clippy::too_many_arguments)]
     fn accepts_types(
         _autocomplete: Option<ApiAutocompleteItem>,
         _box_component: Option<ApiBox>,

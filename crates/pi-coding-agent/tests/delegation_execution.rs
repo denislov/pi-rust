@@ -883,18 +883,19 @@ system_prompt = "Reviewer child instructions."
     assert!(reopened.pending_delegation_confirmations().is_empty());
     drop(reopened);
 
-    let calls = calls.lock().unwrap();
-    assert_eq!(
-        calls.len(),
-        5,
-        "nested approval should run reviewer exactly once after reopen"
-    );
-    assert_eq!(user_texts(&calls[4].context), vec!["review parser"]);
-    assert_eq!(
-        calls[4].context.system_prompt.as_deref(),
-        Some("Reviewer child instructions.")
-    );
-    drop(calls);
+    {
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            5,
+            "nested approval should run reviewer exactly once after reopen"
+        );
+        assert_eq!(user_texts(&calls[4].context), vec!["review parser"]);
+        assert_eq!(
+            calls[4].context.system_prompt.as_deref(),
+            Some("Reviewer child instructions.")
+        );
+    }
 
     let events = drain_events(&mut events);
     assert!(
@@ -1788,18 +1789,19 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     assert!(reopened.pending_delegation_confirmations().is_empty());
     drop(reopened);
 
-    let calls = calls.lock().unwrap();
-    assert_eq!(
-        calls.len(),
-        3,
-        "restored approval should run exactly one child provider call"
-    );
-    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
-    assert_eq!(
-        calls[2].context.system_prompt.as_deref(),
-        Some("Coder child instructions.")
-    );
-    drop(calls);
+    {
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            3,
+            "restored approval should run exactly one child provider call"
+        );
+        assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+        assert_eq!(
+            calls[2].context.system_prompt.as_deref(),
+            Some("Coder child instructions.")
+        );
+    }
 
     let events = drain_events(&mut events);
     assert!(
@@ -1888,13 +1890,14 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
     assert!(reopened.pending_delegation_confirmations().is_empty());
     drop(reopened);
 
-    let calls = calls.lock().unwrap();
-    assert_eq!(
-        calls.len(),
-        2,
-        "restored rejection should not run child work"
-    );
-    drop(calls);
+    {
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            2,
+            "restored rejection should not run child work"
+        );
+    }
 
     let events = drain_events(&mut events);
     assert!(

@@ -19,12 +19,13 @@ pub fn load_skills(paths: &[PathBuf]) -> (Vec<Skill>, Vec<ResourceDiagnostic>) {
             load_skills_from_dir(root, &mut skills, &mut diagnostics);
         } else if root.is_file()
             && let Some(ext) = root.extension()
-                && ext == "md" {
-                    let path = root.clone();
-                    if let Some(skill) = load_skill_file(&path, &mut diagnostics, false) {
-                        skills.push(skill);
-                    }
-                }
+            && ext == "md"
+        {
+            let path = root.clone();
+            if let Some(skill) = load_skill_file(&path, &mut diagnostics, false) {
+                skills.push(skill);
+            }
+        }
     }
 
     (skills, diagnostics)
@@ -65,9 +66,10 @@ fn load_skills_from_dir(
     // Load SKILL.md at the directory level
     let skill_md = root.join("SKILL.md");
     if skill_md.exists()
-        && let Some(skill) = load_skill_file(&skill_md, diagnostics, false) {
-            skills.push(skill);
-        }
+        && let Some(skill) = load_skill_file(&skill_md, diagnostics, false)
+    {
+        skills.push(skill);
+    }
 
     // Walk subdirectories for additional SKILL.md files
     let walker = WalkBuilder::new(root)
@@ -81,9 +83,10 @@ fn load_skills_from_dir(
             continue;
         }
         if entry.file_name() == "SKILL.md"
-            && let Some(skill) = load_skill_file(&path, diagnostics, false) {
-                skills.push(skill);
-            }
+            && let Some(skill) = load_skill_file(&path, diagnostics, false)
+        {
+            skills.push(skill);
+        }
     }
 
     // Load direct .md files in root
@@ -95,9 +98,10 @@ fn load_skills_from_dir(
             }
             if let Some(ext) = path.extension()
                 && ext == "md"
-                    && let Some(skill) = load_skill_file(&path, diagnostics, false) {
-                        skills.push(skill);
-                    }
+                && let Some(skill) = load_skill_file(&path, diagnostics, false)
+            {
+                skills.push(skill);
+            }
         }
     }
 }
@@ -142,17 +146,17 @@ fn load_skill_file(
     // Validate name against TS `validateName` rules.
     if let Some(ref parent_name) = parent_dir_name
         && let Some(ref fm_name) = frontmatter_name
-            && fm_name.as_str() != parent_name.as_str()
-        {
-            diagnostics.push(ResourceDiagnostic {
-                severity: DiagnosticSeverity::Warning,
-                code: "invalid_metadata".into(),
-                message: format!(
-                    "name \"{fm_name}\" does not match parent directory \"{parent_name}\""
-                ),
-                path: path.clone(),
-            });
-        }
+        && fm_name.as_str() != parent_name.as_str()
+    {
+        diagnostics.push(ResourceDiagnostic {
+            severity: DiagnosticSeverity::Warning,
+            code: "invalid_metadata".into(),
+            message: format!(
+                "name \"{fm_name}\" does not match parent directory \"{parent_name}\""
+            ),
+            path: path.clone(),
+        });
+    }
     for error in validate_skill_name(&name) {
         diagnostics.push(ResourceDiagnostic {
             severity: DiagnosticSeverity::Warning,
@@ -241,11 +245,12 @@ fn fallback_name(path: &Path) -> String {
         return capped;
     }
     if let Some(parent) = path.parent()
-        && let Some(name) = parent.file_name() {
-            let s = name.to_string_lossy();
-            let capped: String = s.chars().take(64).collect();
-            return capped;
-        }
+        && let Some(name) = parent.file_name()
+    {
+        let s = name.to_string_lossy();
+        let capped: String = s.chars().take(64).collect();
+        return capped;
+    }
     "unnamed".to_string()
 }
 

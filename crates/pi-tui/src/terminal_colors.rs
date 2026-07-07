@@ -50,7 +50,9 @@ pub fn parse_osc11_background_color(data: &str) -> Option<RgbColor> {
     // RGB format: rgb:rrrr/gggg/bbbb or rgba:rrrr/gggg/bbbb/aaaa
     let rgb_value = if let Some(v) = value.strip_prefix("rgba:") {
         v
-    } else { value.strip_prefix("rgb:")? };
+    } else {
+        value.strip_prefix("rgb:")?
+    };
 
     let mut parts = rgb_value.splitn(3, '/');
     let r = parse_osc_hex_channel(parts.next()?)?;

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Completed status, 2026-07-07: Flow core abstraction hardening is closed in `docs/TODO.md`; `AgentTurnFlow::run_state` now drives a real `Flow<AgentTurnContext>` graph, product flows share construction helpers, and subflow runners are routed through `FlowService`. This plan is retained as implementation history.
+
 **Goal:** Make `pi-rust`'s Flow abstraction match the documented Flow-centered architecture by turning `AgentTurnFlow` into a real graph runtime and then reducing repeated product-flow composition patterns.
 
 **Architecture:** Keep `Flow<C>` as the small typed graph executor. Treat `C` as the typed shared store, keep product side effects in services, and introduce helpers only after behavior-preserving tests are in place.
@@ -52,7 +54,7 @@ This status block reconciles the original plan with the current repository state
 - Modify: `crates/pi-agent-core/tests/agent_turn_flow.rs`
 - Modify: `crates/pi-agent-core/tests/agent_runtime_boundary.rs`
 
-- [ ] **Step 1: Add graph-shape assertions**
+- [x] **Step 1: Add graph-shape assertions**
 
 Add this test near the existing `agent_turn_flow` tests:
 
@@ -76,7 +78,7 @@ fn agent_turn_flow_exposes_real_graph_shape() {
 }
 ```
 
-- [ ] **Step 2: Add a source guard against the monolithic runtime bridge**
+- [x] **Step 2: Add a source guard against the monolithic runtime bridge**
 
 Replace the current `AgentTurnFlow::run_state(state)` source guard in `crates/pi-agent-core/tests/agent_runtime_boundary.rs` with:
 
@@ -100,7 +102,7 @@ fn agent_turn_flow_runtime_entrypoint_does_not_delegate_to_monolithic_loop() {
 }
 ```
 
-- [ ] **Step 3: Run the focused tests and confirm they fail**
+- [x] **Step 3: Run the focused tests and confirm they fail**
 
 Run:
 
@@ -116,7 +118,7 @@ FAILED agent_turn_flow_exposes_real_graph_shape
 FAILED agent_turn_flow_runtime_entrypoint_does_not_delegate_to_monolithic_loop
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```text
 git add crates/pi-agent-core/tests/agent_turn_flow.rs crates/pi-agent-core/tests/agent_runtime_boundary.rs
@@ -130,7 +132,7 @@ git commit -m "test(agent-core): expose agent turn flow graph gap"
 - Modify: `crates/pi-agent-core/src/agent_turn_flow/mod.rs`
 - Modify: `crates/pi-agent-core/tests/agent_turn_flow.rs`
 
-- [ ] **Step 1: Add node IDs and action constants**
+- [x] **Step 1: Add node IDs and action constants**
 
 Insert near the top of `runtime.rs`:
 
@@ -164,7 +166,7 @@ const ACTION_ERROR: &str = "error";
 const ACTION_ABORTED: &str = "aborted";
 ```
 
-- [ ] **Step 2: Change `AgentTurnFlow` from unit struct to graph owner**
+- [x] **Step 2: Change `AgentTurnFlow` from unit struct to graph owner**
 
 Replace:
 
@@ -180,7 +182,7 @@ pub struct AgentTurnFlow {
 }
 ```
 
-- [ ] **Step 3: Add graph construction**
+- [x] **Step 3: Add graph construction**
 
 Add this implementation block before `run_state`:
 
@@ -236,7 +238,7 @@ impl AgentTurnFlow {
 }
 ```
 
-- [ ] **Step 4: Update `agent_turn_flow/mod.rs` unit-struct smoke test**
+- [x] **Step 4: Update `agent_turn_flow/mod.rs` unit-struct smoke test**
 
 Replace the unit struct smoke assertion with:
 
@@ -249,7 +251,7 @@ fn agent_turn_flow_builds_graph() {
 }
 ```
 
-- [ ] **Step 5: Run the graph-shape test**
+- [x] **Step 5: Run the graph-shape test**
 
 Run:
 
@@ -263,7 +265,7 @@ Expected:
 test agent_turn_flow_exposes_real_graph_shape ... ok
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 git add crates/pi-agent-core/src/agent_turn_flow/runtime.rs crates/pi-agent-core/src/agent_turn_flow/mod.rs crates/pi-agent-core/tests/agent_turn_flow.rs
@@ -277,7 +279,7 @@ git commit -m "feat(agent-core): build agent turn flow graph"
 - Modify: `crates/pi-agent-core/src/agent_turn_flow/nodes.rs`
 - Modify: `crates/pi-agent-core/tests/agent_turn_flow.rs`
 
-- [ ] **Step 1: Add context fields required by the full loop behavior**
+- [x] **Step 1: Add context fields required by the full loop behavior**
 
 Extend `AgentTurnContext` with:
 
@@ -295,7 +297,7 @@ should_finish: false,
 has_more_queued_input: false,
 ```
 
-- [ ] **Step 2: Add `StartTurnNode`**
+- [x] **Step 2: Add `StartTurnNode`**
 
 Add to `nodes.rs`:
 
@@ -333,7 +335,7 @@ impl FlowNode<AgentTurnContext> for StartTurnNode {
 }
 ```
 
-- [ ] **Step 3: Add `DrainQueuedInputNode`**
+- [x] **Step 3: Add `DrainQueuedInputNode`**
 
 Add to `nodes.rs`:
 
@@ -359,7 +361,7 @@ impl FlowNode<AgentTurnContext> for DrainQueuedInputNode {
 }
 ```
 
-- [ ] **Step 4: Replace `PrepareContextNode` with full provider request preparation**
+- [x] **Step 4: Replace `PrepareContextNode` with full provider request preparation**
 
 Rename the node to `PrepareProviderRequestNode` and keep the current `prepare_context` logic as the base. Extend it to apply `transform_context` and `convert_to_llm` before constructing `ProviderRequestSnapshot`, matching the old loop behavior:
 
@@ -394,7 +396,7 @@ ctx.config.stream_options.clone()
 ctx.cancel_token.clone()
 ```
 
-- [ ] **Step 5: Add before-provider hook node**
+- [x] **Step 5: Add before-provider hook node**
 
 Add:
 
@@ -421,7 +423,7 @@ impl FlowNode<AgentTurnContext> for ApplyBeforeProviderRequestHookNode {
 }
 ```
 
-- [ ] **Step 6: Split stop/tool decision from next-turn preparation**
+- [x] **Step 6: Split stop/tool decision from next-turn preparation**
 
 Rename `DecideStopOrToolsNode` to `DecideAfterAssistantNode`. It should:
 
@@ -457,7 +459,7 @@ impl FlowNode<AgentTurnContext> for MaybePrepareNextTurnNode {
 }
 ```
 
-- [ ] **Step 7: Add behavior tests for the missing nodes**
+- [x] **Step 7: Add behavior tests for the missing nodes**
 
 Extend the imports at the top of `crates/pi-agent-core/tests/agent_turn_flow.rs`:
 
@@ -544,7 +546,7 @@ async fn maybe_prepare_next_turn_drains_follow_up_before_done() {
 }
 ```
 
-- [ ] **Step 8: Run focused tests**
+- [x] **Step 8: Run focused tests**
 
 Run:
 
@@ -561,7 +563,7 @@ Expected:
 test result: ok
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```text
 git add crates/pi-agent-core/src/agent_turn_flow/context.rs crates/pi-agent-core/src/agent_turn_flow/nodes.rs crates/pi-agent-core/tests/agent_turn_flow.rs
@@ -579,7 +581,7 @@ git commit -m "feat(agent-core): complete agent turn flow nodes"
 - Modify: `crates/pi-agent-core/tests/hooks.rs`
 - Modify: `crates/pi-agent-core/tests/compaction.rs`
 
-- [ ] **Step 1: Add state export from context**
+- [x] **Step 1: Add state export from context**
 
 Add to `context.rs`:
 
@@ -595,7 +597,7 @@ impl AgentTurnContext {
 }
 ```
 
-- [ ] **Step 2: Replace `run_state` bridge**
+- [x] **Step 2: Replace `run_state` bridge**
 
 Replace:
 
@@ -658,7 +660,7 @@ pub(crate) fn run_state(state: Arc<RwLock<AgentState>>) -> AgentStream {
 }
 ```
 
-- [ ] **Step 3: Keep old `run_loop` available only as migration reference**
+- [x] **Step 3: Keep old `run_loop` available only as migration reference**
 
 Move the old `run_loop` implementation below the graph runtime and mark it:
 
@@ -671,7 +673,7 @@ pub fn run_loop(state: Arc<RwLock<AgentState>>) -> AgentStream {
 
 If keeping the full reference function causes duplicated active behavior, delete it in the same task after behavior tests pass.
 
-- [ ] **Step 4: Run core behavior regressions**
+- [x] **Step 4: Run core behavior regressions**
 
 Run:
 
@@ -690,7 +692,7 @@ Expected:
 test result: ok
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git add crates/pi-agent-core/src/agent_turn_flow/runtime.rs crates/pi-agent-core/src/agent_turn_flow/context.rs crates/pi-agent-core/tests/agent_turn_flow.rs crates/pi-agent-core/tests/agent_loop.rs crates/pi-agent-core/tests/parallel_tools.rs crates/pi-agent-core/tests/hooks.rs crates/pi-agent-core/tests/compaction.rs crates/pi-agent-core/tests/agent_runtime_boundary.rs
@@ -706,7 +708,7 @@ git commit -m "feat(agent-core): run agent turns through flow graph"
 - Modify: `crates/pi-coding-agent/src/coding_session/branch_summary_flow.rs`
 - Modify: `crates/pi-coding-agent/tests/event_boundary_guards.rs`
 
-- [ ] **Step 1: Add a local linear-flow helper**
+- [x] **Step 1: Add a local linear-flow helper**
 
 Add this helper inside `flow_service.rs` or a new private `flow_helpers.rs` module:
 
@@ -726,7 +728,7 @@ pub(crate) fn add_linear_edges<C>(
 }
 ```
 
-- [ ] **Step 2: Replace repeated `windows(2)` wiring in three flows**
+- [x] **Step 2: Replace repeated `windows(2)` wiring in three flows**
 
 In `export_flow.rs`, `manual_compaction_flow.rs`, and `branch_summary_flow.rs`, replace:
 
@@ -744,7 +746,7 @@ super::flow_service::add_linear_edges(&mut flow, EXPORT_NODE_IDS)?;
 
 Use each flow's own node ID constant.
 
-- [ ] **Step 3: Keep graph shape visible**
+- [x] **Step 3: Keep graph shape visible**
 
 Add or keep tests that assert:
 
@@ -754,7 +756,7 @@ assert_eq!(ManualCompactionFlow::node_ids(), MANUAL_COMPACTION_NODE_IDS);
 assert_eq!(BranchSummaryFlow::node_ids(), BRANCH_SUMMARY_NODE_IDS);
 ```
 
-- [ ] **Step 4: Run product flow tests**
+- [x] **Step 4: Run product flow tests**
 
 Run:
 
@@ -771,7 +773,7 @@ Expected:
 test result: ok
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git add crates/pi-coding-agent/src/coding_session/flow_service.rs crates/pi-coding-agent/src/coding_session/export_flow.rs crates/pi-coding-agent/src/coding_session/manual_compaction_flow.rs crates/pi-coding-agent/src/coding_session/branch_summary_flow.rs crates/pi-coding-agent/tests/event_boundary_guards.rs
@@ -787,7 +789,7 @@ git commit -m "refactor(coding-agent): share linear product flow wiring"
 - Modify: `crates/pi-coding-agent/tests/agent_invocation.rs`
 - Modify: `crates/pi-coding-agent/tests/agent_team_flow.rs`
 
-- [ ] **Step 1: Add subflow runner methods with explicit names**
+- [x] **Step 1: Add subflow runner methods with explicit names**
 
 Add methods to `FlowService`:
 
@@ -814,7 +816,7 @@ pub(crate) async fn run_agent_team_subflow(
 }
 ```
 
-- [ ] **Step 2: Replace direct nested `PromptTurnFlow::new()?.run(...)` calls**
+- [x] **Step 2: Replace direct nested `PromptTurnFlow::new()?.run(...)` calls**
 
 In `agent_invocation_flow.rs` and `agent_team_flow.rs`, route nested prompt execution through the explicit subflow methods. The call site should read as subflow execution, not ad hoc graph construction.
 
@@ -829,7 +831,7 @@ let prompt_outcome = context
 
 If `AgentInvocationContext` does not currently hold a `FlowService` reference, pass a narrow `SubflowRunner` trait object into the context instead of passing `CodingAgentSession`.
 
-- [ ] **Step 3: Test nested flow behavior stays isolated**
+- [x] **Step 3: Test nested flow behavior stays isolated**
 
 Add assertions to existing tests:
 
@@ -845,7 +847,7 @@ assert!(events.iter().any(|event| matches!(
 assert!(!events_as_json.contains("flowNode"));
 ```
 
-- [ ] **Step 4: Run nested flow tests**
+- [x] **Step 4: Run nested flow tests**
 
 Run:
 
@@ -861,7 +863,7 @@ Expected:
 test result: ok
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git add crates/pi-coding-agent/src/coding_session/flow_service.rs crates/pi-coding-agent/src/coding_session/agent_invocation_flow.rs crates/pi-coding-agent/src/coding_session/agent_team_flow.rs crates/pi-coding-agent/tests/agent_invocation.rs crates/pi-coding-agent/tests/agent_team_flow.rs
@@ -876,7 +878,7 @@ git commit -m "refactor(coding-agent): make nested workflow subflows explicit"
 - Modify: `crates/pi-coding-agent/src/coding_session/agent_team_flow.rs`
 - Modify: `crates/pi-coding-agent/tests/agent_team_flow.rs`
 
-- [ ] **Step 1: Extract ordered parallel tool aggregation**
+- [x] **Step 1: Extract ordered parallel tool aggregation**
 
 In `nodes.rs`, extract the parallel tool execution ordering into:
 
@@ -920,7 +922,7 @@ async fn collect_parallel_tool_executions(
 }
 ```
 
-- [ ] **Step 2: Assert deterministic result ordering**
+- [x] **Step 2: Assert deterministic result ordering**
 
 Extend the delayed parallel tool test with:
 
@@ -936,11 +938,11 @@ let tool_messages: Vec<_> = context
 assert_eq!(tool_messages, vec!["call_slow", "call_fast"]);
 ```
 
-- [ ] **Step 3: Keep product team parallelism out of low-level Flow runtime**
+- [x] **Step 3: Keep product team parallelism out of low-level Flow runtime**
 
 If `AgentTeamFlow` gains parallel member execution, implement it as a product-level helper that returns member outcomes sorted by member index or profile ID. Do not add a generic parallel executor to `Flow<C>` in this task.
 
-- [ ] **Step 4: Run focused parallel checks**
+- [x] **Step 4: Run focused parallel checks**
 
 Run:
 
@@ -956,7 +958,7 @@ Expected:
 test result: ok
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git add crates/pi-agent-core/src/agent_turn_flow/nodes.rs crates/pi-agent-core/tests/agent_turn_flow.rs crates/pi-coding-agent/src/coding_session/agent_team_flow.rs crates/pi-coding-agent/tests/agent_team_flow.rs
@@ -970,7 +972,7 @@ git commit -m "refactor(flow): preserve deterministic parallel aggregation"
 - Modify: `docs/superpowers/specs/2026-07-06-flow-core-abstraction-hardening-design.md`
 - Modify: `docs/superpowers/plans/2026-07-06-flow-core-abstraction-hardening-plan.md`
 
-- [ ] **Step 1: Run workspace checks**
+- [x] **Step 1: Run workspace checks**
 
 Run:
 
@@ -990,7 +992,7 @@ test result: ok
 Finished dev profile
 ```
 
-- [ ] **Step 2: Update TODO status**
+- [x] **Step 2: Update TODO status**
 
 Mark the post-Phase 6 Flow core abstraction hardening item complete only when:
 
@@ -1000,7 +1002,7 @@ Mark the post-Phase 6 Flow core abstraction hardening item complete only when:
 - subflow convention is explicit for invocation/team nesting;
 - adapter event guards still pass.
 
-- [ ] **Step 3: Commit closeout**
+- [x] **Step 3: Commit closeout**
 
 ```text
 git add docs/TODO.md docs/superpowers/specs/2026-07-06-flow-core-abstraction-hardening-design.md docs/superpowers/plans/2026-07-06-flow-core-abstraction-hardening-plan.md

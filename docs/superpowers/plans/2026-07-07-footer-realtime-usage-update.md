@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Completed status, 2026-07-07: interactive footer realtime usage is implemented and recorded in `docs/TODO.md`. `AssistantMessageCompleted` carries usage, `CodingEventBridge` emits per-message `UsageUpdate`, and the old turn-level usage update path has been removed.
+
 **Goal:** 让 interactive TUI footer 的 token/cost/上下文在每个 assistant message 完成时即时刷新，对标 TypeScript `pi` 的 `message_end` + pull 重算语义，而不是等到整个 prompt turn 完成。
 
 **Architecture:** Rust 当前是 push/缓存模型——`root.stats` 只在 `finish_coding_prompt`（turn 完成）时由 `apply_success_usage` 写入一次，且 `CodingAgentEvent::AssistantMessageCompleted` 不携带 usage。改为让事件流携带 per-message usage，由 `CodingEventBridge` 在每个 `AssistantMessageCompleted` 累加并发 `UiEvent::UsageUpdate`，`root.apply_events` 收到后立即更新 `FooterStats`，下次 `footer()` 渲染即刷新。同时移除 `apply_success_usage` / `update_usage` turn 级机制（避免重复累加，并取消"内部辅助任务 usage 不计入"的区分，对齐 TS 遍历所有 entries 的语义）。
@@ -51,7 +53,7 @@
 **Interfaces:**
 - Produces: `CodingAgentEvent::AssistantMessageCompleted { ..., usage: Usage }` — 后续 task 依赖此字段。
 
-- [ ] **Step 1: 加字段**
+- [x] **Step 1: 加字段**
 
 `event.rs` `AssistantMessageCompleted` 变体：
 ```rust
@@ -65,7 +67,7 @@ AssistantMessageCompleted {
 ```
 确认 `event.rs` 顶部已 `use pi_ai::types::Usage;`（若无则加）。
 
-- [ ] **Step 2: emit 点带 usage**
+- [x] **Step 2: emit 点带 usage**
 
 `event_service.rs:678`：
 ```rust
@@ -80,16 +82,16 @@ AgentEvent::AgentDone { message } => {
 }
 ```
 
-- [ ] **Step 3: 更新所有测试构造点**
+- [x] **Step 3: 更新所有测试构造点**
 
 每个构造 `AssistantMessageCompleted { .. }` 的地方加 `usage: Usage::default()`（或测试专用值）。位置（共 5 处）：`event_service.rs:1026`、`tests/interactive_event_bridge.rs:73`、`tests/protocol_events.rs:71`、`tests/protocol_events.rs:150`、`protocol/rpc/events.rs:53`。确保各文件 `use pi_ai::types::Usage;`（或 `pi_ai::types::Usage`）。
 
-- [ ] **Step 4: 编译验证**
+- [x] **Step 4: 编译验证**
 
 Run: `cargo check -p pi-coding-agent`
 Expected: PASS（无编译错误；消费端用 `{ .. }` 或 `{ final_text, .. }` 的 match 不受影响）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(coding-agent): carry usage in AssistantMessageCompleted event"
@@ -107,7 +109,7 @@ git add -A && git commit -m "feat(coding-agent): carry usage in AssistantMessage
 - Consumes: `AssistantMessageCompleted { usage, .. }` (Task 1)
 - Produces: `UiEvent::UsageUpdate { input, output, cache_read, cache_write, cost, context_tokens: Some(_) }` 紧随 `UiEvent::AssistantDone`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/interactive_event_bridge.rs` 修改 `coding_event_bridge_maps_assistant_events`，断言 `AssistantMessageCompleted` 产出 `[AssistantDone, UsageUpdate]`：
 ```rust
@@ -142,12 +144,12 @@ assert_eq!(
 ```
 加一个累积测试：两次 `AssistantMessageCompleted` 后 `UsageUpdate.input` 累加。
 
-- [ ] **Step 2: 跑测试验证失败**
+- [x] **Step 2: 跑测试验证失败**
 
 Run: `cargo test -p pi-coding-agent --test interactive_event_bridge coding_event_bridge_maps_assistant_events`
 Expected: FAIL（当前只产 `[AssistantDone]`）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `event_bridge.rs`：加 `calculate_context_tokens` helper（从 `loop.rs` 移植逻辑）；`AssistantMessageCompleted` 分支：
 ```rust
@@ -174,12 +176,12 @@ CodingAgentEvent::AssistantMessageCompleted { usage, .. } => {
 ```
 注意：`handle(&self, ...)` 签名需改为 `&mut self`（累加器可变）。检查所有 `bridge.handle(...)` 调用点（`loop.rs:1927`、`loop.rs:1341`、`tests`）已用 `&mut bridge`。
 
-- [ ] **Step 4: 跑测试验证通过**
+- [x] **Step 4: 跑测试验证通过**
 
 Run: `cargo test -p pi-coding-agent --test interactive_event_bridge`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(coding-agent): bridge emits UsageUpdate on each AssistantMessageCompleted"
@@ -196,20 +198,20 @@ git add -A && git commit -m "feat(coding-agent): bridge emits UsageUpdate on eac
 **Interfaces:**
 - 消费 Task 2 的实时 `UsageUpdate`；不再有 turn 级 usage 写入。
 
-- [ ] **Step 1: 移除 loop.rs 累加逻辑**
+- [x] **Step 1: 移除 loop.rs 累加逻辑**
 
 删除 `fn apply_success_usage`。`finish_coding_prompt` 签名去掉 `update_usage: bool` 参数，删除 `if update_usage { apply_success_usage(...) }` 块。删除 loop.rs:1977 `apply_success_usage(root, &result.outcome.final_message.usage);`（AgentInvocation 路径）。更新 `finish_coding_prompt` 的两个调用点（1955、1966）去掉 `result.update_usage` 实参。若 `calculate_context_tokens` 仅被 `apply_success_usage` 使用则一并删除（Task 2 已在 bridge 复制）。
 
-- [ ] **Step 2: 移除 prompt_task.rs `update_usage`**
+- [x] **Step 2: 移除 prompt_task.rs `update_usage`**
 
 删除 `CodingPromptTaskResult.update_usage` 字段；删除 4 处构造（668/887/1199/1261）的 `update_usage: ...,` 行。
 
-- [ ] **Step 3: 编译 + 测试**
+- [x] **Step 3: 编译 + 测试**
 
 Run: `cargo check -p pi-coding-agent && cargo test -p pi-coding-agent`
 Expected: PASS。若 `app.rs` footer 测试因 `UsageUpdate` 时机变化失败，按新语义修正（footer 在 `apply_events([UsageUpdate])` 后反映新值）。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A && git commit -m "refactor(coding-agent): remove turn-level apply_success_usage in favor of event-driven usage"
@@ -223,20 +225,20 @@ git add -A && git commit -m "refactor(coding-agent): remove turn-level apply_suc
 - Verify: `crates/pi-coding-agent/src/interactive/app.rs` footer 测试
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: 补 footer 实时更新测试**
+- [x] **Step 1: 补 footer 实时更新测试**
 
 在 `app.rs` 测试模块加：构造 `root`，`apply_events([AssistantDelta, AssistantDelta, UsageUpdate{...}])`，断言 `root.footer(80)` 含新 token/cost/context。再 `apply_events([UsageUpdate{...更大}])`，断言 footer 反映累加值。
 
-- [ ] **Step 2: 全量验证**
+- [x] **Step 2: 全量验证**
 
 Run: `cargo fmt --check && cargo test --workspace && cargo check --workspace`
 Expected: 全 PASS
 
-- [ ] **Step 3: 更新 TODO.md**
+- [x] **Step 3: 更新 TODO.md**
 
 在 `docs/TODO.md` 相关 phase 加进度注记（footer 实时 usage 已对齐 TS `message_end` 语义）。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A && git commit -m "test+docs: verify footer realtime usage update and update TODO"

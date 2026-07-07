@@ -1,5 +1,4 @@
 use pi_ai::types::*;
-use serde_json;
 
 #[test]
 fn assistant_message_roundtrip() {

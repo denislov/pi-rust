@@ -15,8 +15,8 @@ fn built_in_themes_expose_dark_and_light_component_styles() {
     assert_eq!(dark.mode, ThemeMode::Dark);
     assert_eq!(light.mode, ThemeMode::Light);
     assert_ne!(dark.palette.background, light.palette.background);
-    assert_eq!(dark.markdown.heading.bold, true);
-    assert_eq!(light.select_list.selected_text.bold, true);
+    assert!(dark.markdown.heading.bold);
+    assert!(light.select_list.selected_text.bold);
 }
 
 #[test]
@@ -99,5 +99,5 @@ fn select_list_accepts_theme_for_selected_and_description_text() {
 fn image_theme_fallback_color_defaults() {
     let t = pi_tui::ImageTheme::default();
     assert_eq!(t.fallback_color.fg, pi_tui::Color::Default);
-    assert_eq!(t.fallback_color.bold, false);
+    assert!(!t.fallback_color.bold);
 }

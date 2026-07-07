@@ -110,7 +110,7 @@ fn completions_request_maps_context_tools_and_options() {
 
     assert_eq!(req.model, "deepseek-v4-flash");
     assert!(req.stream);
-    assert_eq!(req.stream_options.as_ref().unwrap().include_usage, true);
+    assert!(req.stream_options.as_ref().unwrap().include_usage);
     assert_eq!(req.temperature, Some(0.7));
     assert_eq!(req.max_tokens, Some(1024));
     assert_eq!(

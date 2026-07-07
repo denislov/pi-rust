@@ -34,11 +34,7 @@ fn centered_overlay_is_composited_over_base_lines() {
     );
     // The last line should contain 4 dots, then SEGMENT_RESET, then XX, then SEGMENT_RESET, then 4 dots.
     // Split by newlines and check the last non-empty line.
-    let last_line = output
-        .split('\n')
-        .filter(|l| !l.is_empty())
-        .last()
-        .unwrap_or("");
+    let last_line = output.split('\n').rfind(|l| !l.is_empty()).unwrap_or("");
     assert!(
         last_line.starts_with("...."),
         "expected last line to start with 4 dots, got: {last_line:?}"

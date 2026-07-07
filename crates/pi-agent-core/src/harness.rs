@@ -736,14 +736,14 @@ fn make_provider_request_hook(
                     stream_options: stream_options.clone(),
                 })
                 .await?
-                {
-                    if let Some(updated_context) = update.context {
-                        context = updated_context;
-                    }
-                    if let Some(updated_stream_options) = update.stream_options {
-                        stream_options = updated_stream_options;
-                    }
+            {
+                if let Some(updated_context) = update.context {
+                    context = updated_context;
                 }
+                if let Some(updated_stream_options) = update.stream_options {
+                    stream_options = updated_stream_options;
+                }
+            }
 
             if let Some(auth_hook) = hooks.get_api_key_and_headers.as_ref() {
                 let auth = auth_hook(model.clone()).await.map_err(|err| err.message)?;

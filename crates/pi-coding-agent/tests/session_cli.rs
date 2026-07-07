@@ -327,14 +327,12 @@ async fn name_does_not_write_legacy_session_info_entry() {
 
 fn collect_jsonl_files(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect_jsonl_files(&path, out);
-                } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                    out.push(path);
-                }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_jsonl_files(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                out.push(path);
             }
         }
     }

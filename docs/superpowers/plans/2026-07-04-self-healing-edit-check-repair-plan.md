@@ -1,6 +1,6 @@
 # Self-Healing Edit Check Repair Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Extend `SelfHealingEditFlow` with optional check-command execution and bounded repair retries while preserving the existing session-owned workflow surface.
 

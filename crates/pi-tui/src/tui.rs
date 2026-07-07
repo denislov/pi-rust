@@ -31,14 +31,12 @@ pub struct RenderOutcome {
     pub line_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderSurface {
     #[default]
     Inline,
     Clearing,
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
@@ -271,9 +269,10 @@ impl<T: Terminal> Tui<T> {
         }
 
         if let Some(previous) = self.focused_component
-            && let Some(component) = self.child_mut(previous) {
-                component.set_focused(false);
-            }
+            && let Some(component) = self.child_mut(previous)
+        {
+            component.set_focused(false);
+        }
 
         self.focused_component = id;
         if let Some(next) = id {
@@ -293,9 +292,10 @@ impl<T: Terminal> Tui<T> {
     pub fn dispatch_input(&mut self, event: &InputEvent) {
         // ── Consume terminal colour responses ────────────────────────
         if let InputEvent::Raw(data) = event
-            && self.try_consume_color_scheme_response(data) {
-                return;
-            }
+            && self.try_consume_color_scheme_response(data)
+        {
+            return;
+        }
 
         // ── Dispatch through input listeners ─────────────────────────
         let data = match event {
@@ -367,12 +367,13 @@ impl<T: Terminal> Tui<T> {
     fn try_consume_color_scheme_response(&mut self, data: &str) -> bool {
         // OSC 997 colour scheme report
         if crate::is_color_scheme_report(data)
-            && let Some(scheme) = crate::parse_color_scheme_report(data) {
-                for listener in &mut self.color_scheme_listeners {
-                    listener(scheme);
-                }
-                return true;
+            && let Some(scheme) = crate::parse_color_scheme_report(data)
+        {
+            for listener in &mut self.color_scheme_listeners {
+                listener(scheme);
             }
+            return true;
+        }
 
         // OSC 11 background colour response
         if self.pending_osc11_replies > 0 && crate::is_osc11_background_color_response(data) {
@@ -907,9 +908,10 @@ fn extract_kitty_image_ids(line: &str, ids: &mut Vec<u32>) {
     let header = &line[header_start..header_end];
     for param in header.split(',') {
         if let Some(value) = param.strip_prefix("i=")
-            && let Ok(id) = value.parse::<u32>() {
-                ids.push(id);
-            }
+            && let Ok(id) = value.parse::<u32>()
+        {
+            ids.push(id);
+        }
     }
 }
 

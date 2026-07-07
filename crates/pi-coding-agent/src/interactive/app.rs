@@ -4440,7 +4440,7 @@ display_name = "Coder"
             }
             serde_json::to_string(&value).unwrap()
         };
-        let events = vec![
+        let events = [
             event(
                 "evt_0",
                 None,

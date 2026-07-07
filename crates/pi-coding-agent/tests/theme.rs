@@ -217,7 +217,7 @@ fn detects_light_background_from_colorfgbg() {
         DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
     };
     let env = vec![("COLORFGBG".to_string(), "0;15".to_string())];
-    let detection = detect_terminal_background(env.into_iter());
+    let detection = detect_terminal_background(env);
     assert_eq!(detection.theme, TerminalTheme::Light);
     assert_eq!(detection.source, DetectionSource::ColorFgbg);
     assert_eq!(detection.confidence, DetectionConfidence::High);
@@ -229,7 +229,7 @@ fn detects_dark_background_from_colorfgbg() {
         DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
     };
     let env = vec![("COLORFGBG".to_string(), "15;0".to_string())];
-    let detection = detect_terminal_background(env.into_iter());
+    let detection = detect_terminal_background(env);
     assert_eq!(detection.theme, TerminalTheme::Dark);
     assert_eq!(detection.source, DetectionSource::ColorFgbg);
     assert_eq!(detection.confidence, DetectionConfidence::High);
@@ -240,7 +240,7 @@ fn uses_last_colorfgbg_field_as_background() {
     use pi_coding_agent::theme::{TerminalTheme, detect_terminal_background};
     // "0;7;15" -> last field 15 (bright white) -> light
     let env = vec![("COLORFGBG".to_string(), "0;7;15".to_string())];
-    let detection = detect_terminal_background(env.into_iter());
+    let detection = detect_terminal_background(env);
     assert_eq!(detection.theme, TerminalTheme::Light);
 }
 

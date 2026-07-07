@@ -373,8 +373,7 @@ fn theme_reload_unit_tests_use_named_time_constants() {
     let lines: Vec<_> = THEME_RELOAD_SOURCE.lines().collect();
     let start_index = source_tests_start_index(&lines, "theme reload");
 
-    for index in start_index..lines.len() {
-        let line = lines[index];
+    for (index, &line) in lines.iter().enumerate().skip(start_index) {
         if !line.contains("Duration::from_millis") {
             continue;
         }

@@ -29,6 +29,7 @@ fn public_api_symbols_are_importable_from_api_facade() {
     let _ = env_api_key as fn(&str) -> Option<String>;
     let _ = builtin_provider_apis as fn() -> &'static [&'static str];
 
+    #[allow(clippy::too_many_arguments)]
     fn accepts_types(
         _assistant: Option<AssistantMessage>,
         _event: Option<AssistantMessageEvent>,

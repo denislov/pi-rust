@@ -114,10 +114,11 @@ fn convert_messages(messages: &[Message]) -> Vec<wire::RequestMessage> {
                 // the tool_result to its content array; otherwise push a new user message.
                 if let Some(last) = result.last_mut()
                     && last.role == "user"
-                        && let Some(arr) = last.content.as_array_mut() {
-                            arr.push(tool_content);
-                            continue;
-                        }
+                    && let Some(arr) = last.content.as_array_mut()
+                {
+                    arr.push(tool_content);
+                    continue;
+                }
                 result.push(wire::RequestMessage {
                     role: "user".into(),
                     content: serde_json::json!([tool_content]),

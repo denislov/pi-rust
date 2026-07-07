@@ -1408,8 +1408,10 @@ async fn interactive_resume_ignores_legacy_jsonl_sessions() {
         Some("Resume Target"),
     );
 
-    let mut args = CliArgs::default();
-    args.resume = true;
+    let args = CliArgs {
+        resume: true,
+        ..CliArgs::default()
+    };
     let provider = FauxProvider::new(Vec::new());
     let result =
         run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), "")
@@ -1435,8 +1437,10 @@ async fn interactive_resume_loads_existing_rust_native_session_messages() {
     let manifest = read_session_manifest(&sessions[0]);
     let session_id = manifest["session_id"].as_str().unwrap();
 
-    let mut args = CliArgs::default();
-    args.resume = true;
+    let args = CliArgs {
+        resume: true,
+        ..CliArgs::default()
+    };
     let provider = FauxProvider::new(Vec::new());
     let result =
         run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), "")
@@ -1460,8 +1464,10 @@ async fn interactive_resume_restores_rust_native_footer_usage() {
         .await
         .unwrap();
 
-    let mut args = CliArgs::default();
-    args.resume = true;
+    let args = CliArgs {
+        resume: true,
+        ..CliArgs::default()
+    };
     let provider = FauxProvider::new(Vec::new());
     let result =
         run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), "")

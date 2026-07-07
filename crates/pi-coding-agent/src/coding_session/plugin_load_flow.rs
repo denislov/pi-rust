@@ -1718,10 +1718,7 @@ fn lua_hook_failure_policy_from_str(value: &str) -> mlua::Result<HookFailurePoli
 }
 
 fn normalize_lua_name(value: &str) -> String {
-    value
-        .trim()
-        .replace(['-', '.'], "_")
-        .to_ascii_lowercase()
+    value.trim().replace(['-', '.'], "_").to_ascii_lowercase()
 }
 
 fn prompt_hook_point_name(point: PromptHookPoint) -> &'static str {

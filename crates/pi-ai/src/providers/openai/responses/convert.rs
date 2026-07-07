@@ -25,11 +25,7 @@ pub fn build_request(
     wire::ResponseCreateRequest {
         model: model.id.clone(),
         instructions: ctx.system_prompt.clone(),
-        input: ctx
-            .messages
-            .iter()
-            .flat_map(convert_message)
-            .collect(),
+        input: ctx.messages.iter().flat_map(convert_message).collect(),
         tools,
         max_output_tokens: max_tokens,
         temperature,

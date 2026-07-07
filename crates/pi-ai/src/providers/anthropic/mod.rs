@@ -67,13 +67,14 @@ impl ApiProvider for AnthropicProvider {
 
         if let Some(opts) = &opts
             && let Some(ref headers) = opts.headers
-                && let Some(obj) = headers.as_object() {
-                    for (k, v) in obj {
-                        if let Some(val) = v.as_str() {
-                            request = request.header(k.as_str(), val);
-                        }
-                    }
+            && let Some(obj) = headers.as_object()
+        {
+            for (k, v) in obj {
+                if let Some(val) = v.as_str() {
+                    request = request.header(k.as_str(), val);
                 }
+            }
+        }
 
         let model = model.clone();
         let model_id = model.id.clone();

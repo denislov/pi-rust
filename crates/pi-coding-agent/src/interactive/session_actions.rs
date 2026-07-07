@@ -373,9 +373,7 @@ pub(super) fn export_path_arg(args: &str) -> Option<String> {
 }
 
 pub(super) fn default_export_path(cwd: &Path) -> PathBuf {
-    let stamp = create_timestamp()
-        .replace([':', '.'], "-")
-        .replace('Z', "");
+    let stamp = create_timestamp().replace([':', '.'], "-").replace('Z', "");
     cwd.join(format!("session-{stamp}.html"))
 }
 

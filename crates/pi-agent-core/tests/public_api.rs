@@ -19,6 +19,7 @@ use pi_agent_core::api::{
 
 #[test]
 fn low_level_runtime_symbols_are_importable_from_api_facade() {
+    #[allow(clippy::too_many_arguments)]
     fn accepts_types(
         _agent: Option<Agent>,
         _config: Option<AgentConfig>,

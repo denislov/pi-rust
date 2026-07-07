@@ -283,13 +283,11 @@ impl Default for CompactionSettings {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CompactionConfig {
     pub settings: CompactionSettings,
     pub custom_instructions: Option<String>,
 }
-
 
 // ── AgentMessage ───────────────────────────────────
 

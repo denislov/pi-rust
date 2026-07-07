@@ -66,62 +66,65 @@ impl SseEventHandler for CompletionsHandler {
 
         for choice in chunk.choices {
             if let Some(fr) = choice.finish_reason.as_deref()
-                && !fr.is_empty() && fr != "null" {
-                    self.finish_reason = choice.finish_reason.clone();
-                }
+                && !fr.is_empty()
+                && fr != "null"
+            {
+                self.finish_reason = choice.finish_reason.clone();
+            }
 
             if let Some(text_delta) = &choice.delta.content
-                && !text_delta.is_empty() {
-                    if self.text_content_index.is_none() {
-                        self.text_content_index = Some(partial.content.len() as u32);
-                        partial.content.push(ContentBlock::Text {
-                            text: String::new(),
-                            text_signature: None,
-                        });
-                        events.push(AssistantMessageEvent::TextStart {
-                            content_index: self.text_content_index.unwrap(),
-                            partial: partial.clone(),
-                        });
-                    }
-                    let ci = self.text_content_index.unwrap();
-                    if let Some(ContentBlock::Text { text, .. }) =
-                        partial.content.get_mut(ci as usize)
-                    {
-                        text.push_str(text_delta);
-                    }
-                    events.push(AssistantMessageEvent::TextDelta {
-                        content_index: ci,
-                        delta: text_delta.clone(),
+                && !text_delta.is_empty()
+            {
+                if self.text_content_index.is_none() {
+                    self.text_content_index = Some(partial.content.len() as u32);
+                    partial.content.push(ContentBlock::Text {
+                        text: String::new(),
+                        text_signature: None,
+                    });
+                    events.push(AssistantMessageEvent::TextStart {
+                        content_index: self.text_content_index.unwrap(),
                         partial: partial.clone(),
                     });
                 }
+                let ci = self.text_content_index.unwrap();
+                if let Some(ContentBlock::Text { text, .. }) = partial.content.get_mut(ci as usize)
+                {
+                    text.push_str(text_delta);
+                }
+                events.push(AssistantMessageEvent::TextDelta {
+                    content_index: ci,
+                    delta: text_delta.clone(),
+                    partial: partial.clone(),
+                });
+            }
 
             if let Some(reasoning_delta) = first_reasoning_delta(&choice.delta)
-                && !reasoning_delta.is_empty() {
-                    if self.thinking_content_index.is_none() {
-                        self.thinking_content_index = Some(partial.content.len() as u32);
-                        partial.content.push(ContentBlock::Thinking {
-                            thinking: String::new(),
-                            thinking_signature: None,
-                            redacted: None,
-                        });
-                        events.push(AssistantMessageEvent::ThinkingStart {
-                            content_index: self.thinking_content_index.unwrap(),
-                            partial: partial.clone(),
-                        });
-                    }
-                    let ci = self.thinking_content_index.unwrap();
-                    if let Some(ContentBlock::Thinking { thinking, .. }) =
-                        partial.content.get_mut(ci as usize)
-                    {
-                        thinking.push_str(reasoning_delta);
-                    }
-                    events.push(AssistantMessageEvent::ThinkingDelta {
-                        content_index: ci,
-                        delta: reasoning_delta.to_string(),
+                && !reasoning_delta.is_empty()
+            {
+                if self.thinking_content_index.is_none() {
+                    self.thinking_content_index = Some(partial.content.len() as u32);
+                    partial.content.push(ContentBlock::Thinking {
+                        thinking: String::new(),
+                        thinking_signature: None,
+                        redacted: None,
+                    });
+                    events.push(AssistantMessageEvent::ThinkingStart {
+                        content_index: self.thinking_content_index.unwrap(),
                         partial: partial.clone(),
                     });
                 }
+                let ci = self.thinking_content_index.unwrap();
+                if let Some(ContentBlock::Thinking { thinking, .. }) =
+                    partial.content.get_mut(ci as usize)
+                {
+                    thinking.push_str(reasoning_delta);
+                }
+                events.push(AssistantMessageEvent::ThinkingDelta {
+                    content_index: ci,
+                    delta: reasoning_delta.to_string(),
+                    partial: partial.clone(),
+                });
+            }
 
             if let Some(tc_deltas) = &choice.delta.tool_calls {
                 for tc in tc_deltas {
@@ -148,9 +151,9 @@ impl SseEventHandler for CompletionsHandler {
                     if let Some(ref id) = tc.id
                         && let Some(ContentBlock::ToolCall { id: block_id, .. }) =
                             partial.content.get_mut(content_pos as usize)
-                        {
-                            *block_id = id.clone();
-                        }
+                    {
+                        *block_id = id.clone();
+                    }
                     if let Some(ref func) = tc.function {
                         if let Some(ref name) = func.name
                             && let Some(ContentBlock::ToolCall {
@@ -158,12 +161,12 @@ impl SseEventHandler for CompletionsHandler {
                                 id: block_id,
                                 ..
                             }) = partial.content.get_mut(content_pos as usize)
-                            {
-                                *block_name = name.clone();
-                                if let Some(ref id) = tc.id {
-                                    *block_id = id.clone();
-                                }
+                        {
+                            *block_name = name.clone();
+                            if let Some(ref id) = tc.id {
+                                *block_id = id.clone();
                             }
+                        }
                         if let Some(ref args) = func.arguments {
                             let acc = self.tool_args_acc.entry(openai_idx).or_default();
                             acc.push_str(args);
