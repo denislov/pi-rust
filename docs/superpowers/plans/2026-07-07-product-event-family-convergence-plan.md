@@ -358,3 +358,49 @@ git status --short
 ```
 
 GREEN result: protocol and interactive adapter compatibility tests passed, `cargo check -p pi-coding-agent` passed, and final format/diff hygiene was clean after applying rustfmt.
+
+### Task 5: Add Session-Write Durability Metadata
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/event.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing durability mapping test**
+
+Added `product_event_wrapper_marks_session_write_durability` to require `ProductEvent::from_compat_event()` to classify `SessionWritePending` as `PendingSessionWrite { operation_id }`, classify `SessionWriteCommitted` as `Durable { session_id }`, and keep `SessionWriteSkipped` as `LiveOnly` for the current non-persistent/no-write path.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_marks_session_write_durability --lib
+```
+
+RED result: compile failed because `ProductEventDurability::PendingSessionWrite` and `ProductEventDurability::Durable` did not exist.
+
+- [x] **Step 2: Add minimal session-write durability metadata**
+
+Extended `ProductEventDurability` with `PendingSessionWrite { operation_id }` and `Durable { session_id }`. Added `ProductEventDurability::from_compat_event()` so `ProductEvent::from_compat_event()` derives durability from the current compatibility event without changing the adapter-visible `CodingAgentEvent` stream.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_marks_session_write_durability --lib
+cargo test -p pi-coding-agent product_event_wrapper_owns_compatibility_event_and_metadata --lib
+cargo test -p pi-coding-agent event_service_wraps_emitted_events_with_sequence_and_preserves_compatibility_receiver --lib
+```
+
+GREEN result: the new durability mapping and existing wrapper/EventService boundary tests passed.
+
+- [x] **Step 3: Run focused compatibility and hygiene checks**
+
+```bash
+cargo test -p pi-coding-agent event_service --lib
+cargo test -p pi-coding-agent operation --lib
+cargo check -p pi-coding-agent
+cargo fmt --check
+git diff --check
+git status --short
+```
+
+GREEN result: event_service, operation, crate check, formatting, and diff hygiene checks passed.

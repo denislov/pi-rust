@@ -56,12 +56,13 @@ impl ProductEvent {
         let family = classification.family;
         let operation_id = classification.operation_id.map(str::to_owned);
         let terminal_status = classification.terminal_status;
+        let durability = ProductEventDurability::from_compat_event(&compatibility_event);
         Self {
             sequence,
             family,
             operation_id,
             terminal_status,
-            durability: ProductEventDurability::LiveOnly,
+            durability,
             compatibility_event,
         }
     }
@@ -76,9 +77,66 @@ impl ProductEvent {
 pub(crate) struct ProductEventSequence(pub(crate) u64);
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProductEventDurability {
     LiveOnly,
+    PendingSessionWrite { operation_id: String },
+    Durable { session_id: String },
+}
+
+impl ProductEventDurability {
+    fn from_compat_event(event: &CodingAgentEvent) -> Self {
+        match event {
+            CodingAgentEvent::SessionWritePending { operation_id } => Self::PendingSessionWrite {
+                operation_id: operation_id.clone(),
+            },
+            CodingAgentEvent::SessionWriteCommitted { session_id, .. } => Self::Durable {
+                session_id: session_id.clone(),
+            },
+            CodingAgentEvent::SessionOpened { .. }
+            | CodingAgentEvent::DefaultAgentProfileChanged { .. }
+            | CodingAgentEvent::AgentInvocationStarted { .. }
+            | CodingAgentEvent::AgentInvocationCompleted { .. }
+            | CodingAgentEvent::AgentInvocationFailed { .. }
+            | CodingAgentEvent::AgentInvocationAborted { .. }
+            | CodingAgentEvent::AgentTeamStarted { .. }
+            | CodingAgentEvent::AgentTeamMemberStarted { .. }
+            | CodingAgentEvent::AgentTeamMemberCompleted { .. }
+            | CodingAgentEvent::AgentTeamCompleted { .. }
+            | CodingAgentEvent::AgentTeamFailed { .. }
+            | CodingAgentEvent::AgentTeamAborted { .. }
+            | CodingAgentEvent::SelfHealingEditStarted { .. }
+            | CodingAgentEvent::SelfHealingEditRepairAttempted { .. }
+            | CodingAgentEvent::SelfHealingEditCompleted { .. }
+            | CodingAgentEvent::SelfHealingEditFailed { .. }
+            | CodingAgentEvent::DelegationRequested { .. }
+            | CodingAgentEvent::DelegationRejected { .. }
+            | CodingAgentEvent::DelegationApproved { .. }
+            | CodingAgentEvent::DelegationConfirmationRequired { .. }
+            | CodingAgentEvent::DelegationStarted { .. }
+            | CodingAgentEvent::DelegationCompleted { .. }
+            | CodingAgentEvent::DelegationFailed { .. }
+            | CodingAgentEvent::SessionWriteSkipped { .. }
+            | CodingAgentEvent::PromptStarted { .. }
+            | CodingAgentEvent::AgentTurnStarted { .. }
+            | CodingAgentEvent::ProviderRequestStarted { .. }
+            | CodingAgentEvent::AssistantMessageStarted { .. }
+            | CodingAgentEvent::AssistantMessageDelta { .. }
+            | CodingAgentEvent::AssistantThinkingDelta { .. }
+            | CodingAgentEvent::AssistantMessageCompleted { .. }
+            | CodingAgentEvent::ToolCallStarted { .. }
+            | CodingAgentEvent::ToolCallUpdated { .. }
+            | CodingAgentEvent::ToolCallCompleted { .. }
+            | CodingAgentEvent::ToolCallFailed { .. }
+            | CodingAgentEvent::RuntimeCompactionCompleted { .. }
+            | CodingAgentEvent::SessionCompactionCompleted { .. }
+            | CodingAgentEvent::PromptCompleted { .. }
+            | CodingAgentEvent::PromptFailed { .. }
+            | CodingAgentEvent::PromptAborted { .. }
+            | CodingAgentEvent::Diagnostic { .. }
+            | CodingAgentEvent::CapabilityChanged => Self::LiveOnly,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -709,5 +767,49 @@ mod tests {
         );
         assert_eq!(product_event.durability, ProductEventDurability::LiveOnly);
         assert_eq!(product_event.compatibility_event(), &event);
+    }
+
+    #[test]
+    fn product_event_wrapper_marks_session_write_durability() {
+        let pending = ProductEvent::from_compat_event(
+            ProductEventSequence(1),
+            CodingAgentEvent::SessionWritePending {
+                operation_id: "op_prompt".into(),
+            },
+        );
+        assert_eq!(
+            pending.durability,
+            ProductEventDurability::PendingSessionWrite {
+                operation_id: "op_prompt".into(),
+            }
+        );
+
+        let committed = ProductEvent::from_compat_event(
+            ProductEventSequence(2),
+            CodingAgentEvent::SessionWriteCommitted {
+                operation_id: "op_prompt".into(),
+                session_id: "session_1".into(),
+            },
+        );
+        assert_eq!(
+            committed.durability,
+            ProductEventDurability::Durable {
+                session_id: "session_1".into(),
+            }
+        );
+        assert_eq!(committed.operation_id.as_deref(), Some("op_prompt"));
+        assert_eq!(
+            committed.terminal_status,
+            Some(ProductEventTerminalStatus::Completed)
+        );
+
+        let skipped = ProductEvent::from_compat_event(
+            ProductEventSequence(3),
+            CodingAgentEvent::SessionWriteSkipped {
+                operation_id: "op_prompt".into(),
+                reason: "session persistence disabled".into(),
+            },
+        );
+        assert_eq!(skipped.durability, ProductEventDurability::LiveOnly);
     }
 }
