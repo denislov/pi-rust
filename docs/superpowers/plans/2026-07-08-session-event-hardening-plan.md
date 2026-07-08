@@ -351,7 +351,7 @@ git commit -m "feat: classify session operation recovery state"
 
 Add a `SessionEventData::OperationRecovered` serialization test and a replay test where `OperationRecovered` changes an in-doubt operation to `Recovered`.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -567,13 +567,13 @@ git commit -m "feat: persist runtime generation references"
 
 ## Verification Checklist
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo test -p pi-coding-agent session_log --lib`
-- [ ] `cargo test -p pi-coding-agent session_service --lib`
-- [ ] `cargo test -p pi-coding-agent event_service --lib`
-- [ ] `cargo test -p pi-coding-agent protocol_events`
-- [ ] `cargo check -p pi-coding-agent`
-- [ ] `git diff --check`
+- [x] `cargo fmt --check`
+- [x] `cargo test -p pi-coding-agent session_log --lib`
+- [x] `cargo test -p pi-coding-agent session_service --lib`
+- [x] `cargo test -p pi-coding-agent event_service --lib`
+- [x] `cargo test -p pi-coding-agent protocol_events`
+- [x] `cargo check -p pi-coding-agent`
+- [x] `git diff --check`
 
 ## Spec Coverage
 
