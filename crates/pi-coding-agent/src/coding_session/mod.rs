@@ -13,6 +13,7 @@ mod event_service;
 mod export;
 mod export_flow;
 mod flow_service;
+mod intent_router;
 mod manual_compaction_flow;
 mod manual_compaction_service;
 mod operation;
@@ -76,9 +77,10 @@ use delegation_execution_service::DelegationExecutionService;
 use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
+use intent_router::IntentRouter;
 use manual_compaction_flow::ManualCompactionOptions;
 use manual_compaction_service::ManualCompactionService;
-use operation::{Operation, OperationAdmission, OperationOutcome};
+use operation::{Operation, OperationAdmission, OperationDispatchMode, OperationOutcome};
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::PluginLoadOptions;
@@ -1029,13 +1031,12 @@ impl CodingAgentSession {
         &self,
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
-        let metadata = operation.metadata();
-        let Some(kind) = metadata.static_kind else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "dynamic operation requires async dispatcher".into(),
-            });
-        };
-        let _operation_guard = self.operation_control.begin(kind)?;
+        let admission = IntentRouter::static_admission(&operation)?;
+        let _operation_guard = IntentRouter::begin(
+            &self.operation_control,
+            &admission,
+            OperationDispatchMode::SyncReadOnly,
+        )?;
 
         match operation {
             Operation::Export(options) => self
@@ -1046,10 +1047,7 @@ impl CodingAgentSession {
                 .run_command(&command_id, args)
                 .map(OperationOutcome::PluginCommand),
             Operation::RejectDelegationConfirmation { .. } => {
-                Err(CodingSessionError::UnsupportedCapability {
-                    capability:
-                        "delegation confirmation operation requires sync mutable dispatcher".into(),
-                })
+                Err(IntentRouter::unsupported_dispatch(&admission))
             }
             Operation::Prompt(_)
             | Operation::ManualCompaction(_)
@@ -1058,9 +1056,7 @@ impl CodingAgentSession {
             | Operation::BranchSummary { .. }
             | Operation::SelfHealingEdit(_)
             | Operation::AgentInvocation(_)
-            | Operation::AgentTeam(_) => Err(CodingSessionError::UnsupportedCapability {
-                capability: format!("{} operation requires async dispatcher", kind.as_str()),
-            }),
+            | Operation::AgentTeam(_) => Err(IntentRouter::unsupported_dispatch(&admission)),
         }
     }
 
@@ -1068,13 +1064,12 @@ impl CodingAgentSession {
         &mut self,
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
-        let metadata = operation.metadata();
-        let Some(kind) = metadata.static_kind else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "dynamic operation requires async dispatcher".into(),
-            });
-        };
-        let _operation_guard = self.operation_control.begin(kind)?;
+        let admission = IntentRouter::static_admission(&operation)?;
+        let _operation_guard = IntentRouter::begin(
+            &self.operation_control,
+            &admission,
+            OperationDispatchMode::SyncMutable,
+        )?;
 
         match operation {
             Operation::RejectDelegationConfirmation {
@@ -1094,12 +1089,9 @@ impl CodingAgentSession {
                 )?;
                 Ok(OperationOutcome::DelegationRejection)
             }
-            Operation::Export(_) => Err(CodingSessionError::UnsupportedCapability {
-                capability: "export operation requires read-only sync dispatcher".into(),
-            }),
-            Operation::PluginCommand { .. } => Err(CodingSessionError::UnsupportedCapability {
-                capability: "plugin command operation requires read-only sync dispatcher".into(),
-            }),
+            Operation::Export(_) | Operation::PluginCommand { .. } => {
+                Err(IntentRouter::unsupported_dispatch(&admission))
+            }
             Operation::Prompt(_)
             | Operation::ManualCompaction(_)
             | Operation::PluginLoad(_)
@@ -1107,9 +1099,7 @@ impl CodingAgentSession {
             | Operation::BranchSummary { .. }
             | Operation::SelfHealingEdit(_)
             | Operation::AgentInvocation(_)
-            | Operation::AgentTeam(_) => Err(CodingSessionError::UnsupportedCapability {
-                capability: format!("{} operation requires async dispatcher", kind.as_str()),
-            }),
+            | Operation::AgentTeam(_) => Err(IntentRouter::unsupported_dispatch(&admission)),
         }
     }
 
@@ -1144,14 +1134,7 @@ impl CodingAgentSession {
                 )?;
                 Ok(OperationAdmission::new(kind, metadata, Some(now)))
             }
-            _ => {
-                if metadata.static_kind.is_none() {
-                    return Err(CodingSessionError::UnsupportedCapability {
-                        capability: "dynamic operation requires async dispatcher".into(),
-                    });
-                }
-                Ok(OperationAdmission::new(operation.kind(), metadata, None))
-            }
+            _ => IntentRouter::static_admission(operation),
         }
     }
 
@@ -1233,7 +1216,11 @@ impl CodingAgentSession {
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
-        let _operation_guard = self.operation_control.begin(admission.kind)?;
+        let _operation_guard = IntentRouter::begin(
+            &self.operation_control,
+            &admission,
+            OperationDispatchMode::Async,
+        )?;
 
         match operation {
             Operation::Prompt(options) => {
@@ -1329,17 +1316,10 @@ impl CodingAgentSession {
                 .invoke_team_inner(options)
                 .await
                 .map(OperationOutcome::AgentTeam),
-            Operation::Export(_) => Err(CodingSessionError::UnsupportedCapability {
-                capability: "export operation requires sync dispatcher".into(),
-            }),
-            Operation::PluginCommand { .. } => Err(CodingSessionError::UnsupportedCapability {
-                capability: "plugin command operation requires sync dispatcher".into(),
-            }),
-            Operation::RejectDelegationConfirmation { .. } => {
-                Err(CodingSessionError::UnsupportedCapability {
-                    capability:
-                        "delegation confirmation operation requires sync mutable dispatcher".into(),
-                })
+            Operation::Export(_)
+            | Operation::PluginCommand { .. }
+            | Operation::RejectDelegationConfirmation { .. } => {
+                Err(IntentRouter::unsupported_dispatch(&admission))
             }
             Operation::ApproveDelegationConfirmation {
                 operation_id,

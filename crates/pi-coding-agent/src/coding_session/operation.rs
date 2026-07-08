@@ -180,6 +180,16 @@ pub(crate) enum OperationDispatchMode {
     SyncMutable,
 }
 
+impl OperationDispatchMode {
+    pub(crate) fn dispatcher_label(self) -> &'static str {
+        match self {
+            Self::Async => "async",
+            Self::SyncReadOnly => "read-only sync",
+            Self::SyncMutable => "sync mutable",
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationOrigin {
@@ -217,6 +227,9 @@ pub(crate) enum OperationOutcome {
 
 #[cfg(test)]
 mod tests {
+    use super::super::CodingSessionError;
+    use super::super::intent_router::IntentRouter;
+    use super::super::operation_control::OperationControl;
     use super::super::plugin_load_flow::PluginLoadOptions;
     use super::super::self_healing_edit_flow::{
         SelfHealingEditReplacement, SelfHealingEditRequest,
@@ -379,6 +392,69 @@ mod tests {
         assert_eq!(operation.kind(), OperationKind::Export);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::ReadOnly);
+    }
+
+    #[test]
+    fn intent_router_rejects_dynamic_operation_without_owner_resolution() {
+        let operation = Operation::ApproveDelegationConfirmation {
+            operation_id: "op_parent".into(),
+            tool_call_id: "tool_delegate".into(),
+        };
+
+        let error = IntentRouter::static_admission(&operation).unwrap_err();
+
+        assert_eq!(
+            error,
+            CodingSessionError::UnsupportedCapability {
+                capability: "dynamic operation requires async dispatcher".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn intent_router_validates_dispatch_mode_before_beginning_operation() {
+        let operation = Operation::PluginCommand {
+            command_id: "plugin.echo".into(),
+            args: serde_json::json!({}),
+        };
+        let admission = IntentRouter::static_admission(&operation).unwrap();
+        let control = OperationControl::new();
+
+        let error =
+            IntentRouter::begin(&control, &admission, OperationDispatchMode::Async).unwrap_err();
+
+        assert_eq!(
+            error,
+            CodingSessionError::UnsupportedCapability {
+                capability: "plugin_command operation requires read-only sync dispatcher".into(),
+            }
+        );
+        assert_eq!(control.active(), None);
+    }
+
+    #[test]
+    fn intent_router_begins_admitted_operation_and_uses_busy_guard() {
+        let operation = Operation::PluginCommand {
+            command_id: "plugin.echo".into(),
+            args: serde_json::json!({}),
+        };
+        let admission = IntentRouter::static_admission(&operation).unwrap();
+        let control = OperationControl::new();
+
+        let guard =
+            IntentRouter::begin(&control, &admission, OperationDispatchMode::SyncReadOnly).unwrap();
+
+        assert_eq!(control.active(), Some(OperationKind::PluginCommand));
+        assert_eq!(
+            IntentRouter::begin(&control, &admission, OperationDispatchMode::SyncReadOnly)
+                .unwrap_err(),
+            CodingSessionError::Busy {
+                operation: "plugin_command".into(),
+            }
+        );
+
+        drop(guard);
+        assert_eq!(control.active(), None);
     }
 
     #[test]
