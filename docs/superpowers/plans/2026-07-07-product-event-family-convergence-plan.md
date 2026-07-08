@@ -688,3 +688,61 @@ cargo check -p pi-coding-agent
 ```
 
 GREEN result: the focused accessor test, full event_service suite, and pi-coding-agent crate check passed. The new accessors are intentionally staged for future adapter work and are marked with the same internal dead-code allowance pattern used by the rest of the ProductEvent model.
+
+
+### Task 13: Normalize Terminal Operation Metadata
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/event.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing terminal operation metadata test**
+
+Added `product_event_wrapper_reports_terminal_operation_metadata` to require explicit root-operation terminal ProductEvents to expose operation kind plus terminal status. The first coverage set includes prompt completion, agent invocation failure, team abort, and self-healing edit completion.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_reports_terminal_operation_metadata --lib
+```
+
+RED result: compile failed because `ProductEventTerminalOperation`, `OperationKind` visibility, and `ProductEvent::terminal_operation()` did not exist.
+
+- [x] **Step 2: Add the minimal terminal operation view**
+
+Added crate-internal `ProductEventTerminalOperation { kind, status }` and `ProductEvent::terminal_operation()`. The method maps explicit root operation terminal events for `Prompt`, `AgentInvocation`, `AgentTeam`, and `SelfHealingEdit` while leaving family-level completed/failed events outside the operation-terminal contract.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_reports_terminal_operation_metadata --lib
+cargo test -p pi-coding-agent product_event_wrapper_does_not_treat_family_completion_as_operation_terminal --lib
+```
+
+GREEN result: the focused root-operation terminal metadata test and the non-terminal family-completion guard passed.
+
+- [x] **Step 3: Add manual compaction terminal metadata**
+
+Extended `product_event_wrapper_reports_terminal_operation_metadata` to require `SessionCompactionCompleted` to map to `OperationKind::Compact` with `Completed` status.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_reports_terminal_operation_metadata --lib
+```
+
+RED result: the test failed with `left: None` for `SessionCompactionCompleted`, proving manual compaction was not yet included in the terminal operation contract.
+
+- [x] **Step 4: Map manual compaction completion**
+
+Mapped `CodingAgentEvent::SessionCompactionCompleted` to `OperationKind::Compact` inside `ProductEvent::terminal_operation()`. Kept tool-call completion and session-write commit as non-operation terminal events even though they still carry family-level terminal status.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_reports_terminal_operation_metadata --lib
+cargo test -p pi-coding-agent product_event_wrapper_does_not_treat_family_completion_as_operation_terminal --lib
+```
+
+GREEN result: manual compaction terminal operation metadata and non-terminal family-completion separation both passed.

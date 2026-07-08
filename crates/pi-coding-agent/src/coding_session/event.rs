@@ -1,6 +1,6 @@
 use super::{
     CodingSessionError, ProfileId, ProfileKind, SelfHealingEditCheckOutput,
-    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+    SelfHealingEditDiagnostic, SelfHealingEditReplacement, operation_control::OperationKind,
 };
 use pi_ai::types::Usage;
 
@@ -296,6 +296,13 @@ pub(crate) enum ProductEventTerminalStatus {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProductEventTerminalOperation {
+    pub(crate) kind: OperationKind,
+    pub(crate) status: ProductEventTerminalStatus,
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ProductEvent {
     sequence: ProductEventSequence,
@@ -349,6 +356,27 @@ impl ProductEvent {
     #[allow(dead_code)]
     pub(crate) fn terminal_status(&self) -> Option<ProductEventTerminalStatus> {
         self.terminal_status
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn terminal_operation(&self) -> Option<ProductEventTerminalOperation> {
+        let status = self.terminal_status?;
+        let kind = match self.compatibility_event() {
+            CodingAgentEvent::PromptCompleted { .. }
+            | CodingAgentEvent::PromptFailed { .. }
+            | CodingAgentEvent::PromptAborted { .. } => OperationKind::Prompt,
+            CodingAgentEvent::AgentInvocationCompleted { .. }
+            | CodingAgentEvent::AgentInvocationFailed { .. }
+            | CodingAgentEvent::AgentInvocationAborted { .. } => OperationKind::AgentInvocation,
+            CodingAgentEvent::AgentTeamCompleted { .. }
+            | CodingAgentEvent::AgentTeamFailed { .. }
+            | CodingAgentEvent::AgentTeamAborted { .. } => OperationKind::AgentTeam,
+            CodingAgentEvent::SelfHealingEditCompleted { .. }
+            | CodingAgentEvent::SelfHealingEditFailed { .. } => OperationKind::SelfHealingEdit,
+            CodingAgentEvent::SessionCompactionCompleted { .. } => OperationKind::Compact,
+            _ => return None,
+        };
+        Some(ProductEventTerminalOperation { kind, status })
     }
 
     #[allow(dead_code)]
@@ -1131,5 +1159,137 @@ mod tests {
             event.compatibility_event(),
             CodingAgentEvent::PromptCompleted { .. }
         ));
+    }
+
+    #[test]
+    fn product_event_wrapper_reports_terminal_operation_metadata() {
+        let prompt = ProductEvent::from_compat_event(
+            ProductEventSequence(14),
+            CodingAgentEvent::PromptCompleted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_1".into(),
+            },
+        );
+        assert_eq!(
+            prompt.terminal_operation(),
+            Some(ProductEventTerminalOperation {
+                kind: OperationKind::Prompt,
+                status: ProductEventTerminalStatus::Completed,
+            })
+        );
+
+        let agent = ProductEvent::from_compat_event(
+            ProductEventSequence(15),
+            CodingAgentEvent::AgentInvocationFailed {
+                operation_id: "op_agent".into(),
+                child_operation_id: "op_child".into(),
+                profile_id: profile_id("agent-main"),
+                error: CodingSessionError::Provider {
+                    message: "provider failed".into(),
+                },
+            },
+        );
+        assert_eq!(
+            agent.terminal_operation(),
+            Some(ProductEventTerminalOperation {
+                kind: OperationKind::AgentInvocation,
+                status: ProductEventTerminalStatus::Failed,
+            })
+        );
+
+        let team = ProductEvent::from_compat_event(
+            ProductEventSequence(16),
+            CodingAgentEvent::AgentTeamAborted {
+                operation_id: "op_team".into(),
+                team_id: profile_id("team-main"),
+                reason: "cancelled".into(),
+            },
+        );
+        assert_eq!(
+            team.terminal_operation(),
+            Some(ProductEventTerminalOperation {
+                kind: OperationKind::AgentTeam,
+                status: ProductEventTerminalStatus::Aborted,
+            })
+        );
+
+        let self_healing_edit = ProductEvent::from_compat_event(
+            ProductEventSequence(17),
+            CodingAgentEvent::SelfHealingEditCompleted {
+                operation_id: "op_edit".into(),
+                path: "src/lib.rs".into(),
+                attempts: 1,
+                first_changed_line: Some(12),
+                check_output: None,
+            },
+        );
+        assert_eq!(
+            self_healing_edit.terminal_operation(),
+            Some(ProductEventTerminalOperation {
+                kind: OperationKind::SelfHealingEdit,
+                status: ProductEventTerminalStatus::Completed,
+            })
+        );
+
+        let compaction = ProductEvent::from_compat_event(
+            ProductEventSequence(18),
+            CodingAgentEvent::SessionCompactionCompleted {
+                operation_id: "op_compact".into(),
+                turn_id: "turn_1".into(),
+                summary: "summary".into(),
+                first_kept_message_id: "msg_2".into(),
+                tokens_before: 128,
+            },
+        );
+        assert_eq!(
+            compaction.terminal_operation(),
+            Some(ProductEventTerminalOperation {
+                kind: OperationKind::Compact,
+                status: ProductEventTerminalStatus::Completed,
+            })
+        );
+    }
+
+    #[test]
+    fn product_event_wrapper_does_not_treat_family_completion_as_operation_terminal() {
+        let tool = ProductEvent::from_compat_event(
+            ProductEventSequence(19),
+            CodingAgentEvent::ToolCallCompleted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool_1".into(),
+                name: "read".into(),
+                summary: "ok".into(),
+            },
+        );
+        assert_eq!(
+            tool.terminal_status(),
+            Some(ProductEventTerminalStatus::Completed)
+        );
+        assert_eq!(tool.terminal_operation(), None);
+
+        let session_write = ProductEvent::from_compat_event(
+            ProductEventSequence(20),
+            CodingAgentEvent::SessionWriteCommitted {
+                operation_id: "op_prompt".into(),
+                session_id: "session_1".into(),
+            },
+        );
+        assert_eq!(
+            session_write.terminal_status(),
+            Some(ProductEventTerminalStatus::Completed)
+        );
+        assert_eq!(session_write.terminal_operation(), None);
+
+        let progress = ProductEvent::from_compat_event(
+            ProductEventSequence(21),
+            CodingAgentEvent::AssistantMessageDelta {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                text: "hello".into(),
+            },
+        );
+        assert_eq!(progress.terminal_operation(), None);
     }
 }
