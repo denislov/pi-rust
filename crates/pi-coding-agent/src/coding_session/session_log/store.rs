@@ -161,6 +161,8 @@ impl SessionLogStore {
         events: &[SessionEventEnvelope],
     ) -> Result<(), CodingSessionError> {
         let event_log_path = event_log_path(&handle.session_dir, &handle.manifest)?;
+        let mut next_sequence =
+            next_session_sequence(&event_log_path, &handle.manifest.session_id)?;
         let file = OpenOptions::new()
             .append(true)
             .open(&event_log_path)
@@ -173,8 +175,10 @@ impl SessionLogStore {
         let mut writer = BufWriter::new(file);
 
         for event in events {
-            validate_event_for_session(event, &handle.manifest.session_id)?;
-            serde_json::to_writer(&mut writer, event).map_err(|error| {
+            let event = event.clone().with_session_sequence(next_sequence);
+            next_sequence += 1;
+            validate_event_for_session(&event, &handle.manifest.session_id)?;
+            serde_json::to_writer(&mut writer, &event).map_err(|error| {
                 session_error(format!("failed to serialize session event: {error}"))
             })?;
             writer.write_all(b"\n").map_err(|error| {
@@ -206,17 +210,22 @@ impl SessionLogStore {
         })?;
 
         let mut events = Vec::new();
+        let mut compatibility_sequence = 0_u64;
         for (index, line) in content.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
-            let event: SessionEventEnvelope = serde_json::from_str(line).map_err(|error| {
+            compatibility_sequence += 1;
+            let mut event: SessionEventEnvelope = serde_json::from_str(line).map_err(|error| {
                 session_error(format!(
                     "failed to parse session event at line {} in {}: {error}",
                     index + 1,
                     event_log_path.display()
                 ))
             })?;
+            if event.session_sequence.is_none() {
+                event.session_sequence = Some(compatibility_sequence);
+            }
             validate_event_for_session(&event, &handle.manifest.session_id)?;
             events.push(event);
         }
@@ -496,6 +505,38 @@ fn event_log_path(
     Ok(session_dir.join(&manifest.event_log))
 }
 
+fn next_session_sequence(
+    event_log_path: &Path,
+    session_id: &str,
+) -> Result<u64, CodingSessionError> {
+    let content = fs::read_to_string(event_log_path).map_err(|error| {
+        session_error(format!(
+            "failed to read session event log {}: {error}",
+            event_log_path.display()
+        ))
+    })?;
+
+    let mut compatibility_sequence = 0_u64;
+    let mut last_sequence = 0_u64;
+    for (index, line) in content.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        compatibility_sequence += 1;
+        let event: SessionEventEnvelope = serde_json::from_str(line).map_err(|error| {
+            session_error(format!(
+                "failed to parse session event at line {} in {}: {error}",
+                index + 1,
+                event_log_path.display()
+            ))
+        })?;
+        validate_event_for_session(&event, session_id)?;
+        last_sequence = last_sequence.max(event.session_sequence.unwrap_or(compatibility_sequence));
+    }
+
+    Ok(last_sequence + 1)
+}
+
 fn validate_event_for_session(
     event: &SessionEventEnvelope,
     session_id: &str,
@@ -677,7 +718,89 @@ mod tests {
         assert!(raw.contains("\"kind\":\"turn.started\""));
 
         let decoded = store.read_events(&handle).unwrap();
-        assert_eq!(decoded, events);
+        assert_eq!(
+            decoded,
+            vec![
+                events[0].clone().with_session_sequence(1),
+                events[1].clone().with_session_sequence(2),
+            ]
+        );
+    }
+
+    #[test]
+    fn append_events_assigns_contiguous_session_sequences() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(create_options("sess_sequence"))
+            .unwrap();
+        let events = vec![
+            event(
+                "sess_sequence",
+                "evt_1",
+                SessionEventData::SessionCreated { cwd: None },
+            ),
+            event("sess_sequence", "evt_2", SessionEventData::TurnStarted {}),
+        ];
+
+        store.append_events(&handle, &events).unwrap();
+
+        let decoded = store.read_events(&handle).unwrap();
+        assert_eq!(
+            decoded
+                .iter()
+                .map(|event| event.session_sequence)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+
+        let raw = fs::read_to_string(handle.event_log_path().unwrap()).unwrap();
+        let raw_sequences = raw
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["session_sequence"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(raw_sequences, vec![1, 2]);
+    }
+
+    #[test]
+    fn read_events_synthesizes_sequences_for_legacy_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(create_options("sess_legacy_sequence"))
+            .unwrap();
+        let legacy_events = vec![
+            event(
+                "sess_legacy_sequence",
+                "evt_legacy_1",
+                SessionEventData::SessionCreated { cwd: None },
+            ),
+            event(
+                "sess_legacy_sequence",
+                "evt_legacy_2",
+                SessionEventData::TurnStarted {},
+            ),
+        ];
+        let raw = legacy_events
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(handle.event_log_path().unwrap(), format!("{raw}\n")).unwrap();
+
+        let decoded = store.read_events(&handle).unwrap();
+
+        assert_eq!(
+            decoded
+                .iter()
+                .map(|event| event.session_sequence)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
     }
 
     #[test]

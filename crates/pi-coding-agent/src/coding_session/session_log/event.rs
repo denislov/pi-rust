@@ -13,6 +13,8 @@ pub(crate) struct SessionEventEnvelope {
     pub schema: String,
     pub version: u32,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_sequence: Option<u64>,
     pub event_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
@@ -40,6 +42,7 @@ impl SessionEventEnvelope {
             schema: EVENT_SCHEMA.into(),
             version: EVENT_VERSION,
             session_id: session_id.into(),
+            session_sequence: None,
             event_id: event_id.into(),
             operation_id: None,
             turn_id: None,
@@ -49,6 +52,11 @@ impl SessionEventEnvelope {
             created_at: created_at.into(),
             data,
         }
+    }
+
+    pub(crate) fn with_session_sequence(mut self, sequence: u64) -> Self {
+        self.session_sequence = Some(sequence);
+        self
     }
 
     pub(crate) fn with_operation_id(mut self, operation_id: impl Into<String>) -> Self {
