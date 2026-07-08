@@ -15,6 +15,11 @@ pub enum CodingSessionError {
     Resource { message: String },
     #[error("session error: {message}")]
     Session { message: String },
+    #[error("partial commit uncertainty for operation {operation_id}: {message}")]
+    PartialCommit {
+        operation_id: String,
+        message: String,
+    },
     #[error("self-healing edit failed: {message}")]
     SelfHealingEditFailed {
         message: String,
@@ -46,6 +51,7 @@ impl CodingSessionError {
             Self::Input { .. } => "input",
             Self::Resource { .. } => "resource",
             Self::Session { .. } => "session",
+            Self::PartialCommit { .. } => "partial_commit",
             Self::SelfHealingEditFailed { .. } => "self_healing_edit_failed",
             Self::Provider { .. } => "provider",
             Self::Tool { .. } => "tool",
@@ -66,6 +72,7 @@ impl From<CodingSessionError> for CliError {
             | CodingSessionError::Input { message }
             | CodingSessionError::Resource { message }
             | CodingSessionError::Session { message }
+            | CodingSessionError::PartialCommit { message, .. }
             | CodingSessionError::SelfHealingEditFailed { message, .. }
             | CodingSessionError::Provider { message }
             | CodingSessionError::Tool { message }
@@ -118,6 +125,13 @@ mod tests {
                     message: "not open".into(),
                 },
                 "session",
+            ),
+            (
+                CodingSessionError::PartialCommit {
+                    operation_id: "op_1".into(),
+                    message: "manifest update failed".into(),
+                },
+                "partial_commit",
             ),
             (
                 CodingSessionError::SelfHealingEditFailed {

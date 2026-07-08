@@ -23,6 +23,7 @@ enum TransactionState {
     Committed,
     Aborted,
     Failed,
+    InDoubt,
 }
 
 impl TransactionState {
@@ -32,6 +33,7 @@ impl TransactionState {
             Self::Committed => "committed",
             Self::Aborted => "aborted",
             Self::Failed => "failed",
+            Self::InDoubt => "in_doubt",
         }
     }
 }
@@ -410,16 +412,26 @@ where
             new_leaf_id: new_leaf_id.clone(),
         });
         self.flush_pending()?;
-        self.state = TransactionState::Committed;
         if let Some(leaf_id) = new_leaf_id {
-            self.store.update_manifest(
+            if let Err(error) = self.store.update_manifest(
                 &self.handle,
                 ManifestPatch::new()
                     .updated_at(self.clock.now_rfc3339())
                     .active_leaf_id(Some(leaf_id)),
-            )?;
+            ) {
+                self.state = TransactionState::InDoubt;
+                return Err(CodingSessionError::PartialCommit {
+                    operation_id: self.operation_id.clone(),
+                    message: error.to_string(),
+                });
+            }
         }
+        self.state = TransactionState::Committed;
         Ok(())
+    }
+
+    pub(crate) fn is_in_doubt(&self) -> bool {
+        self.state == TransactionState::InDoubt
     }
 
     pub(crate) fn abort(&mut self, reason: impl Into<String>) -> Result<(), CodingSessionError> {
@@ -995,6 +1007,44 @@ mod tests {
                 "tool.call.cancelled",
                 "operation.aborted",
             ]
+        );
+    }
+
+    #[test]
+    fn transaction_reports_in_doubt_when_manifest_update_fails_after_append() {
+        let (temp, store, handle) = setup();
+        let mut transaction = begin(&store, handle);
+        transaction.push_event(SessionEventData::TurnStarted {});
+
+        // Make session.json read-only so update_manifest fails after events are appended.
+        let manifest_path = temp.path().join("sess_tx").join("session.json");
+        let mut perms = std::fs::metadata(&manifest_path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&manifest_path, perms).unwrap();
+
+        let result = transaction.commit(Some("leaf_1".into()));
+
+        assert!(
+            result.is_err(),
+            "commit should fail when manifest update fails"
+        );
+        assert!(
+            transaction.is_in_doubt(),
+            "transaction should report in-doubt after append succeeds but manifest fails"
+        );
+
+        // Restore permissions and verify events were appended despite the manifest failure.
+        let mut perms = std::fs::metadata(&manifest_path).unwrap().permissions();
+        perms.set_readonly(false);
+        std::fs::set_permissions(&manifest_path, perms).unwrap();
+
+        let handle = store.open_session_id("sess_tx").unwrap();
+        let events = store.read_events(&handle).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event.data, SessionEventData::OperationCommitted { .. })),
+            "OperationCommitted should have been appended before manifest update failed"
         );
     }
 }

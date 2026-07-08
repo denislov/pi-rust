@@ -462,11 +462,11 @@ git commit -m "feat: expose session recovery scan state"
 - Modify: `crates/pi-coding-agent/src/coding_session/session_service.rs`
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Write failing transaction test**
+- [x] **Step 1: Write failing transaction test**
 
 Add a focused test around a store append error or manifest update error to verify a transaction does not report `Committed` after durable event append state becomes ambiguous.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
@@ -476,11 +476,15 @@ cargo test -p pi-coding-agent transaction_reports_in_doubt_when_manifest_update_
 
 Expected: fail because transaction state is only internal and partial commit uncertainty is not modeled.
 
-- [ ] **Step 3: Add in-doubt outcome state**
+Actual RED: confirmed -- `error[E0599]: no method named 'is_in_doubt' found for struct 'TurnTransaction'`. Test makes `session.json` read-only so `update_manifest` fails after `flush_pending` succeeds.
+
+- [x] **Step 3: Add in-doubt outcome state**
 
 Extend transaction finalization internals so append success plus manifest update failure records an explicit in-doubt result for the session service. Do not emit root operation success from this path.
 
-- [ ] **Step 4: Run GREEN and regression tests**
+Added `TransactionState::InDoubt` variant. `commit()` now sets `Committed` only after `update_manifest` succeeds; if manifest update fails after events are appended, it sets `InDoubt` and returns a `partial_commit` error carrying the affected operation id. Exposed `pub(crate) fn is_in_doubt()` for focused transaction assertions. No `OperationRecovered` markers are auto-written.
+
+- [x] **Step 4: Run GREEN and regression tests**
 
 Run:
 
@@ -492,10 +496,12 @@ cargo test -p pi-coding-agent session_service --lib
 
 Expected: selected transaction and service tests pass.
 
-- [ ] **Step 5: Commit**
+Actual GREEN: confirmed -- `transaction_reports_in_doubt_when_manifest_update_fails_after_append` (1), `commit_prompt_transaction_reports_partial_commit_uncertainty` (1), `coding_session_error_codes_are_stable` (1), `session_log::transaction`, and `session_service` pass. `cargo check -p pi-coding-agent` clean, `cargo fmt --check` clean. Production code changed in `transaction.rs`, `error.rs`, and the self-healing edit tool error-message bridge.
+
+- [x] **Step 5: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/coding_session/session_log/transaction.rs crates/pi-coding-agent/src/coding_session/session_service.rs docs/TODO.md
+git add crates/pi-coding-agent/src/coding_session/session_log/transaction.rs crates/pi-coding-agent/src/coding_session/session_service.rs crates/pi-coding-agent/src/coding_session/error.rs crates/pi-coding-agent/src/tools/edit.rs docs/TODO.md docs/superpowers/plans/2026-07-08-session-event-hardening-plan.md
 git commit -m "feat: guard partial session commit uncertainty"
 ```
 

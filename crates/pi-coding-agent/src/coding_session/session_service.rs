@@ -1651,6 +1651,50 @@ mod tests {
     }
 
     #[test]
+    fn commit_prompt_transaction_reports_partial_commit_uncertainty() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_partial_commit")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let mut transaction = service.begin_prompt_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+        transaction
+            .record_user_input(vec![PersistedContentBlock::Text {
+                text: "hello".into(),
+            }])
+            .unwrap();
+
+        let manifest_path = service.session_dir().join("session.json");
+        let mut perms = std::fs::metadata(&manifest_path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&manifest_path, perms).unwrap();
+
+        let error = service
+            .commit_prompt_transaction(Some(transaction), operation_id.clone())
+            .unwrap_err();
+
+        let mut perms = std::fs::metadata(&manifest_path).unwrap().permissions();
+        perms.set_readonly(false);
+        std::fs::set_permissions(&manifest_path, perms).unwrap();
+
+        assert_eq!(error.code(), "partial_commit");
+        assert!(
+            error.to_string().contains(&operation_id),
+            "partial commit error should identify the affected operation"
+        );
+
+        let opened = SessionService::open(&options).unwrap();
+        let events = opened.store.read_events(&opened.handle).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event.data, SessionEventData::OperationCommitted { .. })),
+            "OperationCommitted should be durable when partial commit uncertainty is reported"
+        );
+    }
+
+    #[test]
     fn clone_current_copies_committed_history_to_new_session() {
         let temp = tempfile::tempdir().unwrap();
         let cwd = temp.path().join("project");

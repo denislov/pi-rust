@@ -346,6 +346,10 @@ fn coding_session_error_message(error: CodingSessionError) -> String {
             format!("unsupported capability: {capability}")
         }
         CodingSessionError::Busy { operation } => format!("busy: {operation}"),
+        CodingSessionError::PartialCommit {
+            operation_id,
+            message,
+        } => format!("partial commit uncertainty for operation {operation_id}: {message}"),
     }
 }
 
