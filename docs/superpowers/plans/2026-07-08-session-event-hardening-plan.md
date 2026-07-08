@@ -212,7 +212,7 @@ git commit -m "feat: add durable session event sequences"
 - Modify: `crates/pi-coding-agent/src/coding_session/session_log/replay.rs`
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Write failing replay classification tests**
+- [x] **Step 1: Write failing replay classification tests**
 
 Add tests that build event arrays with `OperationStarted` and each terminal marker:
 
@@ -287,7 +287,7 @@ fn replay_marks_started_operation_without_terminal_marker_in_doubt() {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -298,7 +298,9 @@ cargo test -p pi-coding-agent replay_marks_started_operation_without_terminal_ma
 
 Expected: fail because `OperationReplayStatus` and `SessionReplay::operation_status()` do not exist.
 
-- [ ] **Step 3: Add replay status model**
+Actual RED: confirmed -- 8 compile errors: `OperationReplayStatus` undeclared type, `operation_status` method not found on `SessionReplay`.
+
+- [x] **Step 3: Add replay status model**
 
 Add:
 
@@ -315,7 +317,7 @@ pub(crate) enum OperationReplayStatus {
 
 Store operation statuses in `SessionReplay` and update `fold_events()` when it sees operation lifecycle events.
 
-- [ ] **Step 4: Run GREEN tests**
+- [x] **Step 4: Run GREEN tests**
 
 Run:
 
@@ -327,7 +329,9 @@ cargo test -p pi-coding-agent session_log::replay --lib
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+Actual GREEN: confirmed -- both new tests pass, all 16 `session_log::replay` tests pass. Discovery: 9 existing `SessionReplay` construction sites across 5 files (`branch_summary_flow.rs`, `prompt_flow.rs`, `prompt.rs`, `runtime_service.rs`, `flow_service.rs`) needed `operation_statuses: Default::default()` added. Full verification: `cargo fmt --check` clean, `session_log` 44 passed, `session_service` 21 passed, `event_service` 17 passed, `protocol_events` 1 passed, `cargo check -p pi-coding-agent` clean, `git diff --check` clean.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/session_log/replay.rs docs/TODO.md

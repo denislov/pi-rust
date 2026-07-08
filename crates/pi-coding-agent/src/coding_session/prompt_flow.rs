@@ -700,6 +700,7 @@ mod tests {
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
             usage: Default::default(),
+            operation_statuses: Default::default(),
         });
         context.begin_transaction(&store, handle.clone()).unwrap();
         (temp, store, handle)
@@ -1500,6 +1501,7 @@ mod tests {
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
             usage: Default::default(),
+            operation_statuses: Default::default(),
         });
 
         flow.run(&mut context).await.unwrap();

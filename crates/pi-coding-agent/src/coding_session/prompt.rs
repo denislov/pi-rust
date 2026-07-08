@@ -752,6 +752,7 @@ impl PromptTurnContext {
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
             usage: Default::default(),
+            operation_statuses: Default::default(),
         });
     }
 

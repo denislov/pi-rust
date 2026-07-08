@@ -624,6 +624,7 @@ mod tests {
             }],
             pending_delegation_confirmations: Vec::new(),
             usage: Default::default(),
+            operation_statuses: Default::default(),
         };
 
         service.hydrate_agent_runtime(&agent, &runtime, &replay);

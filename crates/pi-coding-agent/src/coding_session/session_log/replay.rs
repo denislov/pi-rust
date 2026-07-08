@@ -8,6 +8,21 @@ use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use pi_agent_core::compaction::estimate::calculate_context_tokens;
 use pi_ai::types::Usage;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationReplayStatus {
+    Committed,
+    Failed,
+    Aborted,
+    Recovered,
+    InDoubt,
+}
+
+impl SessionReplay {
+    pub(crate) fn operation_status(&self, operation_id: &str) -> Option<OperationReplayStatus> {
+        self.operation_statuses.get(operation_id).copied()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionReplay {
     pub(crate) session_id: String,
@@ -18,6 +33,7 @@ pub(crate) struct SessionReplay {
     pub(crate) diagnostics: Vec<ReplayDiagnostic>,
     pub(crate) pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
     pub(crate) usage: ReplayUsageSummary,
+    pub(crate) operation_statuses: HashMap<String, OperationReplayStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -132,6 +148,7 @@ struct ReplayBuilder {
     operation_transcript_starts: HashMap<String, usize>,
     pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
     usage: ReplayUsageSummary,
+    operation_statuses: HashMap<String, OperationReplayStatus>,
 }
 
 pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
@@ -141,6 +158,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
 
     for event in events {
         builder.observe_session_id(event);
+        builder.observe_operation_status(event);
         if let Some(operation_id) = event.operation_id.as_deref()
             && !finalized_operations.contains(operation_id)
             && !is_delegation_confirmation_event(&event.data)
@@ -165,6 +183,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         diagnostics: builder.diagnostics,
         pending_delegation_confirmations: builder.pending_delegation_confirmations,
         usage: builder.usage,
+        operation_statuses: builder.operation_statuses,
     }
 }
 
@@ -219,6 +238,32 @@ impl ReplayBuilder {
                 event.event_id, event.session_id, session_id
             )),
             Some(_) => {}
+        }
+    }
+
+    fn observe_operation_status(&mut self, event: &SessionEventEnvelope) {
+        let Some(operation_id) = event.operation_id.as_deref() else {
+            return;
+        };
+        match &event.data {
+            SessionEventData::OperationStarted { .. } => {
+                self.operation_statuses
+                    .entry(operation_id.to_owned())
+                    .or_insert(OperationReplayStatus::InDoubt);
+            }
+            SessionEventData::OperationCommitted { .. } => {
+                self.operation_statuses
+                    .insert(operation_id.to_owned(), OperationReplayStatus::Committed);
+            }
+            SessionEventData::OperationFailed { .. } => {
+                self.operation_statuses
+                    .insert(operation_id.to_owned(), OperationReplayStatus::Failed);
+            }
+            SessionEventData::OperationAborted { .. } => {
+                self.operation_statuses
+                    .insert(operation_id.to_owned(), OperationReplayStatus::Aborted);
+            }
+            _ => {}
         }
     }
 
@@ -1472,6 +1517,87 @@ mod tests {
             replay.diagnostics[0]
                 .message
                 .contains("unknown first kept message")
+        );
+    }
+
+    #[test]
+    fn replay_classifies_terminal_operation_statuses() {
+        let events = vec![
+            op_event(
+                "evt_1",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            op_event(
+                "evt_2",
+                SessionEventData::OperationCommitted { new_leaf_id: None },
+            ),
+            event(
+                "evt_3",
+                Some("op_failed"),
+                Some("turn_failed"),
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            event(
+                "evt_4",
+                Some("op_failed"),
+                Some("turn_failed"),
+                SessionEventData::OperationFailed {
+                    error_code: "provider".into(),
+                    message: "provider failed".into(),
+                },
+            ),
+            event(
+                "evt_5",
+                Some("op_aborted"),
+                Some("turn_aborted"),
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            event(
+                "evt_6",
+                Some("op_aborted"),
+                Some("turn_aborted"),
+                SessionEventData::OperationAborted {
+                    reason: "user abort".into(),
+                },
+            ),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(
+            replay.operation_status("op_1"),
+            Some(OperationReplayStatus::Committed)
+        );
+        assert_eq!(
+            replay.operation_status("op_failed"),
+            Some(OperationReplayStatus::Failed)
+        );
+        assert_eq!(
+            replay.operation_status("op_aborted"),
+            Some(OperationReplayStatus::Aborted)
+        );
+    }
+
+    #[test]
+    fn replay_marks_started_operation_without_terminal_marker_in_doubt() {
+        let events = vec![op_event(
+            "evt_1",
+            SessionEventData::OperationStarted {
+                operation: OperationKind::Prompt,
+            },
+        )];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(
+            replay.operation_status("op_1"),
+            Some(OperationReplayStatus::InDoubt)
         );
     }
 }

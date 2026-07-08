@@ -251,6 +251,7 @@ Plan: [Lua host capabilities metadata](superpowers/plans/2026-07-04-lua-host-cap
 
 ## Progress Log
 
+- 2026-07-08: Stage 4 Task 2 operation recovery classification added. `SessionReplay` now exposes `operation_status()` returning `OperationReplayStatus::{Committed, Failed, Aborted, Recovered, InDoubt}`; `fold_events()` tracks operation lifecycle for all events (including incomplete operations skipped from transcript folding) so started-but-not-finalized operations classify as `InDoubt` instead of only being warned. Existing incomplete-operation omission behavior is preserved.
 - 2026-07-08: Stage 2 product-event terminal operation normalization added. `ProductEvent::terminal_operation()` now reports operation kind plus terminal status for explicit root-operation terminal events (prompt, manual compaction, one-off agent/team invocation, and self-healing edit) while keeping tool/session-write family completions out of the operation-terminal contract.
 - 2026-07-08: Stage 2 product-event facade hardening advanced. `ProductEvent` now exposes sequence, kind, operation correlation, terminal status, and durability through crate-internal accessors while keeping storage fields private, so later adapter/protocol migrations consume the product-event boundary instead of its representation.
 - 2026-07-08: Stage 3 intent-router session-mutation admission completed. set_default_agent_profile_id and fork_current_session now route through IntentRouter admission; a source guard prevents regression.
