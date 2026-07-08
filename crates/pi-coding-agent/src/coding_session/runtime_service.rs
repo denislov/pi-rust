@@ -12,6 +12,7 @@ use pi_ai::types::{AssistantMessage, ContentBlock, Context, StopReason, StreamOp
 use crate::runtime::{SessionMode, build_agent_config_with_auth_diagnostics};
 
 use super::CodingSessionError;
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::delegation::delegation_tools;
 use super::plugin_service::PluginService;
 use super::prompt::{CodingDiagnostic, RuntimeSnapshot};
@@ -21,6 +22,15 @@ use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, T
 pub(crate) struct AgentRuntimeBuild {
     pub(crate) agent: Agent,
     pub(crate) diagnostics: Vec<CodingDiagnostic>,
+    #[cfg(test)]
+    tool_names: Vec<String>,
+}
+
+#[cfg(test)]
+impl AgentRuntimeBuild {
+    pub(crate) fn tool_names_for_tests(&self) -> Vec<String> {
+        self.tool_names.clone()
+    }
 }
 
 pub(crate) fn stream_model_for_scoped_runtime(
@@ -88,6 +98,22 @@ impl RuntimeService {
         runtime: &RuntimeSnapshot,
         plugin_service: &PluginService,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
+        let snapshot = OperationCapabilitySnapshot::permissive("op_test_runtime");
+        self.build_agent_runtime_with_capabilities(runtime, plugin_service, &snapshot)
+    }
+
+    pub(crate) fn build_agent_runtime_with_capabilities(
+        &self,
+        runtime: &RuntimeSnapshot,
+        plugin_service: &PluginService,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> Result<AgentRuntimeBuild, CodingSessionError> {
+        if snapshot.model.is_none() {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "model capability is required to build agent runtime".into(),
+            });
+        }
+
         let provider_streamer = scoped_provider_streamer_for_runtime(runtime);
 
         let mut diagnostics = runtime.profile_diagnostics().to_vec();
@@ -99,7 +125,15 @@ impl RuntimeService {
             plugin_service.collect_tools(),
             &policy_tools,
             &mut diagnostics,
-        );
+        )
+        .into_iter()
+        .filter(|tool| snapshot.tools.allows(&tool.name))
+        .collect::<Vec<_>>();
+        #[cfg(test)]
+        let tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
 
         let mut config = build_agent_config_with_auth_diagnostics(
             runtime.model().clone(),
@@ -125,13 +159,21 @@ impl RuntimeService {
 
         let agent = Agent::new(config);
         for tool in tools.into_iter().chain(policy_tools) {
+            if !snapshot.tools.allows(&tool.name) {
+                continue;
+            }
             agent
                 .try_add_tool(tool)
                 .map_err(|error| CodingSessionError::Tool {
                     message: error.to_string(),
                 })?;
         }
-        Ok(AgentRuntimeBuild { agent, diagnostics })
+        Ok(AgentRuntimeBuild {
+            agent,
+            diagnostics,
+            #[cfg(test)]
+            tool_names,
+        })
     }
 
     pub(crate) fn hydrate_agent_runtime(
@@ -434,6 +476,40 @@ mod tests {
         })
     }
 
+    fn runtime_snapshot_with_tools(
+        names: impl IntoIterator<Item = &'static str>,
+    ) -> RuntimeSnapshot {
+        let tools = names
+            .into_iter()
+            .map(|name| {
+                AgentTool::new_text(
+                    name,
+                    name,
+                    serde_json::json!({"type": "object"}),
+                    |_| async { Ok(String::new()) },
+                )
+            })
+            .collect::<Vec<_>>();
+        RuntimeSnapshot::from_prompt_run_options(PromptRunOptions {
+            prompt: "hello".into(),
+            model: model("runtime-service-capability-tools"),
+            api_key: Some("key".into()),
+            auth_diagnostics: Vec::new(),
+            system_prompt: Some("system".into()),
+            max_turns: Some(2),
+            tools,
+            register_builtins: false,
+            session: Some(SessionRunOptions::disabled(".".into())),
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: Some(ToolExecutionMode::Sequential),
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text("hello".into()),
+        })
+    }
+
     #[test]
     fn builds_agent_from_runtime_snapshot() {
         let service = RuntimeService::new();
@@ -563,6 +639,54 @@ mod tests {
 
         assert!(matches!(error, CodingSessionError::Tool { .. }));
         assert!(error.to_string().contains("tool name"));
+    }
+
+    #[test]
+    fn runtime_build_rejects_missing_model_capability() {
+        use crate::coding_session::capability_snapshot::{
+            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
+            ToolCapabilitySet,
+        };
+        let runtime = runtime_snapshot("test-api");
+        let snapshot = OperationCapabilitySnapshot {
+            generation: CapabilityGeneration::new(1),
+            operation_id: "op_runtime".into(),
+            actor: ActorId::Client,
+            model: None,
+            tools: ToolCapabilitySet::default(),
+            commands: Default::default(),
+            filesystem: None,
+            shell: None,
+            session_read: None,
+            session_write: None,
+            ui: None,
+            plugin: PluginCapabilitySet::default(),
+        };
+
+        let error = match RuntimeService::new().build_agent_runtime_with_capabilities(
+            &runtime,
+            &PluginService::new(),
+            &snapshot,
+        ) {
+            Ok(_) => panic!("expected missing model capability to be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code(), "unsupported_capability");
+        assert!(error.to_string().contains("model capability"));
+    }
+
+    #[test]
+    fn runtime_build_filters_tools_through_capability_snapshot() {
+        use crate::coding_session::capability_snapshot::OperationCapabilitySnapshot;
+        let runtime = runtime_snapshot_with_tools(["read", "bash"]);
+        let snapshot = OperationCapabilitySnapshot::test_with_tools("op_runtime", ["read"]);
+
+        let build = RuntimeService::new()
+            .build_agent_runtime_with_capabilities(&runtime, &PluginService::new(), &snapshot)
+            .unwrap();
+
+        assert_eq!(build.tool_names_for_tests(), vec!["read".to_string()]);
     }
 
     #[test]

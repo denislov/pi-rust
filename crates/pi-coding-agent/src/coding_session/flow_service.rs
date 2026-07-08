@@ -263,6 +263,7 @@ mod tests {
     use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
 
     use super::*;
+    use crate::coding_session::capability_snapshot::OperationCapabilitySnapshot;
     use crate::coding_session::export_flow::{ExportContext, ExportOptions};
     use crate::coding_session::plugin_load_flow::{
         PluginLoadCandidate, PluginLoadContext, PluginLoadManifest, PluginLoadOptions,
@@ -513,6 +514,7 @@ mod tests {
             operation_statuses: Default::default(),
         });
         context.begin_transaction(&store, handle).unwrap();
+        context.set_capability_snapshot(OperationCapabilitySnapshot::permissive("op_1"));
 
         let outcome = service.run_prompt_turn_graph(&mut context).await.unwrap();
 

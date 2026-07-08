@@ -7,6 +7,7 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 use pi_ai::types::AssistantMessage;
 
 use super::agent_team_flow::{AgentTeamContext, AgentTeamOptions};
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
 };
@@ -372,6 +373,9 @@ impl AgentInvocationContext {
             child_context.set_prompt_control_receiver(receiver);
         }
         child_context.enable_live_events(self.event_service.clone());
+        child_context.set_capability_snapshot(OperationCapabilitySnapshot::permissive(
+            self.child_operation_id.clone(),
+        ));
         self.child_context = Some(child_context);
         Ok(())
     }

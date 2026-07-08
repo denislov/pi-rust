@@ -143,7 +143,7 @@ impl IntentRouter {
                 capability: "dynamic operation requires async dispatcher".into(),
             });
         }
-        let snapshot = OperationCapabilitySnapshot::permissive_for_tests("op_static_admission");
+        let snapshot = OperationCapabilitySnapshot::permissive("op_static_admission");
         Ok(OperationAdmission::new(
             operation.kind(),
             metadata,

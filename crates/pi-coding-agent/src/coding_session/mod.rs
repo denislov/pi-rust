@@ -1240,7 +1240,7 @@ impl CodingAgentSession {
         let operation_id = self.next_operation_admission_id(operation);
         let snapshot = self
             .capability_snapshots
-            .snapshot(self.snapshot_input_for_operation(operation_id, kind));
+            .snapshot(self.snapshot_input_for_operation(operation_id, kind, operation));
         Ok(OperationAdmission::new(
             kind,
             metadata,
@@ -1258,9 +1258,15 @@ impl CodingAgentSession {
         &self,
         operation_id: String,
         kind: OperationKind,
+        operation: &Operation,
     ) -> CapabilitySnapshotInput {
         let plugin_capabilities = self.plugin_service.capabilities();
         let default_profile_id = self.default_agent_profile_id();
+        let runtime_tools = self.operation_runtime_tool_names(operation);
+        let profile_tools = match self.active_agent_profile() {
+            Some(profile) if !profile.tools.is_empty() => profile.tools.clone(),
+            _ => runtime_tools.clone(),
+        };
         CapabilitySnapshotInput {
             operation_id,
             operation_kind: kind,
@@ -1269,9 +1275,40 @@ impl CodingAgentSession {
             plugin_capabilities,
             persistent_session: matches!(self.persistence, SessionPersistence::Persistent(_)),
             cwd: self.cwd(),
-            runtime_tools: self.current_runtime_tool_names(),
-            profile_tools: self.current_profile_tool_names(),
+            runtime_tools,
+            profile_tools,
         }
+    }
+
+    fn operation_runtime_tool_names(&self, operation: &Operation) -> Vec<String> {
+        let mut names = self.current_runtime_tool_names();
+        let options = match operation {
+            Operation::Prompt(options)
+            | Operation::ManualCompaction(options)
+            | Operation::BranchSummary { options, .. } => Some(options),
+            _ => None,
+        };
+        if let Some(options) = options
+            && let Some(runtime) = options.runtime()
+        {
+            names.extend(runtime.tools().iter().map(|tool| tool.name.clone()));
+        }
+        names.extend(
+            self.plugin_service
+                .collect_tools()
+                .into_iter()
+                .map(|tool| tool.name),
+        );
+        if let Some(profile) = self.active_agent_profile() {
+            names.extend(
+                delegation::delegation_tools(Some(&profile.id), Some(&profile.delegation))
+                    .into_iter()
+                    .map(|tool| tool.name),
+            );
+        }
+        names.sort();
+        names.dedup();
+        names
     }
 
     fn cwd(&self) -> Option<PathBuf> {
@@ -1296,13 +1333,6 @@ impl CodingAgentSession {
             "find".into(),
             "ls".into(),
         ]
-    }
-
-    fn current_profile_tool_names(&self) -> Vec<String> {
-        match self.active_agent_profile() {
-            Some(profile) if !profile.tools.is_empty() => profile.tools.clone(),
-            _ => self.current_runtime_tool_names(),
-        }
     }
 
     fn delegation_approval_operation_kind(
@@ -1817,6 +1847,7 @@ impl CodingAgentSession {
                     context.set_prompt_control_receiver(receiver);
                 }
                 context.enable_live_events(event_service);
+                context.set_capability_snapshot(snapshot.clone());
                 Ok(context)
             }
             SessionPersistence::NonPersistent(state) => {
@@ -1832,6 +1863,7 @@ impl CodingAgentSession {
                     context.set_prompt_control_receiver(receiver);
                 }
                 context.enable_live_events(event_service);
+                context.set_capability_snapshot(snapshot.clone());
                 Ok(context)
             }
         }

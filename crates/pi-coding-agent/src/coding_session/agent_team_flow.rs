@@ -5,6 +5,7 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use pi_ai::types::AssistantMessage;
 
 use super::agent_invocation_flow::{AgentInvocationContext, AgentInvocationOptions};
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
 };
@@ -442,6 +443,9 @@ impl AgentTeamContext {
         child_context
             .set_non_persistent_session(format!("agent_team_{}", child_operation_id), Vec::new());
         child_context.enable_live_events(self.event_service.clone());
+        child_context.set_capability_snapshot(OperationCapabilitySnapshot::permissive(
+            child_operation_id.clone(),
+        ));
 
         let mut finished_outcome = None;
         let child_delegations = match FlowService::new()

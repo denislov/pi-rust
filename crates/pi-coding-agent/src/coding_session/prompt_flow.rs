@@ -272,9 +272,15 @@ fn build_agent_runtime(ctx: &mut PromptTurnContext) -> Result<Action, String> {
         }
         .to_string()
     })?;
+    let snapshot = ctx.capability_snapshot().ok_or_else(|| {
+        CodingSessionError::UnsupportedCapability {
+            capability: "prompt runtime build requires operation capability snapshot".into(),
+        }
+        .to_string()
+    })?;
     let service = RuntimeService::new();
     let build = service
-        .build_agent_runtime_with_plugins_and_diagnostics(&runtime, ctx.plugin_service())
+        .build_agent_runtime_with_capabilities(&runtime, ctx.plugin_service(), snapshot)
         .map_err(|error| error.to_string())?;
     for diagnostic in build.diagnostics {
         ctx.record_diagnostic(diagnostic);
@@ -501,6 +507,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
+    use crate::coding_session::capability_snapshot::OperationCapabilitySnapshot;
     use crate::coding_session::event::CodingAgentEvent;
     use crate::coding_session::plugin_service::PluginService;
     use crate::coding_session::prompt::{PromptTurnIds, PromptTurnOptions};
@@ -665,8 +672,10 @@ mod tests {
             settings: None,
             invocation,
         });
+        let mut context = PromptTurnContext::new(PromptTurnIds::new("op_1", "turn_1"), options);
+        context.set_capability_snapshot(OperationCapabilitySnapshot::permissive("op_1"));
         PromptTurnFixture {
-            context: PromptTurnContext::new(PromptTurnIds::new("op_1", "turn_1"), options),
+            context,
             _provider_guard: provider_guard,
         }
     }

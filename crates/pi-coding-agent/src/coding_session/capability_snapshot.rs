@@ -40,18 +40,20 @@ pub(crate) struct ModelCapability {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolCapabilitySet {
+    allow_all: bool,
     allowed: BTreeSet<String>,
 }
 
 impl ToolCapabilitySet {
     pub(crate) fn from_names(names: impl IntoIterator<Item = String>) -> Self {
         Self {
+            allow_all: false,
             allowed: names.into_iter().collect(),
         }
     }
 
     pub(crate) fn allows(&self, name: &str) -> bool {
-        self.allowed.contains(name)
+        self.allow_all || self.allowed.contains(name)
     }
 
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
@@ -136,25 +138,17 @@ impl OperationCapabilitySnapshot {
             capability_generation: Some(self.generation.get()),
         }
     }
-}
 
-#[cfg(test)]
-impl OperationCapabilitySnapshot {
-    pub(crate) fn permissive_for_tests(operation_id: impl Into<String>) -> Self {
+    pub(crate) fn permissive(operation_id: impl Into<String>) -> Self {
         Self {
             generation: CapabilityGeneration::new(1),
             operation_id: operation_id.into(),
             actor: ActorId::Client,
             model: Some(ModelCapability { profile_id: None }),
-            tools: ToolCapabilitySet::from_names([
-                "read".to_string(),
-                "write".to_string(),
-                "edit".to_string(),
-                "bash".to_string(),
-                "grep".to_string(),
-                "find".to_string(),
-                "ls".to_string(),
-            ]),
+            tools: ToolCapabilitySet {
+                allow_all: true,
+                allowed: BTreeSet::new(),
+            },
             commands: Default::default(),
             filesystem: Some(FilesystemCapability {
                 cwd: std::path::PathBuf::from("."),
@@ -175,15 +169,18 @@ impl OperationCapabilitySnapshot {
             },
         }
     }
+}
 
+#[cfg(test)]
+impl OperationCapabilitySnapshot {
     pub(crate) fn test_without_shell(operation_id: impl Into<String>) -> Self {
-        let mut snapshot = Self::permissive_for_tests(operation_id);
+        let mut snapshot = Self::permissive(operation_id);
         snapshot.shell = None;
         snapshot
     }
 
     pub(crate) fn test_without_session_write(operation_id: impl Into<String>) -> Self {
-        let mut snapshot = Self::permissive_for_tests(operation_id);
+        let mut snapshot = Self::permissive(operation_id);
         snapshot.session_write = None;
         snapshot
     }
@@ -192,7 +189,7 @@ impl OperationCapabilitySnapshot {
         operation_id: impl Into<String>,
         names: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        let mut snapshot = Self::permissive_for_tests(operation_id);
+        let mut snapshot = Self::permissive(operation_id);
         snapshot.tools = ToolCapabilitySet::from_names(names.into_iter().map(Into::into));
         snapshot
     }

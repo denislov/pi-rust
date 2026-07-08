@@ -19,6 +19,7 @@ use crate::runtime::{PromptInvocation, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
 
 use super::CodingSessionError;
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry,
     authorize_delegation_requests_with_lineage,
@@ -553,6 +554,7 @@ pub(crate) struct PromptTurnContext {
     tool_session_call_ids: HashMap<String, String>,
     diagnostics: Vec<CodingDiagnostic>,
     requested_abort_reason: Option<String>,
+    capability_snapshot: Option<OperationCapabilitySnapshot>,
 }
 
 impl PromptTurnContext {
@@ -582,6 +584,7 @@ impl PromptTurnContext {
             tool_session_call_ids: HashMap::new(),
             diagnostics: Vec::new(),
             requested_abort_reason: None,
+            capability_snapshot: None,
         }
     }
 
@@ -611,6 +614,14 @@ impl PromptTurnContext {
 
     pub(crate) fn plugin_service(&self) -> &PluginService {
         &self.plugin_service
+    }
+
+    pub(crate) fn set_capability_snapshot(&mut self, snapshot: OperationCapabilitySnapshot) {
+        self.capability_snapshot = Some(snapshot);
+    }
+
+    pub(crate) fn capability_snapshot(&self) -> Option<&OperationCapabilitySnapshot> {
+        self.capability_snapshot.as_ref()
     }
 
     pub(crate) fn run_prompt_hook(
