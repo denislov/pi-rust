@@ -69,6 +69,7 @@ use agent_invocation_flow::AgentInvocationContext;
 use agent_team_flow::AgentTeamContext;
 use branch_summary_service::BranchSummaryService;
 use capability_service::CapabilityService;
+pub(crate) use capability_snapshot::PluginCapabilitySet;
 use capability_snapshot::{
     ActorId, CapabilitySnapshotInput, CapabilitySnapshotService, OperationCapabilitySnapshot,
 };
@@ -1106,7 +1107,7 @@ impl CodingAgentSession {
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
-        let _operation_permit = IntentRouter::admit_operation(
+        let operation_permit = IntentRouter::admit_operation(
             &self.operation_control,
             &admission,
             OperationDispatchMode::SyncReadOnly,
@@ -1118,7 +1119,11 @@ impl CodingAgentSession {
                 .map(OperationOutcome::Export),
             Operation::PluginCommand { command_id, args } => self
                 .plugin_service
-                .run_command(&command_id, args)
+                .run_command_with_capabilities(
+                    &command_id,
+                    args,
+                    &operation_permit.capability_snapshot().plugin,
+                )
                 .map(OperationOutcome::PluginCommand),
             Operation::RejectDelegationConfirmation { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
@@ -1934,8 +1939,8 @@ mod tests {
     };
     use crate::coding_session::session_log::replay::{MessageStatus, TranscriptItem};
     use crate::plugins::{
-        PluginError, PluginId, PluginMetadata, PluginRegistry, PluginSource, ToolProvider,
-        ToolRegistrationHost,
+        CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginId,
+        PluginMetadata, PluginRegistry, PluginSource, ToolProvider, ToolRegistrationHost,
     };
     use crate::prompt_options::PromptRunOptions;
     use crate::runtime::{PromptInvocation, SessionRunOptions};
@@ -2185,6 +2190,38 @@ mod tests {
                 serde_json::json!({"type": "object"}),
                 |_args| async { Ok("plugin echo".to_owned()) },
             )])
+        }
+    }
+
+    struct SessionPluginCommandProvider;
+
+    impl CommandProvider for SessionPluginCommandProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("session-plugin-command"),
+                "Session Plugin Command",
+                "1.0.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn commands(
+            &self,
+            _host: &CommandRegistrationHost,
+        ) -> Result<Vec<CommandDefinition>, PluginError> {
+            Ok(vec![CommandDefinition::new(
+                "plugin.say_hello",
+                "greets from session plugin",
+            )])
+        }
+
+        fn run_command(
+            &self,
+            command_id: &str,
+            _args: serde_json::Value,
+        ) -> Result<String, PluginError> {
+            assert_eq!(command_id, "plugin.say_hello");
+            Ok("hello".to_owned())
         }
     }
 
@@ -2712,7 +2749,23 @@ runtime = "lua"
 
     #[tokio::test]
     async fn run_sync_operation_plugin_command_uses_guard_and_preserves_plugin_error() {
-        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
+        session
+            .load_plugins(
+                PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
+                    PluginLoadManifest::new(
+                        "session-plugin-command",
+                        "Session Plugin Command",
+                        "1.0.0",
+                        PluginSource::FirstParty,
+                    ),
+                    registry,
+                )),
+            )
             .await
             .unwrap();
         let operation = Operation::PluginCommand {

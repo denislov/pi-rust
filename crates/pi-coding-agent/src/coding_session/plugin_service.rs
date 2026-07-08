@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use pi_agent_core::AgentTool;
 
 use super::CodingSessionError;
+use super::capability_snapshot::PluginCapabilitySet;
 use super::prompt::CodingDiagnostic;
 use crate::plugins::{
     CommandDefinition, CommandProvider, CommandRegistrationHost, FlowExtension, FlowExtensionPoint,
@@ -41,7 +42,7 @@ impl PluginService {
     }
 
     pub(crate) fn collect_tools(&self) -> Vec<AgentTool> {
-        let host = ToolRegistrationHost;
+        let host = ToolRegistrationHost::new(PluginCapabilitySet::default());
         let mut tools = Vec::new();
         for provider in self.registry.tool_providers() {
             match collect_provider_tools(provider.as_ref(), &host) {
@@ -52,9 +53,19 @@ impl PluginService {
         tools
     }
 
+    pub(crate) fn collect_tools_with_capabilities(
+        &self,
+        capabilities: &PluginCapabilitySet,
+    ) -> Vec<AgentTool> {
+        if capabilities.tool_providers == 0 {
+            return Vec::new();
+        }
+        self.collect_tools()
+    }
+
     #[allow(dead_code)]
     pub(crate) fn collect_commands(&self) -> Vec<CommandDefinition> {
-        let host = CommandRegistrationHost;
+        let host = CommandRegistrationHost::new(PluginCapabilitySet::default());
         let mut commands = Vec::new();
         for provider in self.registry.command_providers() {
             match collect_provider_commands(provider.as_ref(), &host) {
@@ -71,7 +82,7 @@ impl PluginService {
         command_id: &str,
         args: serde_json::Value,
     ) -> Result<String, CodingSessionError> {
-        let host = CommandRegistrationHost;
+        let host = CommandRegistrationHost::new(PluginCapabilitySet::default());
         for provider in self.registry.command_providers() {
             let commands = match collect_provider_commands(provider.as_ref(), &host) {
                 Ok(commands) => commands,
@@ -97,9 +108,23 @@ impl PluginService {
         })
     }
 
+    pub(crate) fn run_command_with_capabilities(
+        &self,
+        command_id: &str,
+        args: serde_json::Value,
+        capabilities: &PluginCapabilitySet,
+    ) -> Result<String, CodingSessionError> {
+        if capabilities.command_providers == 0 {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: format!("plugin command not granted: {command_id}"),
+            });
+        }
+        self.run_command(command_id, args)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn collect_prompt_hooks(&self) -> Vec<HookRegistration> {
-        let host = HookRegistrationHost;
+        let host = HookRegistrationHost::new(PluginCapabilitySet::default());
         let mut hooks = Vec::new();
         for provider in self.registry.hook_providers() {
             match collect_provider_hooks(provider.as_ref(), &host) {
@@ -112,7 +137,7 @@ impl PluginService {
 
     #[allow(dead_code)]
     pub(crate) fn collect_ui_actions(&self) -> Vec<UiActionDefinition> {
-        let host = UiRegistrationHost;
+        let host = UiRegistrationHost::new(PluginCapabilitySet::default());
         let mut actions = Vec::new();
         for provider in self.registry.ui_providers() {
             match collect_provider_ui_actions(provider.as_ref(), &host) {
@@ -125,7 +150,7 @@ impl PluginService {
 
     #[allow(dead_code)]
     pub(crate) fn collect_ui_dialogs(&self) -> Vec<UiDialogDefinition> {
-        let host = UiRegistrationHost;
+        let host = UiRegistrationHost::new(PluginCapabilitySet::default());
         let mut dialogs = Vec::new();
         for provider in self.registry.ui_providers() {
             match collect_provider_ui_dialogs(provider.as_ref(), &host) {
@@ -138,7 +163,7 @@ impl PluginService {
 
     #[allow(dead_code)]
     pub(crate) fn collect_keybindings(&self) -> Vec<KeybindDefinition> {
-        let host = KeybindRegistrationHost;
+        let host = KeybindRegistrationHost::new(PluginCapabilitySet::default());
         let mut keybindings = Vec::new();
         for provider in self.registry.keybind_providers() {
             match collect_provider_keybindings(provider.as_ref(), &host) {
@@ -167,7 +192,7 @@ impl PluginService {
         point: PromptHookPoint,
         ctx: PromptHookContext,
     ) -> Result<Vec<CodingDiagnostic>, CodingSessionError> {
-        let host = HookRegistrationHost;
+        let host = HookRegistrationHost::new(PluginCapabilitySet::default());
         let mut diagnostics = Vec::new();
         for provider in self.registry.hook_providers() {
             let registrations = match collect_provider_hooks(provider.as_ref(), &host) {
@@ -407,6 +432,7 @@ mod tests {
     use pi_agent_core::AgentTool;
 
     use super::*;
+    use crate::coding_session::capability_snapshot::PluginCapabilitySet;
     use crate::plugins::{
         CommandDefinition, CommandProvider, CommandRegistrationHost, FlowExtension,
         FlowExtensionPoint, FlowExtensionRegistrationHost, HookFailurePolicy, HookProvider,
@@ -1069,6 +1095,35 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].plugin_id.as_deref(), Some("failing-plugin"));
         assert!(diagnostics[0].message.contains("tool registration failed"));
+    }
+
+    #[test]
+    fn collect_tools_with_capabilities_suppresses_plugin_tools_when_not_granted() {
+        let mut registry = PluginRegistry::new();
+        registry.register_tool_provider(Arc::new(StaticToolProvider {
+            plugin_id: "tools-plugin",
+            tool_name: "plugin_echo",
+        }));
+        let service = PluginService::with_registry(registry);
+        let capabilities = PluginCapabilitySet::default();
+
+        let tools = service.collect_tools_with_capabilities(&capabilities);
+
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn run_command_with_capabilities_rejects_ungranted_commands() {
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(StaticCommandProvider));
+        let service = PluginService::with_registry(registry);
+        let capabilities = PluginCapabilitySet::default();
+
+        let error = service
+            .run_command_with_capabilities("static.command", serde_json::json!({}), &capabilities)
+            .unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
     }
 
     #[test]

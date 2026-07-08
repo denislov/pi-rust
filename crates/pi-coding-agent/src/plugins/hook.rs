@@ -1,5 +1,6 @@
 use super::error::PluginError;
 use super::registry::PluginMetadata;
+use crate::coding_session::PluginCapabilitySet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -27,9 +28,23 @@ pub(crate) struct HookRegistration {
     pub(crate) policy: HookFailurePolicy,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) struct HookRegistrationHost;
+pub(crate) struct HookRegistrationHost {
+    capabilities: PluginCapabilitySet,
+}
+
+#[allow(dead_code)]
+impl HookRegistrationHost {
+    pub(crate) fn new(capabilities: PluginCapabilitySet) -> Self {
+        Self { capabilities }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn capabilities(&self) -> &PluginCapabilitySet {
+        &self.capabilities
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]

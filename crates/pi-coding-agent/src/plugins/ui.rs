@@ -1,5 +1,6 @@
 use super::error::PluginError;
 use super::registry::PluginMetadata;
+use crate::coding_session::PluginCapabilitySet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -99,9 +100,23 @@ impl UiDialogDefinition {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) struct UiRegistrationHost;
+pub(crate) struct UiRegistrationHost {
+    capabilities: PluginCapabilitySet,
+}
+
+#[allow(dead_code)]
+impl UiRegistrationHost {
+    pub(crate) fn new(capabilities: PluginCapabilitySet) -> Self {
+        Self { capabilities }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn capabilities(&self) -> &PluginCapabilitySet {
+        &self.capabilities
+    }
+}
 
 #[allow(dead_code)]
 pub(crate) trait UiProvider: Send + Sync {

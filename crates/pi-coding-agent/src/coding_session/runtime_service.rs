@@ -122,7 +122,7 @@ impl RuntimeService {
             delegation_tools(runtime.profile_id(), runtime.profile_delegation_policy());
         let tools = apply_tool_policy(
             runtime,
-            plugin_service.collect_tools(),
+            plugin_service.collect_tools_with_capabilities(&snapshot.plugin),
             &policy_tools,
             &mut diagnostics,
         )

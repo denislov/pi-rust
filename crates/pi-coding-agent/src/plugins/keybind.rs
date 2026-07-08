@@ -1,5 +1,6 @@
 use super::error::PluginError;
 use super::registry::PluginMetadata;
+use crate::coding_session::PluginCapabilitySet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -27,9 +28,23 @@ impl KeybindDefinition {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) struct KeybindRegistrationHost;
+pub(crate) struct KeybindRegistrationHost {
+    capabilities: PluginCapabilitySet,
+}
+
+#[allow(dead_code)]
+impl KeybindRegistrationHost {
+    pub(crate) fn new(capabilities: PluginCapabilitySet) -> Self {
+        Self { capabilities }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn capabilities(&self) -> &PluginCapabilitySet {
+        &self.capabilities
+    }
+}
 
 #[allow(dead_code)]
 pub(crate) trait KeybindProvider: Send + Sync {
