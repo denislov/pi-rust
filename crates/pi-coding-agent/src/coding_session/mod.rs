@@ -77,7 +77,7 @@ use delegation_execution_service::DelegationExecutionService;
 use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
-use intent_router::IntentRouter;
+use intent_router::{ControlIntent, IntentRouter};
 use manual_compaction_flow::ManualCompactionOptions;
 use manual_compaction_service::ManualCompactionService;
 use operation::{Operation, OperationAdmission, OperationDispatchMode, OperationOutcome};
@@ -381,7 +381,10 @@ impl CodingAgentSession {
     pub(crate) fn prompt_control_handle(
         &mut self,
     ) -> Result<PromptControlHandle, CodingSessionError> {
-        self.operation_control.prompt_control_handle()
+        IntentRouter::prompt_control_handle(
+            &mut self.operation_control,
+            ControlIntent::PromptControl,
+        )
     }
 
     pub fn capabilities(&self) -> CodingAgentCapabilities {

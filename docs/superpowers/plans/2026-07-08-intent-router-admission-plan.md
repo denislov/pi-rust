@@ -227,24 +227,29 @@ Docs result: `docs/TODO.md` now records Stage 3 startup and this plan records th
 **Files:**
 - Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/intent_router.rs`
-- Modify: `crates/pi-coding-agent/src/coding_session/operation_control.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-08-intent-router-admission-plan.md`
 
-- [ ] **Step 1: Write failing prompt-control admission tests**
+- [x] **Step 1: Write failing prompt-control admission tests**
 
 Add a test that requests a prompt control handle through the router and verifies it is classified as `OperationClass::Control`, rejects creation while another operation is active, and still sends abort/steer/follow-up commands through the existing `PromptControlHandle`.
 
-- [ ] **Step 2: Add control intent metadata**
+RED result: `cargo test -p pi-coding-agent prompt_control --lib` failed because `ControlIntent` and `IntentRouter::prompt_control_handle()` did not exist.
+
+- [x] **Step 2: Add control intent metadata**
 
 Add a small internal control-intent type for prompt abort, steer, and follow-up. It should not replace the existing `PromptControlCommand`; it only gives admission a typed control request before acquiring the existing handle.
 
-- [ ] **Step 3: Wire existing prompt-control handle creation through the router**
+Implemented `ControlIntent::PromptControl` with metadata targeting `OperationKind::Prompt` and `OperationClass::Control`. The existing `PromptControlCommand` channel remains unchanged.
+
+- [x] **Step 3: Wire existing prompt-control handle creation through the router**
 
 Keep `CodingAgentSession::prompt_control_handle()` as the adapter-facing method, but make it delegate admission to the router before creating the channel through `OperationControl`.
 
-- [ ] **Step 4: Run focused and adapter checks**
+`CodingAgentSession::prompt_control_handle()` now calls `IntentRouter::prompt_control_handle(&mut self.operation_control, ControlIntent::PromptControl)`. `OperationControl` itself did not need changes; it still owns receiver lifecycle and busy/pending checks.
+
+- [x] **Step 4: Run focused and adapter checks**
 
 Run:
 
@@ -255,3 +260,5 @@ cargo test -p pi-coding-agent --test interactive_mode
 ```
 
 Expected GREEN: existing RPC and interactive control behavior stays unchanged while handle creation now has an explicit admission path.
+
+GREEN result: `cargo test -p pi-coding-agent prompt_control --lib` passed 8 tests, `cargo test -p pi-coding-agent --test rpc_mode` passed 36 tests, `cargo test -p pi-coding-agent --test interactive_mode` passed 41 tests, and `cargo check -p pi-coding-agent` finished without warnings.
