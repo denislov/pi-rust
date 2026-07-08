@@ -362,9 +362,22 @@ impl CodingAgentSession {
         &self,
         target_leaf_id: Option<&str>,
     ) -> Result<Self, CodingSessionError> {
+        let operation = Operation::ForkSession {
+            target_leaf_id: target_leaf_id.map(str::to_owned),
+        };
+        let admission = IntentRouter::static_admission(&operation)?;
+        let _operation_permit = IntentRouter::admit_operation(
+            &self.operation_control,
+            &admission,
+            OperationDispatchMode::SyncMutable,
+        )?;
+        let Operation::ForkSession { target_leaf_id } = operation else {
+            unreachable!("operation is ForkSession")
+        };
+
         match &self.persistence {
             SessionPersistence::Persistent(session_service) => Self::from_services(
-                session_service.fork_current(target_leaf_id)?,
+                session_service.fork_current(target_leaf_id.as_deref())?,
                 self.default_plugin_load_options.clone(),
                 self.profile_registry.clone(),
             ),
@@ -1111,6 +1124,7 @@ impl CodingAgentSession {
             | Operation::SelfHealingEdit(_)
             | Operation::AgentInvocation(_)
             | Operation::AgentTeam(_)
+            | Operation::ForkSession { .. }
             | Operation::SetDefaultAgentProfile { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
@@ -1146,6 +1160,9 @@ impl CodingAgentSession {
                 )?;
                 Ok(OperationOutcome::DelegationRejection)
             }
+            Operation::ForkSession { .. } => Err(CodingSessionError::UnsupportedCapability {
+                capability: "fork session is admitted through fork_current_session".into(),
+            }),
             Operation::SetDefaultAgentProfile { profile_id } => {
                 match &mut self.persistence {
                     SessionPersistence::Persistent(session_service) => {
@@ -1389,6 +1406,7 @@ impl CodingAgentSession {
             Operation::Export(_)
             | Operation::PluginCommand { .. }
             | Operation::RejectDelegationConfirmation { .. }
+            | Operation::ForkSession { .. }
             | Operation::SetDefaultAgentProfile { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
@@ -2548,6 +2566,25 @@ runtime = "lua"
         let error = session
             .set_default_agent_profile_id("agent-main")
             .unwrap_err();
+
+        assert_eq!(error.code(), "busy");
+        assert_eq!(
+            session.operation_control.active(),
+            Some(OperationKind::Prompt)
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_current_session_rejects_while_operation_is_busy() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let _guard = session
+            .operation_control
+            .begin(OperationKind::Prompt)
+            .unwrap();
+
+        let error = session.fork_current_session(None).unwrap_err();
 
         assert_eq!(error.code(), "busy");
         assert_eq!(

@@ -319,7 +319,7 @@ git commit -m "feat: route default profile change through operation admission"
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-08-intent-router-session-mutation-admission-plan.md`
 
-- [ ] **Step 1: Write the failing operation metadata and busy-guard tests**
+- [x] **Step 1: Write the failing operation metadata and busy-guard tests**
 
 Add this test to the `#[cfg(test)] mod tests` block in `crates/pi-coding-agent/src/coding_session/operation.rs`, after the `set_default_agent_profile_operation_declares_runtime_write_metadata` test:
 
@@ -363,7 +363,7 @@ async fn fork_current_session_rejects_while_operation_is_busy() {
 }
 ```
 
-- [ ] **Step 2: Run the focused RED command**
+- [x] **Step 2: Run the focused RED command**
 
 Run:
 
@@ -374,7 +374,9 @@ cargo test -p pi-coding-agent fork_current_session_rejects_while_operation_is_bu
 
 Expected RED: compile failure because `Operation::ForkSession` does not exist yet.
 
-- [ ] **Step 3: Add `Operation::ForkSession` and its metadata**
+Actual RED: confirmed -- both tests fail to compile with `error[E0599]: no variant named \`ForkSession\` found for enum \`coding_session::operation::Operation\``.
+
+- [x] **Step 3: Add `Operation::ForkSession` and its metadata**
 
 In `crates/pi-coding-agent/src/coding_session/operation.rs`, add the variant to the `Operation` enum, before `SetDefaultAgentProfile`:
 
@@ -399,7 +401,7 @@ Do NOT add a `ForkSession` variant to `OperationOutcome` -- fork returns `Self` 
 
 Remove the `#[allow(dead_code)]` attribute from `OperationKind::ForkSession` in `operation_control.rs` (added in Task 1 Step 3), since `Operation::ForkSession` metadata now constructs `OperationKind::ForkSession`.
 
-- [ ] **Step 4: Route `fork_current_session` through direct `IntentRouter` admission**
+- [x] **Step 4: Route `fork_current_session` through direct `IntentRouter` admission**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, replace the body of `fork_current_session` (currently at approximately line 355) with:
 
@@ -431,7 +433,9 @@ In `crates/pi-coding-agent/src/coding_session/mod.rs`, replace the body of `fork
     }
 ```
 
-- [ ] **Step 5: Add `ForkSession` to all three dispatcher match arms**
+Deviation from prescribed code: the `fork_current` call reads `target_leaf_id` from the destructured `Operation::ForkSession` field (via `let Operation::ForkSession { target_leaf_id } = operation` and `target_leaf_id.as_deref()`) rather than from the original `&str` parameter. This keeps the operation as the single source of truth and eliminates a `dead_code` warning on the `target_leaf_id` field that the prescribed code would otherwise produce.
+
+- [x] **Step 5: Add `ForkSession` to all three dispatcher match arms**
 
 `ForkSession` is admitted directly through `fork_current_session`, not through a dispatcher. All three dispatchers must return a clear error if `Operation::ForkSession` is ever passed to them.
 
@@ -447,7 +451,7 @@ In `run_sync_operation`, add `Operation::ForkSession { .. }` to the final fallth
 
 In `run_operation`, add `Operation::ForkSession { .. }` to the fallthrough `|`-list that contains `Operation::Export(_) | ...`.
 
-- [ ] **Step 6: Run the focused GREEN command**
+- [x] **Step 6: Run the focused GREEN command**
 
 Run:
 
@@ -461,7 +465,9 @@ cargo check -p pi-coding-agent
 
 Expected GREEN: the new metadata and busy-guard tests pass, all existing operation and intent-router tests pass, and `pi-coding-agent` compiles without warnings.
 
-- [ ] **Step 7: Run adapter behavior checks**
+Actual GREEN: confirmed -- `fork_session_operation_declares_root_session_write_metadata` (1), `fork_current_session_rejects_while_operation_is_busy` (1), `operation` (59), and `intent_router` (11) all pass. `cargo check -p pi-coding-agent` compiles with 0 warnings.
+
+- [x] **Step 7: Run adapter behavior checks**
 
 Run:
 
@@ -472,7 +478,9 @@ cargo test -p pi-coding-agent --test rpc_mode
 
 Expected GREEN: interactive mode (including tree-navigation fork) and RPC mode tests pass with unchanged behavior.
 
-- [ ] **Step 8: Update docs and commit**
+Actual GREEN: confirmed -- `interactive_mode` (41 tests) and `rpc_mode` (36 tests) all pass with unchanged behavior.
+
+- [x] **Step 8: Update docs and commit**
 
 Update `docs/TODO.md` North Star item to record that `fork_current_session` now routes through `Operation::ForkSession` (SessionWriteRoot) direct admission via `IntentRouter::admit_operation`. Mark this task complete with actual RED/GREEN notes, then commit:
 

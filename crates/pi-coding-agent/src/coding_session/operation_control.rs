@@ -15,7 +15,6 @@ pub(crate) enum OperationKind {
     AgentInvocation,
     AgentTeam,
     Export,
-    #[allow(dead_code)]
     ForkSession,
     SetDefaultAgentProfile,
     #[allow(dead_code)]

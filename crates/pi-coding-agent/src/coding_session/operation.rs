@@ -34,6 +34,9 @@ pub(crate) enum Operation {
     SelfHealingEdit(SelfHealingEditRequest),
     AgentInvocation(AgentInvocationOptions),
     AgentTeam(AgentTeamOptions),
+    ForkSession {
+        target_leaf_id: Option<String>,
+    },
     SetDefaultAgentProfile {
         profile_id: ProfileId,
     },
@@ -121,6 +124,12 @@ impl Operation {
                 OperationOrigin::ClientRoot,
                 OperationClass::NonSessionRoot,
                 OperationDispatchMode::Async,
+            ),
+            Self::ForkSession { .. } => OperationMetadata::new(
+                Some(OperationKind::ForkSession),
+                OperationOrigin::ClientRoot,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::SyncMutable,
             ),
             Self::SetDefaultAgentProfile { .. } => OperationMetadata::new(
                 Some(OperationKind::SetDefaultAgentProfile),
@@ -413,6 +422,21 @@ mod tests {
         assert_eq!(operation.kind(), OperationKind::SetDefaultAgentProfile);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::RuntimeWrite);
+        assert_eq!(
+            operation.metadata().dispatch_mode,
+            OperationDispatchMode::SyncMutable
+        );
+    }
+
+    #[test]
+    fn fork_session_operation_declares_root_session_write_metadata() {
+        let operation = Operation::ForkSession {
+            target_leaf_id: Some("leaf_1".into()),
+        };
+
+        assert_eq!(operation.kind(), OperationKind::ForkSession);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
         assert_eq!(
             operation.metadata().dispatch_mode,
             OperationDispatchMode::SyncMutable
