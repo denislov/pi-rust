@@ -3,6 +3,7 @@ mod agent_team_flow;
 mod branch_summary_flow;
 mod branch_summary_service;
 mod capability_service;
+mod capability_snapshot;
 mod context;
 mod delegation;
 mod delegation_confirmation_service;
