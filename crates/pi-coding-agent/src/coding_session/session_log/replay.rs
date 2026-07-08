@@ -17,9 +17,26 @@ pub(crate) enum OperationReplayStatus {
     InDoubt,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionRecoverySummary {
+    pub(crate) in_doubt_operations: Vec<String>,
+}
+
 impl SessionReplay {
     pub(crate) fn operation_status(&self, operation_id: &str) -> Option<OperationReplayStatus> {
         self.operation_statuses.get(operation_id).copied()
+    }
+
+    pub(crate) fn recovery_summary(&self) -> SessionRecoverySummary {
+        let in_doubt_operations = self
+            .operation_statuses
+            .iter()
+            .filter(|(_, status)| **status == OperationReplayStatus::InDoubt)
+            .map(|(id, _)| id.clone())
+            .collect();
+        SessionRecoverySummary {
+            in_doubt_operations,
+        }
     }
 }
 

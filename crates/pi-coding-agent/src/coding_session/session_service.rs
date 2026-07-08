@@ -12,7 +12,9 @@ use super::session_log::event::{
     PersistedDelegationStatus, PersistedPluginDiagnostic, SessionEventData, SessionEventEnvelope,
 };
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
-use super::session_log::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
+use super::session_log::replay::{
+    MessageStatus, SessionRecoverySummary, SessionReplay, ToolCallStatus, TranscriptItem,
+};
 use super::session_log::store::{
     CreateSessionOptions, ManifestPatch, SessionHandle, SessionLogStore, SessionSummary,
 };
@@ -721,6 +723,11 @@ impl SessionService {
         self.store.replay_session(&self.handle)
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn recovery_summary(&self) -> Result<SessionRecoverySummary, CodingSessionError> {
+        Ok(self.replay()?.recovery_summary())
+    }
+
     pub(crate) fn view(&self) -> CodingAgentSessionView {
         CodingAgentSessionView {
             session_id: self.session_id().to_owned(),
@@ -1372,6 +1379,39 @@ mod tests {
         let opened = SessionService::open(&open_options).unwrap();
 
         assert_eq!(opened.session_id(), "sess_path");
+    }
+
+    #[test]
+    fn open_reports_in_doubt_operations() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_in_doubt")
+            .with_session_log_root(temp.path());
+        let created = SessionService::create(&options).unwrap();
+
+        let incomplete_events = vec![
+            SessionEventEnvelope::new(
+                "sess_in_doubt",
+                "evt_op_started",
+                "2026-07-08T00:00:00Z",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            )
+            .with_operation_id("op_in_doubt"),
+        ];
+        created
+            .store
+            .append_events(&created.handle, &incomplete_events)
+            .unwrap();
+
+        let opened = SessionService::open(&options).unwrap();
+        let recovery = opened.recovery_summary().unwrap();
+
+        assert_eq!(
+            recovery.in_doubt_operations,
+            vec!["op_in_doubt".to_string()]
+        );
     }
 
     #[test]

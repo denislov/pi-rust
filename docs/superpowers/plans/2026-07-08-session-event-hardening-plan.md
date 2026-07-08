@@ -406,21 +406,23 @@ git commit -m "feat: add session operation recovery markers"
 - Modify: `crates/pi-coding-agent/src/coding_session/session_log/replay.rs`
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Write failing service-boundary tests**
+- [x] **Step 1: Write failing service-boundary tests**
 
 Add a test that opens a session log containing `OperationStarted` without a terminal marker and verifies the service exposes the operation as in-doubt instead of silently treating it as normal committed history.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
 ```bash
-cargo test -p pi-coding-agent open_session_reports_in_doubt_operations --lib
+cargo test -p pi-coding-agent open_reports_in_doubt_operations --lib
 ```
 
 Expected: fail because `SessionService` does not expose recovery scan state yet.
 
-- [ ] **Step 3: Add recovery scan view**
+Actual RED: confirmed -- `error[E0599]: no method named 'recovery_summary' found for struct 'session_service::SessionService'`. Test was named `open_reports_in_doubt_operations` (slightly shorter than the plan's `open_session_reports_in_doubt_operations`).
+
+- [x] **Step 3: Add recovery scan view**
 
 Add a lightweight session-owned recovery summary:
 
@@ -433,18 +435,20 @@ pub(crate) struct SessionRecoverySummary {
 
 Derive it from `SessionReplay` operation statuses at `SessionService::open()` and keep it read-only.
 
-- [ ] **Step 4: Run GREEN tests**
+- [x] **Step 4: Run GREEN tests**
 
 Run:
 
 ```bash
-cargo test -p pi-coding-agent open_session_reports_in_doubt_operations --lib
+cargo test -p pi-coding-agent open_reports_in_doubt_operations --lib
 cargo test -p pi-coding-agent session_service --lib
 ```
 
 Expected: selected service tests pass.
 
-- [ ] **Step 5: Commit**
+Actual GREEN: confirmed -- `open_reports_in_doubt_operations` (1), `session_service` (22), `session_log` (46) all pass. `SessionRecoverySummary` is derived from `SessionReplay::operation_statuses` via `SessionReplay::recovery_summary()` and exposed read-only through `SessionService::recovery_summary()`. `cargo check -p pi-coding-agent` clean, `cargo fmt --check` clean.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/session_service.rs crates/pi-coding-agent/src/coding_session/session_log/replay.rs docs/TODO.md
