@@ -1,5 +1,8 @@
 use super::CodingSessionError;
-use super::operation::{Operation, OperationAdmission, OperationClass, OperationDispatchMode};
+use super::capability_snapshot::OperationCapabilitySnapshot;
+#[cfg(test)]
+use super::operation::Operation;
+use super::operation::{OperationAdmission, OperationClass, OperationDispatchMode};
 use super::operation_control::{
     OperationControl, OperationGuard, OperationKind, PromptControlHandle,
 };
@@ -35,6 +38,7 @@ pub(crate) struct QueryIntentMetadata {
 #[must_use = "dropping OperationPermit releases any guarded operation"]
 pub(crate) struct OperationPermit {
     guard: Option<OperationGuard>,
+    capability_snapshot: OperationCapabilitySnapshot,
     #[cfg(test)]
     kind: OperationKind,
     #[cfg(test)]
@@ -62,12 +66,18 @@ impl QueryIntent {
 }
 
 impl OperationPermit {
-    fn guarded(kind: OperationKind, class: OperationClass, guard: OperationGuard) -> Self {
+    fn guarded(
+        kind: OperationKind,
+        class: OperationClass,
+        guard: OperationGuard,
+        capability_snapshot: OperationCapabilitySnapshot,
+    ) -> Self {
         #[cfg(not(test))]
         let _ = (kind, class);
 
         Self {
             guard: Some(guard),
+            capability_snapshot,
             #[cfg(test)]
             kind,
             #[cfg(test)]
@@ -75,17 +85,27 @@ impl OperationPermit {
         }
     }
 
-    fn unguarded(kind: OperationKind, class: OperationClass) -> Self {
+    fn unguarded(
+        kind: OperationKind,
+        class: OperationClass,
+        capability_snapshot: OperationCapabilitySnapshot,
+    ) -> Self {
         #[cfg(not(test))]
         let _ = (kind, class);
 
         Self {
             guard: None,
+            capability_snapshot,
             #[cfg(test)]
             kind,
             #[cfg(test)]
             class,
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn capability_snapshot(&self) -> &OperationCapabilitySnapshot {
+        &self.capability_snapshot
     }
 
     #[cfg(test)]
@@ -113,6 +133,7 @@ impl Drop for OperationPermit {
 pub(crate) struct IntentRouter;
 
 impl IntentRouter {
+    #[cfg(test)]
     pub(crate) fn static_admission(
         operation: &Operation,
     ) -> Result<OperationAdmission, CodingSessionError> {
@@ -122,7 +143,13 @@ impl IntentRouter {
                 capability: "dynamic operation requires async dispatcher".into(),
             });
         }
-        Ok(OperationAdmission::new(operation.kind(), metadata, None))
+        let snapshot = OperationCapabilitySnapshot::permissive_for_tests("op_static_admission");
+        Ok(OperationAdmission::new(
+            operation.kind(),
+            metadata,
+            None,
+            snapshot,
+        ))
     }
 
     #[cfg(test)]
@@ -147,12 +174,18 @@ impl IntentRouter {
             return Ok(OperationPermit::unguarded(
                 admission.kind,
                 admission.metadata.class,
+                admission.capability_snapshot.clone(),
             ));
         }
 
-        control
-            .begin(admission.kind)
-            .map(|guard| OperationPermit::guarded(admission.kind, admission.metadata.class, guard))
+        control.begin(admission.kind).map(|guard| {
+            OperationPermit::guarded(
+                admission.kind,
+                admission.metadata.class,
+                guard,
+                admission.capability_snapshot.clone(),
+            )
+        })
     }
 
     pub(crate) fn prompt_control_handle(
@@ -202,7 +235,7 @@ impl IntentRouter {
 mod tests {
     use super::*;
     use crate::coding_session::export_flow::ExportOptions;
-    use crate::coding_session::operation::OperationClass;
+    use crate::coding_session::operation::{Operation, OperationClass};
     use crate::coding_session::operation_control::{OperationKind, PromptControlCommand};
 
     #[test]
@@ -354,6 +387,95 @@ mod tests {
         assert_eq!(control.active(), Some(OperationKind::PluginCommand));
         drop(permit);
         assert_eq!(control.active(), None);
+    }
+
+    #[test]
+    fn operation_permit_exposes_the_frozen_snapshot_for_execution() {
+        use crate::coding_session::capability_snapshot::{
+            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
+            ToolCapabilitySet,
+        };
+        use crate::coding_session::operation::{OperationMetadata, OperationOrigin};
+
+        let control = OperationControl::new();
+        let metadata = OperationMetadata {
+            static_kind: Some(OperationKind::Export),
+            origin: OperationOrigin::ClientRoot,
+            class: OperationClass::ReadOnly,
+            dispatch_mode: OperationDispatchMode::SyncReadOnly,
+        };
+        let snapshot = OperationCapabilitySnapshot {
+            generation: CapabilityGeneration::new(3),
+            operation_id: "op_export".into(),
+            actor: ActorId::Client,
+            model: None,
+            tools: ToolCapabilitySet::default(),
+            commands: Default::default(),
+            filesystem: None,
+            shell: None,
+            session_read: None,
+            session_write: None,
+            ui: None,
+            plugin: PluginCapabilitySet::default(),
+        };
+        let admission =
+            OperationAdmission::new(OperationKind::Export, metadata, None, snapshot.clone());
+
+        let permit = IntentRouter::admit_operation(
+            &control,
+            &admission,
+            OperationDispatchMode::SyncReadOnly,
+        )
+        .unwrap();
+
+        assert_eq!(permit.capability_snapshot(), &snapshot);
+    }
+
+    #[test]
+    fn operation_permit_exposes_frozen_snapshot_for_guarded_execution() {
+        use crate::coding_session::capability_snapshot::{
+            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
+            ToolCapabilitySet,
+        };
+        use crate::coding_session::operation::{OperationMetadata, OperationOrigin};
+
+        let control = OperationControl::new();
+        let metadata = OperationMetadata {
+            static_kind: Some(OperationKind::PluginCommand),
+            origin: OperationOrigin::ClientRoot,
+            class: OperationClass::NonSessionRoot,
+            dispatch_mode: OperationDispatchMode::SyncReadOnly,
+        };
+        let snapshot = OperationCapabilitySnapshot {
+            generation: CapabilityGeneration::new(5),
+            operation_id: "op_command".into(),
+            actor: ActorId::Client,
+            model: None,
+            tools: ToolCapabilitySet::default(),
+            commands: Default::default(),
+            filesystem: None,
+            shell: None,
+            session_read: None,
+            session_write: None,
+            ui: None,
+            plugin: PluginCapabilitySet::default(),
+        };
+        let admission = OperationAdmission::new(
+            OperationKind::PluginCommand,
+            metadata,
+            None,
+            snapshot.clone(),
+        );
+
+        let permit = IntentRouter::admit_operation(
+            &control,
+            &admission,
+            OperationDispatchMode::SyncReadOnly,
+        )
+        .unwrap();
+
+        assert!(permit.is_guarded());
+        assert_eq!(permit.capability_snapshot(), &snapshot);
     }
 
     #[test]

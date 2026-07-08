@@ -1,5 +1,6 @@
 use super::agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
 use super::agent_team_flow::{AgentTeamOptions, AgentTeamOutcome};
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::export_flow::{ExportOptions, ExportOutcome};
 use super::operation_control::OperationKind;
 use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
@@ -44,6 +45,7 @@ pub(crate) enum Operation {
 }
 
 impl Operation {
+    #[allow(dead_code)]
     pub(crate) fn kind(&self) -> OperationKind {
         self.static_kind()
             .expect("dynamic operation does not have a static kind")
@@ -176,6 +178,8 @@ pub(crate) struct OperationAdmission {
     pub(crate) kind: OperationKind,
     pub(crate) metadata: OperationMetadata,
     pub(crate) admitted_at: Option<String>,
+    #[allow(dead_code)]
+    pub(crate) capability_snapshot: OperationCapabilitySnapshot,
 }
 
 impl OperationAdmission {
@@ -183,11 +187,13 @@ impl OperationAdmission {
         kind: OperationKind,
         metadata: OperationMetadata,
         admitted_at: Option<String>,
+        capability_snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         Self {
             kind,
             metadata,
             admitted_at,
+            capability_snapshot,
         }
     }
 }
@@ -504,6 +510,44 @@ mod tests {
 
         drop(guard);
         assert_eq!(control.active(), None);
+    }
+
+    #[test]
+    fn operation_admission_carries_frozen_capability_snapshot() {
+        use crate::coding_session::capability_snapshot::{
+            ActorId, CapabilityGeneration, ModelCapability, OperationCapabilitySnapshot,
+            PluginCapabilitySet, ToolCapabilitySet,
+        };
+
+        let metadata = OperationMetadata {
+            static_kind: Some(OperationKind::Prompt),
+            origin: OperationOrigin::ClientRoot,
+            class: OperationClass::SessionWriteRoot,
+            dispatch_mode: OperationDispatchMode::Async,
+        };
+        let snapshot = OperationCapabilitySnapshot {
+            generation: CapabilityGeneration::new(7),
+            operation_id: "op_admitted".into(),
+            actor: ActorId::Client,
+            model: Some(ModelCapability { profile_id: None }),
+            tools: ToolCapabilitySet::from_names(["read".to_string()]),
+            commands: Default::default(),
+            filesystem: None,
+            shell: None,
+            session_read: None,
+            session_write: None,
+            ui: None,
+            plugin: PluginCapabilitySet::default(),
+        };
+
+        let admission = OperationAdmission::new(
+            OperationKind::Prompt,
+            metadata,
+            Some("2026-07-09T00:00:00Z".into()),
+            snapshot.clone(),
+        );
+
+        assert_eq!(admission.capability_snapshot, snapshot);
     }
 
     #[test]
