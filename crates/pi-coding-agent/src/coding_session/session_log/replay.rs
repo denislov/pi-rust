@@ -28,12 +28,13 @@ impl SessionReplay {
     }
 
     pub(crate) fn recovery_summary(&self) -> SessionRecoverySummary {
-        let in_doubt_operations = self
+        let mut in_doubt_operations: Vec<String> = self
             .operation_statuses
             .iter()
             .filter(|(_, status)| **status == OperationReplayStatus::InDoubt)
             .map(|(id, _)| id.clone())
             .collect();
+        in_doubt_operations.sort();
         SessionRecoverySummary {
             in_doubt_operations,
         }

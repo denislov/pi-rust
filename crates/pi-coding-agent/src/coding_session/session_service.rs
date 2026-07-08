@@ -1415,6 +1415,57 @@ mod tests {
     }
 
     #[test]
+    fn recovery_summary_returns_in_doubt_operations_in_stable_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_order")
+            .with_session_log_root(temp.path());
+        let created = SessionService::create(&options).unwrap();
+
+        let events = vec![
+            SessionEventEnvelope::new(
+                "sess_order",
+                "evt_op_c",
+                "2026-07-08T00:00:00Z",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            )
+            .with_operation_id("op_c"),
+            SessionEventEnvelope::new(
+                "sess_order",
+                "evt_op_b",
+                "2026-07-08T00:00:00Z",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            )
+            .with_operation_id("op_b"),
+            SessionEventEnvelope::new(
+                "sess_order",
+                "evt_op_a",
+                "2026-07-08T00:00:00Z",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            )
+            .with_operation_id("op_a"),
+        ];
+        created
+            .store
+            .append_events(&created.handle, &events)
+            .unwrap();
+
+        let opened = SessionService::open(&options).unwrap();
+        let recovery = opened.recovery_summary().unwrap();
+
+        assert_eq!(
+            recovery.in_doubt_operations,
+            vec!["op_a".to_string(), "op_b".to_string(), "op_c".to_string()]
+        );
+    }
+
+    #[test]
     fn open_or_create_creates_missing_explicit_session_id() {
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
