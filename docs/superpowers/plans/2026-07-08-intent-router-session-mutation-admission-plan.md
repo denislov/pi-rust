@@ -103,7 +103,7 @@ All other `OperationKind` references in `context.rs`, `capability_service.rs`, `
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-08-intent-router-session-mutation-admission-plan.md`
 
-- [ ] **Step 1: Write the failing operation metadata test**
+- [x] **Step 1: Write the failing operation metadata test**
 
 Add this test to the `#[cfg(test)] mod tests` block in `crates/pi-coding-agent/src/coding_session/operation.rs`, after the existing `export_operation_declares_root_read_only_metadata` test:
 
@@ -148,7 +148,7 @@ async fn set_default_agent_profile_rejects_while_operation_is_busy() {
 }
 ```
 
-- [ ] **Step 2: Run the focused RED command**
+- [x] **Step 2: Run the focused RED command**
 
 Run:
 
@@ -159,7 +159,9 @@ cargo test -p pi-coding-agent set_default_agent_profile_rejects_while_operation_
 
 Expected RED: compile failure because `Operation::SetDefaultAgentProfile`, `OperationKind::SetDefaultAgentProfile`, and the `ProfileId` import do not exist yet.
 
-- [ ] **Step 3: Add `OperationKind::SetDefaultAgentProfile`**
+Actual RED: confirmed -- compile failure with E0433 (`ProfileId` not found in scope), E0599 (`Operation::SetDefaultAgentProfile` variant not found), E0599 (`OperationKind::SetDefaultAgentProfile` variant not found).
+
+- [x] **Step 3: Add `OperationKind::SetDefaultAgentProfile`**
 
 In `crates/pi-coding-agent/src/coding_session/operation_control.rs`, add the variants to the `OperationKind` enum before `SelfHealingEdit`. `ForkSession` gets `#[allow(dead_code)]` because it is not constructed until Task 2; Task 2 Step 3 removes the attribute:
 
@@ -189,7 +191,7 @@ Add the `as_str` arm in the same `impl OperationKind` block, before the `SelfHea
             Self::SetDefaultAgentProfile => "set_default_agent_profile",
 ```
 
-- [ ] **Step 4: Add `Operation::SetDefaultAgentProfile` and its metadata**
+- [x] **Step 4: Add `Operation::SetDefaultAgentProfile` and its metadata**
 
 In `crates/pi-coding-agent/src/coding_session/operation.rs`:
 
@@ -224,7 +226,7 @@ Add the outcome variant to `OperationOutcome`, before `Export`:
     SetDefaultAgentProfile,
 ```
 
-- [ ] **Step 5: Route `set_default_agent_profile_id` through `run_sync_mut_operation`**
+- [x] **Step 5: Route `set_default_agent_profile_id` through `run_sync_mut_operation`**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, replace the body of `set_default_agent_profile_id` (currently at approximately line 432) with:
 
@@ -243,7 +245,7 @@ In `crates/pi-coding-agent/src/coding_session/mod.rs`, replace the body of `set_
     }
 ```
 
-- [ ] **Step 6: Add the `SetDefaultAgentProfile` handler to `run_sync_mut_operation`**
+- [x] **Step 6: Add the `SetDefaultAgentProfile` handler to `run_sync_mut_operation`**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, update the `run_sync_mut_operation` match. Add this arm before the `Operation::Export(_) | Operation::PluginCommand { .. }` fallthrough:
 
@@ -263,13 +265,13 @@ In `crates/pi-coding-agent/src/coding_session/mod.rs`, update the `run_sync_mut_
             }
 ```
 
-- [ ] **Step 7: Add `SetDefaultAgentProfile` to the other dispatchers' fallthrough lists**
+- [x] **Step 7: Add `SetDefaultAgentProfile` to the other dispatchers' fallthrough lists**
 
 In `run_sync_operation` (SyncReadOnly dispatcher), add `Operation::SetDefaultAgentProfile { .. }` to the final fallthrough `|`-list that currently ends with `Operation::AgentTeam(_) => Err(IntentRouter::unsupported_dispatch(&admission))`.
 
 In `run_operation` (Async dispatcher), add `Operation::SetDefaultAgentProfile { .. }` to the fallthrough `|`-list that currently contains `Operation::Export(_) | Operation::PluginCommand { .. } | Operation::RejectDelegationConfirmation { .. }`.
 
-- [ ] **Step 8: Run the focused GREEN command**
+- [x] **Step 8: Run the focused GREEN command**
 
 Run:
 
@@ -282,7 +284,9 @@ cargo check -p pi-coding-agent
 
 Expected GREEN: the new metadata and busy-guard tests pass, all existing operation tests pass, and `pi-coding-agent` compiles without warnings.
 
-- [ ] **Step 9: Run adapter behavior checks**
+Actual GREEN: confirmed -- both new tests pass, all 57 operation tests pass, `cargo check -p pi-coding-agent` clean. Discovery: 13 exhaustive `OperationOutcome` match sites in `mod.rs` public API wrappers also needed `SetDefaultAgentProfile` arms (not enumerated in the plan's exhaustive-match section); all 13 were updated with `unreachable!` arms. `cargo fmt` fixed long-line and import-order formatting.
+
+- [x] **Step 9: Run adapter behavior checks**
 
 Run:
 
@@ -294,7 +298,9 @@ cargo test -p pi-coding-agent query_intent --lib
 
 Expected GREEN: RPC default-profile switching, interactive mode, and query-intent admission tests pass with unchanged behavior.
 
-- [ ] **Step 10: Update docs and commit**
+Actual GREEN: confirmed -- RPC `set_default_agent_profile` (3 tests), `interactive_mode` (41 tests), and `query_intent` (1 test) all pass. Full `pi-coding-agent` suite (525 lib + all integration tests) passes with 0 failures.
+
+- [x] **Step 10: Update docs and commit**
 
 Update `docs/TODO.md` North Star item to record that `set_default_agent_profile_id` now routes through `Operation::SetDefaultAgentProfile` (RuntimeWrite) admission via `run_sync_mut_operation`. Mark this task complete with actual RED/GREEN notes, then commit:
 

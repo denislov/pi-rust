@@ -304,6 +304,9 @@ impl CodingAgentSession {
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("export operation returned agent team outcome")
             }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("export operation returned set default agent profile outcome")
+            }
         }
     }
 
@@ -337,6 +340,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("export operation returned agent team outcome")
+            }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("export operation returned set default agent profile outcome")
             }
         }
     }
@@ -434,17 +440,10 @@ impl CodingAgentSession {
         profile_id: impl Into<ProfileId>,
     ) -> Result<(), CodingSessionError> {
         let profile_id = profile_id.into();
-        match &mut self.persistence {
-            SessionPersistence::Persistent(session_service) => {
-                session_service.set_default_agent_profile_id(profile_id.clone())?;
-            }
-            SessionPersistence::NonPersistent(state) => {
-                state.default_agent_profile_id = profile_id.clone();
-            }
+        match self.run_sync_mut_operation(Operation::SetDefaultAgentProfile { profile_id })? {
+            OperationOutcome::SetDefaultAgentProfile => Ok(()),
+            _ => unreachable!("set default agent profile operation returned wrong outcome"),
         }
-        self.event_service
-            .emit_default_agent_profile_changed(profile_id);
-        Ok(())
     }
 
     pub fn pending_delegation_confirmations(&self) -> Vec<PendingDelegationConfirmation> {
@@ -500,6 +499,11 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("delegation approval operation returned export outcome")
             }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!(
+                    "delegation approval operation returned set default agent profile outcome"
+                )
+            }
         }
     }
 
@@ -545,6 +549,11 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("delegation rejection operation returned export outcome")
             }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!(
+                    "delegation rejection operation returned set default agent profile outcome"
+                )
+            }
         }
     }
 
@@ -582,6 +591,9 @@ impl CodingAgentSession {
                 unreachable!("prompt operation returned agent team outcome")
             }
             OperationOutcome::Export(_) => unreachable!("prompt operation returned export outcome"),
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("prompt operation returned set default agent profile outcome")
+            }
         }
     }
 
@@ -623,6 +635,11 @@ impl CodingAgentSession {
             }
             OperationOutcome::Export(_) => {
                 unreachable!("manual compaction operation returned export outcome")
+            }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!(
+                    "manual compaction operation returned set default agent profile outcome"
+                )
             }
         }
     }
@@ -675,6 +692,11 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("self-healing edit operation returned export outcome")
             }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!(
+                    "self-healing edit operation returned set default agent profile outcome"
+                )
+            }
         }
     }
 
@@ -717,6 +739,11 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("agent invocation operation returned export outcome")
             }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!(
+                    "agent invocation operation returned set default agent profile outcome"
+                )
+            }
         }
     }
 
@@ -755,6 +782,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::Export(_) => {
                 unreachable!("agent team operation returned export outcome")
+            }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("agent team operation returned set default agent profile outcome")
             }
         }
     }
@@ -820,6 +850,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("plugin command operation returned export outcome")
             }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("plugin command operation returned set default agent profile outcome")
+            }
         }
     }
 
@@ -858,6 +891,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::Export(_) => {
                 unreachable!("plugin load operation returned export outcome")
+            }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("plugin load operation returned set default agent profile outcome")
             }
         }
     }
@@ -908,6 +944,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::Export(_) => {
                 unreachable!("branch summary operation returned export outcome")
+            }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("branch summary operation returned set default agent profile outcome")
             }
         }
     }
@@ -969,6 +1008,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::Export(_) => {
                 unreachable!("branch summary operation returned export outcome")
+            }
+            OperationOutcome::SetDefaultAgentProfile => {
+                unreachable!("branch summary operation returned set default agent profile outcome")
             }
         }
     }
@@ -1068,7 +1110,10 @@ impl CodingAgentSession {
             | Operation::BranchSummary { .. }
             | Operation::SelfHealingEdit(_)
             | Operation::AgentInvocation(_)
-            | Operation::AgentTeam(_) => Err(IntentRouter::unsupported_dispatch(&admission)),
+            | Operation::AgentTeam(_)
+            | Operation::SetDefaultAgentProfile { .. } => {
+                Err(IntentRouter::unsupported_dispatch(&admission))
+            }
         }
     }
 
@@ -1100,6 +1145,19 @@ impl CodingAgentSession {
                     reason,
                 )?;
                 Ok(OperationOutcome::DelegationRejection)
+            }
+            Operation::SetDefaultAgentProfile { profile_id } => {
+                match &mut self.persistence {
+                    SessionPersistence::Persistent(session_service) => {
+                        session_service.set_default_agent_profile_id(profile_id.clone())?;
+                    }
+                    SessionPersistence::NonPersistent(state) => {
+                        state.default_agent_profile_id = profile_id.clone();
+                    }
+                }
+                self.event_service
+                    .emit_default_agent_profile_changed(profile_id);
+                Ok(OperationOutcome::SetDefaultAgentProfile)
             }
             Operation::Export(_) | Operation::PluginCommand { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
@@ -1330,7 +1388,8 @@ impl CodingAgentSession {
                 .map(OperationOutcome::AgentTeam),
             Operation::Export(_)
             | Operation::PluginCommand { .. }
-            | Operation::RejectDelegationConfirmation { .. } => {
+            | Operation::RejectDelegationConfirmation { .. }
+            | Operation::SetDefaultAgentProfile { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
             Operation::ApproveDelegationConfirmation {
@@ -2470,6 +2529,27 @@ runtime = "lua"
             error.to_string(),
             "unsupported capability: export requires a persistent Rust-native session"
         );
+        assert_eq!(
+            session.operation_control.active(),
+            Some(OperationKind::Prompt)
+        );
+    }
+
+    #[tokio::test]
+    async fn set_default_agent_profile_rejects_while_operation_is_busy() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let _guard = session
+            .operation_control
+            .begin(OperationKind::Prompt)
+            .unwrap();
+
+        let error = session
+            .set_default_agent_profile_id("agent-main")
+            .unwrap_err();
+
+        assert_eq!(error.code(), "busy");
         assert_eq!(
             session.operation_control.active(),
             Some(OperationKind::Prompt)

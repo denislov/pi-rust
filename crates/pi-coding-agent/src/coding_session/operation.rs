@@ -3,6 +3,7 @@ use super::agent_team_flow::{AgentTeamOptions, AgentTeamOutcome};
 use super::export_flow::{ExportOptions, ExportOutcome};
 use super::operation_control::OperationKind;
 use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
+use super::profiles::ProfileId;
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome};
 use super::self_healing_edit_flow::{SelfHealingEditOutcome, SelfHealingEditRequest};
 
@@ -33,6 +34,9 @@ pub(crate) enum Operation {
     SelfHealingEdit(SelfHealingEditRequest),
     AgentInvocation(AgentInvocationOptions),
     AgentTeam(AgentTeamOptions),
+    SetDefaultAgentProfile {
+        profile_id: ProfileId,
+    },
     Export(ExportOptions),
 }
 
@@ -117,6 +121,12 @@ impl Operation {
                 OperationOrigin::ClientRoot,
                 OperationClass::NonSessionRoot,
                 OperationDispatchMode::Async,
+            ),
+            Self::SetDefaultAgentProfile { .. } => OperationMetadata::new(
+                Some(OperationKind::SetDefaultAgentProfile),
+                OperationOrigin::ClientRoot,
+                OperationClass::RuntimeWrite,
+                OperationDispatchMode::SyncMutable,
             ),
             Self::Export(_) => OperationMetadata::new(
                 Some(OperationKind::Export),
@@ -222,6 +232,7 @@ pub(crate) enum OperationOutcome {
     SelfHealingEdit(SelfHealingEditOutcome),
     AgentInvocation(AgentInvocationOutcome),
     AgentTeam(AgentTeamOutcome),
+    SetDefaultAgentProfile,
     Export(ExportOutcome),
 }
 
@@ -392,6 +403,20 @@ mod tests {
         assert_eq!(operation.kind(), OperationKind::Export);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::ReadOnly);
+    }
+
+    #[test]
+    fn set_default_agent_profile_operation_declares_runtime_write_metadata() {
+        let profile_id = ProfileId::new("agent-main").expect("valid profile id");
+        let operation = Operation::SetDefaultAgentProfile { profile_id };
+
+        assert_eq!(operation.kind(), OperationKind::SetDefaultAgentProfile);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(operation.class(), OperationClass::RuntimeWrite);
+        assert_eq!(
+            operation.metadata().dispatch_mode,
+            OperationDispatchMode::SyncMutable
+        );
     }
 
     #[test]
