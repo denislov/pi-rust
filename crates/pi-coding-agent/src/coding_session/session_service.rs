@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use pi_agent_core::transcript::{SessionEntry, SessionTreeNode, StoredAgentMessage};
 use pi_ai::types::ContentBlock;
 
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::event_service::EventService;
 use super::export_flow::{ExportContext, ExportOptions};
 use super::prompt::{PromptTurnContext, PromptTurnOutcome, PromptTurnTransaction};
@@ -350,6 +351,7 @@ impl SessionService {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn begin_prompt_transaction(&self) -> PromptTurnTransaction {
         TurnTransaction::begin(
             &self.store,
@@ -357,6 +359,20 @@ impl SessionService {
             SystemIdGenerator,
             SystemClock,
             OperationKind::Prompt,
+        )
+    }
+
+    pub(crate) fn begin_prompt_transaction_with_snapshot(
+        &self,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> PromptTurnTransaction {
+        TurnTransaction::begin_with_runtime_generation(
+            &self.store,
+            self.handle.clone(),
+            SystemIdGenerator,
+            SystemClock,
+            OperationKind::Prompt,
+            snapshot.persisted_runtime_generation_ref(),
         )
     }
 
@@ -381,6 +397,7 @@ impl SessionService {
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn begin_plugin_load_transaction(&self) -> PromptTurnTransaction {
         TurnTransaction::begin(
             &self.store,
@@ -388,6 +405,20 @@ impl SessionService {
             SystemIdGenerator,
             SystemClock,
             OperationKind::PluginLoad,
+        )
+    }
+
+    pub(crate) fn begin_plugin_load_transaction_with_snapshot(
+        &self,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> PromptTurnTransaction {
+        TurnTransaction::begin_with_runtime_generation(
+            &self.store,
+            self.handle.clone(),
+            SystemIdGenerator,
+            SystemClock,
+            OperationKind::PluginLoad,
+            snapshot.persisted_runtime_generation_ref(),
         )
     }
 
@@ -1717,6 +1748,62 @@ mod tests {
             .expect("plugin-load operation start should be recorded");
         assert_eq!(runtime_generation.profile_id, None);
         assert_eq!(runtime_generation.capability_generation, Some(1));
+    }
+
+    #[test]
+    fn prompt_transaction_persists_admitted_snapshot_generation() {
+        use crate::coding_session::capability_snapshot::{
+            ActorId, CapabilityGeneration, ModelCapability, OperationCapabilitySnapshot,
+            PluginCapabilitySet, ToolCapabilitySet,
+        };
+
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_snapshot_generation")
+            .with_default_agent_profile_id("reviewer")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let snapshot = OperationCapabilitySnapshot {
+            generation: CapabilityGeneration::new(9),
+            operation_id: "op_snapshot".into(),
+            actor: ActorId::Client,
+            model: Some(ModelCapability {
+                profile_id: Some(ProfileId::from("reviewer")),
+            }),
+            tools: ToolCapabilitySet::default(),
+            commands: Default::default(),
+            filesystem: None,
+            shell: None,
+            session_read: None,
+            session_write: None,
+            ui: None,
+            plugin: PluginCapabilitySet::default(),
+        };
+        let mut transaction = service.begin_prompt_transaction_with_snapshot(&snapshot);
+        let operation_id = transaction.operation_id().to_owned();
+        transaction
+            .record_user_input(vec![PersistedContentBlock::Text {
+                text: "hello".into(),
+            }])
+            .unwrap();
+
+        service
+            .commit_prompt_transaction(Some(transaction), operation_id)
+            .unwrap();
+
+        let events = service.store.read_events(&service.handle).unwrap();
+        let persisted = events
+            .iter()
+            .find_map(|event| match &event.data {
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                    runtime_generation,
+                } => Some(runtime_generation),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(persisted.profile_id, Some(ProfileId::from("reviewer")));
+        assert_eq!(persisted.capability_generation, Some(9));
     }
 
     #[test]

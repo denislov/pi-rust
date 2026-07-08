@@ -1,4 +1,5 @@
 use super::CodingSessionError;
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::event_service::EventService;
 use super::flow_service::FlowService;
 use super::plugin_load_flow::{PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
@@ -25,10 +26,11 @@ impl PluginLoadService {
         flow_service: &FlowService,
         event_service: &EventService,
         options: PluginLoadOptions,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<PluginLoadExecution, CodingSessionError> {
         let mut transaction = match persistence {
             SessionPersistence::Persistent(session_service) => {
-                Some(session_service.begin_plugin_load_transaction())
+                Some(session_service.begin_plugin_load_transaction_with_snapshot(snapshot))
             }
             SessionPersistence::NonPersistent(_) => None,
         };

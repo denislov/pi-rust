@@ -67,13 +67,31 @@ where
     pub(crate) fn begin(
         store: &SessionLogStore,
         handle: SessionHandle,
-        mut ids: G,
+        ids: G,
         clock: C,
         operation: OperationKind,
     ) -> Self {
+        let runtime_generation = runtime_generation_for_operation(handle.manifest(), &operation);
+        Self::begin_with_runtime_generation(
+            store,
+            handle,
+            ids,
+            clock,
+            operation,
+            runtime_generation,
+        )
+    }
+
+    pub(crate) fn begin_with_runtime_generation(
+        store: &SessionLogStore,
+        handle: SessionHandle,
+        mut ids: G,
+        clock: C,
+        operation: OperationKind,
+        runtime_generation: PersistedRuntimeGenerationRef,
+    ) -> Self {
         let operation_id = ids.next_operation_id();
         let turn_id = ids.next_turn_id();
-        let runtime_generation = runtime_generation_for_operation(handle.manifest(), &operation);
         let mut transaction = Self {
             store: store.clone(),
             handle,

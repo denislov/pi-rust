@@ -69,7 +69,9 @@ use agent_invocation_flow::AgentInvocationContext;
 use agent_team_flow::AgentTeamContext;
 use branch_summary_service::BranchSummaryService;
 use capability_service::CapabilityService;
-use capability_snapshot::{ActorId, CapabilitySnapshotInput, CapabilitySnapshotService};
+use capability_snapshot::{
+    ActorId, CapabilitySnapshotInput, CapabilitySnapshotService, OperationCapabilitySnapshot,
+};
 pub(crate) use delegation::{
     DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
     PendingDelegationConfirmationState, delegation_lineage_for_request, pending_state_from_replay,
@@ -1381,15 +1383,16 @@ impl CodingAgentSession {
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
-        let _operation_permit = IntentRouter::admit_operation(
+        let operation_permit = IntentRouter::admit_operation(
             &self.operation_control,
             &admission,
             OperationDispatchMode::Async,
         )?;
+        let snapshot = operation_permit.capability_snapshot().clone();
 
         match operation {
             Operation::Prompt(options) => {
-                let result = self.prompt_inner(options).await;
+                let result = self.prompt_inner(options, &snapshot).await;
                 self.operation_control.clear_prompt_control_receiver();
                 result.map(OperationOutcome::Prompt)
             }
@@ -1411,7 +1414,7 @@ impl CodingAgentSession {
                     .map(OperationOutcome::ManualCompaction)
             }
             Operation::PluginLoad(options) => self
-                .load_plugins_inner(options)
+                .load_plugins_inner(options, &snapshot)
                 .await
                 .map(OperationOutcome::PluginLoad),
             Operation::BranchSummary {
@@ -1508,6 +1511,7 @@ impl CodingAgentSession {
     async fn load_plugins_inner(
         &mut self,
         options: PluginLoadOptions,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
         let execution = self
             .plugin_load_service
@@ -1516,6 +1520,7 @@ impl CodingAgentSession {
                 &self.flow_service,
                 &self.event_service,
                 options,
+                snapshot,
             )
             .await?;
         if let Some(plugin_service) = execution.loaded_plugin_service {
@@ -1527,6 +1532,7 @@ impl CodingAgentSession {
     async fn prompt_inner(
         &mut self,
         options: PromptTurnOptions,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
         if options.runtime().is_none() {
             return Err(CodingSessionError::Config {
@@ -1534,7 +1540,7 @@ impl CodingAgentSession {
             });
         }
         let options = self.apply_default_agent_profile(options)?;
-        let mut context = self.prepare_prompt_context(options)?;
+        let mut context = self.prepare_prompt_context(options, snapshot)?;
         let operation_id = context.operation_id().to_owned();
         let turn_id = context.turn_id().to_owned();
 
@@ -1791,13 +1797,14 @@ impl CodingAgentSession {
     fn prepare_prompt_context(
         &mut self,
         options: PromptTurnOptions,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<PromptTurnContext, CodingSessionError> {
         let event_service = self.event_service.clone();
         let prompt_control_receiver = self.operation_control.take_prompt_control_receiver();
         match &mut self.persistence {
             SessionPersistence::Persistent(session_service) => {
                 let replay = session_service.replay()?;
-                let transaction = session_service.begin_prompt_transaction();
+                let transaction = session_service.begin_prompt_transaction_with_snapshot(snapshot);
                 let operation_id = transaction.operation_id().to_owned();
                 let turn_id = transaction.turn_id().to_owned();
                 let mut context =
