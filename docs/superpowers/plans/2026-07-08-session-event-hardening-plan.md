@@ -343,9 +343,11 @@ git commit -m "feat: classify session operation recovery state"
 **Files:**
 - Modify: `crates/pi-coding-agent/src/coding_session/session_log/event.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/session_log/replay.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/session_log/transaction.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/prompt_flow.rs`
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Write failing serialization and replay tests**
+- [x] **Step 1: Write failing serialization and replay tests**
 
 Add a `SessionEventData::OperationRecovered` serialization test and a replay test where `OperationRecovered` changes an in-doubt operation to `Recovered`.
 
@@ -360,7 +362,9 @@ cargo test -p pi-coding-agent replay_classifies_recovered_operation --lib
 
 Expected: fail because the event variant does not exist.
 
-- [ ] **Step 3: Add event variant**
+Actual RED: confirmed -- 3 compile errors: `OperationRecovered` variant not found in `SessionEventData`. Tests reference the variant in `event.rs` (kind-name case + round-trip) and `replay.rs` (classification test).
+
+- [x] **Step 3: Add event variant**
 
 Add to `SessionEventData`:
 
@@ -374,7 +378,7 @@ OperationRecovered {
 
 Update replay classification so this marker maps to `OperationReplayStatus::Recovered`.
 
-- [ ] **Step 4: Run GREEN tests**
+- [x] **Step 4: Run GREEN tests**
 
 Run:
 
@@ -386,10 +390,12 @@ cargo test -p pi-coding-agent session_log --lib
 
 Expected: selected session log tests pass.
 
-- [ ] **Step 5: Commit**
+Actual GREEN: confirmed -- `operation_recovered_event_round_trips` (1), `replay_classifies_recovered_operation` (1), `session_log::replay` (17), and `session_log` (46) all pass. Discovery: two additional exhaustive `SessionEventData` match sites needed `OperationRecovered` arms -- `transaction.rs::event_kinds()` and `prompt_flow.rs::event_kinds()` (test helper). `OperationRecovered` was also added to `finalized_operation_ids()` so recovered operations are treated as terminal (payload retained, not omitted as incomplete). Full verification: `session_service` 21 passed, `event_service` 17 passed, `protocol_events` 1 passed, `cargo check -p pi-coding-agent` clean, `cargo fmt --check` clean.
+
+- [x] **Step 5: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/coding_session/session_log/event.rs crates/pi-coding-agent/src/coding_session/session_log/replay.rs docs/TODO.md
+git add crates/pi-coding-agent/src/coding_session/session_log/event.rs crates/pi-coding-agent/src/coding_session/session_log/replay.rs crates/pi-coding-agent/src/coding_session/session_log/transaction.rs crates/pi-coding-agent/src/coding_session/prompt_flow.rs docs/TODO.md
 git commit -m "feat: add session operation recovery markers"
 ```
 

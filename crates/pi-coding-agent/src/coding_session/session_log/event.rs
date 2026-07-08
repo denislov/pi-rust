@@ -168,6 +168,8 @@ pub(crate) enum SessionEventData {
     OperationAborted { reason: String },
     #[serde(rename = "operation.failed")]
     OperationFailed { error_code: String, message: String },
+    #[serde(rename = "operation.recovered")]
+    OperationRecovered { reason: String, recovery_id: String },
     #[serde(rename = "turn.started")]
     TurnStarted {},
     #[serde(rename = "turn.input.recorded")]
@@ -549,6 +551,13 @@ mod tests {
                 },
                 "operation.failed",
             ),
+            (
+                SessionEventData::OperationRecovered {
+                    reason: "manual recovery".into(),
+                    recovery_id: "recovery_1".into(),
+                },
+                "operation.recovered",
+            ),
             (SessionEventData::TurnStarted {}, "turn.started"),
             (
                 SessionEventData::TurnInputRecorded {
@@ -644,6 +653,29 @@ mod tests {
             assert_eq!(value["kind"], expected_kind);
             assert!(value.get("data").is_some());
         }
+    }
+
+    #[test]
+    fn operation_recovered_event_round_trips() {
+        let envelope = SessionEventEnvelope::new(
+            "sess_recover",
+            "evt_1",
+            "2026-07-08T00:00:00Z",
+            SessionEventData::OperationRecovered {
+                reason: "manual recovery after crash".into(),
+                recovery_id: "recovery_1".into(),
+            },
+        )
+        .with_operation_id("op_recovered");
+
+        let json = serde_json::to_string(&envelope).unwrap();
+        let decoded: SessionEventEnvelope = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded, envelope);
+        assert_eq!(
+            serde_json::to_value(&envelope).unwrap()["kind"],
+            "operation.recovered"
+        );
     }
 
     fn test_delegation_runtime_seed() -> PersistedDelegationRuntimeSeed {

@@ -202,7 +202,8 @@ fn finalized_operation_ids(events: &[SessionEventEnvelope]) -> HashSet<String> {
         .filter_map(|event| match event.data {
             SessionEventData::OperationCommitted { .. }
             | SessionEventData::OperationAborted { .. }
-            | SessionEventData::OperationFailed { .. } => event.operation_id.clone(),
+            | SessionEventData::OperationFailed { .. }
+            | SessionEventData::OperationRecovered { .. } => event.operation_id.clone(),
             _ => None,
         })
         .collect()
@@ -262,6 +263,10 @@ impl ReplayBuilder {
             SessionEventData::OperationAborted { .. } => {
                 self.operation_statuses
                     .insert(operation_id.to_owned(), OperationReplayStatus::Aborted);
+            }
+            SessionEventData::OperationRecovered { .. } => {
+                self.operation_statuses
+                    .insert(operation_id.to_owned(), OperationReplayStatus::Recovered);
             }
             _ => {}
         }
@@ -399,6 +404,12 @@ impl ReplayBuilder {
                         event.operation_id.as_deref().unwrap_or("<unknown>")
                     ),
                 });
+            }
+            SessionEventData::OperationRecovered { reason, .. } => {
+                self.warn(format!(
+                    "operation {} recovered: {reason}",
+                    event.operation_id.as_deref().unwrap_or("<unknown>")
+                ));
             }
             SessionEventData::TurnInputRecorded { content } => {
                 self.transcript.push(TranscriptItem::UserInput {
@@ -1598,6 +1609,53 @@ mod tests {
         assert_eq!(
             replay.operation_status("op_1"),
             Some(OperationReplayStatus::InDoubt)
+        );
+    }
+
+    #[test]
+    fn replay_classifies_recovered_operation() {
+        let events = vec![
+            op_event(
+                "evt_1",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                },
+            ),
+            op_event(
+                "evt_2",
+                SessionEventData::TurnInputRecorded {
+                    content: vec![PersistedContentBlock::Text {
+                        text: "recovered input".into(),
+                    }],
+                },
+            ),
+            event(
+                "evt_3",
+                Some("op_1"),
+                Some("turn_1"),
+                SessionEventData::OperationRecovered {
+                    reason: "manual recovery".into(),
+                    recovery_id: "recovery_1".into(),
+                },
+            ),
+        ];
+
+        let replay = fold_events(&events);
+
+        assert_eq!(
+            replay.operation_status("op_1"),
+            Some(OperationReplayStatus::Recovered)
+        );
+        assert!(
+            !replay.transcript.is_empty(),
+            "recovered operation payload should not be omitted as incomplete"
+        );
+        assert!(
+            !replay
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("no final marker")),
+            "recovered operation should not be warned as incomplete"
         );
     }
 }
