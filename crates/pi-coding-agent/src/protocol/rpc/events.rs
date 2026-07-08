@@ -1,4 +1,4 @@
-use crate::coding_session::CodingAgentEvent;
+use crate::coding_session::ProductEvent;
 use crate::protocol::events::CodingProtocolEventAdapter;
 use crate::protocol::types::ProtocolEvent;
 
@@ -13,15 +13,17 @@ impl RpcCodingEventAdapter {
         }
     }
 
-    pub(crate) fn push(&mut self, event: &CodingAgentEvent) -> Vec<ProtocolEvent> {
-        self.inner.push(event)
+    pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<ProtocolEvent> {
+        self.inner.push_product_event(event)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding_session::{CodingAgentEvent, CodingSessionError};
+    use crate::coding_session::{
+        CodingAgentEvent, CodingSessionError, ProductEvent, ProductEventSequence,
+    };
     use pi_agent_core::transcript::StoredAgentMessage;
     use pi_ai::types::{StopReason, Usage};
 
@@ -38,7 +40,7 @@ mod tests {
         let mut adapter = adapter();
         let mut events = Vec::new();
 
-        for event in [
+        for (index, event) in [
             CodingAgentEvent::AgentTurnStarted {
                 operation_id: "op_1".into(),
                 turn_id: "turn_1".into(),
@@ -61,8 +63,13 @@ mod tests {
                 operation_id: "op_1".into(),
                 turn_id: "turn_1".into(),
             },
-        ] {
-            events.extend(adapter.push(&event));
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let product_event =
+                ProductEvent::from_compat_event(ProductEventSequence(index as u64 + 1), event);
+            events.extend(adapter.push_product_event(&product_event));
         }
 
         assert!(matches!(events[0], ProtocolEvent::TurnStart));
@@ -84,14 +91,51 @@ mod tests {
     }
 
     #[test]
+    fn rpc_adapter_accepts_internal_product_events() {
+        let mut adapter = adapter();
+        let product_event = ProductEvent::from_compat_event(
+            ProductEventSequence(1),
+            CodingAgentEvent::PromptFailed {
+                operation_id: "op_1".into(),
+                error: CodingSessionError::Provider {
+                    message: "provider failed".into(),
+                },
+            },
+        );
+
+        let events = adapter.push_product_event(&product_event);
+
+        assert!(matches!(
+            &events[0],
+            ProtocolEvent::MessageStart {
+                message: StoredAgentMessage::Assistant {
+                    provider,
+                    stop_reason: StopReason::Error,
+                    error_message: Some(error_message),
+                    ..
+                }
+            } if provider == "faux-provider" && error_message == "provider error: provider failed"
+        ));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ProtocolEvent::AgentEnd { .. }))
+        );
+    }
+
+    #[test]
     fn rpc_adapter_maps_product_failure_to_protocol_error_message() {
         let mut adapter = adapter();
-        let events = adapter.push(&CodingAgentEvent::PromptFailed {
-            operation_id: "op_1".into(),
-            error: CodingSessionError::Provider {
-                message: "provider failed".into(),
+        let product_event = ProductEvent::from_compat_event(
+            ProductEventSequence(1),
+            CodingAgentEvent::PromptFailed {
+                operation_id: "op_1".into(),
+                error: CodingSessionError::Provider {
+                    message: "provider failed".into(),
+                },
             },
-        });
+        );
+        let events = adapter.push_product_event(&product_event);
 
         assert!(matches!(
             &events[0],

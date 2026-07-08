@@ -1325,7 +1325,7 @@ fn reject_pending_delegation_confirmation<T: Terminal>(
             }
         };
 
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     session
         .reject_delegation_confirmation(
             &operation_id,
@@ -1337,7 +1337,7 @@ fn reject_pending_delegation_confirmation<T: Terminal>(
     let mut bridge = CodingEventBridge::new();
     let mut ui_events = Vec::new();
     while let Ok(Some(event)) = receiver.try_recv() {
-        ui_events.extend(bridge.handle(&event));
+        ui_events.extend(bridge.handle_product_event(&event));
     }
     if ui_events.is_empty() {
         ui_events.push(UiEvent::SystemNotice {
@@ -1923,7 +1923,7 @@ fn apply_prompt_task_event<T: Terminal>(
     event: PromptTaskEvent,
 ) -> Result<RenderRequest, CliError> {
     let PromptTaskEvent::Coding(event) = event;
-    let ui_events = coding_bridge.handle(&event);
+    let ui_events = coding_bridge.handle_product_event(&event);
     let force_render = ui_events.iter().any(ui_event_updates_visible_block);
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
@@ -2088,7 +2088,7 @@ fn finish_prompt<T: Terminal>(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
-    use crate::coding_session::CodingAgentEvent;
+    use crate::coding_session::{CodingAgentEvent, ProductEvent, ProductEventSequence};
     use pi_ai::types::Usage;
     use pi_tui::VirtualTerminal;
 
@@ -2103,7 +2103,10 @@ mod tests {
     }
 
     fn prompt_event(event: CodingAgentEvent) -> PromptTaskEvent {
-        PromptTaskEvent::Coding(event)
+        PromptTaskEvent::Coding(ProductEvent::from_compat_event(
+            ProductEventSequence(1),
+            event,
+        ))
     }
 
     fn base_assistant_delta() -> CodingAgentEvent {
@@ -2234,6 +2237,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(request, RenderRequest::NONE);
+    }
+
+    #[test]
+    fn interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary() {
+        let source = include_str!("loop.rs");
+        let product_subscription = [".", "subscribe_product_events()"].concat();
+        let compatibility_subscription = [".", "subscribe()"].concat();
+        let product_bridge = ["bridge", ".handle_product_event(&event)"].concat();
+
+        assert!(source.contains(&product_subscription));
+        assert!(!source.contains(&compatibility_subscription));
+        assert!(source.contains(&product_bridge));
     }
 }
 

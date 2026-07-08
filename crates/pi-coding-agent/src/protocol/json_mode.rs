@@ -1,7 +1,7 @@
 use crate::CliOutput;
 use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    PromptTurnOptions, PromptTurnOutcome,
+    ProductEvent, ProductEventReceiver, PromptTurnOptions, PromptTurnOutcome,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::events::CodingProtocolEventAdapter;
@@ -90,7 +90,7 @@ async fn run_json_prompt(
     adapter: &mut CodingProtocolEventAdapter,
 ) -> Result<PromptTurnOutcome, CodingSessionError> {
     let mut session = open_json_coding_session(&options).await?;
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
     let (done_tx, mut done_rx) = tokio::sync::oneshot::channel();
 
@@ -101,7 +101,7 @@ async fn run_json_prompt(
     loop {
         tokio::select! {
             event = receiver.recv() => match event {
-                Ok(event) => push_coding_protocol_events(stdout, adapter, &event)?,
+                Ok(event) => push_product_protocol_events(stdout, adapter, &event)?,
                 Err(CodingSessionError::Cancelled) => {
                     return done_rx.await.map_err(|_| CodingSessionError::Cancelled)?;
                 }
@@ -185,13 +185,13 @@ fn json_header_cwd(options: &PromptRunOptions) -> String {
 }
 
 fn drain_json_events(
-    receiver: &mut crate::coding_session::CodingAgentEventReceiver,
+    receiver: &mut ProductEventReceiver,
     stdout: &mut String,
     adapter: &mut CodingProtocolEventAdapter,
 ) -> Result<(), CodingSessionError> {
     loop {
         match receiver.try_recv() {
-            Ok(Some(event)) => push_coding_protocol_events(stdout, adapter, &event)?,
+            Ok(Some(event)) => push_product_protocol_events(stdout, adapter, &event)?,
             Ok(None) | Err(CodingSessionError::Cancelled) => return Ok(()),
             Err(error) => return Err(error),
         }
@@ -211,4 +211,62 @@ fn push_coding_protocol_events(
         })?);
     }
     Ok(())
+}
+
+fn push_product_protocol_events(
+    stdout: &mut String,
+    adapter: &mut CodingProtocolEventAdapter,
+    event: &ProductEvent,
+) -> Result<(), CodingSessionError> {
+    for protocol_event in adapter.push_product_event(event) {
+        stdout.push_str(&serialize_json_line(&protocol_event).map_err(|error| {
+            CodingSessionError::Provider {
+                message: error.to_string(),
+            }
+        })?);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coding_session::{ProductEvent, ProductEventSequence};
+
+    #[test]
+    fn json_mode_protocol_adapter_accepts_product_events() {
+        let product_event = ProductEvent::from_compat_event(
+            ProductEventSequence(1),
+            CodingAgentEvent::AssistantMessageDelta {
+                operation_id: "op_json".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                text: "hello json".into(),
+            },
+        );
+        let mut stdout = String::new();
+        let mut adapter =
+            CodingProtocolEventAdapter::new_with_provider("faux".into(), "faux".into(), "m".into());
+
+        push_product_protocol_events(&mut stdout, &mut adapter, &product_event).unwrap();
+
+        let lines = stdout
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(lines.iter().any(|line| {
+            line["type"] == "message_update"
+                && line["message"]["content"][0]["text"] == "hello json"
+        }));
+    }
+
+    #[test]
+    fn json_prompt_stream_uses_product_event_subscription_boundary() {
+        let source = include_str!("json_mode.rs");
+        let product_subscription = ["session", ".subscribe_product_events()"].concat();
+        let compatibility_subscription = ["session", ".subscribe()"].concat();
+
+        assert!(source.contains(&product_subscription));
+        assert!(!source.contains(&compatibility_subscription));
+    }
 }

@@ -504,3 +504,152 @@ git status --short
 ```
 
 GREEN result: formatting, event_service, operation, crate check, adapter compatibility, public API smoke, and diff hygiene checks passed before committing this slice.
+
+
+### Task 8: Route JSON Mode Through The Internal ProductEvent Stream
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/json_mode.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/events.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/events.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing JSON product-event adapter tests**
+
+Added `json_mode_protocol_adapter_accepts_product_events` to require JSON protocol projection to accept a crate-internal `ProductEvent` wrapper and still emit the existing JSONL `ProtocolEvent` shape. Added `json_prompt_stream_uses_product_event_subscription_boundary` to guard that the JSON prompt streaming loop subscribes through `session.subscribe_product_events()` instead of the compatibility `session.subscribe()` stream.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent json_mode_protocol_adapter_accepts_product_events --lib
+```
+
+RED result: compile failed because `push_product_protocol_events` did not exist.
+
+- [x] **Step 2: Add the minimal JSON product-event bridge**
+
+Added a crate-internal `CodingAgentSession::subscribe_product_events()` facade over `EventService::subscribe_product_events()`. Updated JSON mode prompt streaming and drain logic to consume `ProductEventReceiver`, and added `push_product_protocol_events()` so JSON mode projects internal `ProductEvent` values through the existing `CodingProtocolEventAdapter::push_product_event()` compatibility bridge. Adapter-visible JSONL output remains unchanged.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent json_mode_protocol_adapter_accepts_product_events --lib
+cargo test -p pi-coding-agent json_prompt_stream_uses_product_event_subscription_boundary --lib
+cargo test -p pi-coding-agent --test json_mode
+cargo test -p pi-coding-agent rpc_adapter_accepts_internal_product_events --lib
+```
+
+GREEN result: JSON product-event projection, JSON product subscription guard, JSON mode integration coverage, and RPC adapter product-event bridge coverage passed.
+
+
+### Task 9: Route RPC Running Prompts Through The Internal ProductEvent Stream
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/protocol/rpc.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/prompt.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/state.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing RPC running-prompt boundary test**
+
+Added `rpc_running_prompt_uses_product_event_stream_boundary` to require the shared RPC running-prompt queue to carry `ProductEvent`, require prompt/agent/team/delegation-approval running operations to subscribe through `session.subscribe_product_events()`, and require running prompt write/drain logic to project events through `RpcCodingEventAdapter::push_product_event()`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent rpc_running_prompt_uses_product_event_stream_boundary --lib
+```
+
+RED result: the boundary test failed because the RPC running prompt paths still used four compatibility `session.subscribe()` calls.
+
+- [x] **Step 2: Migrate the shared RPC running-prompt event queue**
+
+Changed `CodingRunningPrompt.events` from `CodingAgentEvent` to crate-internal `ProductEvent`, changed `RpcLoopEvent::CodingEvent` to carry `ProductEvent`, renamed the running write helper to `write_product_event()`, and updated prompt, agent invocation, team invocation, and delegation approval running paths to subscribe through `session.subscribe_product_events()`. Existing RPC wire events still flow through the compatibility projection inside `RpcCodingEventAdapter`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent rpc_running_prompt_uses_product_event_stream_boundary --lib
+cargo test -p pi-coding-agent --test rpc_mode
+```
+
+GREEN result: the RPC running-prompt product-event boundary test passed, and all 36 RPC mode integration tests passed with unchanged wire behavior.
+
+
+### Task 10: Route RPC Synchronous Command Drains Through ProductEvent
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/commands.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/events.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing RPC sync-command boundary test**
+
+Added `rpc_sync_commands_use_product_event_stream_boundary` to require the RPC synchronous command drain paths to subscribe through `session.subscribe_product_events()` and project drained events through `RpcCodingEventAdapter::push_product_event()`.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent rpc_sync_commands_use_product_event_stream_boundary --lib
+```
+
+RED result: the boundary test failed because the three synchronous command drains still subscribed to the compatibility event stream.
+
+- [x] **Step 2: Migrate the RPC synchronous command drains**
+
+Updated self-healing edit, default-agent-profile update, and delegation rejection RPC command drains to consume `ProductEvent` from `session.subscribe_product_events()`. Removed the now-unused `RpcCodingEventAdapter::push(&CodingAgentEvent)` method and updated RPC adapter tests to construct `ProductEvent` wrappers before projection.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent rpc_sync_commands_use_product_event_stream_boundary --lib
+cargo test -p pi-coding-agent rpc_adapter_maps_product_prompt_stream_to_protocol_events --lib
+cargo test -p pi-coding-agent rpc_adapter_maps_product_failure_to_protocol_error_message --lib
+cargo test -p pi-coding-agent --test rpc_mode
+```
+
+GREEN result: the RPC sync-command boundary test passed, RPC adapter product-event tests passed, and all 36 RPC mode integration tests passed with unchanged wire behavior.
+
+
+### Task 11: Route Interactive Adapters Through ProductEvent
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/interactive/event_bridge.rs`
+- Modify: `crates/pi-coding-agent/src/interactive/loop.rs`
+- Modify: `crates/pi-coding-agent/src/interactive/prompt_task.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing interactive product-event boundary tests**
+
+Added `coding_event_bridge_accepts_product_events` to require the UI event bridge to accept internal `ProductEvent` wrappers. Added `interactive_prompt_tasks_use_product_event_stream_boundary` to require all interactive prompt task runners to subscribe through `session.subscribe_product_events()`. Added `interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary` to guard the interactive synchronous delegation-rejection drain.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent coding_event_bridge_accepts_product_events --lib
+cargo test -p pi-coding-agent interactive_prompt_tasks_use_product_event_stream_boundary --lib
+cargo test -p pi-coding-agent interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary --lib
+```
+
+RED result: compile failed because `CodingEventBridge::handle_product_event()` did not exist, and the interactive subscription guards still expected product-event subscriptions that were not present.
+
+- [x] **Step 2: Migrate interactive prompt tasks and bridge projection**
+
+Added `CodingEventBridge::handle_product_event()` as a compatibility projection over `ProductEvent::compatibility_event()`. Changed `PromptTaskEvent::Coding` to carry `ProductEvent`, updated all interactive prompt task runners to subscribe through `session.subscribe_product_events()`, and changed the synchronous delegation rejection drain to use the same product-event bridge. UI mapping still lives in the existing `CodingEventBridge::handle(&CodingAgentEvent)` implementation for now.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent coding_event_bridge_accepts_product_events --lib
+cargo test -p pi-coding-agent interactive_prompt_tasks_use_product_event_stream_boundary --lib
+cargo test -p pi-coding-agent interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary --lib
+cargo test -p pi-coding-agent --test interactive_event_bridge
+cargo test -p pi-coding-agent --test interactive_mode
+```
+
+GREEN result: interactive product-event boundary tests passed, the existing event bridge tests passed, and all 41 interactive mode integration tests passed with unchanged UI behavior.

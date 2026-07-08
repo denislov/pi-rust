@@ -2,10 +2,9 @@ use std::path::PathBuf;
 
 use crate::CliError;
 use crate::coding_session::{
-    AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentEvent,
-    CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PluginLoadOutcome,
-    ProfileId, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome,
-    SelfHealingEditRequest,
+    AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentSession,
+    CodingAgentSessionOptions, CodingSessionError, PluginLoadOutcome, ProductEvent, ProfileId,
+    PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest,
 };
 use crate::interactive::root::{
     PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
@@ -16,7 +15,7 @@ use crate::session::{ResolvedSessionTarget, resolve_session_dir};
 use tokio::sync::{mpsc, oneshot};
 
 pub(super) enum PromptTaskEvent {
-    Coding(CodingAgentEvent),
+    Coding(ProductEvent),
 }
 
 pub(super) enum PromptTaskResult {
@@ -617,7 +616,7 @@ async fn run_coding_prompt_task(
         }
     };
     let prompt_control = session.prompt_control_handle()?;
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
@@ -689,7 +688,7 @@ async fn run_coding_agent_invocation_task(
         }
     };
     let prompt_control = session.prompt_control_handle()?;
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     let invocation_options = AgentInvocationOptions::new(
         profile_id,
         task,
@@ -759,7 +758,7 @@ async fn run_coding_agent_team_task(
             .await?
         }
     };
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     let team_options = AgentTeamOptions::new(
         team_id,
         task,
@@ -801,7 +800,7 @@ async fn run_coding_delegation_approval_task(
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> Result<DelegationApprovalTaskResult, CliError> {
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
 
     {
         let mut approval =
@@ -850,7 +849,7 @@ async fn run_coding_compact_task(
             .await?
         }
     };
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     let compact_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
@@ -905,7 +904,7 @@ async fn run_coding_self_healing_edit_task(
             .await?
         }
     };
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
 
     let outcome = {
         let mut edit = Box::pin(session.self_healing_edit_with_options(request));
@@ -953,7 +952,7 @@ async fn run_coding_plugin_reload_task(
             .await?
         }
     };
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
 
     let outcome = {
         let mut reload = Box::pin(session.reload_plugins());
@@ -1015,7 +1014,7 @@ async fn run_coding_plugin_command_task(
             .await?
         }
     };
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
 
     if should_load_plugins {
         let mut reload = Box::pin(session.reload_plugins());
@@ -1156,7 +1155,7 @@ async fn run_coding_branch_summary_task(
             .await?
         }
     };
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     let branch_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
@@ -1217,7 +1216,7 @@ async fn run_coding_branch_summary_navigation_task(
             .await?
         }
     };
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events();
     let branch_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
@@ -1353,4 +1352,18 @@ fn target_looks_like_rust_native_session_dir(target: &str) -> bool {
 fn target_looks_like_legacy_jsonl(target: &str) -> bool {
     let path = std::path::Path::new(target);
     path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") || path.is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn interactive_prompt_tasks_use_product_event_stream_boundary() {
+        let source = include_str!("prompt_task.rs");
+        let product_subscription = [".", "subscribe_product_events()"].concat();
+        let compatibility_subscription = [".", "subscribe()"].concat();
+
+        assert_eq!(source.matches(&product_subscription).count(), 10);
+        assert!(!source.contains(&compatibility_subscription));
+        assert!(source.contains("Coding(ProductEvent)"));
+    }
 }

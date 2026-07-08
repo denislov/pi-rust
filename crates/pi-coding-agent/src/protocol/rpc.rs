@@ -69,7 +69,7 @@ where
                 handle_input_line(&mut state, &line, writer).await?;
             }
             RpcLoopEvent::CodingEvent(Some(event)) => {
-                state.write_coding_event(event, writer).await?;
+                state.write_product_event(event, writer).await?;
             }
             RpcLoopEvent::CodingEvent(None) => {
                 if let Some(RunningPrompt::Coding(running)) = state.running.as_mut() {
@@ -87,7 +87,7 @@ where
 
 enum RpcLoopEvent {
     Input(Result<Option<String>, std::io::Error>),
-    CodingEvent(Option<crate::coding_session::CodingAgentEvent>),
+    CodingEvent(Option<crate::coding_session::ProductEvent>),
     CodingPromptDone(Result<CodingOperationTaskResult, oneshot::error::RecvError>),
 }
 

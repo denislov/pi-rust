@@ -1,5 +1,6 @@
 use crate::coding_session::{
-    CodingAgentEvent, ProfileKind, SelfHealingEditCheckOutput, SelfHealingEditReplacement,
+    CodingAgentEvent, ProductEvent, ProfileKind, SelfHealingEditCheckOutput,
+    SelfHealingEditReplacement,
 };
 use crate::protocol::types::{
     CompactionProtocolResult, CompactionReason, ProtocolDelegationFoldedBlock, ProtocolEvent,
@@ -29,6 +30,11 @@ impl CodingProtocolEventAdapter {
             current_tool_results: Vec::new(),
             assistant_open: false,
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<ProtocolEvent> {
+        self.push(event.compatibility_event())
     }
 
     pub fn push(&mut self, event: &CodingAgentEvent) -> Vec<ProtocolEvent> {

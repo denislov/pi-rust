@@ -459,7 +459,7 @@ impl RpcState {
                 }
             },
         };
-        let mut receiver = session.subscribe();
+        let mut receiver = session.subscribe_product_events();
         let mut adapter = RpcCodingEventAdapter::new_with_provider(
             self.model.api.clone(),
             self.model.provider.clone(),
@@ -483,7 +483,7 @@ impl RpcState {
                 let data = rpc_self_healing_edit_data(&outcome);
                 let mut protocol_events = Vec::new();
                 while let Ok(Some(event)) = receiver.try_recv() {
-                    protocol_events.extend(adapter.push(&event));
+                    protocol_events.extend(adapter.push_product_event(&event));
                 }
                 self.coding_session = Some(session);
                 write_rpc_response(
@@ -499,7 +499,7 @@ impl RpcState {
             Err(error) => {
                 let mut protocol_events = Vec::new();
                 while let Ok(Some(event)) = receiver.try_recv() {
-                    protocol_events.extend(adapter.push(&event));
+                    protocol_events.extend(adapter.push_product_event(&event));
                 }
                 let response = match rpc_self_healing_edit_error_data(&error) {
                     Some(data) => RpcResponse::error_with_data(
@@ -664,7 +664,7 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
-                let mut receiver = session.subscribe();
+                let mut receiver = session.subscribe_product_events();
                 if let Err(error) = session.set_default_agent_profile_id(profile_id.clone()) {
                     write_rpc_response(
                         writer,
@@ -674,7 +674,7 @@ impl RpcState {
                     return Ok(());
                 }
                 while let Ok(Some(event)) = receiver.try_recv() {
-                    protocol_events.extend(adapter.push(&event));
+                    protocol_events.extend(adapter.push_product_event(&event));
                 }
                 serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() })
             }
@@ -800,7 +800,7 @@ impl RpcState {
         } else {
             reason
         };
-        let mut receiver = session.subscribe();
+        let mut receiver = session.subscribe_product_events();
         let mut adapter = RpcCodingEventAdapter::new_with_provider(
             self.model.api.clone(),
             self.model.provider.clone(),
@@ -819,7 +819,7 @@ impl RpcState {
 
         let mut protocol_events = Vec::new();
         while let Ok(Some(event)) = receiver.try_recv() {
-            protocol_events.extend(adapter.push(&event));
+            protocol_events.extend(adapter.push_product_event(&event));
         }
         write_rpc_response(
             writer,
@@ -1267,4 +1267,21 @@ fn rpc_plugin_reload_data(outcome: &PluginLoadOutcome) -> serde_json::Value {
 
 pub(super) fn has_images(images: &Option<Vec<pi_ai::types::ContentBlock>>) -> bool {
     images.as_ref().is_some_and(|images| !images.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rpc_sync_commands_use_product_event_stream_boundary() {
+        let source = include_str!("commands.rs");
+        let product_subscription = [".", "subscribe_product_events()"].concat();
+        let compatibility_subscription = [".", "subscribe()"].concat();
+        let product_adapter = ["adapter", ".push_product_event(&event)"].concat();
+        let compatibility_adapter = ["adapter", ".push(&event)"].concat();
+
+        assert_eq!(source.matches(&product_subscription).count(), 3);
+        assert!(!source.contains(&compatibility_subscription));
+        assert!(source.contains(&product_adapter));
+        assert!(!source.contains(&compatibility_adapter));
+    }
 }

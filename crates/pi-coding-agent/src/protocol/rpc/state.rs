@@ -1,8 +1,8 @@
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
-    coding_session::AgentTeamOutcome, coding_session::CodingAgentEvent,
-    coding_session::CodingAgentSession, coding_session::OperationKind,
+    coding_session::AgentTeamOutcome, coding_session::CodingAgentSession,
+    coding_session::OperationKind, coding_session::ProductEvent,
     coding_session::PromptControlHandle, coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::transcript::StoredAgentMessage;
@@ -36,7 +36,7 @@ pub(super) enum RunningPrompt {
 }
 
 pub(super) struct CodingRunningPrompt {
-    pub(super) events: mpsc::UnboundedReceiver<CodingAgentEvent>,
+    pub(super) events: mpsc::UnboundedReceiver<ProductEvent>,
     pub(super) done: oneshot::Receiver<CodingOperationTaskResult>,
     pub(super) control: Option<PromptControlHandle>,
     pub(super) operation_kind: OperationKind,

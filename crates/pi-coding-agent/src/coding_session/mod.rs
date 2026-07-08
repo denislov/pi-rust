@@ -42,7 +42,10 @@ pub(crate) use context::{
 pub use delegation::PendingDelegationConfirmation;
 pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
+#[allow(unused_imports)]
+pub(crate) use event::{ProductEvent, ProductEventSequence};
 pub use event_service::CodingAgentEventReceiver;
+pub(crate) use event_service::ProductEventReceiver;
 pub use export::{CodingAgentSessionExport, CodingAgentSessionExportItem};
 pub(crate) use plugin_load_flow::PluginLoadOutcome;
 pub use profiles::{
@@ -367,6 +370,10 @@ impl CodingAgentSession {
 
     pub fn subscribe(&self) -> CodingAgentEventReceiver {
         self.event_service.subscribe()
+    }
+
+    pub(crate) fn subscribe_product_events(&self) -> ProductEventReceiver {
+        self.event_service.subscribe_product_events()
     }
 
     pub(crate) fn prompt_control_handle(

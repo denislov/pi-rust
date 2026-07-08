@@ -221,7 +221,7 @@ impl RpcState {
         .with_mode(PromptTurnMode::Rpc);
         let invocation_options =
             AgentInvocationOptions::new(profile_id.clone(), task.clone(), prompt_options);
-        let mut receiver = session.subscribe();
+        let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
 
@@ -390,7 +390,7 @@ impl RpcState {
         })
         .with_mode(PromptTurnMode::Rpc);
         let team_options = AgentTeamOptions::new(team_id.clone(), task.clone(), prompt_options);
-        let mut receiver = session.subscribe();
+        let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
 
@@ -516,7 +516,7 @@ impl RpcState {
         } else {
             None
         };
-        let mut receiver = session.subscribe();
+        let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
 
@@ -631,7 +631,7 @@ impl RpcState {
         })
         .with_mode(PromptTurnMode::Rpc);
         let control = session.prompt_control_handle()?;
-        let mut receiver = session.subscribe();
+        let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
 
@@ -692,9 +692,9 @@ impl RpcState {
         self.follow_up.push(message);
     }
 
-    pub(super) async fn write_coding_event<W>(
+    pub(super) async fn write_product_event<W>(
         &mut self,
-        event: crate::coding_session::CodingAgentEvent,
+        event: crate::coding_session::ProductEvent,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
@@ -703,7 +703,7 @@ impl RpcState {
         let Some(RunningPrompt::Coding(running)) = self.running.as_mut() else {
             return Ok(());
         };
-        for protocol_event in running.adapter.push(&event) {
+        for protocol_event in running.adapter.push_product_event(&event) {
             write_json_line(writer, &protocol_event).await?;
         }
         Ok(())
@@ -722,7 +722,7 @@ impl RpcState {
         };
 
         while let Ok(event) = running.events.try_recv() {
-            for protocol_event in running.adapter.push(&event) {
+            for protocol_event in running.adapter.push_product_event(&event) {
                 write_json_line(writer, &protocol_event).await?;
             }
         }
@@ -805,5 +805,24 @@ fn prompt_outcome_leaf_id(outcome: &crate::coding_session::PromptTurnOutcome) ->
         crate::coding_session::PromptTurnOutcome::Success { leaf_id, .. } => leaf_id.as_deref(),
         crate::coding_session::PromptTurnOutcome::Aborted { .. }
         | crate::coding_session::PromptTurnOutcome::Failed { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rpc_running_prompt_uses_product_event_stream_boundary() {
+        let prompt_source = include_str!("prompt.rs");
+        let state_source = include_str!("state.rs");
+        let rpc_source = include_str!("../rpc.rs");
+        let product_subscription = [".", "subscribe_product_events()"].concat();
+        let compatibility_subscription = [".", "subscribe()"].concat();
+        let product_adapter = ["adapter", ".push_product_event(&event)"].concat();
+
+        assert_eq!(prompt_source.matches(&product_subscription).count(), 4);
+        assert!(!prompt_source.contains(&compatibility_subscription));
+        assert!(state_source.contains("UnboundedReceiver<ProductEvent>"));
+        assert!(rpc_source.contains("CodingEvent(Option<crate::coding_session::ProductEvent>)"));
+        assert!(prompt_source.contains(&product_adapter));
     }
 }

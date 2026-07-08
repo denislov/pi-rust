@@ -1,4 +1,4 @@
-use crate::coding_session::{CodingAgentEvent, ProfileKind};
+use crate::coding_session::{CodingAgentEvent, ProductEvent, ProfileKind};
 use pi_ai::types::Usage;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +89,10 @@ impl Default for CodingEventBridge {
 impl CodingEventBridge {
     pub fn new() -> Self {
         Self
+    }
+
+    pub(crate) fn handle_product_event(&mut self, event: &ProductEvent) -> Vec<UiEvent> {
+        self.handle(event.compatibility_event())
     }
 
     pub fn handle(&mut self, event: &CodingAgentEvent) -> Vec<UiEvent> {
@@ -536,5 +540,34 @@ fn profile_kind_label(kind: ProfileKind) -> &'static str {
     match kind {
         ProfileKind::Agent => "agent",
         ProfileKind::Team => "team",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coding_session::{CodingAgentEvent, ProductEvent, ProductEventSequence};
+
+    #[test]
+    fn coding_event_bridge_accepts_product_events() {
+        let product_event = ProductEvent::from_compat_event(
+            ProductEventSequence(1),
+            CodingAgentEvent::AssistantMessageDelta {
+                operation_id: "op_interactive".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                text: "hello interactive".into(),
+            },
+        );
+        let mut bridge = CodingEventBridge::new();
+
+        let events = bridge.handle_product_event(&product_event);
+
+        assert_eq!(
+            events,
+            vec![UiEvent::AssistantDelta {
+                text: "hello interactive".into()
+            }]
+        );
     }
 }
