@@ -10,8 +10,24 @@ pub(crate) enum ControlIntent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueryIntent {
+    Capabilities,
+    SessionView,
+    AgentProfiles,
+    TeamProfiles,
+    ProfileDiagnostics,
+    PendingDelegationConfirmations,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ControlIntentMetadata {
     pub(crate) operation_kind: OperationKind,
+    pub(crate) class: OperationClass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QueryIntentMetadata {
+    pub(crate) intent: QueryIntent,
     pub(crate) class: OperationClass,
 }
 
@@ -22,6 +38,15 @@ impl ControlIntent {
                 operation_kind: OperationKind::Prompt,
                 class: OperationClass::Control,
             },
+        }
+    }
+}
+
+impl QueryIntent {
+    pub(crate) fn metadata(self) -> QueryIntentMetadata {
+        QueryIntentMetadata {
+            intent: self,
+            class: OperationClass::Query,
         }
     }
 }
@@ -63,6 +88,16 @@ impl IntentRouter {
             OperationKind::Prompt => control.prompt_control_handle(),
             _ => unreachable!("unsupported control intent target"),
         }
+    }
+
+    pub(crate) fn admit_query(
+        control: &OperationControl,
+        intent: QueryIntent,
+    ) -> QueryIntentMetadata {
+        let metadata = intent.metadata();
+        debug_assert_eq!(metadata.class, OperationClass::Query);
+        let _ = control;
+        metadata
     }
 
     pub(crate) fn unsupported_dispatch(admission: &OperationAdmission) -> CodingSessionError {
@@ -148,5 +183,63 @@ mod tests {
                 text: "continue".into(),
             }
         );
+    }
+
+    #[test]
+    fn query_intents_are_classified_as_query() {
+        for intent in [
+            QueryIntent::Capabilities,
+            QueryIntent::SessionView,
+            QueryIntent::AgentProfiles,
+            QueryIntent::TeamProfiles,
+            QueryIntent::ProfileDiagnostics,
+            QueryIntent::PendingDelegationConfirmations,
+        ] {
+            let metadata = intent.metadata();
+
+            assert_eq!(metadata.intent, intent);
+            assert_eq!(metadata.class, OperationClass::Query);
+        }
+    }
+
+    #[test]
+    fn intent_router_admits_queries_while_root_operation_is_busy() {
+        let control = OperationControl::new();
+        let guard = control.begin(OperationKind::Prompt).unwrap();
+
+        let admission =
+            IntentRouter::admit_query(&control, QueryIntent::PendingDelegationConfirmations);
+
+        assert_eq!(
+            admission.intent,
+            QueryIntent::PendingDelegationConfirmations
+        );
+        assert_eq!(admission.class, OperationClass::Query);
+        assert_eq!(control.active(), Some(OperationKind::Prompt));
+        drop(guard);
+        assert_eq!(control.active(), None);
+    }
+
+    #[test]
+    fn session_query_facade_routes_through_query_admission() {
+        let source = include_str!("mod.rs");
+
+        assert!(
+            source.matches("IntentRouter::admit_query(").count() >= 6,
+            "CodingAgentSession query facade should route query methods through query admission"
+        );
+        for expected in [
+            "QueryIntent::Capabilities",
+            "QueryIntent::SessionView",
+            "QueryIntent::AgentProfiles",
+            "QueryIntent::TeamProfiles",
+            "QueryIntent::ProfileDiagnostics",
+            "QueryIntent::PendingDelegationConfirmations",
+        ] {
+            assert!(
+                source.contains(expected),
+                "CodingAgentSession query facade should route through query admission: {expected}"
+            );
+        }
     }
 }

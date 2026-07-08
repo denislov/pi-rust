@@ -77,7 +77,7 @@ use delegation_execution_service::DelegationExecutionService;
 use event_service::EventService;
 use export_flow::ExportOptions;
 use flow_service::FlowService;
-use intent_router::{ControlIntent, IntentRouter};
+use intent_router::{ControlIntent, IntentRouter, QueryIntent};
 use manual_compaction_flow::ManualCompactionOptions;
 use manual_compaction_service::ManualCompactionService;
 use operation::{Operation, OperationAdmission, OperationDispatchMode, OperationOutcome};
@@ -388,6 +388,7 @@ impl CodingAgentSession {
     }
 
     pub fn capabilities(&self) -> CodingAgentCapabilities {
+        IntentRouter::admit_query(&self.operation_control, QueryIntent::Capabilities);
         let plugin_capabilities = self.plugin_service.capabilities();
         let persistent = matches!(self.persistence, SessionPersistence::Persistent(_));
         self.capability_service.capabilities(
@@ -398,6 +399,7 @@ impl CodingAgentSession {
     }
 
     pub fn view(&self) -> CodingAgentSessionView {
+        IntentRouter::admit_query(&self.operation_control, QueryIntent::SessionView);
         let _ = (
             &self.runtime_service,
             &self.flow_service,
@@ -413,14 +415,17 @@ impl CodingAgentSession {
     }
 
     pub fn agent_profiles(&self) -> Vec<AgentProfile> {
+        IntentRouter::admit_query(&self.operation_control, QueryIntent::AgentProfiles);
         self.profile_registry.agents().cloned().collect()
     }
 
     pub fn team_profiles(&self) -> Vec<TeamProfile> {
+        IntentRouter::admit_query(&self.operation_control, QueryIntent::TeamProfiles);
         self.profile_registry.teams().cloned().collect()
     }
 
     pub fn profile_diagnostics(&self) -> Vec<ProfileDiagnostic> {
+        IntentRouter::admit_query(&self.operation_control, QueryIntent::ProfileDiagnostics);
         self.profile_registry.diagnostics().to_vec()
     }
 
@@ -443,6 +448,10 @@ impl CodingAgentSession {
     }
 
     pub fn pending_delegation_confirmations(&self) -> Vec<PendingDelegationConfirmation> {
+        IntentRouter::admit_query(
+            &self.operation_control,
+            QueryIntent::PendingDelegationConfirmations,
+        );
         let now = SystemClock.now_rfc3339();
         self.delegation_confirmation_service
             .active_views(&self.pending_delegation_confirmations, &now)

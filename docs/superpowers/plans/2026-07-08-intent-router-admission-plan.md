@@ -262,3 +262,153 @@ cargo test -p pi-coding-agent --test interactive_mode
 Expected GREEN: existing RPC and interactive control behavior stays unchanged while handle creation now has an explicit admission path.
 
 GREEN result: `cargo test -p pi-coding-agent prompt_control --lib` passed 8 tests, `cargo test -p pi-coding-agent --test rpc_mode` passed 36 tests, `cargo test -p pi-coding-agent --test interactive_mode` passed 41 tests, and `cargo check -p pi-coding-agent` finished without warnings.
+
+## Task 3: Admit Query Intents Through IntentRouter
+
+**Scope:** Add the first non-operation client-intent admission path for pure query surfaces. This task intentionally does not change `OperationClass::ReadOnly` operation scheduling for `Export`; read-only operation concurrency should be handled by a later scheduler task because it affects committed-state read semantics while a session writer is active.
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/intent_router.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-08-intent-router-admission-plan.md`
+
+- [x] **Step 1: Write failing query-intent router tests**
+
+Add tests requiring a new query admission path:
+
+```rust
+#[test]
+fn query_intents_are_classified_as_query() {
+    for intent in [
+        QueryIntent::Capabilities,
+        QueryIntent::SessionView,
+        QueryIntent::AgentProfiles,
+        QueryIntent::TeamProfiles,
+        QueryIntent::ProfileDiagnostics,
+        QueryIntent::PendingDelegationConfirmations,
+    ] {
+        let metadata = intent.metadata();
+
+        assert_eq!(metadata.intent, intent);
+        assert_eq!(metadata.class, OperationClass::Query);
+    }
+}
+
+#[test]
+fn intent_router_admits_queries_while_root_operation_is_busy() {
+    let control = OperationControl::new();
+    let guard = control.begin(OperationKind::Prompt).unwrap();
+
+    let admission =
+        IntentRouter::admit_query(&control, QueryIntent::PendingDelegationConfirmations);
+
+    assert_eq!(admission.intent, QueryIntent::PendingDelegationConfirmations);
+    assert_eq!(admission.class, OperationClass::Query);
+    assert_eq!(control.active(), Some(OperationKind::Prompt));
+    drop(guard);
+    assert_eq!(control.active(), None);
+}
+```
+
+- [x] **Step 2: Run focused RED command**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent query_intent --lib
+```
+
+Expected RED: compile failure because `QueryIntent` and `IntentRouter::admit_query()` do not exist.
+
+RED result: after fixing an initial test-placement mistake, `cargo test -p pi-coding-agent query_intent --lib` failed only because `QueryIntent` and `IntentRouter::admit_query()` did not exist. A second wiring guard, `cargo test -p pi-coding-agent session_query_facade --lib`, failed until the session facade methods were routed through query admission.
+
+- [x] **Step 3: Add minimal query intent admission**
+
+Add a query-intent type and metadata to `intent_router.rs`:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueryIntent {
+    Capabilities,
+    SessionView,
+    AgentProfiles,
+    TeamProfiles,
+    ProfileDiagnostics,
+    PendingDelegationConfirmations,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QueryIntentMetadata {
+    pub(crate) intent: QueryIntent,
+    pub(crate) class: OperationClass,
+}
+
+impl QueryIntent {
+    pub(crate) fn metadata(self) -> QueryIntentMetadata {
+        QueryIntentMetadata {
+            intent: self,
+            class: OperationClass::Query,
+        }
+    }
+}
+```
+
+Add the router method:
+
+```rust
+pub(crate) fn admit_query(
+    control: &OperationControl,
+    intent: QueryIntent,
+) -> QueryIntentMetadata {
+    let metadata = intent.metadata();
+    debug_assert_eq!(metadata.class, OperationClass::Query);
+    let _ = control;
+    metadata
+}
+```
+
+- [x] **Step 4: Route session query surfaces through the router**
+
+Update `CodingAgentSession` query/read facade methods so they call `IntentRouter::admit_query()` before reading state:
+
+```rust
+IntentRouter::admit_query(&self.operation_control, QueryIntent::Capabilities);
+IntentRouter::admit_query(&self.operation_control, QueryIntent::SessionView);
+IntentRouter::admit_query(&self.operation_control, QueryIntent::AgentProfiles);
+IntentRouter::admit_query(&self.operation_control, QueryIntent::TeamProfiles);
+IntentRouter::admit_query(&self.operation_control, QueryIntent::ProfileDiagnostics);
+IntentRouter::admit_query(
+    &self.operation_control,
+    QueryIntent::PendingDelegationConfirmations,
+);
+```
+
+Keep existing return types and adapter behavior unchanged.
+
+- [x] **Step 5: Run GREEN and adapter checks**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent query_intent --lib
+cargo test -p pi-coding-agent prompt_control --lib
+cargo test -p pi-coding-agent --test rpc_mode list_delegation_confirmations
+cargo test -p pi-coding-agent --test interactive_mode delegation_confirmation
+cargo check -p pi-coding-agent
+```
+
+Expected GREEN: query admission tests pass, prompt control behavior stays unchanged, and RPC/interactive delegation-confirmation query paths retain their existing behavior.
+
+GREEN result: `cargo test -p pi-coding-agent intent_router --lib` passed 9 tests, `cargo test -p pi-coding-agent query_intent --lib` passed 1 test, `cargo test -p pi-coding-agent prompt_control --lib` passed 8 tests, `cargo test -p pi-coding-agent --test rpc_mode rpc_list_agent_profiles_reports_registry` passed, `cargo test -p pi-coding-agent --test rpc_mode rpc_list_team_profiles_reports_registry` passed, `cargo test -p pi-coding-agent --test rpc_mode rpc_lists_and_approves_delegation_confirmation` passed, `cargo test -p pi-coding-agent --test rpc_mode rpc_rejects_delegation_confirmation` passed, and `cargo test -p pi-coding-agent --test interactive_mode delegation_confirmation` passed 1 test. The initially listed `list_delegation_confirmations` RPC filter matched no test names, so the named RPC delegation confirmation tests above were used for behavior coverage. Final verification also passed: `cargo fmt --check`, `git diff --check`, `cargo check -p pi-coding-agent`, `cargo check --workspace`, and `cargo test --workspace`.
+
+- [x] **Step 6: Update docs and commit**
+
+Update `docs/TODO.md` to record that Stage 3 now admits pure query client intents through `IntentRouter` without taking the active root-operation guard. Mark this task complete with actual RED/GREEN notes, then commit:
+
+```bash
+git add crates/pi-coding-agent/src/coding_session/intent_router.rs crates/pi-coding-agent/src/coding_session/mod.rs docs/TODO.md docs/superpowers/plans/2026-07-08-intent-router-admission-plan.md
+git commit -m "feat: admit query intents through intent router"
+```
+
+Docs result: `docs/TODO.md` now records that capabilities, session view, profile listings, profile diagnostics, and pending delegation confirmation queries flow through `QueryIntent` admission without taking the active root-operation guard. Commit remains pending until final verification for this turn passes.
