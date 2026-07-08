@@ -498,7 +498,7 @@ git commit -m "feat: route fork session through operation admission"
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-08-intent-router-session-mutation-admission-plan.md`
 
-- [ ] **Step 1: Write the failing source guard test**
+- [x] **Step 1: Write the failing source guard test**
 
 Add this test to the `#[cfg(test)] mod tests` block in `crates/pi-coding-agent/src/coding_session/mod.rs`, after the `fork_current_session_rejects_while_operation_is_busy` test:
 
@@ -523,7 +523,7 @@ Add this test to the `#[cfg(test)] mod tests` block in `crates/pi-coding-agent/s
     }
 ```
 
-- [ ] **Step 2: Run the focused command**
+- [x] **Step 2: Run the focused command**
 
 Run:
 
@@ -533,7 +533,9 @@ cargo test -p pi-coding-agent session_mutation_facade_routes_through_intent_admi
 
 Expected: GREEN if Tasks 1 and 2 are correctly implemented. If RED, the implementation did not route the methods through admission correctly -- fix before proceeding.
 
-- [ ] **Step 3: Run full workspace verification**
+Actual GREEN: confirmed -- `session_mutation_facade_routes_through_intent_admission` passes (1 test). The source scan found `run_sync_mut_operation(Operation::SetDefaultAgentProfile`, `Operation::ForkSession`, and 4 `IntentRouter::admit_operation(` call sites (3 dispatchers at `run_sync_operation`/`run_sync_mut_operation`/`run_operation` + 1 direct `fork_current_session` admission).
+
+- [x] **Step 3: Run full workspace verification**
 
 Run:
 
@@ -553,7 +555,9 @@ cargo test --workspace
 
 Expected GREEN: all format, operation, intent-router, adapter, and full workspace checks pass.
 
-- [ ] **Step 4: Update TODO and plan docs**
+Actual GREEN: confirmed -- `cargo fmt --check` clean; `operation` (59), `intent_router` (11), `query_intent` (1), `read_only_admission` (3), and `session_mutation_facade_routes_through_intent_admission` (1) lib tests pass; `rpc_mode` (36), `interactive_mode` (41), and `json_mode` (4) integration tests pass; `cargo check --workspace` clean and `cargo test --workspace` passes with 0 failures across every suite.
+
+- [x] **Step 4: Update TODO and plan docs**
 
 Update `docs/TODO.md`:
 

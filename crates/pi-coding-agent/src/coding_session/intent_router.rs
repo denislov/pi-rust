@@ -378,4 +378,23 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn session_mutation_facade_routes_through_intent_admission() {
+        let source = include_str!("mod.rs");
+
+        assert!(
+            source.contains("run_sync_mut_operation(Operation::SetDefaultAgentProfile"),
+            "set_default_agent_profile_id should route through run_sync_mut_operation"
+        );
+        assert!(
+            source.contains("Operation::ForkSession"),
+            "fork_current_session should construct a ForkSession operation"
+        );
+        // 3 dispatcher admit_operation calls + 1 fork_current_session direct call = 4
+        assert!(
+            source.matches("IntentRouter::admit_operation(").count() >= 4,
+            "session mutation should admit through IntentRouter (dispatchers + fork)"
+        );
+    }
 }
