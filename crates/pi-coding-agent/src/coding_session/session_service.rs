@@ -1057,7 +1057,7 @@ fn build_leaf_tree(
             continue;
         };
         match &event.data {
-            SessionEventData::OperationStarted { operation } => {
+            SessionEventData::OperationStarted { operation, .. } => {
                 operation_kinds.insert(operation_id.to_owned(), operation.clone());
             }
             SessionEventData::TurnInputRecorded { content } => {
@@ -1396,6 +1396,7 @@ mod tests {
                 "2026-07-08T00:00:00Z",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             )
             .with_operation_id("op_in_doubt"),
@@ -1429,6 +1430,7 @@ mod tests {
                 "2026-07-08T00:00:00Z",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             )
             .with_operation_id("op_c"),
@@ -1438,6 +1440,7 @@ mod tests {
                 "2026-07-08T00:00:00Z",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             )
             .with_operation_id("op_b"),
@@ -1447,6 +1450,7 @@ mod tests {
                 "2026-07-08T00:00:00Z",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             )
             .with_operation_id("op_a"),
@@ -1648,6 +1652,71 @@ mod tests {
                 .as_deref(),
             replay.active_leaf_id.as_deref()
         );
+    }
+
+    #[test]
+    fn session_events_record_runtime_generation_references() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_runtime_generation")
+            .with_default_agent_profile_id("reviewer")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+
+        record_prompt(&mut service, "hello");
+
+        let events = service.store.read_events(&service.handle).unwrap();
+        let runtime_generation = events
+            .iter()
+            .find_map(|event| match &event.data {
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                    runtime_generation,
+                } => Some(runtime_generation),
+                _ => None,
+            })
+            .expect("prompt operation start should be recorded");
+        assert_eq!(
+            runtime_generation.profile_id,
+            Some(ProfileId::from("reviewer"))
+        );
+        assert_eq!(runtime_generation.capability_generation, Some(1));
+    }
+
+    #[test]
+    fn session_events_record_capability_generation_references() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_capability_generation")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let mut transaction = service.begin_plugin_load_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+        SessionService::record_plugin_load_completed(
+            &mut transaction,
+            Vec::new(),
+            Vec::new(),
+            true,
+        )
+        .unwrap();
+
+        service
+            .commit_plugin_load_transaction(Some(transaction), operation_id)
+            .unwrap();
+
+        let events = service.store.read_events(&service.handle).unwrap();
+        let runtime_generation = events
+            .iter()
+            .find_map(|event| match &event.data {
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::PluginLoad,
+                    runtime_generation,
+                } => Some(runtime_generation),
+                _ => None,
+            })
+            .expect("plugin-load operation start should be recorded");
+        assert_eq!(runtime_generation.profile_id, None);
+        assert_eq!(runtime_generation.capability_generation, Some(1));
     }
 
     #[test]

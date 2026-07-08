@@ -295,7 +295,7 @@ impl ReplayBuilder {
             SessionEventData::SessionCreated { cwd } => {
                 self.cwd = cwd.clone();
             }
-            SessionEventData::OperationStarted { operation } => {
+            SessionEventData::OperationStarted { operation, .. } => {
                 if let Some(operation_id) = event.operation_id.as_deref() {
                     self.operation_kinds
                         .insert(operation_id.to_owned(), operation.clone());
@@ -998,6 +998,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event("evt_2", SessionEventData::TurnStarted {}),
@@ -1116,6 +1117,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event(
@@ -1147,6 +1149,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event(
@@ -1220,6 +1223,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event(
@@ -1287,6 +1291,7 @@ mod tests {
                 Some("turn_root"),
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             event(
@@ -1313,6 +1318,7 @@ mod tests {
                 Some("turn_branch"),
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             event(
@@ -1347,6 +1353,7 @@ mod tests {
                 Some("turn_alt"),
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             event(
@@ -1404,6 +1411,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::BranchSummary,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event(
@@ -1441,6 +1449,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event(
@@ -1556,6 +1565,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event(
@@ -1568,6 +1578,7 @@ mod tests {
                 Some("turn_failed"),
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             event(
@@ -1585,6 +1596,7 @@ mod tests {
                 Some("turn_aborted"),
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             event(
@@ -1619,6 +1631,7 @@ mod tests {
             "evt_1",
             SessionEventData::OperationStarted {
                 operation: OperationKind::Prompt,
+                runtime_generation: Default::default(),
             },
         )];
 
@@ -1637,6 +1650,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             ),
             op_event(

@@ -5,17 +5,20 @@ use serde_json::Value;
 
 use super::event::{
     DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedDelegationStatus,
-    PersistedPluginDiagnostic, PersistedRole, PersistedSelfHealingEditCheckOutput,
-    PersistedSelfHealingEditReplacement, PersistedToolResult, SessionEventData,
-    SessionEventEnvelope,
+    PersistedPluginDiagnostic, PersistedRole, PersistedRuntimeGenerationRef,
+    PersistedSelfHealingEditCheckOutput, PersistedSelfHealingEditReplacement, PersistedToolResult,
+    SessionEventData, SessionEventEnvelope,
 };
 use super::id::{Clock, IdGenerator};
+use super::manifest::SessionManifest;
 use super::store::{ManifestPatch, SessionHandle, SessionLogStore};
 use crate::coding_session::CodingSessionError;
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use crate::coding_session::self_healing_edit_flow::{
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
+
+const BASELINE_CAPABILITY_GENERATION: u64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransactionState {
@@ -70,6 +73,7 @@ where
     ) -> Self {
         let operation_id = ids.next_operation_id();
         let turn_id = ids.next_turn_id();
+        let runtime_generation = runtime_generation_for_operation(handle.manifest(), &operation);
         let mut transaction = Self {
             store: store.clone(),
             handle,
@@ -82,7 +86,10 @@ where
             open_tool_calls: HashSet::new(),
             state: TransactionState::Open,
         };
-        transaction.push_event(SessionEventData::OperationStarted { operation });
+        transaction.push_event(SessionEventData::OperationStarted {
+            operation,
+            runtime_generation,
+        });
         transaction.push_event(SessionEventData::TurnStarted {});
         transaction
     }
@@ -534,6 +541,27 @@ where
                 message: format!("tool call is not open: {tool_call_id}"),
             })
         }
+    }
+}
+
+fn runtime_generation_for_operation(
+    manifest: &SessionManifest,
+    operation: &OperationKind,
+) -> PersistedRuntimeGenerationRef {
+    match operation {
+        OperationKind::Prompt => PersistedRuntimeGenerationRef {
+            profile_id: Some(manifest.default_agent_profile_id.clone()),
+            capability_generation: Some(BASELINE_CAPABILITY_GENERATION),
+        },
+        OperationKind::PluginLoad => PersistedRuntimeGenerationRef {
+            profile_id: None,
+            capability_generation: Some(BASELINE_CAPABILITY_GENERATION),
+        },
+        OperationKind::ManualCompaction
+        | OperationKind::BranchSummary
+        | OperationKind::Export
+        | OperationKind::SelfHealingEdit
+        | OperationKind::Other { .. } => PersistedRuntimeGenerationRef::default(),
     }
 }
 

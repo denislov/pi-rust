@@ -161,7 +161,14 @@ pub(crate) enum SessionEventData {
         summary: Option<String>,
     },
     #[serde(rename = "operation.started")]
-    OperationStarted { operation: OperationKind },
+    OperationStarted {
+        operation: OperationKind,
+        #[serde(
+            default,
+            skip_serializing_if = "PersistedRuntimeGenerationRef::is_empty"
+        )]
+        runtime_generation: PersistedRuntimeGenerationRef,
+    },
     #[serde(rename = "operation.committed")]
     OperationCommitted { new_leaf_id: Option<String> },
     #[serde(rename = "operation.aborted")]
@@ -259,6 +266,20 @@ pub(crate) enum OperationKind {
     PluginLoad,
     SelfHealingEdit,
     Other { name: String },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PersistedRuntimeGenerationRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) profile_id: Option<ProfileId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) capability_generation: Option<u64>,
+}
+
+impl PersistedRuntimeGenerationRef {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.profile_id.is_none() && self.capability_generation.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -531,6 +552,7 @@ mod tests {
             (
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: PersistedRuntimeGenerationRef::default(),
                 },
                 "operation.started",
             ),

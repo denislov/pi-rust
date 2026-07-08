@@ -816,6 +816,7 @@ mod tests {
                 "evt_1",
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
                 },
             )
             .with_operation_id("op_1")

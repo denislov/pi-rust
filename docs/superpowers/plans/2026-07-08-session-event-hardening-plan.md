@@ -513,11 +513,11 @@ git commit -m "feat: guard partial session commit uncertainty"
 - Modify: `crates/pi-coding-agent/src/coding_session/session_service.rs`
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Write failing durable audit tests**
+- [x] **Step 1: Write failing durable audit tests**
 
 Add tests for prompt/profile/plugin-affecting operations that verify durable session facts include the runtime/profile/capability generation identifiers needed to explain replay behavior.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -528,7 +528,9 @@ cargo test -p pi-coding-agent session_events_record_capability_generation_refere
 
 Expected: fail because generation reference fields are not modeled.
 
-- [ ] **Step 3: Add generation reference model**
+Actual RED: confirmed -- both tests failed to compile with `SessionEventData::OperationStarted` missing the `runtime_generation` field.
+
+- [x] **Step 3: Add generation reference model**
 
 Add a compact durable reference struct to `event.rs` and attach it only to operation families where replay/audit needs it:
 
@@ -540,7 +542,9 @@ pub(crate) struct PersistedRuntimeGenerationRef {
 }
 ```
 
-- [ ] **Step 4: Run GREEN tests**
+Added backward-compatible `PersistedRuntimeGenerationRef` on `operation.started`; missing fields default for legacy Rust-native logs and empty refs skip serialization. `TurnTransaction::begin()` now records the active default profile id plus baseline capability generation for prompt operations, and records the baseline capability generation for plugin-load operations.
+
+- [x] **Step 4: Run GREEN tests**
 
 Run:
 
@@ -552,10 +556,12 @@ cargo test -p pi-coding-agent session_log --lib
 
 Expected: selected session log tests pass.
 
-- [ ] **Step 5: Commit**
+Actual GREEN: confirmed -- `session_events_record_runtime_generation_references` (1), `session_events_record_capability_generation_references` (1), `session_log` (47), and `session_service` (26) pass.
+
+- [x] **Step 5: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/coding_session/session_log/event.rs crates/pi-coding-agent/src/coding_session/session_log/transaction.rs crates/pi-coding-agent/src/coding_session/session_service.rs docs/TODO.md
+git add crates/pi-coding-agent/src/coding_session/session_log/event.rs crates/pi-coding-agent/src/coding_session/session_log/replay.rs crates/pi-coding-agent/src/coding_session/session_log/store.rs crates/pi-coding-agent/src/coding_session/session_log/transaction.rs crates/pi-coding-agent/src/coding_session/session_service.rs docs/TODO.md docs/superpowers/plans/2026-07-08-session-event-hardening-plan.md
 git commit -m "feat: persist runtime generation references"
 ```
 
