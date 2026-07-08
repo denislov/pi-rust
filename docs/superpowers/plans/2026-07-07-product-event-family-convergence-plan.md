@@ -653,3 +653,38 @@ cargo test -p pi-coding-agent --test interactive_mode
 ```
 
 GREEN result: interactive product-event boundary tests passed, the existing event bridge tests passed, and all 41 interactive mode integration tests passed with unchanged UI behavior.
+
+
+### Task 12: Harden ProductEvent Metadata Access
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/event.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/event_service.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-07-product-event-family-convergence-plan.md`
+
+- [x] **Step 1: Write failing ProductEvent accessor test**
+
+Added `product_event_wrapper_exposes_metadata_through_accessors` to require `ProductEvent` consumers to read live sequence, family-specific kind, operation correlation, terminal status, durability, and compatibility projection through methods.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_exposes_metadata_through_accessors --lib
+```
+
+RED result: compile failed because `ProductEvent` exposed metadata as fields and did not provide `sequence()`, `kind()`, `operation_id()`, `terminal_status()`, or `durability()` methods.
+
+- [x] **Step 2: Add metadata accessors and privatize wrapper fields**
+
+Made `ProductEvent` metadata fields private and added crate-internal accessors for sequence, kind, operation correlation, terminal status, and durability. Updated existing product-event wrapper and EventService tests to use the accessor boundary instead of storage fields.
+
+Verification:
+
+```bash
+cargo test -p pi-coding-agent product_event_wrapper_exposes_metadata_through_accessors --lib
+cargo test -p pi-coding-agent event_service --lib
+cargo check -p pi-coding-agent
+```
+
+GREEN result: the focused accessor test, full event_service suite, and pi-coding-agent crate check passed. The new accessors are intentionally staged for future adapter work and are marked with the same internal dead-code allowance pattern used by the rest of the ProductEvent model.

@@ -298,11 +298,11 @@ pub(crate) enum ProductEventTerminalStatus {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ProductEvent {
-    pub(crate) sequence: ProductEventSequence,
-    pub(crate) kind: ProductEventKind,
-    pub(crate) operation_id: Option<String>,
-    pub(crate) terminal_status: Option<ProductEventTerminalStatus>,
-    pub(crate) durability: ProductEventDurability,
+    sequence: ProductEventSequence,
+    kind: ProductEventKind,
+    operation_id: Option<String>,
+    terminal_status: Option<ProductEventTerminalStatus>,
+    durability: ProductEventDurability,
     compatibility_event: CodingAgentEvent,
 }
 
@@ -329,6 +329,31 @@ impl ProductEvent {
     #[allow(dead_code)]
     pub(crate) fn family(&self) -> ProductEventFamily {
         self.kind.family()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn sequence(&self) -> ProductEventSequence {
+        self.sequence
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn kind(&self) -> ProductEventKind {
+        self.kind
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn operation_id(&self) -> Option<&str> {
+        self.operation_id.as_deref()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn terminal_status(&self) -> Option<ProductEventTerminalStatus> {
+        self.terminal_status
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn durability(&self) -> &ProductEventDurability {
+        &self.durability
     }
 
     pub(crate) fn compatibility_event(&self) -> &CodingAgentEvent {
@@ -977,14 +1002,17 @@ mod tests {
         let product_event =
             ProductEvent::from_compat_event(ProductEventSequence(42), event.clone());
 
-        assert_eq!(product_event.sequence, ProductEventSequence(42));
+        assert_eq!(product_event.sequence(), ProductEventSequence(42));
         assert_eq!(product_event.family(), ProductEventFamily::Workflow);
-        assert_eq!(product_event.operation_id.as_deref(), Some("op_prompt"));
+        assert_eq!(product_event.operation_id(), Some("op_prompt"));
         assert_eq!(
-            product_event.terminal_status,
+            product_event.terminal_status(),
             Some(ProductEventTerminalStatus::Failed)
         );
-        assert_eq!(product_event.durability, ProductEventDurability::LiveOnly);
+        assert_eq!(
+            product_event.durability(),
+            &ProductEventDurability::LiveOnly
+        );
         assert_eq!(product_event.compatibility_event(), &event);
     }
 
@@ -997,8 +1025,8 @@ mod tests {
             },
         );
         assert_eq!(
-            pending.durability,
-            ProductEventDurability::PendingSessionWrite {
+            pending.durability(),
+            &ProductEventDurability::PendingSessionWrite {
                 operation_id: "op_prompt".into(),
             }
         );
@@ -1011,14 +1039,14 @@ mod tests {
             },
         );
         assert_eq!(
-            committed.durability,
-            ProductEventDurability::Durable {
+            committed.durability(),
+            &ProductEventDurability::Durable {
                 session_id: "session_1".into(),
             }
         );
-        assert_eq!(committed.operation_id.as_deref(), Some("op_prompt"));
+        assert_eq!(committed.operation_id(), Some("op_prompt"));
         assert_eq!(
-            committed.terminal_status,
+            committed.terminal_status(),
             Some(ProductEventTerminalStatus::Completed)
         );
 
@@ -1029,7 +1057,7 @@ mod tests {
                 reason: "session persistence disabled".into(),
             },
         );
-        assert_eq!(skipped.durability, ProductEventDurability::LiveOnly);
+        assert_eq!(skipped.durability(), &ProductEventDurability::LiveOnly);
     }
 
     #[test]
@@ -1042,7 +1070,7 @@ mod tests {
             },
         );
         assert_eq!(
-            prompt.kind,
+            prompt.kind(),
             ProductEventKind::Workflow(WorkflowProductEventKind::PromptCompleted)
         );
         assert_eq!(prompt.family(), ProductEventFamily::Workflow);
@@ -1058,7 +1086,7 @@ mod tests {
             },
         );
         assert_eq!(
-            tool.kind,
+            tool.kind(),
             ProductEventKind::Tool(ToolProductEventKind::Completed)
         );
         assert_eq!(tool.family(), ProductEventFamily::Tool);
@@ -1071,9 +1099,37 @@ mod tests {
             },
         );
         assert_eq!(
-            session.kind,
+            session.kind(),
             ProductEventKind::Session(SessionProductEventKind::WriteCommitted)
         );
         assert_eq!(session.family(), ProductEventFamily::Session);
+    }
+
+    #[test]
+    fn product_event_wrapper_exposes_metadata_through_accessors() {
+        let event = ProductEvent::from_compat_event(
+            ProductEventSequence(13),
+            CodingAgentEvent::PromptCompleted {
+                operation_id: "op_prompt".into(),
+                turn_id: "turn_1".into(),
+            },
+        );
+
+        assert_eq!(event.sequence(), ProductEventSequence(13));
+        assert_eq!(
+            event.kind(),
+            ProductEventKind::Workflow(WorkflowProductEventKind::PromptCompleted)
+        );
+        assert_eq!(event.family(), ProductEventFamily::Workflow);
+        assert_eq!(event.operation_id(), Some("op_prompt"));
+        assert_eq!(
+            event.terminal_status(),
+            Some(ProductEventTerminalStatus::Completed)
+        );
+        assert_eq!(event.durability(), &ProductEventDurability::LiveOnly);
+        assert!(matches!(
+            event.compatibility_event(),
+            CodingAgentEvent::PromptCompleted { .. }
+        ));
     }
 }
