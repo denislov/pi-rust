@@ -412,3 +412,161 @@ git commit -m "feat: admit query intents through intent router"
 ```
 
 Docs result: `docs/TODO.md` now records that capabilities, session view, profile listings, profile diagnostics, and pending delegation confirmation queries flow through `QueryIntent` admission without taking the active root-operation guard. Commit remains pending until final verification for this turn passes.
+
+## Task 4: Admit ReadOnly Operations Without Taking the Root Guard
+
+**Scope:** Introduce an explicit operation permit from `IntentRouter` so `OperationClass::ReadOnly` operations validate through the same admission path but do not acquire the active root-operation guard. Keep `PluginCommand` and other non-read-only operations guarded. This task only changes scheduler/admission semantics; it does not change `ExportFlow` replay or rendering behavior.
+
+**Files:**
+- Modify: `crates/pi-coding-agent/src/coding_session/intent_router.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-08-intent-router-admission-plan.md`
+
+- [x] **Step 1: Write failing read-only admission tests**
+
+Add router and session tests that require `Export` to admit while another root operation is active, while keeping non-read-only sync operations guarded:
+
+```rust
+#[test]
+fn read_only_admission_allows_export_while_root_operation_is_busy() {
+    let operation = Operation::Export(ExportOptions::view());
+    let admission = IntentRouter::static_admission(&operation).unwrap();
+    let control = OperationControl::new();
+    let guard = control.begin(OperationKind::Prompt).unwrap();
+
+    let permit = IntentRouter::admit_operation(
+        &control,
+        &admission,
+        OperationDispatchMode::SyncReadOnly,
+    )
+    .unwrap();
+
+    assert_eq!(permit.kind(), OperationKind::Export);
+    assert_eq!(permit.class(), OperationClass::ReadOnly);
+    assert!(!permit.is_guarded());
+    assert_eq!(control.active(), Some(OperationKind::Prompt));
+    drop(permit);
+    assert_eq!(control.active(), Some(OperationKind::Prompt));
+    drop(guard);
+    assert_eq!(control.active(), None);
+}
+```
+
+```rust
+#[tokio::test]
+async fn run_sync_operation_export_uses_read_only_admission_while_root_busy() {
+    let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let _guard = session.operation_control.begin(OperationKind::Prompt).unwrap();
+
+    let error = session
+        .run_sync_operation(Operation::Export(ExportOptions::view()))
+        .unwrap_err();
+
+    assert_eq!(error.code(), "unsupported_capability");
+    assert_eq!(
+        error.to_string(),
+        "unsupported capability: export requires a persistent Rust-native session"
+    );
+    assert_eq!(session.operation_control.active(), Some(OperationKind::Prompt));
+}
+```
+
+- [x] **Step 2: Run focused RED commands**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent read_only_admission --lib
+cargo test -p pi-coding-agent run_sync_operation_export_uses_read_only_admission_while_root_busy --lib
+```
+
+Expected RED: the router test fails to compile because `IntentRouter::admit_operation()` and `OperationPermit` do not exist; the session test fails with a `busy` error until `run_sync_operation()` uses read-only admission.
+
+RED result: `cargo test -p pi-coding-agent read_only_admission --lib` first failed with `no associated function or constant named admit_operation found for struct IntentRouter`. After adding the router permit API but before wiring session dispatch, the same command ran 3 tests with the two router tests passing and `run_sync_operation_export_uses_read_only_admission_while_root_busy` failing because it still returned `busy` instead of the expected export persistence error.
+
+- [x] **Step 3: Add an operation permit to IntentRouter**
+
+Add an internal permit that either holds an `OperationGuard` or represents an unguarded read-only admission:
+
+```rust
+#[derive(Debug)]
+#[must_use = "dropping OperationPermit releases any guarded operation"]
+pub(crate) struct OperationPermit {
+    guard: Option<OperationGuard>,
+    #[cfg(test)]
+    kind: OperationKind,
+    #[cfg(test)]
+    class: OperationClass,
+}
+```
+
+Add `IntentRouter::admit_operation()`:
+
+```rust
+pub(crate) fn admit_operation(
+    control: &OperationControl,
+    admission: &OperationAdmission,
+    expected: OperationDispatchMode,
+) -> Result<OperationPermit, CodingSessionError> {
+    Self::validate_dispatch_mode(admission, expected)?;
+
+    if admission.metadata.class == OperationClass::ReadOnly {
+        return Ok(OperationPermit::unguarded(
+            admission.kind,
+            admission.metadata.class,
+        ));
+    }
+
+    control
+        .begin(admission.kind)
+        .map(|guard| OperationPermit::guarded(admission.kind, admission.metadata.class, guard))
+}
+```
+
+Keep `IntentRouter::begin()` as a guarded compatibility helper for existing focused tests, but have both methods share dispatch-mode validation.
+
+Implementation note: `OperationPermit` now holds an optional `OperationGuard`; permit introspection and the legacy `IntentRouter::begin()` helper are test-only so normal `cargo check -p pi-coding-agent` remains warning-free.
+
+- [x] **Step 4: Wire operation dispatchers through permits**
+
+Update `CodingAgentSession::run_sync_operation()`, `run_sync_mut_operation()`, and async `run_operation()` to bind the result of `IntentRouter::admit_operation()`:
+
+```rust
+let _operation_permit = IntentRouter::admit_operation(
+    &self.operation_control,
+    &admission,
+    OperationDispatchMode::SyncReadOnly,
+)?;
+```
+
+Use `SyncMutable` and `Async` respectively in the other dispatchers. This preserves guards for session writes, runtime writes, plugin commands, delegation approval, and delegation rejection, while allowing read-only `Export` admission to leave any active root operation intact.
+
+- [x] **Step 5: Run GREEN checks**
+
+Run:
+
+```bash
+cargo test -p pi-coding-agent read_only_admission --lib
+cargo test -p pi-coding-agent intent_router --lib
+cargo test -p pi-coding-agent run_sync_operation_export_uses_read_only_admission_while_root_busy --lib
+cargo test -p pi-coding-agent run_sync_operation_plugin_command --lib
+cargo check -p pi-coding-agent
+```
+
+Expected GREEN: read-only admission tests pass, existing intent-router tests pass, `PluginCommand` remains guarded, and `pi-coding-agent` compiles.
+
+GREEN result: `cargo test -p pi-coding-agent read_only_admission --lib` passed 3 tests, `cargo test -p pi-coding-agent intent_router --lib` passed 11 tests, `cargo test -p pi-coding-agent run_sync_operation_plugin_command --lib` passed 2 tests, `cargo test -p pi-coding-agent export_current_html_uses_read_only_operation_admission_while_root_busy --lib` passed 1 test, and `cargo check -p pi-coding-agent` finished without warnings. Full `cargo test --workspace` initially exposed an old guarded-export assertion in `export_current_html_uses_export_operation_boundary`; after updating that test to the read-only admission contract, `cargo test --workspace` passed.
+
+- [x] **Step 6: Update docs and commit**
+
+Update `docs/TODO.md` to record that Stage 3 now admits `OperationClass::ReadOnly` operations without taking the active root-operation guard. Mark this task complete with actual RED/GREEN notes, then commit:
+
+```bash
+git add crates/pi-coding-agent/src/coding_session/intent_router.rs crates/pi-coding-agent/src/coding_session/mod.rs docs/TODO.md docs/superpowers/plans/2026-07-08-intent-router-admission-plan.md
+git commit -m "feat: admit read-only operations without root guard"
+```
+
+Docs result: `docs/TODO.md` now records that `OperationClass::ReadOnly` operations admit through `IntentRouter` as unguarded permits, while non-read-only operations keep the active root-operation guard. Commit remains pending until final verification for this turn passes.

@@ -1044,7 +1044,7 @@ impl CodingAgentSession {
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = IntentRouter::static_admission(&operation)?;
-        let _operation_guard = IntentRouter::begin(
+        let _operation_permit = IntentRouter::admit_operation(
             &self.operation_control,
             &admission,
             OperationDispatchMode::SyncReadOnly,
@@ -1077,7 +1077,7 @@ impl CodingAgentSession {
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = IntentRouter::static_admission(&operation)?;
-        let _operation_guard = IntentRouter::begin(
+        let _operation_permit = IntentRouter::admit_operation(
             &self.operation_control,
             &admission,
             OperationDispatchMode::SyncMutable,
@@ -1228,7 +1228,7 @@ impl CodingAgentSession {
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
-        let _operation_guard = IntentRouter::begin(
+        let _operation_permit = IntentRouter::admit_operation(
             &self.operation_control,
             &admission,
             OperationDispatchMode::Async,
@@ -2435,7 +2435,7 @@ runtime = "lua"
     }
 
     #[tokio::test]
-    async fn run_sync_operation_export_uses_guard_and_preserves_persistence_error() {
+    async fn run_sync_operation_export_preserves_persistence_error_without_active_operation() {
         let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
             .unwrap();
@@ -2449,6 +2449,31 @@ runtime = "lua"
             "unsupported capability: export requires a persistent Rust-native session"
         );
         assert_eq!(session.operation_control.active(), None);
+    }
+
+    #[tokio::test]
+    async fn run_sync_operation_export_uses_read_only_admission_while_root_busy() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let _guard = session
+            .operation_control
+            .begin(OperationKind::Prompt)
+            .unwrap();
+
+        let error = session
+            .run_sync_operation(Operation::Export(ExportOptions::view()))
+            .unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
+        assert_eq!(
+            error.to_string(),
+            "unsupported capability: export requires a persistent Rust-native session"
+        );
+        assert_eq!(
+            session.operation_control.active(),
+            Some(OperationKind::Prompt)
+        );
     }
 
     #[tokio::test]
@@ -2469,6 +2494,34 @@ runtime = "lua"
             "plugin error: plugin command not found: missing.command"
         );
         assert_eq!(session.operation_control.active(), None);
+    }
+
+    #[tokio::test]
+    async fn run_sync_operation_plugin_command_remains_guarded_while_root_busy() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let _guard = session
+            .operation_control
+            .begin(OperationKind::Prompt)
+            .unwrap();
+        let operation = Operation::PluginCommand {
+            command_id: "missing.command".into(),
+            args: serde_json::Value::Null,
+        };
+
+        let error = session.run_sync_operation(operation).unwrap_err();
+
+        assert_eq!(
+            error,
+            CodingSessionError::Busy {
+                operation: "prompt".into(),
+            }
+        );
+        assert_eq!(
+            session.operation_control.active(),
+            Some(OperationKind::Prompt)
+        );
     }
 
     #[tokio::test]
@@ -3611,7 +3664,7 @@ runtime = "lua"
     }
 
     #[tokio::test]
-    async fn export_current_html_uses_export_operation_boundary() {
+    async fn export_current_html_uses_read_only_operation_admission_while_root_busy() {
         let temp = tempfile::tempdir().unwrap();
         let session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
@@ -3626,11 +3679,14 @@ runtime = "lua"
             .unwrap();
         let output = temp.path().join("session.html");
 
-        let error = session.export_current_html(&output).unwrap_err();
+        let exported = session.export_current_html(&output).unwrap();
 
-        assert_eq!(error.code(), "busy");
-        assert_eq!(error.to_string(), "busy: prompt");
-        assert!(!output.exists());
+        assert_eq!(exported, output);
+        assert!(output.exists());
+        assert_eq!(
+            session.operation_control.active(),
+            Some(OperationKind::Prompt)
+        );
     }
 
     fn outcome_turn_id(outcome: &PromptTurnOutcome) -> &str {

@@ -31,6 +31,16 @@ pub(crate) struct QueryIntentMetadata {
     pub(crate) class: OperationClass,
 }
 
+#[derive(Debug)]
+#[must_use = "dropping OperationPermit releases any guarded operation"]
+pub(crate) struct OperationPermit {
+    guard: Option<OperationGuard>,
+    #[cfg(test)]
+    kind: OperationKind,
+    #[cfg(test)]
+    class: OperationClass,
+}
+
 impl ControlIntent {
     pub(crate) fn metadata(self) -> ControlIntentMetadata {
         match self {
@@ -51,6 +61,55 @@ impl QueryIntent {
     }
 }
 
+impl OperationPermit {
+    fn guarded(kind: OperationKind, class: OperationClass, guard: OperationGuard) -> Self {
+        #[cfg(not(test))]
+        let _ = (kind, class);
+
+        Self {
+            guard: Some(guard),
+            #[cfg(test)]
+            kind,
+            #[cfg(test)]
+            class,
+        }
+    }
+
+    fn unguarded(kind: OperationKind, class: OperationClass) -> Self {
+        #[cfg(not(test))]
+        let _ = (kind, class);
+
+        Self {
+            guard: None,
+            #[cfg(test)]
+            kind,
+            #[cfg(test)]
+            class,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kind(&self) -> OperationKind {
+        self.kind
+    }
+
+    #[cfg(test)]
+    pub(crate) fn class(&self) -> OperationClass {
+        self.class
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_guarded(&self) -> bool {
+        self.guard.is_some()
+    }
+}
+
+impl Drop for OperationPermit {
+    fn drop(&mut self) {
+        let _ = self.guard.is_some();
+    }
+}
+
 pub(crate) struct IntentRouter;
 
 impl IntentRouter {
@@ -66,16 +125,34 @@ impl IntentRouter {
         Ok(OperationAdmission::new(operation.kind(), metadata, None))
     }
 
+    #[cfg(test)]
     pub(crate) fn begin(
         control: &OperationControl,
         admission: &OperationAdmission,
         expected: OperationDispatchMode,
     ) -> Result<OperationGuard, CodingSessionError> {
-        if admission.metadata.dispatch_mode != expected {
-            return Err(Self::unsupported_dispatch(admission));
-        }
+        Self::validate_dispatch_mode(admission, expected)?;
 
         control.begin(admission.kind)
+    }
+
+    pub(crate) fn admit_operation(
+        control: &OperationControl,
+        admission: &OperationAdmission,
+        expected: OperationDispatchMode,
+    ) -> Result<OperationPermit, CodingSessionError> {
+        Self::validate_dispatch_mode(admission, expected)?;
+
+        if admission.metadata.class == OperationClass::ReadOnly {
+            return Ok(OperationPermit::unguarded(
+                admission.kind,
+                admission.metadata.class,
+            ));
+        }
+
+        control
+            .begin(admission.kind)
+            .map(|guard| OperationPermit::guarded(admission.kind, admission.metadata.class, guard))
     }
 
     pub(crate) fn prompt_control_handle(
@@ -100,6 +177,16 @@ impl IntentRouter {
         metadata
     }
 
+    fn validate_dispatch_mode(
+        admission: &OperationAdmission,
+        expected: OperationDispatchMode,
+    ) -> Result<(), CodingSessionError> {
+        if admission.metadata.dispatch_mode != expected {
+            return Err(Self::unsupported_dispatch(admission));
+        }
+        Ok(())
+    }
+
     pub(crate) fn unsupported_dispatch(admission: &OperationAdmission) -> CodingSessionError {
         CodingSessionError::UnsupportedCapability {
             capability: format!(
@@ -114,6 +201,7 @@ impl IntentRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding_session::export_flow::ExportOptions;
     use crate::coding_session::operation::OperationClass;
     use crate::coding_session::operation_control::{OperationKind, PromptControlCommand};
 
@@ -217,6 +305,54 @@ mod tests {
         assert_eq!(admission.class, OperationClass::Query);
         assert_eq!(control.active(), Some(OperationKind::Prompt));
         drop(guard);
+        assert_eq!(control.active(), None);
+    }
+
+    #[test]
+    fn read_only_admission_allows_export_while_root_operation_is_busy() {
+        let operation = Operation::Export(ExportOptions::view());
+        let admission = IntentRouter::static_admission(&operation).unwrap();
+        let control = OperationControl::new();
+        let guard = control.begin(OperationKind::Prompt).unwrap();
+
+        let permit = IntentRouter::admit_operation(
+            &control,
+            &admission,
+            OperationDispatchMode::SyncReadOnly,
+        )
+        .unwrap();
+
+        assert_eq!(permit.kind(), OperationKind::Export);
+        assert_eq!(permit.class(), OperationClass::ReadOnly);
+        assert!(!permit.is_guarded());
+        assert_eq!(control.active(), Some(OperationKind::Prompt));
+        drop(permit);
+        assert_eq!(control.active(), Some(OperationKind::Prompt));
+        drop(guard);
+        assert_eq!(control.active(), None);
+    }
+
+    #[test]
+    fn read_only_admission_keeps_plugin_command_guarded() {
+        let operation = Operation::PluginCommand {
+            command_id: "plugin.echo".into(),
+            args: serde_json::json!({}),
+        };
+        let admission = IntentRouter::static_admission(&operation).unwrap();
+        let control = OperationControl::new();
+
+        let permit = IntentRouter::admit_operation(
+            &control,
+            &admission,
+            OperationDispatchMode::SyncReadOnly,
+        )
+        .unwrap();
+
+        assert_eq!(permit.kind(), OperationKind::PluginCommand);
+        assert_eq!(permit.class(), OperationClass::NonSessionRoot);
+        assert!(permit.is_guarded());
+        assert_eq!(control.active(), Some(OperationKind::PluginCommand));
+        drop(permit);
         assert_eq!(control.active(), None);
     }
 
