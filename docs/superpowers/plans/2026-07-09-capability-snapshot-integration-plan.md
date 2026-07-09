@@ -2040,21 +2040,21 @@ git commit -m "docs: close capability snapshot integration stage"
 
 ## Verification Checklist
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo test -p pi-coding-agent capability_snapshot --lib`
-- [ ] `cargo test -p pi-coding-agent intent_router --lib`
-- [ ] `cargo test -p pi-coding-agent runtime_service --lib`
-- [ ] `cargo test -p pi-coding-agent plugin_service --lib`
-- [ ] `cargo test -p pi-coding-agent session_service --lib`
-- [ ] `cargo test -p pi-coding-agent event_service --lib`
-- [ ] `cargo test -p pi-coding-agent protocol_events`
-- [ ] `cargo test -p pi-coding-agent delegation_execution`
-- [ ] `cargo test -p pi-coding-agent agent_invocation`
-- [ ] `cargo test -p pi-coding-agent agent_team_flow`
-- [ ] `cargo test -p pi-coding-agent tool_bash`
-- [ ] `cargo test -p pi-coding-agent tool_edit`
-- [ ] `cargo check -p pi-coding-agent`
-- [ ] `git diff --check`
+- [x] `cargo fmt --check`
+- [x] `cargo test -p pi-coding-agent capability_snapshot --lib`
+- [x] `cargo test -p pi-coding-agent intent_router --lib`
+- [x] `cargo test -p pi-coding-agent runtime_service --lib`
+- [x] `cargo test -p pi-coding-agent plugin_service --lib`
+- [x] `cargo test -p pi-coding-agent session_service --lib`
+- [x] `cargo test -p pi-coding-agent event_service --lib`
+- [x] `cargo test -p pi-coding-agent protocol_events`
+- [x] `cargo test -p pi-coding-agent delegation_execution`
+- [x] `cargo test -p pi-coding-agent agent_invocation`
+- [x] `cargo test -p pi-coding-agent agent_team_flow`
+- [x] `cargo test -p pi-coding-agent tool_bash`
+- [x] `cargo test -p pi-coding-agent tool_edit`
+- [x] `cargo check -p pi-coding-agent`
+- [x] `git diff --check`
 
 ## Spec Coverage
 
