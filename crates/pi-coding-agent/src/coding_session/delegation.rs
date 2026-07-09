@@ -46,11 +46,11 @@ pub(crate) fn capability_snapshot_for_delegated_profile(
     profile: &AgentProfile,
     actor: ActorId,
 ) -> OperationCapabilitySnapshot {
-    let mut released_tools = parent
+    let mut released_tools = profile
         .tools
-        .names()
-        .filter(|name| profile.tools.iter().any(|allowed| allowed == name))
-        .map(str::to_owned)
+        .iter()
+        .filter(|name| parent.tools.allows(name))
+        .cloned()
         .collect::<Vec<_>>();
     for tool in delegation_tools(Some(&profile.id), Some(&profile.delegation)) {
         if parent.tools.allows(&tool.name) && !released_tools.iter().any(|name| name == &tool.name)
