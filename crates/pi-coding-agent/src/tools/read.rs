@@ -1,3 +1,4 @@
+use crate::coding_session::FilesystemCapability;
 use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{
     DEFAULT_MAX_BYTES, TruncatedBy, TruncationOptions, format_size, truncate_head,
@@ -5,7 +6,7 @@ use crate::tools::truncate::{
 use futures::future::{BoxFuture, FutureExt};
 use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 const DESCRIPTION: &str = "Read the contents of a text file. Output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files; continue with offset until complete. Image files are not read in this mode.";
@@ -170,16 +171,21 @@ pub async fn read_execute_with_operations(
     Ok(text_block(out))
 }
 
-pub fn read_tool(cwd: PathBuf) -> AgentTool {
-    read_tool_with_operations(cwd, Arc::new(RealReadOperations))
+pub fn read_tool(filesystem: FilesystemCapability) -> AgentTool {
+    read_tool_with_operations(filesystem, Arc::new(RealReadOperations))
 }
 
-pub fn read_tool_with_operations(cwd: PathBuf, ops: Arc<dyn ReadOperations>) -> AgentTool {
+pub fn read_tool_with_operations(
+    filesystem: FilesystemCapability,
+    ops: Arc<dyn ReadOperations>,
+) -> AgentTool {
     let execute: ToolFn = Arc::new(move |args, _on_update| {
-        let cwd = cwd.clone();
+        let filesystem = filesystem.clone();
         let ops = ops.clone();
         Box::pin(async move {
-            read_execute_with_operations(&cwd, args, ops)
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            filesystem.resolve_path(path).map_err(|e| e.to_string())?;
+            read_execute_with_operations(&filesystem.cwd, args, ops)
                 .await
                 .map(AgentToolOutput::new)
         })

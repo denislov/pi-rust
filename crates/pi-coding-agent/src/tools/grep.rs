@@ -1,3 +1,4 @@
+use crate::coding_session::FilesystemCapability;
 use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
 use globset::{GlobBuilder, GlobMatcher};
@@ -338,10 +339,16 @@ pub async fn grep_execute(
     Ok(text_block(output))
 }
 
-pub fn grep_tool(cwd: PathBuf) -> AgentTool {
+pub fn grep_tool(filesystem: FilesystemCapability) -> AgentTool {
     let execute: ToolFn = Arc::new(move |args, _on_update| {
-        let cwd = cwd.clone();
-        Box::pin(async move { grep_execute(&cwd, args).await.map(AgentToolOutput::new) })
+        let filesystem = filesystem.clone();
+        Box::pin(async move {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            filesystem.resolve_path(path).map_err(|e| e.to_string())?;
+            grep_execute(&filesystem.cwd, args)
+                .await
+                .map(AgentToolOutput::new)
+        })
     });
     AgentTool {
         name: "grep".into(),

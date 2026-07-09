@@ -1,3 +1,5 @@
+use crate::coding_session::ShellCapability;
+use crate::tools::truncate::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
 use futures::future::{BoxFuture, FutureExt};
 use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn, ToolUpdateCallback};
 use pi_ai::types::ContentBlock;
@@ -6,8 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
-
-use crate::tools::truncate::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
 
 const DESCRIPTION: &str = "Execute a bash command in the working directory. Returns merged stdout and stderr. Output is truncated to the last 2000 lines or 50KB (whichever is hit first). Commands time out after 120 seconds by default; timeout is capped at 600 seconds.";
 const BUFFER_KEEP: usize = 65536;
@@ -542,16 +542,19 @@ async fn kill_process_group(pid: u32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-pub fn bash_tool(cwd: PathBuf) -> AgentTool {
-    bash_tool_with_operations(cwd, Arc::new(RealBashOperations))
+pub fn bash_tool(shell: ShellCapability) -> AgentTool {
+    bash_tool_with_operations(shell, Arc::new(RealBashOperations))
 }
 
-pub fn bash_tool_with_operations(cwd: PathBuf, ops: Arc<dyn BashOperations>) -> AgentTool {
+pub fn bash_tool_with_operations(
+    shell: ShellCapability,
+    ops: Arc<dyn BashOperations>,
+) -> AgentTool {
     let execute: ToolFn = Arc::new(move |args, on_update| {
-        let cwd = cwd.clone();
+        let shell = shell.clone();
         let ops = ops.clone();
         Box::pin(async move {
-            bash_execute_with_operations(&cwd, args, &BashOptions::default(), on_update, ops)
+            bash_execute_with_operations(&shell.cwd, args, &BashOptions::default(), on_update, ops)
                 .await
                 .map(AgentToolOutput::new)
         })

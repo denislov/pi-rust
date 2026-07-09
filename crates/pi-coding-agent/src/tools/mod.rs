@@ -2,6 +2,8 @@ use pi_agent_core::AgentTool;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+pub use crate::coding_session::{FilesystemCapability, ShellCapability};
+
 pub mod bash;
 pub mod edit;
 mod edit_diff;
@@ -15,14 +17,16 @@ pub mod truncate;
 pub mod write;
 
 pub fn builtin_tools(cwd: PathBuf) -> Vec<AgentTool> {
+    let filesystem = FilesystemCapability::new(cwd.clone());
+    let shell = ShellCapability::new(cwd);
     vec![
-        read::read_tool(cwd.clone()),
-        write::write_tool(cwd.clone()),
-        edit::edit_tool(cwd.clone()),
-        bash::bash_tool(cwd.clone()),
-        grep::grep_tool(cwd.clone()),
-        find::find_tool(cwd.clone()),
-        ls::ls_tool(cwd),
+        read::read_tool(filesystem.clone()),
+        write::write_tool(filesystem.clone()),
+        edit::edit_tool(filesystem.clone()),
+        bash::bash_tool(shell),
+        grep::grep_tool(filesystem.clone()),
+        find::find_tool(filesystem.clone()),
+        ls::ls_tool(filesystem),
     ]
 }
 

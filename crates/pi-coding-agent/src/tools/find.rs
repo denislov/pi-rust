@@ -1,10 +1,11 @@
+use crate::coding_session::FilesystemCapability;
 use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
 use globset::{GlobBuilder, GlobMatcher};
 use ignore::{DirEntry, WalkBuilder};
 use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 const DESCRIPTION: &str = "Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to 1000 results or 50KB (whichever is hit first).";
@@ -186,10 +187,16 @@ pub async fn find_execute(
     Ok(text_block(output))
 }
 
-pub fn find_tool(cwd: PathBuf) -> AgentTool {
+pub fn find_tool(filesystem: FilesystemCapability) -> AgentTool {
     let execute: ToolFn = Arc::new(move |args, _on_update| {
-        let cwd = cwd.clone();
-        Box::pin(async move { find_execute(&cwd, args).await.map(AgentToolOutput::new) })
+        let filesystem = filesystem.clone();
+        Box::pin(async move {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            filesystem.resolve_path(path).map_err(|e| e.to_string())?;
+            find_execute(&filesystem.cwd, args)
+                .await
+                .map(AgentToolOutput::new)
+        })
     });
     AgentTool {
         name: "find".into(),

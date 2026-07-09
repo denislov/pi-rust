@@ -2,8 +2,9 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
+use super::CodingSessionError;
 use super::operation_control::OperationKind;
 use super::profiles::ProfileId;
 use super::session_log::event::PersistedRuntimeGenerationRef;
@@ -67,13 +68,87 @@ pub(crate) struct CommandCapabilitySet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FilesystemCapability {
+pub struct FilesystemCapability {
     pub(crate) cwd: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ShellCapability {
+pub struct ShellCapability {
     pub(crate) cwd: PathBuf,
+}
+
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut stack: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => match stack.last() {
+                Some(Component::Normal(_)) => {
+                    stack.pop();
+                }
+                _ => stack.push(component),
+            },
+            Component::CurDir => {}
+            other => stack.push(other),
+        }
+    }
+    let mut result = PathBuf::new();
+    for component in stack {
+        result.push(component.as_os_str());
+    }
+    result
+}
+
+impl FilesystemCapability {
+    pub fn new(cwd: PathBuf) -> Self {
+        Self { cwd }
+    }
+
+    pub(crate) fn resolve_path(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<PathBuf, CodingSessionError> {
+        use crate::tools::path::resolve_to_cwd;
+        let path_ref = path.as_ref();
+        let path_str = path_ref.to_string_lossy();
+        let resolved = resolve_to_cwd(&path_str, &self.cwd);
+        let was_relative = !path_ref.is_absolute() && !path_str.starts_with('~');
+        if was_relative {
+            let normalized = lexically_normalize(&resolved);
+            let normalized_cwd = lexically_normalize(&self.cwd);
+            if !normalized.starts_with(&normalized_cwd) {
+                return Err(CodingSessionError::UnsupportedCapability {
+                    capability: format!(
+                        "filesystem path escapes granted cwd: {}",
+                        normalized.display()
+                    ),
+                });
+            }
+            return Ok(normalized);
+        }
+        Ok(resolved)
+    }
+
+    pub(crate) fn require(
+        value: Option<&FilesystemCapability>,
+    ) -> Result<&FilesystemCapability, CodingSessionError> {
+        value.ok_or_else(|| CodingSessionError::UnsupportedCapability {
+            capability: "filesystem capability is not granted".into(),
+        })
+    }
+}
+
+impl ShellCapability {
+    pub fn new(cwd: PathBuf) -> Self {
+        Self { cwd }
+    }
+
+    pub(crate) fn require(
+        value: Option<&ShellCapability>,
+    ) -> Result<&ShellCapability, CodingSessionError> {
+        value.ok_or_else(|| CodingSessionError::UnsupportedCapability {
+            capability: "shell capability is not granted".into(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -398,5 +473,50 @@ mod tests {
         assert!(snapshot.tools.allows("read"));
         assert!(snapshot.tools.allows("edit"));
         assert!(!snapshot.tools.allows("bash"));
+    }
+
+    #[test]
+    fn filesystem_resolve_path_keeps_absolute_paths() {
+        let capability = FilesystemCapability {
+            cwd: std::path::PathBuf::from("/workspace/project"),
+        };
+        let resolved = capability.resolve_path("/etc/hosts").unwrap();
+        assert_eq!(resolved, std::path::PathBuf::from("/etc/hosts"));
+    }
+
+    #[test]
+    fn filesystem_resolve_path_rejects_dotdot_escape() {
+        let capability = FilesystemCapability {
+            cwd: std::path::PathBuf::from("/workspace/project"),
+        };
+        let error = capability.resolve_path("../outside.txt").unwrap_err();
+        assert_eq!(error.code(), "unsupported_capability");
+    }
+
+    #[test]
+    fn filesystem_resolve_path_allows_relative_within_cwd() {
+        let capability = FilesystemCapability {
+            cwd: std::path::PathBuf::from("/workspace/project"),
+        };
+        let resolved = capability.resolve_path("src/main.rs").unwrap();
+        assert_eq!(
+            resolved,
+            std::path::PathBuf::from("/workspace/project/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn shell_capability_require_rejects_missing_capability() {
+        let snapshot = OperationCapabilitySnapshot::test_without_shell("op_shell");
+        let error = ShellCapability::require(snapshot.shell.as_ref()).unwrap_err();
+        assert_eq!(error.code(), "unsupported_capability");
+    }
+
+    #[test]
+    fn filesystem_capability_require_rejects_missing_capability() {
+        let mut snapshot = OperationCapabilitySnapshot::permissive("op_fs");
+        snapshot.filesystem = None;
+        let error = FilesystemCapability::require(snapshot.filesystem.as_ref()).unwrap_err();
+        assert_eq!(error.code(), "unsupported_capability");
     }
 }

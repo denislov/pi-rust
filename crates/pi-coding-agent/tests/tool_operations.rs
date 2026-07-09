@@ -1,5 +1,6 @@
 use futures::future::{BoxFuture, FutureExt};
 use pi_ai::types::ContentBlock;
+use pi_coding_agent::tools::ShellCapability;
 use pi_coding_agent::tools::bash::{BashOperations, BashOptions};
 use pi_coding_agent::tools::bash::{bash_execute_with_operations, bash_tool_with_operations};
 use pi_coding_agent::tools::edit::{EditOperations, edit_execute_with_operations};
@@ -234,7 +235,8 @@ async fn bash_can_use_injected_operations_and_stream_updates() {
 async fn bash_tool_accepts_injected_operations() {
     let cwd = tempdir().unwrap();
     let ops = Arc::new(FakeBashOps::default());
-    let tool = bash_tool_with_operations(cwd.path().to_path_buf(), ops.clone());
+    let tool =
+        bash_tool_with_operations(ShellCapability::new(cwd.path().to_path_buf()), ops.clone());
 
     let output = (tool.execute)(serde_json::json!({"command": "from tool"}), None)
         .await

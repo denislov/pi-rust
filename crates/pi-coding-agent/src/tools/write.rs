@@ -1,9 +1,10 @@
+use crate::coding_session::FilesystemCapability;
 use crate::tools::file_mutation_queue::with_file_mutation_queue;
 use crate::tools::path::resolve_to_cwd;
 use futures::future::{BoxFuture, FutureExt};
 use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 const DESCRIPTION: &str = "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.";
@@ -86,16 +87,21 @@ pub async fn write_execute_with_operations(
     .await
 }
 
-pub fn write_tool(cwd: PathBuf) -> AgentTool {
-    write_tool_with_operations(cwd, Arc::new(RealWriteOperations))
+pub fn write_tool(filesystem: FilesystemCapability) -> AgentTool {
+    write_tool_with_operations(filesystem, Arc::new(RealWriteOperations))
 }
 
-pub fn write_tool_with_operations(cwd: PathBuf, ops: Arc<dyn WriteOperations>) -> AgentTool {
+pub fn write_tool_with_operations(
+    filesystem: FilesystemCapability,
+    ops: Arc<dyn WriteOperations>,
+) -> AgentTool {
     let execute: ToolFn = Arc::new(move |args, _on_update| {
-        let cwd = cwd.clone();
+        let filesystem = filesystem.clone();
         let ops = ops.clone();
         Box::pin(async move {
-            write_execute_with_operations(&cwd, args, ops)
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            filesystem.resolve_path(path).map_err(|e| e.to_string())?;
+            write_execute_with_operations(&filesystem.cwd, args, ops)
                 .await
                 .map(AgentToolOutput::new)
         })

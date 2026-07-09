@@ -73,6 +73,7 @@ pub(crate) use capability_snapshot::PluginCapabilitySet;
 use capability_snapshot::{
     ActorId, CapabilitySnapshotInput, CapabilitySnapshotService, OperationCapabilitySnapshot,
 };
+pub use capability_snapshot::{FilesystemCapability, ShellCapability};
 pub(crate) use delegation::{
     DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
     PendingDelegationConfirmationState, delegation_lineage_for_request, pending_state_from_replay,

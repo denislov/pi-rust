@@ -1,8 +1,9 @@
+use crate::coding_session::FilesystemCapability;
 use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
 use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 const DESCRIPTION: &str = "List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to 500 entries or 50KB (whichever is hit first).";
@@ -112,10 +113,16 @@ pub async fn ls_execute(cwd: &Path, args: serde_json::Value) -> Result<Vec<Conte
     Ok(text_block(output))
 }
 
-pub fn ls_tool(cwd: PathBuf) -> AgentTool {
+pub fn ls_tool(filesystem: FilesystemCapability) -> AgentTool {
     let execute: ToolFn = Arc::new(move |args, _on_update| {
-        let cwd = cwd.clone();
-        Box::pin(async move { ls_execute(&cwd, args).await.map(AgentToolOutput::new) })
+        let filesystem = filesystem.clone();
+        Box::pin(async move {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            filesystem.resolve_path(path).map_err(|e| e.to_string())?;
+            ls_execute(&filesystem.cwd, args)
+                .await
+                .map(AgentToolOutput::new)
+        })
     });
     AgentTool {
         name: "ls".into(),

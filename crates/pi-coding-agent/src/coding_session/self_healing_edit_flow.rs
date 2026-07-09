@@ -21,6 +21,7 @@ use tokio::process::Command;
 use crate::tools::edit::{EditOperations, RealEditOperations, edit_execute_with_operations};
 
 use super::CodingSessionError;
+use super::FilesystemCapability;
 use super::prompt::{PromptTurnOptions, RuntimeSnapshot};
 use super::runtime_service::stream_model_for_scoped_runtime;
 
@@ -270,7 +271,7 @@ impl SelfHealingEditRepairStrategy for ModelSelfHealingEditRepairStrategy {
 
 #[derive(Clone)]
 pub(crate) struct SelfHealingEditOptions {
-    cwd: PathBuf,
+    filesystem: FilesystemCapability,
     path: String,
     replacements: Vec<SelfHealingEditReplacement>,
     operations: Arc<dyn EditOperations>,
@@ -288,7 +289,7 @@ impl SelfHealingEditOptions {
         replacements: Vec<SelfHealingEditReplacement>,
     ) -> Self {
         Self {
-            cwd: cwd.into(),
+            filesystem: FilesystemCapability { cwd: cwd.into() },
             path: path.into(),
             replacements,
             operations: Arc::new(RealEditOperations),
@@ -448,9 +449,10 @@ impl SelfHealingEditContext {
     }
 
     async fn read_target(&mut self) -> Result<(), CodingSessionError> {
+        let resolved = self.options.filesystem.resolve_path(&self.options.path)?;
         self.options
             .operations
-            .read_file(&self.options.cwd.join(&self.options.path))
+            .read_file(&resolved)
             .await
             .map_err(session_error)?;
         self.target_was_read = true;
@@ -495,10 +497,13 @@ impl SelfHealingEditContext {
                 .map(SelfHealingEditReplacement::to_json)
                 .collect::<Vec<_>>(),
         });
-        let output =
-            edit_execute_with_operations(&self.options.cwd, args, self.options.operations.clone())
-                .await
-                .map_err(session_error)?;
+        let output = edit_execute_with_operations(
+            &self.options.filesystem.cwd,
+            args,
+            self.options.operations.clone(),
+        )
+        .await
+        .map_err(session_error)?;
         self.apply_output = Some(output);
         Ok(())
     }
@@ -517,7 +522,7 @@ impl SelfHealingEditContext {
             session_error("self-healing edit check command requires a check runner")
         })?;
         let output = runner
-            .run_check(&self.options.cwd, command)
+            .run_check(&self.options.filesystem.cwd, command)
             .await
             .map_err(|error| {
                 session_error(format!("self-healing edit check failed to run: {error}"))

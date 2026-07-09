@@ -1,6 +1,6 @@
 use crate::coding_session::{
-    CodingSessionError, SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOptions,
-    SelfHealingEditOutcome, SelfHealingEditReplacement,
+    CodingSessionError, FilesystemCapability, SelfHealingEditContext, SelfHealingEditFlow,
+    SelfHealingEditOptions, SelfHealingEditOutcome, SelfHealingEditReplacement,
 };
 use crate::tools::edit_diff::{
     TextReplacement, apply_replacements_preserving_unchanged_lines, generate_diff_string,
@@ -11,7 +11,7 @@ use crate::tools::path::resolve_to_cwd;
 use futures::future::{BoxFuture, FutureExt};
 use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::types::ContentBlock;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
@@ -432,15 +432,22 @@ pub async fn edit_execute_with_operations(
     .await
 }
 
-pub fn edit_tool(cwd: PathBuf) -> AgentTool {
-    edit_tool_with_operations(cwd, Arc::new(RealEditOperations))
+pub fn edit_tool(filesystem: FilesystemCapability) -> AgentTool {
+    edit_tool_with_operations(filesystem, Arc::new(RealEditOperations))
 }
 
-pub fn edit_tool_with_operations(cwd: PathBuf, ops: Arc<dyn EditOperations>) -> AgentTool {
+pub fn edit_tool_with_operations(
+    filesystem: FilesystemCapability,
+    ops: Arc<dyn EditOperations>,
+) -> AgentTool {
     let execute: ToolFn = Arc::new(move |args, _on_update| {
-        let cwd = cwd.clone();
+        let filesystem = filesystem.clone();
         let ops = ops.clone();
-        Box::pin(async move { edit_tool_execute_with_operations(&cwd, args, ops).await })
+        Box::pin(async move {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            filesystem.resolve_path(path).map_err(|e| e.to_string())?;
+            edit_tool_execute_with_operations(&filesystem.cwd, args, ops).await
+        })
     });
     AgentTool {
         name: "edit".into(),
