@@ -4,7 +4,7 @@
 
 **Goal:** Make the operation runtime tolerate slow clients, incompatible protocol clients, process restarts, partial commits, and retried client commands without unbounded memory growth or ambiguous recovery state.
 
-**Architecture:** Keep `CodingAgentSession` as the runtime owner and build Stage 7 on the Stage 6 snapshot/client boundary. `EventService` owns product-event retention and lag semantics; RPC negotiates protocol families before relying on optional versioned fields; `SessionService` owns startup recovery marker writes; adapters recover by requesting a fresh `UiSnapshot` plus retained `ProductEvent`s instead of reaching into runtime services.
+**Architecture:** Keep `CodingAgentSession` as the runtime owner and build Stage 7 on the Stage 6 snapshot/client boundary. `EventService` owns product-event retention and lag semantics; RPC supports an explicit `hello` protocol-family negotiation path while preserving legacy clients that do not send `hello`; `SessionService` owns startup recovery marker writes; adapters recover by requesting a fresh `UiSnapshot` plus retained `ProductEvent`s instead of reaching into runtime services. Negotiated protocol state is recorded per RPC process and projected through `get_state`, but Stage 7 does not make `hello` mandatory because that would break existing RPC clients.
 
 **Tech Stack:** Rust 2024, `pi-coding-agent`, Tokio broadcast and bounded mpsc channels, Rust-native `SessionEvent` log, existing `ProductEvent`, `UiSnapshot`, `ClientConnection`, `RpcSessionState`, `CodingProtocolEventAdapter`, deterministic offline tests.
 
@@ -19,7 +19,7 @@ Stage 6 completed the snapshot/reconnect/client boundary:
 - `crates/pi-coding-agent/src/coding_session/client_projection.rs` defines `UiSnapshot`, `UiSnapshotCursor`, `ClientConnection`, client drafts, and submitted operations.
 - `crates/pi-coding-agent/src/coding_session/mod.rs` exposes crate-internal `ui_snapshot()`, `connect_client()`, `product_event_replay_handle()`, and `product_events_after()` helpers.
 - `crates/pi-coding-agent/src/protocol/rpc/state.rs` stores client identity, client drafts, submitted operation state, and running prompt replay watermarks.
-- `crates/pi-coding-agent/src/protocol/rpc/prompt.rs` still forwards running prompt product events through an unbounded mpsc channel and relies on Stage 6 replay logic for reconnect overlap.
+- `crates/pi-coding-agent/src/protocol/rpc/prompt.rs` still forwards every running `CodingRunningPrompt` product-event stream through unbounded mpsc channels (`prompt`, `invoke_agent`, `invoke_team`, and delegation approval) and relies on Stage 6 replay logic for reconnect overlap.
 - `crates/pi-coding-agent/src/protocol/types.rs` exposes `RpcCommand` and `RpcSessionState` with Stage 6 `clientId`, `snapshotSequence`, and `capabilityGeneration` fields, but no explicit protocol-family negotiation.
 - `crates/pi-coding-agent/src/coding_session/session_log/replay.rs` can classify operations as `Committed`, `Failed`, `Aborted`, `Recovered`, or `InDoubt`.
 - `crates/pi-coding-agent/src/coding_session/session_service.rs` opens sessions and exposes recovery summaries, but opening a session does not yet write recovery markers for incomplete operations.
@@ -37,7 +37,7 @@ Stage 7 must not remove broad public methods or compatibility event APIs. Stage 
 - Modify: `crates/pi-coding-agent/src/coding_session/event_service.rs`
   - Add explicit backpressure status, lag-to-snapshot recovery errors, and retained-window status tests.
 - Modify: `crates/pi-coding-agent/src/coding_session/client_projection.rs`
-  - Add `UiSnapshotVersion` to `UiSnapshot` and cursor rebuild policy tests.
+  - Add the shared `ProtocolFamilyVersion` snapshot version to `UiSnapshot` and cursor rebuild policy tests.
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
   - Populate snapshot version and expose recovery marker application through the session owner where needed.
 - Modify: `crates/pi-coding-agent/src/coding_session/session_service.rs`
@@ -55,7 +55,7 @@ Stage 7 must not remove broad public methods or compatibility event APIs. Stage 
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/commands.rs`
   - Handle `hello`, unsupported protocol versions, and idempotency-aware root command retries.
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/prompt.rs`
-  - Replace unbounded running prompt product-event forwarding with the bounded queue helper.
+  - Replace all running `CodingRunningPrompt` product-event forwarding channels with the bounded queue helper, including prompt, invoke-agent, invoke-team, delegation approval, completion drains, and prompt-module test fixtures.
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/state.rs`
   - Store negotiated protocol state, bounded idempotency records, and bounded event queue types.
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/stats.rs`
@@ -440,6 +440,14 @@ impl RpcProductEventQueue {
             .send(RpcQueuedProductEvent::Overflow { skipped })
             .await
     }
+
+    #[cfg(test)]
+    pub(super) fn try_send_event(
+        &self,
+        event: ProductEvent,
+    ) -> Result<(), mpsc::error::TrySendError<RpcQueuedProductEvent>> {
+        self.sender.try_send(RpcQueuedProductEvent::Event(event))
+    }
 }
 ```
 
@@ -449,7 +457,7 @@ Declare the module in `protocol/rpc.rs`:
 mod event_queue;
 ```
 
-- [ ] **Step 4: Replace running prompt unbounded event forwarding**
+- [ ] **Step 4: Replace every running RPC product-event forwarding channel**
 
 In `state.rs`, import the queue item:
 
@@ -469,7 +477,16 @@ In `prompt.rs`, import the queue:
 use crate::protocol::rpc::event_queue::{RpcProductEventQueue, RpcQueuedProductEvent};
 ```
 
-Replace:
+Replace every production `mpsc::unbounded_channel()` that feeds `CodingRunningPrompt.events` with the bounded queue. This includes the event channel setup in:
+
+```text
+handle_invoke_agent()
+handle_invoke_team()
+handle_approve_delegation()
+start_coding_session_prompt()
+```
+
+For each block, replace:
 
 ```rust
 let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -481,13 +498,13 @@ with:
 let (event_tx, event_rx) = RpcProductEventQueue::new();
 ```
 
-Before the prompt select loop, add:
+Before each spawned operation's select loop, add:
 
 ```rust
 let mut product_event_forwarding_open = true;
 ```
 
-Replace the live event forwarding branch with:
+Replace each live event forwarding branch with:
 
 ```rust
 event = receiver.recv(), if product_event_forwarding_open => {
@@ -508,7 +525,7 @@ event = receiver.recv(), if product_event_forwarding_open => {
 }
 ```
 
-Replace the post-prompt drain with:
+Replace each post-operation drain with:
 
 ```rust
 while let Ok(Some(event)) = receiver.try_recv() {
@@ -517,6 +534,16 @@ while let Ok(Some(event)) = receiver.try_recv() {
     }
 }
 ```
+
+Update the prompt-module test fixtures that seed `CodingRunningPrompt.events` so they use `RpcProductEventQueue::for_tests(...)` and `try_send_event(...)` instead of `mpsc::unbounded_channel()`. For example, replace a seeded fixture with:
+
+```rust
+let (event_tx, event_rx) = RpcProductEventQueue::for_tests(4);
+event_tx.try_send_event(pending).unwrap();
+drop(event_tx);
+```
+
+The source guard in Task 8 scans the whole `prompt.rs`, so no `mpsc::unbounded_channel` call should remain in that file after this task.
 
 - [ ] **Step 5: Emit explicit RPC overflow recovery responses**
 
@@ -563,6 +590,44 @@ RpcLoopEvent::CodingEvent(Some(RpcQueuedProductEvent::Event(event))) => {
 
 Keep the `None` arm that sets `events_closed = true`.
 
+In `finish_coding_running_prompt()` in `protocol/rpc/prompt.rs`, update the completion drain to match the queued item type instead of treating every received item as a `ProductEvent`:
+
+```rust
+while let Ok(item) = running.events.try_recv() {
+    match item {
+        RpcQueuedProductEvent::Event(event) => {
+            let pushed = push_live_product_event(&mut running, &event);
+            if pushed.accepted {
+                self.observe_product_event_submission_for_kind(&event, Some(operation_kind));
+            }
+            for protocol_event in pushed.protocol_events {
+                write_json_line(writer, &protocol_event).await?;
+            }
+        }
+        RpcQueuedProductEvent::Overflow { skipped } => {
+            write_rpc_response(
+                writer,
+                RpcResponse::error_with_data(
+                    None,
+                    "event_stream",
+                    format!(
+                        "event stream lagged by {skipped} events; client must request a fresh UI snapshot"
+                    ),
+                    serde_json::json!({
+                        "code": "event_stream_lag",
+                        "skipped": skipped,
+                        "recovery": "fresh_snapshot"
+                    }),
+                ),
+            )
+            .await?;
+            running.events_closed = true;
+            break;
+        }
+    }
+}
+```
+
 - [ ] **Step 6: Run GREEN tests**
 
 Run:
@@ -590,6 +655,8 @@ git commit -m "feat: bound RPC product event forwarding"
 - Modify: `crates/pi-coding-agent/src/protocol/types.rs`
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/wire.rs`
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/commands.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/state.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/stats.rs`
 - Modify: `crates/pi-coding-agent/tests/rpc_mode.rs`
 
 - [ ] **Step 1: Write failing RPC negotiation tests**
@@ -648,6 +715,32 @@ async fn rpc_hello_rejects_unsupported_major_protocol_version() {
     assert_eq!(lines[0]["data"]["code"], "unsupported_protocol_version");
     assert_eq!(lines[0]["data"]["supported"]["major"], 1);
 }
+
+#[tokio::test]
+async fn rpc_hello_records_negotiated_protocol_state() {
+    let input = b"{\"id\":\"h1\",\"type\":\"hello\",\"protocol\":{\"family\":\"rpc\",\"major\":1,\"minor\":0}}\n{\"id\":\"s1\",\"type\":\"get_state\"}\n";
+    let mut output = Vec::new();
+
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-hello-state")),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["command"], "hello");
+    assert_eq!(lines[0]["success"], true);
+    assert_eq!(lines[1]["command"], "get_state");
+    assert_eq!(lines[1]["data"]["negotiatedProtocol"]["rpc"]["family"], "rpc");
+    assert_eq!(lines[1]["data"]["negotiatedProtocol"]["rpc"]["major"], 1);
+}
 ```
 
 - [ ] **Step 2: Run RED tests**
@@ -657,9 +750,10 @@ Run:
 ```bash
 cargo test -p pi-coding-agent --test rpc_mode rpc_hello_negotiates_supported_protocol_families
 cargo test -p pi-coding-agent --test rpc_mode rpc_hello_rejects_unsupported_major_protocol_version
+cargo test -p pi-coding-agent --test rpc_mode rpc_hello_records_negotiated_protocol_state
 ```
 
-Expected: fail because `hello` is unsupported.
+Expected: fail because `hello` is unsupported and `RpcSessionState.negotiatedProtocol` does not exist.
 
 - [ ] **Step 3: Add protocol version types**
 
@@ -752,11 +846,60 @@ pub struct RpcHelloResponse {
     #[serde(rename = "uiSnapshot")]
     pub ui_snapshot: ProtocolFamilyVersion,
 }
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcNegotiatedProtocolState {
+    pub rpc: Option<ProtocolFamilyVersion>,
+    #[serde(rename = "productEvents")]
+    pub product_events: ProtocolFamilyVersion,
+    #[serde(rename = "uiSnapshot")]
+    pub ui_snapshot: ProtocolFamilyVersion,
+}
 ```
 
 Add `"hello"` to `is_supported_m5_command()` in `protocol/rpc/wire.rs`.
 
-- [ ] **Step 5: Handle negotiation in RPC commands**
+- [ ] **Step 5: Store and project negotiated protocol state**
+
+In `state.rs`, import the version constants and the RPC wire state:
+
+```rust
+use crate::protocol::types::RpcNegotiatedProtocolState;
+use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION};
+```
+
+Add this field to `RpcState`:
+
+```rust
+pub(super) negotiated_protocol: RpcNegotiatedProtocolState,
+```
+
+Initialize it in `RpcState::new()`:
+
+```rust
+negotiated_protocol: RpcNegotiatedProtocolState {
+    rpc: None,
+    product_events: PRODUCT_EVENT_PROTOCOL_VERSION,
+    ui_snapshot: UI_SNAPSHOT_PROTOCOL_VERSION,
+},
+```
+
+In `types.rs`, add this field to `RpcSessionState` after `capability_generation`:
+
+```rust
+#[serde(rename = "negotiatedProtocol")]
+pub negotiated_protocol: RpcNegotiatedProtocolState,
+```
+
+In `protocol/rpc/stats.rs`, project the field from `RpcState`:
+
+```rust
+negotiated_protocol: self.negotiated_protocol.clone(),
+```
+
+This state is optional for Stage 7 compatibility. Legacy clients that never send `hello` remain accepted and see `"rpc": null`; clients that do send `hello` get a stable state echo through `get_state`.
+
+- [ ] **Step 6: Handle negotiation in RPC commands**
 
 In `commands.rs`, import:
 
@@ -798,6 +941,7 @@ RpcCommand::Hello { id, protocol } => {
         .await?;
         return Ok(());
     }
+    self.negotiated_protocol.rpc = Some(RPC_PROTOCOL_VERSION);
     write_rpc_response(
         writer,
         RpcResponse::success(
@@ -817,22 +961,23 @@ RpcCommand::Hello { id, protocol } => {
 }
 ```
 
-- [ ] **Step 6: Run GREEN tests**
+- [ ] **Step 7: Run GREEN tests**
 
 Run:
 
 ```bash
 cargo test -p pi-coding-agent --test rpc_mode rpc_hello_negotiates_supported_protocol_families
 cargo test -p pi-coding-agent --test rpc_mode rpc_hello_rejects_unsupported_major_protocol_version
+cargo test -p pi-coding-agent --test rpc_mode rpc_hello_records_negotiated_protocol_state
 cargo test -p pi-coding-agent --test rpc_mode unsupported
 ```
 
-Expected: hello negotiation passes and existing unsupported-command behavior remains unchanged.
+Expected: hello negotiation passes, `get_state` reports negotiated state after hello, legacy unsupported-command behavior remains unchanged, and non-hello clients remain compatible.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/protocol/mod.rs crates/pi-coding-agent/src/protocol/version.rs crates/pi-coding-agent/src/protocol/types.rs crates/pi-coding-agent/src/protocol/rpc/wire.rs crates/pi-coding-agent/src/protocol/rpc/commands.rs crates/pi-coding-agent/tests/rpc_mode.rs
+git add crates/pi-coding-agent/src/protocol/mod.rs crates/pi-coding-agent/src/protocol/version.rs crates/pi-coding-agent/src/protocol/types.rs crates/pi-coding-agent/src/protocol/rpc/wire.rs crates/pi-coding-agent/src/protocol/rpc/commands.rs crates/pi-coding-agent/src/protocol/rpc/state.rs crates/pi-coding-agent/src/protocol/rpc/stats.rs crates/pi-coding-agent/tests/rpc_mode.rs
 git commit -m "feat: negotiate RPC protocol families"
 ```
 
@@ -846,6 +991,12 @@ git commit -m "feat: negotiate RPC protocol families"
 
 - [ ] **Step 1: Write failing snapshot version tests**
 
+Add this import to the `#[cfg(test)] mod tests` in `client_projection.rs`:
+
+```rust
+use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
+```
+
 Add this test to `client_projection.rs`:
 
 ```rust
@@ -856,7 +1007,7 @@ fn ui_snapshot_carries_projection_version() {
             last_event_sequence: ProductEventSequence::new(7),
             capability_generation: CapabilityGeneration::new(3),
         },
-        UiSnapshotVersion::current(),
+        UI_SNAPSHOT_PROTOCOL_VERSION,
         CodingAgentSessionView {
             session_id: "sess_version".into(),
             default_agent_profile_id: ProfileId::from("default"),
@@ -869,7 +1020,7 @@ fn ui_snapshot_carries_projection_version() {
     assert_eq!(snapshot.version.family, "ui_snapshot");
     assert_eq!(snapshot.version.major, 1);
     assert_eq!(snapshot.version.minor, 0);
-    assert!(snapshot.version.is_compatible_with(snapshot.version));
+    assert_eq!(snapshot.version, UI_SNAPSHOT_PROTOCOL_VERSION);
 }
 ```
 
@@ -890,77 +1041,43 @@ cargo test -p pi-coding-agent ui_snapshot_carries_projection_version --lib
 cargo test -p pi-coding-agent rpc_state --lib
 ```
 
-Expected: fail because `UiSnapshotVersion` and `RpcSessionState.snapshotVersion` do not exist.
+Expected: fail because `UiSnapshot.version`, `UI_SNAPSHOT_PROTOCOL_VERSION` imports in `client_projection.rs`, and `RpcSessionState.snapshotVersion` do not exist yet.
 
 - [ ] **Step 3: Add snapshot version to the projection model**
 
-In `client_projection.rs`, add:
+In `client_projection.rs`, import the shared protocol-version type and constant from Task 3:
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct UiSnapshotVersion {
-    pub(crate) family: &'static str,
-    pub(crate) major: u32,
-    pub(crate) minor: u32,
-}
-
-impl UiSnapshotVersion {
-    pub(crate) const fn current() -> Self {
-        Self {
-            family: "ui_snapshot",
-            major: 1,
-            minor: 0,
-        }
-    }
-
-    pub(crate) fn is_compatible_with(self, other: Self) -> bool {
-        self.family == other.family && self.major == other.major && other.minor <= self.minor
-    }
-}
+use crate::protocol::version::{ProtocolFamilyVersion, UI_SNAPSHOT_PROTOCOL_VERSION};
 ```
 
 Add the field to `UiSnapshot`:
 
 ```rust
-pub(crate) version: UiSnapshotVersion,
+pub(crate) version: ProtocolFamilyVersion,
 ```
 
-Change `UiSnapshot::new()` to accept `version: UiSnapshotVersion` immediately after `cursor` and store it. Update every existing `UiSnapshot::new()` call in tests and production to pass `UiSnapshotVersion::current()`.
+Change `UiSnapshot::new()` to accept `version: ProtocolFamilyVersion` immediately after `cursor` and store it. Update every existing `UiSnapshot::new()` call in tests and production to pass `UI_SNAPSHOT_PROTOCOL_VERSION`.
 
 In `CodingAgentSession::ui_snapshot()`, pass:
 
 ```rust
-UiSnapshotVersion::current(),
+UI_SNAPSHOT_PROTOCOL_VERSION,
 ```
 
 - [ ] **Step 4: Add snapshot version to RPC state**
-
-In `protocol/types.rs`, add:
-
-```rust
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct RpcProtocolFamilyVersion {
-    pub family: &'static str,
-    pub major: u32,
-    pub minor: u32,
-}
-```
 
 Add this field to `RpcSessionState` after `capability_generation`:
 
 ```rust
 #[serde(rename = "snapshotVersion")]
-pub snapshot_version: RpcProtocolFamilyVersion,
+pub snapshot_version: ProtocolFamilyVersion,
 ```
 
 In `protocol/rpc/stats.rs`, project it from the session snapshot:
 
 ```rust
-snapshot_version: RpcProtocolFamilyVersion {
-    family: snapshot.version.family,
-    major: snapshot.version.major,
-    minor: snapshot.version.minor,
-},
+snapshot_version: snapshot.version,
 ```
 
 - [ ] **Step 5: Run GREEN tests**
@@ -1086,10 +1203,39 @@ Expected: first test fails because open only exposes the in-doubt summary; secon
 
 - [ ] **Step 3: Add startup recovery marker application**
 
+In `session_service.rs`, add a small record for markers written during this open call:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StartupRecoveryMarker {
+    pub(crate) operation_id: String,
+    pub(crate) recovery_id: String,
+    pub(crate) reason: String,
+}
+```
+
+Add a field to `SessionService`:
+
+```rust
+startup_recovery_markers: Vec<StartupRecoveryMarker>,
+```
+
+Add a constructor helper and use it anywhere the file currently builds `Self { store, handle }`:
+
+```rust
+fn from_handle(store: SessionLogStore, handle: SessionHandle) -> Self {
+    Self {
+        store,
+        handle,
+        startup_recovery_markers: Vec::new(),
+    }
+}
+```
+
 In `session_service.rs`, change `open()` to build a mutable service and apply recovery:
 
 ```rust
-let mut service = Self { store, handle };
+let mut service = Self::from_handle(store, handle);
 service.apply_startup_recovery()?;
 Ok(service)
 ```
@@ -1097,7 +1243,7 @@ Ok(service)
 Do the same in `open_or_create()` when `try_open_session_id()` returns an existing handle:
 
 ```rust
-let mut service = Self { store, handle };
+let mut service = Self::from_handle(store, handle);
 service.apply_startup_recovery()?;
 return Ok(service);
 ```
@@ -1116,19 +1262,31 @@ fn apply_startup_recovery(&mut self) -> Result<(), CodingSessionError> {
     let mut ids = SystemIdGenerator;
     let clock = SystemClock;
     let recovered_at = clock.now_rfc3339();
-    let events = in_doubt_operations
+    let reason = "startup recovery marked incomplete operation in-doubt".to_owned();
+    let markers = in_doubt_operations
         .into_iter()
         .map(|operation_id| {
+            let recovery_id = ids.next_operation_id();
+            StartupRecoveryMarker {
+                operation_id,
+                recovery_id,
+                reason: reason.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let events = markers
+        .iter()
+        .map(|marker| {
             SessionEventEnvelope::new(
                 session_id.clone(),
                 ids.next_event_id(),
                 recovered_at.clone(),
                 SessionEventData::OperationRecovered {
-                    reason: "startup recovery marked incomplete operation in-doubt".into(),
-                    recovery_id: ids.next_operation_id(),
+                    reason: marker.reason.clone(),
+                    recovery_id: marker.recovery_id.clone(),
                 },
             )
-            .with_operation_id(operation_id)
+            .with_operation_id(marker.operation_id.clone())
         })
         .collect::<Vec<_>>();
 
@@ -1136,11 +1294,20 @@ fn apply_startup_recovery(&mut self) -> Result<(), CodingSessionError> {
     self.store
         .update_manifest(&self.handle, ManifestPatch::new().updated_at(recovered_at))?;
     self.handle = self.store.open_session_id(&session_id)?;
+    self.startup_recovery_markers.extend(markers);
     Ok(())
 }
 ```
 
-This is idempotent because after the first append, `replay().recovery_summary().in_doubt_operations` no longer includes recovered operations.
+Add this accessor so the session owner can project the markers written by this open call:
+
+```rust
+pub(crate) fn take_startup_recovery_markers(&mut self) -> Vec<StartupRecoveryMarker> {
+    std::mem::take(&mut self.startup_recovery_markers)
+}
+```
+
+This is idempotent because after the first append, `replay().recovery_summary().in_doubt_operations` no longer includes recovered operations. This intentionally makes every `SessionService::open()` path self-healing, including `hydrate()`, `tree_view()`, clone/fork, and export. If a future caller needs a strictly read-only open, add a separate `open_read_only()` path instead of bypassing `apply_startup_recovery()` in adapters.
 
 - [ ] **Step 4: Add replay-focused recovery marker coverage**
 
@@ -1340,7 +1507,26 @@ pub(crate) fn emit_operation_recovered(
 }
 ```
 
-In `CodingAgentSession::from_services()` and the persistent open path, emit recovery product events for newly written startup recovery markers by returning their `(operation_id, recovery_id, reason)` from `SessionService::apply_startup_recovery()` and calling `event_service.emit_operation_recovered(...)` before returning the session.
+In `CodingAgentSession::from_services()`, take the markers recorded by Task 5 before storing the service in the session:
+
+```rust
+let mut session_service = session_service;
+let startup_recovery_markers = session_service.take_startup_recovery_markers();
+```
+
+After constructing the `CodingAgentSession` with its `EventService`, emit one live product event per marker:
+
+```rust
+for marker in startup_recovery_markers {
+    session.event_service.emit_operation_recovered(
+        marker.operation_id,
+        marker.recovery_id,
+        marker.reason,
+    );
+}
+```
+
+These product events are live projection notifications for the current adapter; the durable recovery fact remains the `operation.recovered` session event written by `SessionService`. Do not let RPC or interactive adapters append durable recovery markers directly.
 
 - [ ] **Step 5: Add protocol projection**
 
@@ -1495,7 +1681,6 @@ Add the field to these variants:
 ```rust
 Prompt
 SelfHealingEdit
-Compact
 InvokeAgent
 InvokeTeam
 ApproveDelegation
@@ -1503,7 +1688,7 @@ RejectDelegation
 SetDefaultAgentProfile
 ```
 
-Do not add it to pure query commands in this task.
+Do not add it to pure query commands in this task. Do not add it to `Compact` while the current RPC compact branch only returns "manual compaction is not available in Rust M5"; add a compact idempotency key later with the actual compact operation implementation.
 
 - [ ] **Step 5: Store bounded RPC idempotency records**
 
@@ -1525,6 +1710,12 @@ pub(super) struct RpcIdempotencyRecord {
     pub(super) operation_kind: OperationKind,
     pub(super) completed: bool,
 }
+```
+
+Add the active key to `CodingRunningPrompt` so completion updates only the operation that just finished:
+
+```rust
+pub(super) idempotency_key: Option<OperationIdempotencyKey>,
 ```
 
 Add fields to `RpcState`:
@@ -1552,17 +1743,22 @@ pub(super) fn idempotent_retry_response(
     &self,
     key: Option<&OperationIdempotencyKey>,
     command: &'static str,
-) -> Option<serde_json::Value> {
+) -> Result<Option<serde_json::Value>, CliError> {
     let key = key?;
-    let record = self.idempotency_records.get(key)?;
+    let Some(record) = self.idempotency_records.get(key) else {
+        return Ok(None);
+    };
     if record.command == command {
-        return Some(serde_json::json!({
+        return Ok(Some(serde_json::json!({
             "deduplicated": true,
             "operation": record.operation_kind.as_str(),
             "completed": record.completed
-        }));
+        })));
     }
-    None
+    Err(CliError::SessionFailure(format!(
+        "idempotency key was already used for {}, not {command}",
+        record.command
+    )))
 }
 
 pub(super) fn remember_idempotency_key(
@@ -1592,11 +1788,12 @@ pub(super) fn remember_idempotency_key(
     }
 }
 
-pub(super) fn mark_idempotency_complete(&mut self, operation_kind: OperationKind) {
-    for record in self.idempotency_records.values_mut() {
-        if record.operation_kind == operation_kind {
-            record.completed = true;
-        }
+pub(super) fn mark_idempotency_complete(&mut self, key: Option<&OperationIdempotencyKey>) {
+    let Some(key) = key else {
+        return;
+    };
+    if let Some(record) = self.idempotency_records.get_mut(key) {
+        record.completed = true;
     }
 }
 ```
@@ -1615,25 +1812,43 @@ At the beginning of non-image prompt handling:
 
 ```rust
 let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "prompt") {
+if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "prompt")? {
     write_rpc_response(writer, RpcResponse::success(id, "prompt", Some(data))).await?;
     return Ok(());
 }
 ```
 
-Immediately before starting a new root prompt operation, remember the key:
+Clone the key before moving it into `remember_idempotency_key()` so the running state can keep it:
 
 ```rust
+let running_idempotency_key = idempotency_key.clone();
 self.remember_idempotency_key(idempotency_key, "prompt", OperationKind::Prompt);
 ```
 
-In `finish_coding_running_prompt()`, call:
+When constructing `CodingRunningPrompt`, store:
 
 ```rust
-self.mark_idempotency_complete(OperationKind::Prompt);
+idempotency_key: running_idempotency_key,
 ```
 
-Repeat the same parse, retry response, remember, and complete pattern for `invoke_agent`, `invoke_team`, `compact`, `self_healing_edit`, `approve_delegation`, `reject_delegation`, and `set_default_agent_profile`. Use each command's actual `OperationKind`.
+In `finish_coding_running_prompt()`, after taking `running` and before returning, call:
+
+```rust
+self.mark_idempotency_complete(running.idempotency_key.as_ref());
+```
+
+Apply the same key parsing and retry-response logic to the remaining mutating commands, but use the command-specific completion point:
+
+```text
+invoke_agent: remember before spawning, store key in CodingRunningPrompt, complete in finish_coding_running_prompt().
+invoke_team: remember before spawning, store key in CodingRunningPrompt, complete in finish_coding_running_prompt().
+approve_delegation: determine OperationKind from the pending target, remember before spawning, store key in CodingRunningPrompt, complete in finish_coding_running_prompt().
+self_healing_edit: remember after request validation and before calling self_healing_edit_with_options(); mark the same key complete after writing the success or structured error response.
+reject_delegation: remember after the target pending confirmation is found; mark the same key complete after the response is written.
+set_default_agent_profile: remember after ProfileId validation; mark the same key complete after the response is written.
+```
+
+Do not store idempotency records for validation failures before an operation has been accepted. A retry with the same key after fixing the invalid input should be treated as a fresh accepted operation.
 
 - [ ] **Step 7: Add RPC retry coverage**
 
@@ -1747,6 +1962,10 @@ fn rpc_running_product_events_do_not_use_unbounded_channels() {
         prompt_rs.contains("RpcProductEventQueue::new()"),
         "RPC prompt forwarding should route through RpcProductEventQueue"
     );
+    assert!(
+        prompt_rs.contains("RpcQueuedProductEvent::Overflow"),
+        "RPC completion drains must handle queued overflow recovery items"
+    );
 }
 
 #[test]
@@ -1771,7 +1990,7 @@ Add these tests to `event_boundary_guards.rs`:
 
 ```rust
 #[test]
-fn rpc_protocol_requires_explicit_version_negotiation() {
+fn rpc_protocol_exposes_optional_version_negotiation_state() {
     let types_rs = std::fs::read_to_string(
         workspace_path("crates/pi-coding-agent/src/protocol/types.rs"),
     )
@@ -1780,9 +1999,19 @@ fn rpc_protocol_requires_explicit_version_negotiation() {
         workspace_path("crates/pi-coding-agent/src/protocol/rpc/commands.rs"),
     )
     .expect("read rpc commands");
+    let state_rs = std::fs::read_to_string(
+        workspace_path("crates/pi-coding-agent/src/protocol/rpc/state.rs"),
+    )
+    .expect("read rpc state");
+    let stats_rs = std::fs::read_to_string(
+        workspace_path("crates/pi-coding-agent/src/protocol/rpc/stats.rs"),
+    )
+    .expect("read rpc stats");
 
     assert!(types_rs.contains("Hello {"));
     assert!(commands_rs.contains("RPC_PROTOCOL_VERSION.is_compatible_with"));
+    assert!(state_rs.contains("negotiated_protocol"));
+    assert!(stats_rs.contains("negotiated_protocol"));
 }
 
 #[test]
@@ -1798,6 +2027,7 @@ fn startup_recovery_stays_session_service_owned() {
     ];
 
     assert!(session_service_rs.contains("apply_startup_recovery"));
+    assert!(session_service_rs.contains("take_startup_recovery_markers"));
     for source in rpc_sources {
         let text = std::fs::read_to_string(&source).expect("read adapter source");
         assert!(
@@ -1816,7 +2046,7 @@ Run:
 ```bash
 cargo test -p pi-coding-agent --test product_runtime_boundary_guards rpc_running_product_events_do_not_use_unbounded_channels
 cargo test -p pi-coding-agent --test product_runtime_boundary_guards event_receiver_lag_maps_to_snapshot_recovery_error
-cargo test -p pi-coding-agent --test event_boundary_guards rpc_protocol_requires_explicit_version_negotiation
+cargo test -p pi-coding-agent --test event_boundary_guards rpc_protocol_exposes_optional_version_negotiation_state
 cargo test -p pi-coding-agent --test event_boundary_guards startup_recovery_stays_session_service_owned
 ```
 
@@ -1829,7 +2059,7 @@ If a guard fails for a false positive, update the searched file list or searched
 ```text
 RPC running product-event forwarding cannot use unbounded mpsc channels.
 Broadcast lag must map to event_stream_lag/fresh snapshot recovery.
-RPC protocol compatibility must be explicit through hello/version negotiation.
+RPC protocol compatibility metadata is exposed through optional hello/version negotiation.
 Startup recovery marker writes stay owned by SessionService.
 Adapters can project recovery events but cannot write durable recovery markers.
 ```
@@ -1841,7 +2071,7 @@ Run:
 ```bash
 cargo test -p pi-coding-agent --test product_runtime_boundary_guards rpc_running_product_events_do_not_use_unbounded_channels
 cargo test -p pi-coding-agent --test product_runtime_boundary_guards event_receiver_lag_maps_to_snapshot_recovery_error
-cargo test -p pi-coding-agent --test event_boundary_guards rpc_protocol_requires_explicit_version_negotiation
+cargo test -p pi-coding-agent --test event_boundary_guards rpc_protocol_exposes_optional_version_negotiation_state
 cargo test -p pi-coding-agent --test event_boundary_guards startup_recovery_stays_session_service_owned
 ```
 
@@ -1871,6 +2101,7 @@ cargo test -p pi-coding-agent product_event_receiver_lag_reports_snapshot_recove
 cargo test -p pi-coding-agent rpc_product_event_queue --lib
 cargo test -p pi-coding-agent --test rpc_mode rpc_hello_negotiates_supported_protocol_families
 cargo test -p pi-coding-agent --test rpc_mode rpc_hello_rejects_unsupported_major_protocol_version
+cargo test -p pi-coding-agent --test rpc_mode rpc_hello_records_negotiated_protocol_state
 cargo test -p pi-coding-agent ui_snapshot_carries_projection_version --lib
 cargo test -p pi-coding-agent rpc_state --lib
 cargo test -p pi-coding-agent open_marks_in_doubt_operations_recovered --lib
@@ -1901,6 +2132,7 @@ After the commands pass, mark these checkboxes:
 - [x] `cargo test -p pi-coding-agent rpc_product_event_queue --lib`
 - [x] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_negotiates_supported_protocol_families`
 - [x] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_rejects_unsupported_major_protocol_version`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_records_negotiated_protocol_state`
 - [x] `cargo test -p pi-coding-agent ui_snapshot_carries_projection_version --lib`
 - [x] `cargo test -p pi-coding-agent rpc_state --lib`
 - [x] `cargo test -p pi-coding-agent open_marks_in_doubt_operations_recovered --lib`
@@ -1923,13 +2155,13 @@ After the commands pass, mark these checkboxes:
 Update the active operation-runtime item in `docs/TODO.md` so the Stage 7 portion says:
 
 ```markdown
-Stage 7 backpressure/versioning/recovery hardening is complete: product-event publication has explicit bounded retention and lag recovery semantics, RPC running event forwarding is bounded, clients negotiate RPC/product-event/UI-snapshot protocol families, UI snapshots carry projection versions, startup recovery writes durable recovered markers for in-doubt operations, recovery events project through RPC/interactive adapters, and RPC root operations accept structured idempotency keys for retry deduplication.
+Stage 7 backpressure/versioning/recovery hardening is complete: product-event publication has explicit bounded retention and lag recovery semantics, RPC running event forwarding is bounded, clients can negotiate and observe RPC/product-event/UI-snapshot protocol families through optional `hello`, UI snapshots carry projection versions, startup recovery writes durable recovered markers for in-doubt operations, recovery events project through RPC/interactive adapters, and RPC root operations accept structured idempotency keys for retry deduplication.
 ```
 
 Add a progress log entry:
 
 ```markdown
-- 2026-07-09: Stage 7 backpressure/versioning/recovery hardening completed. Product-event lag now instructs clients to request a fresh `UiSnapshot`, RPC forwarding no longer uses an unbounded product-event queue, protocol families are negotiated through `hello`, UI snapshots carry a versioned rebuild contract, session open applies durable recovery markers for in-doubt operations, recovery projects through product events, and retried RPC root operations can use idempotency keys.
+- 2026-07-09: Stage 7 backpressure/versioning/recovery hardening completed. Product-event lag now instructs clients to request a fresh `UiSnapshot`, RPC forwarding no longer uses an unbounded product-event queue, protocol families can be negotiated and observed through optional `hello`, UI snapshots carry a versioned rebuild contract, session open applies durable recovery markers for in-doubt operations, recovery projects through product events, and retried RPC root operations can use idempotency keys.
 ```
 
 - [ ] **Step 4: Commit closure documentation**
@@ -1947,6 +2179,7 @@ git commit -m "docs: close runtime hardening stage"
 - [ ] `cargo test -p pi-coding-agent rpc_product_event_queue --lib`
 - [ ] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_negotiates_supported_protocol_families`
 - [ ] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_rejects_unsupported_major_protocol_version`
+- [ ] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_records_negotiated_protocol_state`
 - [ ] `cargo test -p pi-coding-agent ui_snapshot_carries_projection_version --lib`
 - [ ] `cargo test -p pi-coding-agent rpc_state --lib`
 - [ ] `cargo test -p pi-coding-agent open_marks_in_doubt_operations_recovered --lib`
@@ -1981,5 +2214,6 @@ git commit -m "docs: close runtime hardening stage"
 
 - Keep Stage 7 focused on production tolerance. Do not narrow public facade methods or delete compatibility APIs here; Stage 8 owns that work.
 - Keep recovery marker writes in `SessionService`. Adapters project recovery product events but never append durable recovery markers.
+- Keep `hello` negotiation optional in Stage 7. Supported clients can discover and record protocol-family compatibility, but existing clients that never send `hello` must continue to work unless a future public protocol version explicitly makes negotiation mandatory.
 - Keep lag recovery client-driven: after `event_stream_lag` or `event_stream_gap`, the client requests a fresh `UiSnapshot` and then resumes from retained events if available.
 - Keep idempotency bounded in memory for this stage. Durable cross-process idempotency can be added later only if a specific embedding client needs restart-stable retry records.
