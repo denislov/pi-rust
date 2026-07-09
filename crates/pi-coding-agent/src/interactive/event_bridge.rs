@@ -1,4 +1,6 @@
-use crate::coding_session::{CodingAgentEvent, ProductEvent, ProfileKind};
+use crate::coding_session::{
+    CodingAgentEvent, ProductEvent, ProductEventSequence, ProfileKind, UiSnapshot,
+};
 use pi_ai::types::Usage;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +59,59 @@ pub enum UiEvent {
     },
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct UiProjection {
+    bridge: CodingEventBridge,
+    last_sequence: ProductEventSequence,
+    pending: Vec<UiEvent>,
+}
+
+impl Default for UiProjection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UiProjection {
+    pub(crate) fn new() -> Self {
+        Self {
+            bridge: CodingEventBridge::new(),
+            last_sequence: ProductEventSequence::default(),
+            pending: Vec::new(),
+        }
+    }
+
+    pub(crate) fn from_snapshot(snapshot: UiSnapshot) -> Self {
+        Self {
+            bridge: CodingEventBridge::new(),
+            last_sequence: snapshot.cursor.last_event_sequence,
+            pending: snapshot_hydration_events(&snapshot),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn last_sequence(&self) -> ProductEventSequence {
+        self.last_sequence
+    }
+
+    pub(crate) fn apply_product_event(&mut self, event: &ProductEvent) {
+        if event.sequence() <= self.last_sequence {
+            return;
+        }
+        self.last_sequence = event.sequence();
+        self.pending.extend(self.bridge.push_product_event(event));
+    }
+
+    pub(crate) fn drain(&mut self) -> Vec<UiEvent> {
+        self.pending.drain(..).collect()
+    }
+}
+
+fn snapshot_hydration_events(snapshot: &UiSnapshot) -> Vec<UiEvent> {
+    let _ = snapshot;
+    Vec::new()
+}
+
 /// Stateless event bridge: converts `CodingAgentEvent` to `Vec<UiEvent>`.
 ///
 /// No longer accumulates tokens — `UiEvent::UsageUpdate` carries per-event
@@ -91,8 +146,12 @@ impl CodingEventBridge {
         Self
     }
 
-    pub(crate) fn handle_product_event(&mut self, event: &ProductEvent) -> Vec<UiEvent> {
+    pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<UiEvent> {
         self.handle(event.compatibility_event())
+    }
+
+    pub(crate) fn handle_product_event(&mut self, event: &ProductEvent) -> Vec<UiEvent> {
+        self.push_product_event(event)
     }
 
     pub fn handle(&mut self, event: &CodingAgentEvent) -> Vec<UiEvent> {
@@ -546,7 +605,62 @@ fn profile_kind_label(kind: ProfileKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding_session::{CodingAgentEvent, ProductEvent, ProductEventSequence};
+    use crate::coding_session::{
+        CapabilityStatus, CodingAgentCapabilities, CodingAgentEvent, CodingAgentSession,
+        CodingAgentSessionOptions, CodingAgentSessionView, ProductEvent, ProductEventSequence,
+        ProfileId, UiSnapshot, UiSnapshotCursor,
+    };
+
+    fn capabilities() -> CodingAgentCapabilities {
+        CodingAgentCapabilities {
+            prompt: CapabilityStatus::Available,
+            abort: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            },
+            steer: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            },
+            follow_up: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            },
+            compact: CapabilityStatus::Available,
+            fork: CapabilityStatus::Available,
+            clone_session: CapabilityStatus::Available,
+            branch_summary: CapabilityStatus::Available,
+            switch_session: CapabilityStatus::Unsupported {
+                reason: "session switching is not exposed on CodingAgentSession yet".into(),
+            },
+            export: CapabilityStatus::Available,
+            plugin_reload: CapabilityStatus::Available,
+            self_healing_edit: CapabilityStatus::Available,
+            agent_profiles: CapabilityStatus::Available,
+            team_profiles: CapabilityStatus::Available,
+            delegation: CapabilityStatus::Available,
+            tools: CapabilityStatus::Available,
+            shell: CapabilityStatus::Available,
+            plugins: CapabilityStatus::Available,
+        }
+    }
+
+    async fn snapshot(last_event_sequence: ProductEventSequence, session_id: &str) -> UiSnapshot {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let base = session.ui_snapshot(Vec::new());
+        UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence,
+                capability_generation: base.cursor.capability_generation,
+            },
+            CodingAgentSessionView {
+                session_id: session_id.into(),
+                default_agent_profile_id: ProfileId::from("default"),
+            },
+            capabilities(),
+            None,
+            Vec::new(),
+        )
+    }
 
     #[test]
     fn coding_event_bridge_accepts_product_events() {
@@ -569,5 +683,94 @@ mod tests {
                 text: "hello interactive".into()
             }]
         );
+    }
+
+    fn assistant_delta_event(sequence: u64, text: &str) -> ProductEvent {
+        ProductEvent::from_compat_event(
+            ProductEventSequence::new(sequence),
+            CodingAgentEvent::AssistantMessageDelta {
+                operation_id: "op_interactive".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                text: text.into(),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn ui_projection_hydrates_from_snapshot() {
+        let snapshot = snapshot(ProductEventSequence::new(7), "sess_projection").await;
+        let mut projection = UiProjection::from_snapshot(snapshot);
+
+        assert_eq!(projection.last_sequence(), ProductEventSequence::new(7));
+        assert!(projection.drain().is_empty());
+        assert!(projection.drain().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ui_projection_ignores_equal_sequence_events() {
+        let snapshot = snapshot(ProductEventSequence::new(7), "sess_projection").await;
+        let mut projection = UiProjection::from_snapshot(snapshot);
+        projection.drain();
+
+        projection.apply_product_event(&assistant_delta_event(7, "duplicate"));
+
+        assert_eq!(projection.last_sequence(), ProductEventSequence::new(7));
+        assert!(projection.drain().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ui_projection_ignores_stale_sequence_events() {
+        let snapshot = snapshot(ProductEventSequence::new(7), "sess_projection").await;
+        let mut projection = UiProjection::from_snapshot(snapshot);
+        projection.drain();
+
+        projection.apply_product_event(&assistant_delta_event(6, "stale"));
+
+        assert_eq!(projection.last_sequence(), ProductEventSequence::new(7));
+        assert!(projection.drain().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ui_projection_applies_product_events_in_sequence_order() {
+        let snapshot = snapshot(ProductEventSequence::new(2), "sess_projection").await;
+        let mut projection = UiProjection::from_snapshot(snapshot);
+        projection.drain();
+
+        let first = ProductEvent::from_compat_event(
+            ProductEventSequence::new(3),
+            CodingAgentEvent::AssistantMessageDelta {
+                operation_id: "op_interactive".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                text: "hello ".into(),
+            },
+        );
+        let second = ProductEvent::from_compat_event(
+            ProductEventSequence::new(4),
+            CodingAgentEvent::AssistantThinkingDelta {
+                operation_id: "op_interactive".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                text: "thinking".into(),
+            },
+        );
+
+        projection.apply_product_event(&first);
+        projection.apply_product_event(&second);
+
+        assert_eq!(projection.last_sequence(), ProductEventSequence::new(4));
+        assert_eq!(
+            projection.drain(),
+            vec![
+                UiEvent::AssistantDelta {
+                    text: "hello ".into()
+                },
+                UiEvent::ThinkingDelta {
+                    text: "thinking".into()
+                }
+            ]
+        );
+        assert!(projection.drain().is_empty());
     }
 }

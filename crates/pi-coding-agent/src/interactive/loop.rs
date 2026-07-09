@@ -15,6 +15,7 @@ use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
     PromptContext, build_prompt_context, resolve_prompt_api_key, session_label,
 };
+use crate::interactive::event_bridge::UiProjection;
 use crate::interactive::input::InputPump;
 use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
 use crate::interactive::root::{
@@ -349,7 +350,7 @@ where
     let mut stdin_buffer = StdinBuffer::new();
     let mut running: Option<PromptTask> = None;
     let mut coding_session: Option<CodingAgentSession> = None;
-    let mut coding_bridge = CodingEventBridge::new();
+    let mut ui_projection = UiProjection::new();
     let mut input_open = true;
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
     render_scheduler.request(true);
@@ -432,7 +433,7 @@ where
                                 apply_prompt_task_event(
                                     tui,
                                     root_id,
-                                    &mut coding_bridge,
+                                    &mut ui_projection,
                                     event,
                                 )?,
                             );
@@ -462,7 +463,7 @@ where
                             apply_prompt_task_event(
                                 tui,
                                 root_id,
-                                &mut coding_bridge,
+                                &mut ui_projection,
                                 event,
                             )?,
                         );
@@ -1919,11 +1920,18 @@ fn start_branch_summary_task<T: Terminal>(
 fn apply_prompt_task_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
-    coding_bridge: &mut CodingEventBridge,
+    ui_projection: &mut UiProjection,
     event: PromptTaskEvent,
 ) -> Result<RenderRequest, CliError> {
-    let PromptTaskEvent::Coding(event) = event;
-    let ui_events = coding_bridge.handle_product_event(&event);
+    match event {
+        PromptTaskEvent::Snapshot(snapshot) => {
+            *ui_projection = UiProjection::from_snapshot(snapshot);
+        }
+        PromptTaskEvent::Coding(event) => {
+            ui_projection.apply_product_event(&event);
+        }
+    }
+    let ui_events = ui_projection.drain();
     let force_render = ui_events.iter().any(ui_event_updates_visible_block);
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
@@ -2088,7 +2096,11 @@ fn finish_prompt<T: Terminal>(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
-    use crate::coding_session::{CodingAgentEvent, ProductEvent, ProductEventSequence};
+    use crate::coding_session::{
+        CapabilityStatus, CodingAgentCapabilities, CodingAgentEvent, CodingAgentSession,
+        CodingAgentSessionOptions, CodingAgentSessionView, ProductEvent, ProductEventSequence,
+        ProfileId, UiSnapshot, UiSnapshotCursor,
+    };
     use pi_ai::types::Usage;
     use pi_tui::VirtualTerminal;
 
@@ -2103,10 +2115,65 @@ mod tests {
     }
 
     fn prompt_event(event: CodingAgentEvent) -> PromptTaskEvent {
-        PromptTaskEvent::Coding(ProductEvent::from_compat_event(
-            ProductEventSequence(1),
-            event,
-        ))
+        prompt_event_with_sequence(ProductEventSequence::new(1), event)
+    }
+
+    fn prompt_event_with_sequence(
+        sequence: ProductEventSequence,
+        event: CodingAgentEvent,
+    ) -> PromptTaskEvent {
+        PromptTaskEvent::Coding(ProductEvent::from_compat_event(sequence, event))
+    }
+
+    fn capabilities() -> CodingAgentCapabilities {
+        CodingAgentCapabilities {
+            prompt: CapabilityStatus::Available,
+            abort: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            },
+            steer: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            },
+            follow_up: CapabilityStatus::Disabled {
+                reason: "no prompt is running".into(),
+            },
+            compact: CapabilityStatus::Available,
+            fork: CapabilityStatus::Available,
+            clone_session: CapabilityStatus::Available,
+            branch_summary: CapabilityStatus::Available,
+            switch_session: CapabilityStatus::Unsupported {
+                reason: "session switching is not exposed on CodingAgentSession yet".into(),
+            },
+            export: CapabilityStatus::Available,
+            plugin_reload: CapabilityStatus::Available,
+            self_healing_edit: CapabilityStatus::Available,
+            agent_profiles: CapabilityStatus::Available,
+            team_profiles: CapabilityStatus::Available,
+            delegation: CapabilityStatus::Available,
+            tools: CapabilityStatus::Available,
+            shell: CapabilityStatus::Available,
+            plugins: CapabilityStatus::Available,
+        }
+    }
+
+    async fn snapshot(last_event_sequence: ProductEventSequence, session_id: &str) -> UiSnapshot {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let base = session.ui_snapshot(Vec::new());
+        UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence,
+                capability_generation: base.cursor.capability_generation,
+            },
+            CodingAgentSessionView {
+                session_id: session_id.into(),
+                default_agent_profile_id: ProfileId::from("default"),
+            },
+            capabilities(),
+            None,
+            Vec::new(),
+        )
     }
 
     fn base_assistant_delta() -> CodingAgentEvent {
@@ -2129,15 +2196,27 @@ mod tests {
     }
 
     fn assert_event_forces_render(setup: Vec<CodingAgentEvent>, event: CodingAgentEvent) {
-        let mut bridge = CodingEventBridge::new();
+        let mut projection = UiProjection::new();
         let (mut tui, root_id) = test_tui();
+        let mut sequence = ProductEventSequence::new(1);
         for setup_event in setup {
-            apply_prompt_task_event(&mut tui, root_id, &mut bridge, prompt_event(setup_event))
-                .unwrap();
+            apply_prompt_task_event(
+                &mut tui,
+                root_id,
+                &mut projection,
+                prompt_event_with_sequence(sequence, setup_event),
+            )
+            .unwrap();
+            sequence = sequence.next();
         }
 
-        let request =
-            apply_prompt_task_event(&mut tui, root_id, &mut bridge, prompt_event(event)).unwrap();
+        let request = apply_prompt_task_event(
+            &mut tui,
+            root_id,
+            &mut projection,
+            prompt_event_with_sequence(sequence, event),
+        )
+        .unwrap();
 
         assert_eq!(
             request,
@@ -2221,13 +2300,13 @@ mod tests {
 
     #[test]
     fn prompt_events_without_visible_ui_do_not_request_render() {
-        let mut bridge = CodingEventBridge::new();
+        let mut projection = UiProjection::new();
         let (mut tui, root_id) = test_tui();
 
         let request = apply_prompt_task_event(
             &mut tui,
             root_id,
-            &mut bridge,
+            &mut projection,
             prompt_event(CodingAgentEvent::AssistantMessageStarted {
                 operation_id: "op_1".to_string(),
                 turn_id: "turn_1".to_string(),
@@ -2239,16 +2318,50 @@ mod tests {
         assert_eq!(request, RenderRequest::NONE);
     }
 
+    #[tokio::test]
+    async fn prompt_task_snapshots_do_not_append_visible_restore_notices() {
+        let mut projection = UiProjection::new();
+        let (mut tui, root_id) = test_tui();
+        let before_items = root_ref(&tui, root_id).unwrap().transcript.items().len();
+
+        let first = apply_prompt_task_event(
+            &mut tui,
+            root_id,
+            &mut projection,
+            PromptTaskEvent::Snapshot(snapshot(ProductEventSequence::new(7), "sess_loop").await),
+        )
+        .unwrap();
+        let second = apply_prompt_task_event(
+            &mut tui,
+            root_id,
+            &mut projection,
+            PromptTaskEvent::Snapshot(snapshot(ProductEventSequence::new(7), "sess_loop").await),
+        )
+        .unwrap();
+
+        let root = root_ref(&tui, root_id).unwrap();
+        assert_eq!(first, RenderRequest::NONE);
+        assert_eq!(second, RenderRequest::NONE);
+        assert_eq!(root.transcript.items().len(), before_items);
+        assert!(
+            !root
+                .transcript
+                .items()
+                .iter()
+                .any(|item| matches!(item, TranscriptItem::System { text } if text.contains("Restored session")))
+        );
+    }
+
     #[test]
     fn interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary() {
         let source = include_str!("loop.rs");
         let product_subscription = [".", "subscribe_product_events()"].concat();
         let compatibility_subscription = [".", "subscribe()"].concat();
-        let product_bridge = ["bridge", ".handle_product_event(&event)"].concat();
+        let product_projection = "UiProjection::new()";
 
         assert!(source.contains(&product_subscription));
         assert!(!source.contains(&compatibility_subscription));
-        assert!(source.contains(&product_bridge));
+        assert!(source.contains(product_projection));
     }
 }
 
