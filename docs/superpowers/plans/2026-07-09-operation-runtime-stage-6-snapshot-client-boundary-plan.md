@@ -48,7 +48,7 @@ Stage 6 does not remove public compatibility event APIs. It adds the snapshot/cl
   - Add a `UiProjection` that consumes `UiSnapshot` plus `ProductEvent`.
 - Modify: `crates/pi-coding-agent/src/interactive/prompt_task.rs`
   - Keep task events as `ProductEvent` and route initial hydration through `UiSnapshot`.
-- Modify: `crates/pi-coding-agent/tests/product_event_adapter_flow_node_independence.rs`
+- Modify: `crates/pi-coding-agent/tests/event_boundary_guards.rs`
   - Extend source guards so adapters consume snapshot/product-event facades instead of session/runtime internals.
 - Modify: `docs/TODO.md`
   - Track Stage 6 start and each slice.
@@ -882,7 +882,7 @@ Run:
 ```bash
 cargo test -p pi-coding-agent rpc_state_includes_snapshot_cursor_and_client_id --lib
 cargo test -p pi-coding-agent rpc_pending_message_count_comes_from_client_drafts --lib
-cargo test -p pi-coding-agent rpc_mode get_state --test rpc_mode
+cargo test -p pi-coding-agent --test rpc_mode get_state
 cargo check -p pi-coding-agent
 ```
 
@@ -1028,7 +1028,7 @@ Run:
 ```bash
 cargo test -p pi-coding-agent rpc_reconnect_replays_retained_product_events_after_snapshot_cursor --lib
 cargo test -p pi-coding-agent rpc_reconnect_gap_returns_fresh_snapshot_required_error --lib
-cargo test -p pi-coding-agent rpc_mode reconnect --test rpc_mode
+cargo test -p pi-coding-agent --test rpc_mode reconnect
 cargo check -p pi-coding-agent
 ```
 
@@ -1396,8 +1396,8 @@ Run:
 ```bash
 cargo test -p pi-coding-agent submitted_operation_clears_matching_prompt_draft --lib
 cargo test -p pi-coding-agent steer_and_follow_up_drafts_remain_client_local_until_submitted --lib
-cargo test -p pi-coding-agent rpc_mode steer --test rpc_mode
-cargo test -p pi-coding-agent rpc_mode follow --test rpc_mode
+cargo test -p pi-coding-agent --test rpc_mode steer
+cargo test -p pi-coding-agent --test rpc_mode follow
 cargo check -p pi-coding-agent
 ```
 
@@ -1413,13 +1413,13 @@ git commit -m "feat: separate client drafts from submitted operations"
 ## Task 9: Boundary Guards For Snapshot/Product-Event Adapters
 
 **Files:**
-- Modify: `crates/pi-coding-agent/tests/product_event_adapter_flow_node_independence.rs`
+- Modify: `crates/pi-coding-agent/tests/event_boundary_guards.rs`
 - Modify: `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs`
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Write failing source guards**
+- [x] **Step 1: Write source guards**
 
-Add these guards to `product_event_adapter_flow_node_independence.rs`:
+Add these guards to `event_boundary_guards.rs` (the current repository's event/adapter boundary guard target):
 
 ```rust
 #[test]
@@ -1473,19 +1473,19 @@ fn adapters_do_not_access_event_service_directly_for_projection() {
 }
 ```
 
-- [ ] **Step 2: Run RED guards**
+- [x] **Step 2: Run guard checks**
 
 Run:
 
 ```bash
-cargo test -p pi-coding-agent rpc_state_consumes_ui_snapshot_boundary --test product_event_adapter_flow_node_independence
-cargo test -p pi-coding-agent interactive_projection_consumes_product_events --test product_event_adapter_flow_node_independence
+cargo test -p pi-coding-agent rpc_state_consumes_ui_snapshot_boundary --test event_boundary_guards
+cargo test -p pi-coding-agent interactive_projection_consumes_product_events --test event_boundary_guards
 cargo test -p pi-coding-agent adapters_do_not_access_event_service_directly_for_projection --test product_runtime_boundary_guards
 ```
 
-Expected: fail until the previous tasks route adapters through snapshot/product-event facades.
+Result: all three guards passed immediately because the previous tasks had already routed adapters through snapshot/product-event facades. The plan's original placeholder guard target was adapted to the existing `event_boundary_guards` target in this repository.
 
-- [ ] **Step 3: Keep only facade calls in adapters**
+- [x] **Step 3: Keep only facade calls in adapters**
 
 If a guard fails, replace direct service access with these facade methods:
 
@@ -1497,7 +1497,7 @@ session.subscribe_product_events()
 
 Do not expose `EventService`, `SessionService`, `RuntimeService`, `FlowService`, or `OperationControl` to protocol or interactive adapters.
 
-- [ ] **Step 4: Update TODO progress**
+- [x] **Step 4: Update TODO progress**
 
 Add a progress log entry to `docs/TODO.md`:
 
@@ -1511,22 +1511,22 @@ Update the active architecture item so the final sentence becomes:
 Stage 6 now has an implementation plan for snapshot/reconnect/multi-client projection; Stages 7-8 (backpressure/versioning/recovery hardening and public facade narrowing) remain future work under the same reference architecture.
 ```
 
-- [ ] **Step 5: Run GREEN guards**
+- [x] **Step 5: Run GREEN guards**
 
 Run:
 
 ```bash
-cargo test -p pi-coding-agent rpc_state_consumes_ui_snapshot_boundary --test product_event_adapter_flow_node_independence
-cargo test -p pi-coding-agent interactive_projection_consumes_product_events --test product_event_adapter_flow_node_independence
+cargo test -p pi-coding-agent rpc_state_consumes_ui_snapshot_boundary --test event_boundary_guards
+cargo test -p pi-coding-agent interactive_projection_consumes_product_events --test event_boundary_guards
 cargo test -p pi-coding-agent adapters_do_not_access_event_service_directly_for_projection --test product_runtime_boundary_guards
 ```
 
 Expected: all three guards pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add crates/pi-coding-agent/tests/product_event_adapter_flow_node_independence.rs crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs docs/TODO.md
+git add crates/pi-coding-agent/tests/event_boundary_guards.rs crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs docs/TODO.md
 git commit -m "test: guard snapshot client adapter boundaries"
 ```
 
@@ -1536,7 +1536,7 @@ git commit -m "test: guard snapshot client adapter boundaries"
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-09-operation-runtime-stage-6-snapshot-client-boundary-plan.md`
 
-- [ ] **Step 1: Run full Stage 6 verification**
+- [x] **Step 1: Run full Stage 6 verification**
 
 Run:
 
@@ -1549,17 +1549,17 @@ cargo test -p pi-coding-agent ui_snapshot --lib
 cargo test -p pi-coding-agent rpc_state --lib
 cargo test -p pi-coding-agent rpc_reconnect --lib
 cargo test -p pi-coding-agent ui_projection --lib
-cargo test -p pi-coding-agent rpc_mode get_state --test rpc_mode
+cargo test -p pi-coding-agent --test rpc_mode get_state
 cargo test -p pi-coding-agent interactive --lib
-cargo test -p pi-coding-agent product_event_adapter_flow_node_independence
-cargo test -p pi-coding-agent product_runtime_boundary_guards
+cargo test -p pi-coding-agent --test event_boundary_guards
+cargo test -p pi-coding-agent --test product_runtime_boundary_guards
 cargo check -p pi-coding-agent
 git diff --check
 ```
 
 Expected: every command exits with code 0.
 
-- [ ] **Step 2: Update this plan's verification checklist**
+- [x] **Step 2: Update this plan's verification checklist**
 
 After the commands pass, mark these checkboxes:
 
@@ -1572,15 +1572,15 @@ After the commands pass, mark these checkboxes:
 - [x] `cargo test -p pi-coding-agent rpc_state --lib`
 - [x] `cargo test -p pi-coding-agent rpc_reconnect --lib`
 - [x] `cargo test -p pi-coding-agent ui_projection --lib`
-- [x] `cargo test -p pi-coding-agent rpc_mode get_state --test rpc_mode`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode get_state`
 - [x] `cargo test -p pi-coding-agent interactive --lib`
-- [x] `cargo test -p pi-coding-agent product_event_adapter_flow_node_independence`
-- [x] `cargo test -p pi-coding-agent product_runtime_boundary_guards`
+- [x] `cargo test -p pi-coding-agent --test event_boundary_guards`
+- [x] `cargo test -p pi-coding-agent --test product_runtime_boundary_guards`
 - [x] `cargo check -p pi-coding-agent`
 - [x] `git diff --check`
 ```
 
-- [ ] **Step 3: Update `docs/TODO.md` top-level architecture status**
+- [x] **Step 3: Update `docs/TODO.md` top-level architecture status**
 
 Replace the Stage 6 portion of the active architecture item with:
 
@@ -1594,7 +1594,7 @@ Add a progress log entry:
 - 2026-07-09: Stage 6 snapshot/client boundary completed. `UiSnapshot` and `ClientConnection` now define adapter cursor semantics, RPC state and reconnect consume session snapshots plus retained product events, interactive projection consumes `UiSnapshot + ProductEvent`, client-local drafts no longer live in runtime-owned submitted operation state, and adapter guards prevent projection paths from bypassing the snapshot/product-event facade.
 ```
 
-- [ ] **Step 4: Commit closure documentation**
+- [x] **Step 4: Commit closure documentation**
 
 ```bash
 git add docs/TODO.md docs/superpowers/plans/2026-07-09-operation-runtime-stage-6-snapshot-client-boundary-plan.md
@@ -1603,20 +1603,20 @@ git commit -m "docs: close snapshot client boundary stage"
 
 ## Verification Checklist
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo test -p pi-coding-agent product_event_sequence --lib`
-- [ ] `cargo test -p pi-coding-agent client_connection --lib`
-- [ ] `cargo test -p pi-coding-agent retained_product_events --lib`
-- [ ] `cargo test -p pi-coding-agent ui_snapshot --lib`
-- [ ] `cargo test -p pi-coding-agent rpc_state --lib`
-- [ ] `cargo test -p pi-coding-agent rpc_reconnect --lib`
-- [ ] `cargo test -p pi-coding-agent ui_projection --lib`
-- [ ] `cargo test -p pi-coding-agent rpc_mode get_state --test rpc_mode`
-- [ ] `cargo test -p pi-coding-agent interactive --lib`
-- [ ] `cargo test -p pi-coding-agent product_event_adapter_flow_node_independence`
-- [ ] `cargo test -p pi-coding-agent product_runtime_boundary_guards`
-- [ ] `cargo check -p pi-coding-agent`
-- [ ] `git diff --check`
+- [x] `cargo fmt --check`
+- [x] `cargo test -p pi-coding-agent product_event_sequence --lib`
+- [x] `cargo test -p pi-coding-agent client_connection --lib`
+- [x] `cargo test -p pi-coding-agent retained_product_events --lib`
+- [x] `cargo test -p pi-coding-agent ui_snapshot --lib`
+- [x] `cargo test -p pi-coding-agent rpc_state --lib`
+- [x] `cargo test -p pi-coding-agent rpc_reconnect --lib`
+- [x] `cargo test -p pi-coding-agent ui_projection --lib`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode get_state`
+- [x] `cargo test -p pi-coding-agent interactive --lib`
+- [x] `cargo test -p pi-coding-agent --test event_boundary_guards`
+- [x] `cargo test -p pi-coding-agent --test product_runtime_boundary_guards`
+- [x] `cargo check -p pi-coding-agent`
+- [x] `git diff --check`
 
 ## Spec Coverage
 
