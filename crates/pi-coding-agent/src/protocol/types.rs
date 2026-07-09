@@ -441,6 +441,11 @@ pub enum RpcCommand {
         images: Option<Vec<ContentBlock>>,
         #[serde(rename = "streamingBehavior")]
         streaming_behavior: Option<StreamingBehavior>,
+        #[serde(
+            rename = "afterSnapshotSequence",
+            skip_serializing_if = "Option::is_none"
+        )]
+        after_snapshot_sequence: Option<u64>,
     },
     #[serde(rename = "steer")]
     Steer {

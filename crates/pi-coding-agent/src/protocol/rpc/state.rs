@@ -3,7 +3,8 @@ use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
     coding_session::AgentTeamOutcome, coding_session::ClientConnectionId,
     coding_session::ClientDraft, coding_session::CodingAgentSession, coding_session::OperationKind,
-    coding_session::ProductEvent, coding_session::PromptControlHandle,
+    coding_session::ProductEvent, coding_session::ProductEventReplayHandle,
+    coding_session::ProductEventSequence, coding_session::PromptControlHandle,
     coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::transcript::StoredAgentMessage;
@@ -44,6 +45,9 @@ pub(super) struct CodingRunningPrompt {
     pub(super) control: Option<PromptControlHandle>,
     pub(super) operation_kind: OperationKind,
     pub(super) adapter: RpcCodingEventAdapter,
+    pub(super) product_event_replay: Option<ProductEventReplayHandle>,
+    pub(super) adapter_applied_sequence: ProductEventSequence,
+    pub(super) replayed_through_sequence: ProductEventSequence,
     pub(super) events_closed: bool,
 }
 

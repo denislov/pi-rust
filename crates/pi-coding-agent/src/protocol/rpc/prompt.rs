@@ -1,7 +1,8 @@
 use crate::CliError;
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, CodingAgentSession, CodingAgentSessionOptions,
-    OperationKind, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
+    CodingSessionError, OperationKind, ProductEvent, ProductEventSequence, ProfileId, ProfileKind,
+    PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
@@ -25,6 +26,7 @@ impl RpcState {
         message: String,
         images: Option<Vec<pi_ai::types::ContentBlock>>,
         streaming_behavior: Option<StreamingBehavior>,
+        after_snapshot_sequence: Option<ProductEventSequence>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
@@ -44,8 +46,14 @@ impl RpcState {
         }
 
         if self.is_streaming() {
-            self.handle_streaming_prompt(id, message, streaming_behavior, writer)
-                .await?;
+            self.handle_streaming_prompt(
+                id,
+                message,
+                streaming_behavior,
+                after_snapshot_sequence,
+                writer,
+            )
+            .await?;
             return Ok(());
         }
 
@@ -53,6 +61,56 @@ impl RpcState {
     }
 
     async fn handle_streaming_prompt<W>(
+        &mut self,
+        id: Option<String>,
+        message: String,
+        streaming_behavior: Option<StreamingBehavior>,
+        after_snapshot_sequence: Option<ProductEventSequence>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if let Some(cursor) = after_snapshot_sequence {
+            let replayed = match reconnect_running_prompt_after(self, cursor).await {
+                Ok(replayed) => replayed,
+                Err(error @ CodingSessionError::EventStreamGap { .. }) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error_with_data(
+                            id,
+                            "prompt",
+                            error.to_string(),
+                            serde_json::json!({ "code": error.code() }),
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                Err(error) => return Err(CliError::from(error)),
+            };
+
+            if streaming_behavior.is_none() {
+                write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await?;
+                for event in replayed {
+                    write_json_line(writer, &event).await?;
+                }
+                return Ok(());
+            }
+
+            self.handle_streaming_prompt_control(id, message, streaming_behavior, writer)
+                .await?;
+            for event in replayed {
+                write_json_line(writer, &event).await?;
+            }
+            return Ok(());
+        }
+
+        self.handle_streaming_prompt_control(id, message, streaming_behavior, writer)
+            .await
+    }
+
+    async fn handle_streaming_prompt_control<W>(
         &mut self,
         id: Option<String>,
         message: String,
@@ -224,6 +282,7 @@ impl RpcState {
         let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
+        let product_event_replay = session.product_event_replay_handle();
 
         write_rpc_response(
             writer,
@@ -277,6 +336,9 @@ impl RpcState {
                 self.model.provider.clone(),
                 self.model.id.clone(),
             ),
+            product_event_replay: Some(product_event_replay),
+            adapter_applied_sequence: ProductEventSequence::default(),
+            replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
         }));
 
@@ -393,6 +455,7 @@ impl RpcState {
         let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
+        let product_event_replay = session.product_event_replay_handle();
 
         write_rpc_response(
             writer,
@@ -446,6 +509,9 @@ impl RpcState {
                 self.model.provider.clone(),
                 self.model.id.clone(),
             ),
+            product_event_replay: Some(product_event_replay),
+            adapter_applied_sequence: ProductEventSequence::default(),
+            replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
         }));
 
@@ -519,6 +585,7 @@ impl RpcState {
         let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
+        let product_event_replay = session.product_event_replay_handle();
 
         write_rpc_response(
             writer,
@@ -572,6 +639,9 @@ impl RpcState {
                 self.model.provider.clone(),
                 self.model.id.clone(),
             ),
+            product_event_replay: Some(product_event_replay),
+            adapter_applied_sequence: ProductEventSequence::default(),
+            replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
         }));
 
@@ -634,6 +704,7 @@ impl RpcState {
         let mut receiver = session.subscribe_product_events();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
+        let product_event_replay = session.product_event_replay_handle();
 
         write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await?;
         write_json_line(writer, &ProtocolEvent::AgentStart).await?;
@@ -678,6 +749,9 @@ impl RpcState {
                 self.model.provider.clone(),
                 self.model.id.clone(),
             ),
+            product_event_replay: Some(product_event_replay),
+            adapter_applied_sequence: ProductEventSequence::default(),
+            replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
         }));
 
@@ -694,7 +768,7 @@ impl RpcState {
 
     pub(super) async fn write_product_event<W>(
         &mut self,
-        event: crate::coding_session::ProductEvent,
+        event: ProductEvent,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
@@ -703,7 +777,7 @@ impl RpcState {
         let Some(RunningPrompt::Coding(running)) = self.running.as_mut() else {
             return Ok(());
         };
-        for protocol_event in running.adapter.push_product_event(&event) {
+        for protocol_event in push_live_product_event(running, &event) {
             write_json_line(writer, &protocol_event).await?;
         }
         Ok(())
@@ -722,7 +796,7 @@ impl RpcState {
         };
 
         while let Ok(event) = running.events.try_recv() {
-            for protocol_event in running.adapter.push_product_event(&event) {
+            for protocol_event in push_live_product_event(&mut running, &event) {
                 write_json_line(writer, &protocol_event).await?;
             }
         }
@@ -781,6 +855,44 @@ impl RpcState {
     }
 }
 
+pub(super) async fn reconnect_running_prompt_after(
+    state: &mut RpcState,
+    cursor: ProductEventSequence,
+) -> Result<Vec<ProtocolEvent>, CodingSessionError> {
+    let Some(RunningPrompt::Coding(running)) = state.running.as_mut() else {
+        return Ok(Vec::new());
+    };
+    let Some(replay) = running.product_event_replay.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut protocol_events = Vec::new();
+    for event in replay.product_events_after(cursor)? {
+        if event.sequence() <= running.adapter_applied_sequence {
+            continue;
+        }
+        let sequence = event.sequence();
+        protocol_events.extend(running.adapter.push_product_event(&event));
+        running.adapter_applied_sequence = running.adapter_applied_sequence.max(sequence);
+        running.replayed_through_sequence = running.replayed_through_sequence.max(sequence);
+    }
+    Ok(protocol_events)
+}
+
+fn push_live_product_event(
+    running: &mut CodingRunningPrompt,
+    event: &ProductEvent,
+) -> Vec<ProtocolEvent> {
+    let sequence = event.sequence();
+    if sequence <= running.replayed_through_sequence || sequence <= running.adapter_applied_sequence
+    {
+        return Vec::new();
+    }
+    let protocol_events = running.adapter.push_product_event(event);
+    running.adapter_applied_sequence = running.adapter_applied_sequence.max(sequence);
+    protocol_events
+}
+
 fn rpc_coding_session_root(options: &SessionRunOptions) -> Result<PathBuf, CliError> {
     match options.session_dir.as_ref() {
         Some(root) => Ok(root.clone()),
@@ -810,6 +922,231 @@ fn prompt_outcome_leaf_id(outcome: &crate::coding_session::PromptTurnOutcome) ->
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::CliRunOptions;
+    use crate::coding_session::{
+        CodingAgentEvent, CodingAgentSessionOptions, CodingSessionError, ProductEvent,
+        ProductEventReplayHandle, ProductEventSequence,
+    };
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    #[derive(Default)]
+    struct TestWriter {
+        bytes: Vec<u8>,
+    }
+
+    impl tokio::io::AsyncWrite for TestWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.bytes.extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn state_with_running_prompt_replay(replay: ProductEventReplayHandle) -> RpcState {
+        let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        let (_event_tx, event_rx) = mpsc::unbounded_channel();
+        let (_done_tx, done_rx) = oneshot::channel();
+        state.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
+            events: event_rx,
+            done: done_rx,
+            control: None,
+            operation_kind: OperationKind::Prompt,
+            adapter: RpcCodingEventAdapter::new_with_provider(
+                "test-api".into(),
+                "test-provider".into(),
+                "test-model".into(),
+            ),
+            product_event_replay: Some(replay),
+            adapter_applied_sequence: ProductEventSequence::default(),
+            replayed_through_sequence: ProductEventSequence::default(),
+            events_closed: false,
+        }));
+        state
+    }
+
+    fn state_with_running_prompt_replay_and_pending(
+        replay: ProductEventReplayHandle,
+        pending: ProductEvent,
+    ) -> RpcState {
+        let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        event_tx.send(pending).unwrap();
+        drop(event_tx);
+        let (_done_tx, done_rx) = oneshot::channel();
+        state.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
+            events: event_rx,
+            done: done_rx,
+            control: None,
+            operation_kind: OperationKind::Prompt,
+            adapter: RpcCodingEventAdapter::new_with_provider(
+                "test-api".into(),
+                "test-provider".into(),
+                "test-model".into(),
+            ),
+            product_event_replay: Some(replay),
+            adapter_applied_sequence: ProductEventSequence::default(),
+            replayed_through_sequence: ProductEventSequence::default(),
+            events_closed: false,
+        }));
+        state
+    }
+
+    fn assistant_delta_event(text: &str) -> CodingAgentEvent {
+        CodingAgentEvent::AssistantMessageDelta {
+            operation_id: "op_reconnect".into(),
+            turn_id: "turn_reconnect".into(),
+            message_id: Some("msg_reconnect".into()),
+            text: text.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn rpc_reconnect_after_live_adapter_consumed_event_does_not_duplicate_text() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        let event = session
+            .emit_product_event_for_tests(assistant_delta_event("already live reconnect marker"));
+        let mut state = state_with_running_prompt_replay(replay);
+        let mut live_writer = TestWriter::default();
+        state
+            .write_product_event(event, &mut live_writer)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8(live_writer.bytes)
+                .unwrap()
+                .contains("already live reconnect marker")
+        );
+
+        let events = reconnect_running_prompt_after(&mut state, ProductEventSequence::default())
+            .await
+            .unwrap();
+
+        let encoded = serde_json::to_string(&events).unwrap();
+        assert!(!encoded.contains("already live reconnect marker"));
+    }
+
+    #[tokio::test]
+    async fn rpc_reconnect_skips_later_live_channel_overlap() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        let event =
+            session.emit_product_event_for_tests(assistant_delta_event("pending overlap marker"));
+        let mut state = state_with_running_prompt_replay_and_pending(replay, event.clone());
+
+        let replayed = reconnect_running_prompt_after(&mut state, ProductEventSequence::default())
+            .await
+            .unwrap();
+        let encoded = serde_json::to_string(&replayed).unwrap();
+        assert!(encoded.contains("pending overlap marker"));
+
+        let pending = match state.running.as_mut().unwrap() {
+            RunningPrompt::Coding(running) => running.events.try_recv().unwrap(),
+        };
+        let mut live_writer = TestWriter::default();
+        state
+            .write_product_event(pending, &mut live_writer)
+            .await
+            .unwrap();
+
+        let live_output = String::from_utf8(live_writer.bytes).unwrap();
+        assert!(!live_output.contains("pending overlap marker"));
+    }
+
+    #[tokio::test]
+    async fn rpc_reconnect_replayed_event_advances_live_adapter_for_following_delta() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        session.emit_product_event_for_tests(assistant_delta_event("replayed prefix "));
+        let mut state = state_with_running_prompt_replay(replay);
+
+        let replayed = reconnect_running_prompt_after(&mut state, ProductEventSequence::default())
+            .await
+            .unwrap();
+        let replayed_json = serde_json::to_string(&replayed).unwrap();
+        assert!(replayed_json.contains("replayed prefix "));
+
+        let later_event =
+            session.emit_product_event_for_tests(assistant_delta_event("live suffix"));
+        let mut live_writer = TestWriter::default();
+        state
+            .write_product_event(later_event, &mut live_writer)
+            .await
+            .unwrap();
+
+        let live_output = String::from_utf8(live_writer.bytes).unwrap();
+        assert!(live_output.contains("replayed prefix "));
+        assert!(live_output.contains("live suffix"));
+        for line in live_output.lines().filter(|line| !line.trim().is_empty()) {
+            let value: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_ne!(value["type"], "message_start");
+        }
+    }
+
+    #[tokio::test]
+    async fn rpc_reconnect_replays_retained_product_events_after_snapshot_cursor() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        let cursor = session.ui_snapshot(Vec::new()).cursor.last_event_sequence;
+        session.emit_product_event_for_tests(assistant_delta_event("retained reconnect marker"));
+        let mut state = state_with_running_prompt_replay(replay);
+
+        let events = reconnect_running_prompt_after(&mut state, cursor)
+            .await
+            .unwrap();
+
+        let encoded = serde_json::to_string(&events).unwrap();
+        assert!(encoded.contains("retained reconnect marker"));
+    }
+
+    #[tokio::test]
+    async fn rpc_reconnect_gap_returns_fresh_snapshot_required_error() {
+        let session = CodingAgentSession::non_persistent_with_event_capacity_for_tests(
+            CodingAgentSessionOptions::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        let replay = session.product_event_replay_handle();
+        session.emit_product_event_for_tests(assistant_delta_event("evicted reconnect marker"));
+        session.emit_product_event_for_tests(assistant_delta_event("retained reconnect marker"));
+        let mut state = state_with_running_prompt_replay(replay);
+
+        let error = reconnect_running_prompt_after(&mut state, ProductEventSequence::new(1))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), "event_stream_gap");
+        assert!(matches!(
+            error,
+            CodingSessionError::EventStreamGap {
+                requested_after: 1,
+                oldest_available: 2,
+            }
+        ));
+    }
+
     #[test]
     fn rpc_running_prompt_uses_product_event_stream_boundary() {
         let prompt_source = include_str!("prompt.rs");

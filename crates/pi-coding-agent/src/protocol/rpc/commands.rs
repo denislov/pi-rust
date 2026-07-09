@@ -2,10 +2,10 @@ use crate::CliError;
 use crate::coding_session::{
     AgentProfile, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     DelegationConfirmationMode, DelegationPolicy, PendingDelegationConfirmation, PluginLoadOutcome,
-    ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
-    SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
-    SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
-    SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+    ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource, PromptTurnMode,
+    PromptTurnOptions, SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions,
+    SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
+    SelfHealingEditRequest, SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
@@ -35,9 +35,17 @@ impl RpcState {
                 message,
                 images,
                 streaming_behavior,
+                after_snapshot_sequence,
             } => {
-                self.handle_prompt(id, message, images, streaming_behavior, writer)
-                    .await
+                self.handle_prompt(
+                    id,
+                    message,
+                    images,
+                    streaming_behavior,
+                    after_snapshot_sequence.map(ProductEventSequence::new),
+                    writer,
+                )
+                .await
             }
             RpcCommand::Steer {
                 id,

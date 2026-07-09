@@ -139,6 +139,24 @@ pub struct CodingAgentSession {
     capability_snapshots: CapabilitySnapshotService,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ProductEventReplayHandle {
+    event_service: EventService,
+}
+
+impl ProductEventReplayHandle {
+    fn new(event_service: EventService) -> Self {
+        Self { event_service }
+    }
+
+    pub(crate) fn product_events_after(
+        &self,
+        cursor: ProductEventSequence,
+    ) -> Result<Vec<ProductEvent>, CodingSessionError> {
+        self.event_service.product_events_after(cursor)
+    }
+}
+
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
     let cwd = options
         .cwd()
@@ -231,6 +249,16 @@ impl CodingAgentSession {
             default_plugin_load_options(&options),
             profile_registry_for_options(&options, None)?,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn non_persistent_with_event_capacity_for_tests(
+        options: CodingAgentSessionOptions,
+        event_capacity: usize,
+    ) -> Result<Self, CodingSessionError> {
+        let mut session = Self::non_persistent(options).await?;
+        session.event_service = EventService::with_event_capacity_for_tests(event_capacity);
+        Ok(session)
     }
 
     pub fn list(
@@ -411,6 +439,10 @@ impl CodingAgentSession {
         self.event_service.subscribe_product_events()
     }
 
+    pub(crate) fn product_event_replay_handle(&self) -> ProductEventReplayHandle {
+        ProductEventReplayHandle::new(self.event_service.clone())
+    }
+
     #[allow(dead_code)]
     pub(crate) fn ui_snapshot(&self, client_drafts: Vec<ClientDraft>) -> UiSnapshot {
         IntentRouter::admit_query(&self.operation_control, QueryIntent::SessionView);
@@ -443,6 +475,11 @@ impl CodingAgentSession {
         cursor: ProductEventSequence,
     ) -> Result<Vec<ProductEvent>, CodingSessionError> {
         self.event_service.product_events_after(cursor)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn emit_product_event_for_tests(&self, event: CodingAgentEvent) -> ProductEvent {
+        self.event_service.emit(event)
     }
 
     pub(crate) fn prompt_control_handle(

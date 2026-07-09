@@ -901,8 +901,10 @@ git commit -m "feat: build RPC state from UI snapshots"
 - Modify: `crates/pi-coding-agent/src/protocol/types.rs`
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/prompt.rs`
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/commands.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/state.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 
-- [ ] **Step 1: Write failing reconnect tests**
+- [x] **Step 1: Write failing reconnect tests**
 
 Add tests to the RPC prompt module or `rpc_mode` test suite:
 
@@ -959,9 +961,9 @@ async fn rpc_reconnect_gap_returns_fresh_snapshot_required_error() {
 }
 ```
 
-Add `#[cfg(test)] pub(crate) fn event_service_for_tests(&self) -> &EventService` on `CodingAgentSession` and use it in these reconnect tests. The helper must return `&self.event_service` only under `#[cfg(test)]`.
+Actual adaptation: current RPC moves `CodingAgentSession` into the background task while a prompt is running, so reconnect cannot rely on `state.coding_session`. The implementation exposes a narrow crate-internal `ProductEventReplayHandle` from `CodingAgentSession`, stores it on `CodingRunningPrompt`, and uses cfg(test) session helpers only to construct a small retained-event buffer and emit retained product events. The focused replay test emits an assistant delta marker because plain diagnostic product events are intentionally RPC-silent in the existing adapter.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -972,7 +974,7 @@ cargo test -p pi-coding-agent rpc_reconnect_gap_returns_fresh_snapshot_required_
 
 Expected: fail because reconnect-by-cursor does not exist.
 
-- [ ] **Step 3: Add reconnect request fields**
+- [x] **Step 3: Add reconnect request fields**
 
 Add to the relevant RPC command/request type in `protocol/types.rs`:
 
@@ -990,7 +992,7 @@ let cursor = request
     .unwrap_or_default();
 ```
 
-- [ ] **Step 4: Replay retained events before live receiver drain**
+- [x] **Step 4: Replay retained events before live receiver drain**
 
 Add a helper in `protocol/rpc/prompt.rs`:
 
@@ -1019,7 +1021,7 @@ pub(super) async fn reconnect_running_prompt_after(
 
 Call this helper when a reconnect or resume command supplies `afterSnapshotSequence`.
 
-- [ ] **Step 5: Run GREEN and reconnect regressions**
+- [x] **Step 5: Run GREEN and reconnect regressions**
 
 Run:
 
@@ -1032,7 +1034,7 @@ cargo check -p pi-coding-agent
 
 Expected: reconnect tests and crate check pass. If the `rpc_mode reconnect` filter has no tests, it should run zero tests and exit successfully; keep the focused module tests as the binding verification.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/protocol/types.rs crates/pi-coding-agent/src/protocol/rpc/prompt.rs crates/pi-coding-agent/src/protocol/rpc/commands.rs crates/pi-coding-agent/src/coding_session/mod.rs
