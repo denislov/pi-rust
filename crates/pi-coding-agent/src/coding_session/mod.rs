@@ -4,6 +4,7 @@ mod branch_summary_flow;
 mod branch_summary_service;
 mod capability_service;
 mod capability_snapshot;
+mod client_projection;
 mod context;
 mod delegation;
 mod delegation_confirmation_service;
@@ -33,6 +34,11 @@ mod session_service;
 
 pub use agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
 pub use agent_team_flow::{AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome};
+#[allow(unused_imports)]
+pub(crate) use client_projection::{
+    ClientConnection, ClientConnectionId, ClientDraft, ClientDraftKind, SubmittedOperation,
+    UiSnapshot, UiSnapshotCursor,
+};
 pub use context::{
     CapabilityStatus, CodingAgentCapabilities, CodingAgentSessionOptions,
     CodingAgentSessionSummary, CodingAgentSessionView,
