@@ -234,3 +234,51 @@ fn collect_source_violations(
         }
     }
 }
+
+fn workspace_path(relative: &str) -> PathBuf {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate should live under crates/pi-coding-agent")
+        .to_path_buf();
+    repo_root.join(relative)
+}
+
+#[test]
+fn rpc_running_product_events_do_not_use_unbounded_channels() {
+    let prompt_rs = fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/protocol/rpc/prompt.rs",
+    ))
+    .expect("read rpc prompt source");
+
+    assert!(
+        !prompt_rs.contains("mpsc::unbounded_channel"),
+        "RPC running product-event forwarding must use bounded queues"
+    );
+    assert!(
+        prompt_rs.contains("RpcProductEventQueue::new()"),
+        "RPC prompt forwarding should route through RpcProductEventQueue"
+    );
+    assert!(
+        prompt_rs.contains("RpcQueuedProductEvent::Overflow"),
+        "RPC completion drains must handle queued overflow recovery items"
+    );
+}
+
+#[test]
+fn event_receiver_lag_maps_to_snapshot_recovery_error() {
+    let event_service_rs = fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/coding_session/event_service.rs",
+    ))
+    .expect("read event service source");
+
+    assert!(
+        event_service_rs.contains("CodingSessionError::EventStreamLag"),
+        "broadcast lag must map to event_stream_lag so clients know to request a fresh snapshot"
+    );
+    assert!(
+        !event_service_rs.contains("event receiver lagged by {skipped} events"),
+        "lag should not remain a generic resource error"
+    );
+}

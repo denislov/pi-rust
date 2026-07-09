@@ -217,3 +217,62 @@ fn interactive_projection_consumes_product_events() {
         "interactive prompt-task event application should consume ProductEvent through UiProjection"
     );
 }
+
+fn workspace_path(relative: &str) -> std::path::PathBuf {
+    let crate_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = crate_root
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crate should live under crates/pi-coding-agent")
+        .to_path_buf();
+    repo_root.join(relative)
+}
+
+#[test]
+fn rpc_protocol_exposes_optional_version_negotiation_state() {
+    let types_rs = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/protocol/types.rs",
+    ))
+    .expect("read protocol types");
+    let commands_rs = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/protocol/rpc/commands.rs",
+    ))
+    .expect("read rpc commands");
+    let state_rs = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/protocol/rpc/state.rs",
+    ))
+    .expect("read rpc state");
+    let stats_rs = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/protocol/rpc/stats.rs",
+    ))
+    .expect("read rpc stats");
+
+    assert!(types_rs.contains("Hello {"));
+    assert!(commands_rs.contains("RPC_PROTOCOL_VERSION.is_compatible_with"));
+    assert!(state_rs.contains("negotiated_protocol"));
+    assert!(stats_rs.contains("negotiated_protocol"));
+}
+
+#[test]
+fn startup_recovery_stays_session_service_owned() {
+    let session_service_rs = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/coding_session/session_service.rs",
+    ))
+    .expect("read session service source");
+    let rpc_sources = [
+        workspace_path("crates/pi-coding-agent/src/protocol/rpc/commands.rs"),
+        workspace_path("crates/pi-coding-agent/src/protocol/rpc/prompt.rs"),
+        workspace_path("crates/pi-coding-agent/src/interactive/event_bridge.rs"),
+    ];
+
+    assert!(session_service_rs.contains("apply_startup_recovery"));
+    assert!(session_service_rs.contains("take_startup_recovery_markers"));
+    for source in rpc_sources {
+        let text = std::fs::read_to_string(&source).expect("read adapter source");
+        assert!(
+            !text.contains("SessionEventData::OperationRecovered {"),
+            "adapters must project recovery events but not write recovery session markers: {}",
+            source.display()
+        );
+    }
+}
