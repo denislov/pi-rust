@@ -28,11 +28,19 @@ use super::{
     SelfHealingEditRepairAttempt,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StartupRecoveryMarker {
+    pub(crate) operation_id: String,
+    pub(crate) recovery_id: String,
+    pub(crate) reason: String,
+}
+
 #[derive(Debug)]
 pub(crate) struct SessionService {
     #[allow(dead_code)]
     store: SessionLogStore,
     handle: SessionHandle,
+    startup_recovery_markers: Vec<StartupRecoveryMarker>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +95,14 @@ enum SessionCopyKind {
 }
 
 impl SessionService {
+    fn from_handle(store: SessionLogStore, handle: SessionHandle) -> Self {
+        Self {
+            store,
+            handle,
+            startup_recovery_markers: Vec::new(),
+        }
+    }
+
     pub(crate) fn create(options: &CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let root = resolve_session_log_root(options)?;
         let store = SessionLogStore::new(root);
@@ -112,7 +128,9 @@ impl SessionService {
         let target = open_target(options)?;
         let handle = store.open_session(&target)?;
 
-        Ok(Self { store, handle })
+        let mut service = Self::from_handle(store, handle);
+        service.apply_startup_recovery()?;
+        Ok(service)
     }
 
     pub(crate) fn open_or_create(
@@ -133,7 +151,9 @@ impl SessionService {
         let store = SessionLogStore::new(root);
 
         if let Some(handle) = store.try_open_session_id(&session_id)? {
-            return Ok(Self { store, handle });
+            let mut service = Self::from_handle(store, handle);
+            service.apply_startup_recovery()?;
+            return Ok(service);
         }
 
         let mut ids = SystemIdGenerator;
@@ -770,6 +790,58 @@ impl SessionService {
         Ok(self.replay()?.recovery_summary())
     }
 
+    fn apply_startup_recovery(&mut self) -> Result<(), CodingSessionError> {
+        let replay = self.replay()?;
+        let in_doubt_operations = replay.recovery_summary().in_doubt_operations;
+        if in_doubt_operations.is_empty() {
+            return Ok(());
+        }
+
+        let session_id = self.session_id().to_owned();
+        let mut ids = SystemIdGenerator;
+        let clock = SystemClock;
+        let recovered_at = clock.now_rfc3339();
+        let reason = "startup recovery marked incomplete operation in-doubt".to_owned();
+        let markers = in_doubt_operations
+            .into_iter()
+            .map(|operation_id| {
+                let recovery_id = ids.next_operation_id();
+                StartupRecoveryMarker {
+                    operation_id,
+                    recovery_id,
+                    reason: reason.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let events = markers
+            .iter()
+            .map(|marker| {
+                SessionEventEnvelope::new(
+                    session_id.clone(),
+                    ids.next_event_id(),
+                    recovered_at.clone(),
+                    SessionEventData::OperationRecovered {
+                        reason: marker.reason.clone(),
+                        recovery_id: marker.recovery_id.clone(),
+                    },
+                )
+                .with_operation_id(marker.operation_id.clone())
+            })
+            .collect::<Vec<_>>();
+
+        self.store.append_events(&self.handle, &events)?;
+        self.store
+            .update_manifest(&self.handle, ManifestPatch::new().updated_at(recovered_at))?;
+        self.handle = self.store.open_session_id(&session_id)?;
+        self.startup_recovery_markers.extend(markers);
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn take_startup_recovery_markers(&mut self) -> Vec<StartupRecoveryMarker> {
+        std::mem::take(&mut self.startup_recovery_markers)
+    }
+
     pub(crate) fn view(&self) -> CodingAgentSessionView {
         CodingAgentSessionView {
             session_id: self.session_id().to_owned(),
@@ -904,7 +976,7 @@ impl SessionService {
         );
         store.append_events(&handle, &[created])?;
 
-        Ok(Self { store, handle })
+        Ok(Self::from_handle(store, handle))
     }
 
     fn append_durable_session_event(
@@ -1359,6 +1431,7 @@ fn normalized_path_string(path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::coding_session::session_log::event::PersistedContentBlock;
+    use crate::coding_session::session_log::replay::OperationReplayStatus;
 
     #[test]
     fn create_uses_explicit_session_id() {
@@ -1448,8 +1521,7 @@ mod tests {
             .append_events(&created.handle, &incomplete_events)
             .unwrap();
 
-        let opened = SessionService::open(&options).unwrap();
-        let recovery = opened.recovery_summary().unwrap();
+        let recovery = created.recovery_summary().unwrap();
 
         assert_eq!(
             recovery.in_doubt_operations,
@@ -1502,13 +1574,91 @@ mod tests {
             .append_events(&created.handle, &events)
             .unwrap();
 
-        let opened = SessionService::open(&options).unwrap();
-        let recovery = opened.recovery_summary().unwrap();
+        let recovery = created.recovery_summary().unwrap();
 
         assert_eq!(
             recovery.in_doubt_operations,
             vec!["op_a".to_string(), "op_b".to_string(), "op_c".to_string()]
         );
+    }
+
+    #[test]
+    fn open_marks_in_doubt_operations_recovered() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(CreateSessionOptions::new(
+                "sess_recover_open",
+                "2026-07-09T00:00:00Z",
+            ))
+            .unwrap();
+        let started = SessionEventEnvelope::new(
+            "sess_recover_open",
+            "evt_started",
+            "2026-07-09T00:00:01Z",
+            SessionEventData::OperationStarted {
+                operation: OperationKind::Prompt,
+                runtime_generation: Default::default(),
+            },
+        )
+        .with_operation_id("op_in_doubt");
+        store.append_events(&handle, &[started]).unwrap();
+
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_recover_open")
+            .with_session_log_root(temp.path());
+        let service = SessionService::open(&options).unwrap();
+
+        let replay = service.replay().unwrap();
+        assert_eq!(
+            replay.operation_status("op_in_doubt"),
+            Some(OperationReplayStatus::Recovered)
+        );
+    }
+
+    #[test]
+    fn startup_recovery_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(CreateSessionOptions::new(
+                "sess_recover_once",
+                "2026-07-09T00:00:00Z",
+            ))
+            .unwrap();
+        let started = SessionEventEnvelope::new(
+            "sess_recover_once",
+            "evt_started",
+            "2026-07-09T00:00:01Z",
+            SessionEventData::OperationStarted {
+                operation: OperationKind::Prompt,
+                runtime_generation: Default::default(),
+            },
+        )
+        .with_operation_id("op_recover_once");
+        store.append_events(&handle, &[started]).unwrap();
+
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_recover_once")
+            .with_session_log_root(temp.path());
+        let _first = SessionService::open(&options).unwrap();
+        let _second = SessionService::open(&options).unwrap();
+
+        let reopened = SessionLogStore::new(temp.path())
+            .open_session_id("sess_recover_once")
+            .unwrap();
+        let events = SessionLogStore::new(temp.path())
+            .read_events(&reopened)
+            .unwrap();
+        let recovered_count = events
+            .iter()
+            .filter(|event| {
+                event.operation_id.as_deref() == Some("op_recover_once")
+                    && matches!(event.data, SessionEventData::OperationRecovered { .. })
+            })
+            .count();
+
+        assert_eq!(recovered_count, 1);
     }
 
     #[test]

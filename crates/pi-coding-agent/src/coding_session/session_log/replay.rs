@@ -1690,4 +1690,34 @@ mod tests {
             "recovered operation should not be warned as incomplete"
         );
     }
+
+    #[test]
+    fn operation_recovered_marker_finalizes_in_doubt_operation() {
+        let replay = fold_events(&[
+            event(
+                "evt_started",
+                Some("op_recovered"),
+                Some("turn_1"),
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
+                },
+            ),
+            event(
+                "evt_recovered",
+                Some("op_recovered"),
+                Some("turn_1"),
+                SessionEventData::OperationRecovered {
+                    reason: "startup recovery marked incomplete operation in-doubt".into(),
+                    recovery_id: "op_recovery_1".into(),
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            replay.operation_status("op_recovered"),
+            Some(OperationReplayStatus::Recovered)
+        );
+        assert!(replay.recovery_summary().in_doubt_operations.is_empty());
+    }
 }
