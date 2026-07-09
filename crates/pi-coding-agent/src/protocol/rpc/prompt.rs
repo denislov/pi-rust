@@ -34,10 +34,25 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-        if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "prompt")? {
-            write_rpc_response(writer, RpcResponse::success(id, "prompt", Some(data))).await?;
-            return Ok(());
+        let idempotency_key = match self.parse_idempotency_key(idempotency_key) {
+            Ok(key) => key,
+            Err(error) => {
+                write_rpc_response(writer, RpcResponse::error(id, "prompt", error.to_string()))
+                    .await?;
+                return Ok(());
+            }
+        };
+        match self.idempotent_retry_response(idempotency_key.as_ref(), "prompt") {
+            Ok(Some(data)) => {
+                write_rpc_response(writer, RpcResponse::success(id, "prompt", Some(data))).await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                write_rpc_response(writer, RpcResponse::error(id, "prompt", error.to_string()))
+                    .await?;
+                return Ok(());
+            }
         }
 
         if has_images(&images) {
@@ -191,12 +206,32 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-        if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "invoke_agent")?
-        {
-            write_rpc_response(writer, RpcResponse::success(id, "invoke_agent", Some(data)))
+        let idempotency_key = match self.parse_idempotency_key(idempotency_key) {
+            Ok(key) => key,
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "invoke_agent", error.to_string()),
+                )
                 .await?;
-            return Ok(());
+                return Ok(());
+            }
+        };
+        match self.idempotent_retry_response(idempotency_key.as_ref(), "invoke_agent") {
+            Ok(Some(data)) => {
+                write_rpc_response(writer, RpcResponse::success(id, "invoke_agent", Some(data)))
+                    .await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "invoke_agent", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
         }
 
         if self.is_streaming() {
@@ -396,12 +431,32 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-        if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "invoke_team")?
-        {
-            write_rpc_response(writer, RpcResponse::success(id, "invoke_team", Some(data)))
+        let idempotency_key = match self.parse_idempotency_key(idempotency_key) {
+            Ok(key) => key,
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "invoke_team", error.to_string()),
+                )
                 .await?;
-            return Ok(());
+                return Ok(());
+            }
+        };
+        match self.idempotent_retry_response(idempotency_key.as_ref(), "invoke_team") {
+            Ok(Some(data)) => {
+                write_rpc_response(writer, RpcResponse::success(id, "invoke_team", Some(data)))
+                    .await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "invoke_team", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
         }
 
         if self.is_streaming() {
@@ -596,13 +651,35 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-        if let Some(data) =
-            self.idempotent_retry_response(idempotency_key.as_ref(), "approve_delegation")?
-        {
-            write_rpc_response(writer, RpcResponse::success(id, "approve_delegation", Some(data)))
+        let idempotency_key = match self.parse_idempotency_key(idempotency_key) {
+            Ok(key) => key,
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "approve_delegation", error.to_string()),
+                )
                 .await?;
-            return Ok(());
+                return Ok(());
+            }
+        };
+        match self.idempotent_retry_response(idempotency_key.as_ref(), "approve_delegation") {
+            Ok(Some(data)) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(id, "approve_delegation", Some(data)),
+                )
+                .await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "approve_delegation", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
         }
 
         if self.is_streaming() {
@@ -678,11 +755,7 @@ impl RpcState {
         write_json_line(writer, &ProtocolEvent::AgentStart).await?;
 
         let running_idempotency_key = idempotency_key.clone();
-        self.remember_idempotency_key(
-            idempotency_key,
-            "approve_delegation",
-            operation_kind,
-        );
+        self.remember_idempotency_key(idempotency_key, "approve_delegation", operation_kind);
 
         tokio::spawn(async move {
             let outcome = {
@@ -928,7 +1001,10 @@ impl RpcState {
                 RpcQueuedProductEvent::Event(event) => {
                     let pushed = push_live_product_event(&mut running, &event);
                     if pushed.accepted {
-                        self.observe_product_event_submission_for_kind(&event, Some(operation_kind));
+                        self.observe_product_event_submission_for_kind(
+                            &event,
+                            Some(operation_kind),
+                        );
                     }
                     for protocol_event in pushed.protocol_events {
                         write_json_line(writer, &protocol_event).await?;
@@ -1223,7 +1299,9 @@ mod tests {
             .unwrap();
         let replay = session.product_event_replay_handle();
         let (event_tx, event_rx) = RpcProductEventQueue::for_tests(4);
-        event_tx.try_send_event(prompt_started_event(1, "op_finish")).unwrap();
+        event_tx
+            .try_send_event(prompt_started_event(1, "op_finish"))
+            .unwrap();
         event_tx
             .try_send_event(prompt_completed_event(2, "op_finish"))
             .unwrap();

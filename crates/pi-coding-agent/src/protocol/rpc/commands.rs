@@ -512,16 +512,35 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-        if let Some(data) =
-            self.idempotent_retry_response(idempotency_key.as_ref(), "self_healing_edit")?
-        {
-            write_rpc_response(
-                writer,
-                RpcResponse::success(id, "self_healing_edit", Some(data)),
-            )
-            .await?;
-            return Ok(());
+        let idempotency_key = match self.parse_idempotency_key(idempotency_key) {
+            Ok(key) => key,
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "self_healing_edit", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        match self.idempotent_retry_response(idempotency_key.as_ref(), "self_healing_edit") {
+            Ok(Some(data)) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(id, "self_healing_edit", Some(data)),
+                )
+                .await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "self_healing_edit", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
         }
 
         if self.is_streaming() {
@@ -731,16 +750,36 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-        if let Some(data) = self
-            .idempotent_retry_response(idempotency_key.as_ref(), "set_default_agent_profile")?
+        let idempotency_key = match self.parse_idempotency_key(idempotency_key) {
+            Ok(key) => key,
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        match self.idempotent_retry_response(idempotency_key.as_ref(), "set_default_agent_profile")
         {
-            write_rpc_response(
-                writer,
-                RpcResponse::success(id, "set_default_agent_profile", Some(data)),
-            )
-            .await?;
-            return Ok(());
+            Ok(Some(data)) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(id, "set_default_agent_profile", Some(data)),
+                )
+                .await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
         }
 
         if self.is_streaming() {
@@ -902,16 +941,35 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
-        if let Some(data) =
-            self.idempotent_retry_response(idempotency_key.as_ref(), "reject_delegation")?
-        {
-            write_rpc_response(
-                writer,
-                RpcResponse::success(id, "reject_delegation", Some(data)),
-            )
-            .await?;
-            return Ok(());
+        let idempotency_key = match self.parse_idempotency_key(idempotency_key) {
+            Ok(key) => key,
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "reject_delegation", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        match self.idempotent_retry_response(idempotency_key.as_ref(), "reject_delegation") {
+            Ok(Some(data)) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(id, "reject_delegation", Some(data)),
+                )
+                .await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "reject_delegation", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
         }
 
         if self.is_streaming() {
@@ -942,8 +1000,7 @@ impl RpcState {
                     .pending_delegation_confirmations()
                     .into_iter()
                     .find(|pending| {
-                        pending.operation_id == operation_id
-                            && pending.tool_call_id == tool_call_id
+                        pending.operation_id == operation_id && pending.tool_call_id == tool_call_id
                     })
             else {
                 write_rpc_response(
