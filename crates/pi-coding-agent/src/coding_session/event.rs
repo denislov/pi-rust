@@ -169,6 +169,9 @@ impl ProductEventKind {
             CodingAgentEvent::CapabilityChanged { .. } => {
                 Self::Capability(CapabilityProductEventKind::Changed)
             }
+            CodingAgentEvent::OperationRecovered { .. } => {
+                Self::Workflow(WorkflowProductEventKind::OperationRecovered)
+            }
         }
     }
 
@@ -274,6 +277,7 @@ pub(crate) enum WorkflowProductEventKind {
     PromptCompleted,
     PromptFailed,
     PromptAborted,
+    OperationRecovered,
 }
 
 #[allow(dead_code)]
@@ -294,6 +298,7 @@ pub(crate) enum ProductEventTerminalStatus {
     Completed,
     Failed,
     Aborted,
+    Recovered,
 }
 
 #[allow(dead_code)]
@@ -465,7 +470,8 @@ impl ProductEventDurability {
             | CodingAgentEvent::PromptFailed { .. }
             | CodingAgentEvent::PromptAborted { .. }
             | CodingAgentEvent::Diagnostic { .. }
-            | CodingAgentEvent::CapabilityChanged { .. } => Self::LiveOnly,
+            | CodingAgentEvent::CapabilityChanged { .. }
+            | CodingAgentEvent::OperationRecovered { .. } => Self::LiveOnly,
         }
     }
 }
@@ -743,6 +749,11 @@ pub enum CodingAgentEvent {
         generation: u64,
         revocation: CapabilityRevocationPolicy,
     },
+    OperationRecovered {
+        operation_id: String,
+        recovery_id: String,
+        reason: String,
+    },
 }
 
 #[allow(dead_code)]
@@ -800,7 +811,8 @@ impl CodingAgentEvent {
             | Self::SessionCompactionCompleted { operation_id, .. }
             | Self::PromptCompleted { operation_id, .. }
             | Self::PromptFailed { operation_id, .. }
-            | Self::PromptAborted { operation_id, .. } => Some(operation_id.as_str()),
+            | Self::PromptAborted { operation_id, .. }
+            | Self::OperationRecovered { operation_id, .. } => Some(operation_id.as_str()),
             Self::Diagnostic { operation_id, .. } => operation_id.as_deref(),
             Self::SessionOpened { .. }
             | Self::DefaultAgentProfileChanged { .. }
@@ -827,6 +839,7 @@ impl CodingAgentEvent {
             Self::AgentInvocationAborted { .. }
             | Self::AgentTeamAborted { .. }
             | Self::PromptAborted { .. } => Some(ProductEventTerminalStatus::Aborted),
+            Self::OperationRecovered { .. } => Some(ProductEventTerminalStatus::Recovered),
             Self::SessionOpened { .. }
             | Self::DefaultAgentProfileChanged { .. }
             | Self::AgentInvocationStarted { .. }

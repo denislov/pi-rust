@@ -1111,6 +1111,8 @@ impl CodingAgentSession {
         default_plugin_load_options: PluginLoadOptions,
         profile_registry: ProfileRegistry,
     ) -> Result<Self, CodingSessionError> {
+        let mut session_service = session_service;
+        let startup_recovery_markers = session_service.take_startup_recovery_markers();
         let replay = session_service.replay()?;
         let cwd = replay
             .cwd
@@ -1127,7 +1129,7 @@ impl CodingAgentSession {
         let event_service = EventService::new();
         event_service.emit_session_opened(session_service.session_id().to_owned());
 
-        Ok(Self {
+        let session = Self {
             persistence: SessionPersistence::Persistent(session_service),
             runtime_service: RuntimeService::new(),
             flow_service: FlowService::new(),
@@ -1145,7 +1147,17 @@ impl CodingAgentSession {
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
             capability_snapshots: CapabilitySnapshotService::new(),
-        })
+        };
+
+        for marker in startup_recovery_markers {
+            session.event_service.emit_operation_recovered(
+                marker.operation_id,
+                marker.recovery_id,
+                marker.reason,
+            );
+        }
+
+        Ok(session)
     }
 
     fn from_transient(
@@ -4218,6 +4230,7 @@ runtime = "lua"
             CodingAgentEvent::PromptAborted { .. } => "prompt_aborted",
             CodingAgentEvent::Diagnostic { .. } => "diagnostic",
             CodingAgentEvent::CapabilityChanged { .. } => "capability_changed",
+            CodingAgentEvent::OperationRecovered { .. } => "operation_recovered",
         }
     }
 }

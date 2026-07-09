@@ -197,6 +197,15 @@ impl CodingProtocolEventAdapter {
                 generation: *generation,
                 revocation: revocation.as_str().to_owned(),
             }],
+            CodingAgentEvent::OperationRecovered {
+                operation_id,
+                recovery_id,
+                reason,
+            } => vec![ProtocolEvent::OperationRecovered {
+                operation_id: operation_id.clone(),
+                recovery_id: recovery_id.clone(),
+                reason: reason.clone(),
+            }],
             CodingAgentEvent::SelfHealingEditStarted {
                 operation_id,
                 path,
@@ -856,5 +865,41 @@ fn stored_error_assistant(
         stop_reason: StopReason::Error,
         error_message: Some(error.to_string()),
         timestamp: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coding_session::{CodingAgentEvent, ProductEvent, ProductEventSequence};
+
+    #[test]
+    fn protocol_adapter_maps_operation_recovered_to_recovery_event() {
+        let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+            "faux".into(),
+            "faux-provider".into(),
+            "faux-model".into(),
+        );
+        let product_event = ProductEvent::from_compat_event(
+            ProductEventSequence::new(1),
+            CodingAgentEvent::OperationRecovered {
+                operation_id: "op_recovered".into(),
+                recovery_id: "recovery_1".into(),
+                reason: "startup recovery marked incomplete operation in-doubt".into(),
+            },
+        );
+
+        let events = adapter.push_product_event(&product_event);
+
+        assert!(matches!(
+            &events[0],
+            ProtocolEvent::OperationRecovered {
+                operation_id,
+                recovery_id,
+                reason,
+            } if operation_id == "op_recovered"
+                && recovery_id == "recovery_1"
+                && reason.contains("startup recovery")
+        ));
     }
 }

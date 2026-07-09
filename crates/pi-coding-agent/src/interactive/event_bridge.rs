@@ -443,6 +443,13 @@ impl CodingEventBridge {
                     text: format!("Self-healing edit failed for {}: {}", path, error),
                 }]
             }
+            CodingAgentEvent::OperationRecovered {
+                operation_id,
+                reason,
+                ..
+            } => vec![UiEvent::SystemNotice {
+                text: format!("Recovered incomplete operation {operation_id}: {reason}"),
+            }],
             CodingAgentEvent::SessionOpened { .. }
             | CodingAgentEvent::DefaultAgentProfileChanged { .. }
             | CodingAgentEvent::AgentInvocationStarted { .. }

@@ -698,6 +698,19 @@ impl EventService {
         });
     }
 
+    pub(crate) fn emit_operation_recovered(
+        &self,
+        operation_id: impl Into<String>,
+        recovery_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> ProductEvent {
+        self.emit(CodingAgentEvent::OperationRecovered {
+            operation_id: operation_id.into(),
+            recovery_id: recovery_id.into(),
+            reason: reason.into(),
+        })
+    }
+
     pub(crate) fn subscribe(&self) -> CodingAgentEventReceiver {
         CodingAgentEventReceiver {
             inner: self.sender.subscribe(),
@@ -2369,5 +2382,22 @@ mod tests {
 
         assert_eq!(error.code(), "event_stream_lag");
         assert!(error.to_string().contains("client must request a fresh UI snapshot"));
+    }
+
+    #[test]
+    fn recovery_markers_publish_terminal_product_events() {
+        let service = EventService::new();
+        let event = service.emit_operation_recovered(
+            "op_recovered",
+            "recovery_1",
+            "startup recovery marked incomplete operation in-doubt",
+        );
+
+        assert_eq!(event.operation_id(), Some("op_recovered"));
+        assert_eq!(
+            event.terminal_status(),
+            Some(ProductEventTerminalStatus::Recovered)
+        );
+        assert_eq!(event.family(), ProductEventFamily::Workflow);
     }
 }
