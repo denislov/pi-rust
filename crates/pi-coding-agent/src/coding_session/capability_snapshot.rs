@@ -476,6 +476,13 @@ mod tests {
     }
 
     #[test]
+    fn compact_snapshot_grants_model_and_session_write() {
+        let snapshot = CapabilitySnapshotService::new().snapshot(input(OperationKind::Compact));
+        assert!(snapshot.model.is_some());
+        assert!(snapshot.session_write.is_some());
+    }
+
+    #[test]
     fn runtime_write_install_generation_advances_future_snapshots() {
         let mut service = CapabilitySnapshotService::new();
         let first = service.snapshot(input(OperationKind::Prompt));
