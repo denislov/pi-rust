@@ -1,5 +1,7 @@
 use crate::protocol::rpc::event_queue::RpcQueuedProductEvent;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
+use crate::protocol::types::RpcNegotiatedProtocolState;
+use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION};
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
     coding_session::AgentTeamOutcome, coding_session::ClientConnectionId,
@@ -36,6 +38,7 @@ pub(super) struct RpcState {
     pub(super) is_compacting: bool,
     pub(super) steering: Vec<String>,
     pub(super) follow_up: Vec<String>,
+    pub(super) negotiated_protocol: RpcNegotiatedProtocolState,
 }
 
 pub(super) enum RunningPrompt {
@@ -122,6 +125,11 @@ impl RpcState {
             is_compacting: false,
             steering: Vec::new(),
             follow_up: Vec::new(),
+            negotiated_protocol: RpcNegotiatedProtocolState {
+                rpc: None,
+                product_events: PRODUCT_EVENT_PROTOCOL_VERSION,
+                ui_snapshot: UI_SNAPSHOT_PROTOCOL_VERSION,
+            },
         })
     }
 

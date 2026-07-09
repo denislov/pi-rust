@@ -13,7 +13,11 @@ use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
 use crate::protocol::types::{
-    RpcCommand, RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement,
+    RpcCommand, RpcHelloResponse, RpcResponse, RpcSelfHealingEditModelRepair,
+    RpcSelfHealingEditReplacement,
+};
+use crate::protocol::version::{
+    PRODUCT_EVENT_PROTOCOL_VERSION, RPC_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION,
 };
 use crate::runtime::{PromptInvocation, SessionMode};
 use crate::session::resolve_session_dir;
@@ -30,6 +34,52 @@ impl RpcState {
         W: AsyncWrite + Unpin,
     {
         match command {
+            RpcCommand::Hello { id, protocol } => {
+                if !RPC_PROTOCOL_VERSION.is_compatible_with(&protocol) {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error_with_data(
+                            id,
+                            "hello",
+                            format!(
+                                "unsupported protocol version for rpc: requested {protocol}, supported {RPC_PROTOCOL_VERSION}"
+                            ),
+                            serde_json::json!({
+                                "code": "unsupported_protocol_version",
+                                "requested": {
+                                    "family": protocol.family,
+                                    "major": protocol.major,
+                                    "minor": protocol.minor
+                                },
+                                "supported": {
+                                    "family": RPC_PROTOCOL_VERSION.family,
+                                    "major": RPC_PROTOCOL_VERSION.major,
+                                    "minor": RPC_PROTOCOL_VERSION.minor
+                                }
+                            }),
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                self.negotiated_protocol.rpc = Some(RPC_PROTOCOL_VERSION);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "hello",
+                        Some(
+                            serde_json::to_value(RpcHelloResponse {
+                                protocol: RPC_PROTOCOL_VERSION,
+                                product_events: PRODUCT_EVENT_PROTOCOL_VERSION,
+                                ui_snapshot: UI_SNAPSHOT_PROTOCOL_VERSION,
+                            })
+                            .expect("hello response serializes"),
+                        ),
+                    ),
+                )
+                .await
+            }
             RpcCommand::Prompt {
                 id,
                 message,

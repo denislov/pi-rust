@@ -26,6 +26,7 @@ impl RpcState {
             client_id: self.client_id.as_ref().map(|id| id.as_str().to_owned()),
             snapshot_sequence: projection.snapshot_sequence,
             capability_generation: projection.capability_generation,
+            negotiated_protocol: self.negotiated_protocol.clone(),
             session_name: self.session_name.clone(),
             auto_compaction_enabled: self.auto_compaction_enabled,
             message_count: self.messages.len(),

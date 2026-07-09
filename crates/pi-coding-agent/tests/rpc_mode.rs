@@ -2498,3 +2498,84 @@ async fn rpc_state_commands_update_get_state() {
     assert_eq!(state["data"]["thinkingLevel"], "high");
     assert_eq!(state["data"]["steeringMode"], "one-at-a-time");
 }
+
+#[tokio::test]
+async fn rpc_hello_negotiates_supported_protocol_families() {
+    let input = b"{\"id\":\"h1\",\"type\":\"hello\",\"protocol\":{\"family\":\"rpc\",\"major\":1,\"minor\":0}}\n";
+    let mut output = Vec::new();
+
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-hello")),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["command"], "hello");
+    assert_eq!(lines[0]["success"], true);
+    assert_eq!(lines[0]["data"]["protocol"]["family"], "rpc");
+    assert_eq!(lines[0]["data"]["protocol"]["major"], 1);
+    assert_eq!(lines[0]["data"]["productEvents"]["family"], "product_event");
+    assert_eq!(lines[0]["data"]["uiSnapshot"]["family"], "ui_snapshot");
+}
+
+#[tokio::test]
+async fn rpc_hello_rejects_unsupported_major_protocol_version() {
+    let input = b"{\"id\":\"h1\",\"type\":\"hello\",\"protocol\":{\"family\":\"rpc\",\"major\":99,\"minor\":0}}\n";
+    let mut output = Vec::new();
+
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-hello-reject")),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["command"], "hello");
+    assert_eq!(lines[0]["success"], false);
+    assert_eq!(lines[0]["data"]["code"], "unsupported_protocol_version");
+    assert_eq!(lines[0]["data"]["supported"]["major"], 1);
+}
+
+#[tokio::test]
+async fn rpc_hello_records_negotiated_protocol_state() {
+    let input = b"{\"id\":\"h1\",\"type\":\"hello\",\"protocol\":{\"family\":\"rpc\",\"major\":1,\"minor\":0}}\n{\"id\":\"s1\",\"type\":\"get_state\"}\n";
+    let mut output = Vec::new();
+
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model("pi-coding-rpc-hello-state")),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let lines = parse_lines(&output);
+    assert_eq!(lines[0]["command"], "hello");
+    assert_eq!(lines[0]["success"], true);
+    assert_eq!(lines[1]["command"], "get_state");
+    assert_eq!(
+        lines[1]["data"]["negotiatedProtocol"]["rpc"]["family"],
+        "rpc"
+    );
+    assert_eq!(lines[1]["data"]["negotiatedProtocol"]["rpc"]["major"], 1);
+}

@@ -1,4 +1,5 @@
 use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
+use crate::protocol::version::{ProtocolFamilyVersion, RequestedProtocolVersion};
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model};
@@ -434,6 +435,11 @@ pub struct RpcSelfHealingEditModelRepair {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum RpcCommand {
+    #[serde(rename = "hello")]
+    Hello {
+        id: Option<String>,
+        protocol: RequestedProtocolVersion,
+    },
     #[serde(rename = "prompt")]
     Prompt {
         id: Option<String>,
@@ -578,6 +584,24 @@ pub enum StreamingBehavior {
     FollowUp,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcHelloResponse {
+    pub protocol: ProtocolFamilyVersion,
+    #[serde(rename = "productEvents")]
+    pub product_events: ProtocolFamilyVersion,
+    #[serde(rename = "uiSnapshot")]
+    pub ui_snapshot: ProtocolFamilyVersion,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcNegotiatedProtocolState {
+    pub rpc: Option<ProtocolFamilyVersion>,
+    #[serde(rename = "productEvents")]
+    pub product_events: ProtocolFamilyVersion,
+    #[serde(rename = "uiSnapshot")]
+    pub ui_snapshot: ProtocolFamilyVersion,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RpcSessionState {
     pub model: Option<Model>,
@@ -601,6 +625,8 @@ pub struct RpcSessionState {
     pub snapshot_sequence: u64,
     #[serde(rename = "capabilityGeneration")]
     pub capability_generation: u64,
+    #[serde(rename = "negotiatedProtocol")]
+    pub negotiated_protocol: RpcNegotiatedProtocolState,
     #[serde(rename = "sessionName", skip_serializing_if = "Option::is_none")]
     pub session_name: Option<String>,
     #[serde(rename = "autoCompactionEnabled")]

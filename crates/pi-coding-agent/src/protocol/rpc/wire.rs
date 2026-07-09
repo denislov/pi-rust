@@ -46,7 +46,8 @@ pub(super) fn command_id(value: &Value) -> Option<String> {
 pub(super) fn is_supported_m5_command(command: &str) -> bool {
     matches!(
         command,
-        "prompt"
+        "hello"
+            | "prompt"
             | "steer"
             | "follow_up"
             | "abort"
