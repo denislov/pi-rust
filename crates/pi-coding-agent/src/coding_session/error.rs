@@ -48,11 +48,11 @@ pub enum CodingSessionError {
     UnsupportedCapability { capability: String },
     #[error("busy: {operation}")]
     Busy { operation: String },
-    #[error(
-        "event stream lagged by {skipped} events; client must request a fresh UI snapshot"
-    )]
+    #[error("event stream lagged by {skipped} events; client must request a fresh UI snapshot")]
     EventStreamLag { skipped: u64 },
-    #[error("unsupported protocol version for {family}: requested {requested}, supported {supported}")]
+    #[error(
+        "unsupported protocol version for {family}: requested {requested}, supported {supported}"
+    )]
     UnsupportedProtocolVersion {
         family: String,
         requested: String,

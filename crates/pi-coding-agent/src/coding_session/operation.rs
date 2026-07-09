@@ -268,8 +268,9 @@ impl OperationIdempotencyKey {
                 .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'));
         if !valid {
             return Err(crate::coding_session::CodingSessionError::Input {
-                message: "idempotency key must be 1-128 ASCII letters, digits, '-', '_', '.', or ':'"
-                    .into(),
+                message:
+                    "idempotency key must be 1-128 ASCII letters, digits, '-', '_', '.', or ':'"
+                        .into(),
             });
         }
         Ok(Self(value))

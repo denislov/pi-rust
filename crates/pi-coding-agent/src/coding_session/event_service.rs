@@ -1030,9 +1030,9 @@ impl CodingAgentEventReceiver {
 fn map_recv_error(error: broadcast::error::RecvError) -> CodingSessionError {
     match error {
         broadcast::error::RecvError::Closed => CodingSessionError::Cancelled,
-        broadcast::error::RecvError::Lagged(skipped) => CodingSessionError::EventStreamLag {
-            skipped,
-        },
+        broadcast::error::RecvError::Lagged(skipped) => {
+            CodingSessionError::EventStreamLag { skipped }
+        }
     }
 }
 
@@ -2381,7 +2381,11 @@ mod tests {
         let error = receiver.recv().await.unwrap_err();
 
         assert_eq!(error.code(), "event_stream_lag");
-        assert!(error.to_string().contains("client must request a fresh UI snapshot"));
+        assert!(
+            error
+                .to_string()
+                .contains("client must request a fresh UI snapshot")
+        );
     }
 
     #[test]

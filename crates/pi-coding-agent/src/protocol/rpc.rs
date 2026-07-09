@@ -1,6 +1,6 @@
 mod commands;
-pub(crate) mod events;
 mod event_queue;
+pub(crate) mod events;
 mod prompt;
 mod state;
 mod stats;
@@ -9,13 +9,13 @@ mod wire;
 use crate::protocol::jsonl::JsonlLineReader;
 use crate::protocol::types::{RpcCommand, RpcResponse};
 use crate::{CliError, CliRunOptions};
+use event_queue::RpcQueuedProductEvent;
 use serde_json::Value;
 use state::{CodingOperationTaskResult, RpcState, RunningPrompt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 pub use wire::write_rpc_response;
 use wire::{command_id, command_type, is_supported_m5_command};
-use event_queue::RpcQueuedProductEvent;
 
 pub async fn run_rpc_mode_for_io<R, W>(
     reader: R,

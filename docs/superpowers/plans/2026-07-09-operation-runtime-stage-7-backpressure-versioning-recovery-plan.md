@@ -2173,28 +2173,28 @@ git commit -m "docs: close runtime hardening stage"
 
 ## Verification Checklist
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo test -p pi-coding-agent event_service_reports_bounded_product_event_window --lib`
-- [ ] `cargo test -p pi-coding-agent product_event_receiver_lag_reports_snapshot_recovery --lib`
-- [ ] `cargo test -p pi-coding-agent rpc_product_event_queue --lib`
-- [ ] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_negotiates_supported_protocol_families`
-- [ ] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_rejects_unsupported_major_protocol_version`
-- [ ] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_records_negotiated_protocol_state`
-- [ ] `cargo test -p pi-coding-agent ui_snapshot_carries_projection_version --lib`
-- [ ] `cargo test -p pi-coding-agent rpc_state --lib`
-- [ ] `cargo test -p pi-coding-agent open_marks_in_doubt_operations_recovered --lib`
-- [ ] `cargo test -p pi-coding-agent startup_recovery_is_idempotent --lib`
-- [ ] `cargo test -p pi-coding-agent operation_recovered_marker_finalizes_in_doubt_operation --lib`
-- [ ] `cargo test -p pi-coding-agent recovery_markers_publish_terminal_product_events --lib`
-- [ ] `cargo test -p pi-coding-agent protocol_adapter_maps_operation_recovered_to_recovery_event --lib`
-- [ ] `cargo test -p pi-coding-agent idempotency_key --lib`
-- [ ] `cargo test -p pi-coding-agent --test rpc_mode rpc_prompt_idempotency_key_deduplicates_running_retry`
-- [ ] `cargo test -p pi-coding-agent --test rpc_mode get_state`
-- [ ] `cargo test -p pi-coding-agent --test rpc_mode prompt`
-- [ ] `cargo test -p pi-coding-agent --test event_boundary_guards`
-- [ ] `cargo test -p pi-coding-agent --test product_runtime_boundary_guards`
-- [ ] `cargo check -p pi-coding-agent`
-- [ ] `git diff --check`
+- [x] `cargo fmt --check`
+- [x] `cargo test -p pi-coding-agent event_service_reports_bounded_product_event_window --lib`
+- [x] `cargo test -p pi-coding-agent product_event_receiver_lag_reports_snapshot_recovery --lib`
+- [x] `cargo test -p pi-coding-agent rpc_product_event_queue --lib`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_negotiates_supported_protocol_families`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_rejects_unsupported_major_protocol_version`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode rpc_hello_records_negotiated_protocol_state`
+- [x] `cargo test -p pi-coding-agent ui_snapshot_carries_projection_version --lib`
+- [x] `cargo test -p pi-coding-agent rpc_state --lib`
+- [x] `cargo test -p pi-coding-agent open_marks_in_doubt_operations_recovered --lib`
+- [x] `cargo test -p pi-coding-agent startup_recovery_is_idempotent --lib`
+- [x] `cargo test -p pi-coding-agent operation_recovered_marker_finalizes_in_doubt_operation --lib`
+- [x] `cargo test -p pi-coding-agent recovery_markers_publish_terminal_product_events --lib`
+- [x] `cargo test -p pi-coding-agent protocol_adapter_maps_operation_recovered_to_recovery_event --lib`
+- [x] `cargo test -p pi-coding-agent idempotency_key --lib`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode rpc_prompt_idempotency_key_deduplicates_running_retry`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode get_state`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode prompt`
+- [x] `cargo test -p pi-coding-agent --test event_boundary_guards`
+- [x] `cargo test -p pi-coding-agent --test product_runtime_boundary_guards`
+- [x] `cargo check -p pi-coding-agent`
+- [x] `git diff --check`
 
 ## Spec Coverage
 
