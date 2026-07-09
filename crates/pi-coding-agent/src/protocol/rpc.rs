@@ -1,5 +1,6 @@
 mod commands;
 pub(crate) mod events;
+mod event_queue;
 mod prompt;
 mod state;
 mod stats;
@@ -14,6 +15,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 pub use wire::write_rpc_response;
 use wire::{command_id, command_type, is_supported_m5_command};
+use event_queue::RpcQueuedProductEvent;
 
 pub async fn run_rpc_mode_for_io<R, W>(
     reader: R,
@@ -68,7 +70,28 @@ where
                 };
                 handle_input_line(&mut state, &line, writer).await?;
             }
-            RpcLoopEvent::CodingEvent(Some(event)) => {
+            RpcLoopEvent::CodingEvent(Some(RpcQueuedProductEvent::Overflow { skipped })) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error_with_data(
+                        None,
+                        "event_stream",
+                        format!(
+                            "event stream lagged by {skipped} events; client must request a fresh UI snapshot"
+                        ),
+                        serde_json::json!({
+                            "code": "event_stream_lag",
+                            "skipped": skipped,
+                            "recovery": "fresh_snapshot"
+                        }),
+                    ),
+                )
+                .await?;
+                if let Some(RunningPrompt::Coding(running)) = state.running.as_mut() {
+                    running.events_closed = true;
+                }
+            }
+            RpcLoopEvent::CodingEvent(Some(RpcQueuedProductEvent::Event(event))) => {
                 state.write_product_event(event, writer).await?;
             }
             RpcLoopEvent::CodingEvent(None) => {
@@ -87,7 +110,7 @@ where
 
 enum RpcLoopEvent {
     Input(Result<Option<String>, std::io::Error>),
-    CodingEvent(Option<crate::coding_session::ProductEvent>),
+    CodingEvent(Option<RpcQueuedProductEvent>),
     CodingPromptDone(Result<CodingOperationTaskResult, oneshot::error::RecvError>),
 }
 

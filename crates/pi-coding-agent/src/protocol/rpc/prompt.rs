@@ -6,6 +6,7 @@ use crate::coding_session::{
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
+use crate::protocol::rpc::event_queue::{RpcProductEventQueue, RpcQueuedProductEvent};
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::{
     CodingOperationOutcome, CodingOperationTaskResult, CodingRunningPrompt, RpcState, RunningPrompt,
@@ -17,7 +18,7 @@ use crate::session::resolve_session_dir;
 use pi_agent_core::AgentResources;
 use std::path::PathBuf;
 use tokio::io::AsyncWrite;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 impl RpcState {
     pub(super) async fn handle_prompt<W>(
@@ -280,7 +281,7 @@ impl RpcState {
         let invocation_options =
             AgentInvocationOptions::new(profile_id.clone(), task.clone(), prompt_options);
         let mut receiver = session.subscribe_product_events();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = RpcProductEventQueue::new();
         let (done_tx, done_rx) = oneshot::channel();
         let product_event_replay = session.product_event_replay_handle();
 
@@ -301,11 +302,23 @@ impl RpcState {
         tokio::spawn(async move {
             let outcome = {
                 let mut invocation = Box::pin(session.invoke_agent(invocation_options));
+                let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
-                        event = receiver.recv() => {
-                            if let Ok(event) = event {
-                                let _ = event_tx.send(event);
+                        event = receiver.recv(), if product_event_forwarding_open => {
+                            match event {
+                                Ok(event) => {
+                                    if event_tx.send_event(event).await.is_err() {
+                                        product_event_forwarding_open = false;
+                                    }
+                                }
+                                Err(CodingSessionError::EventStreamLag { skipped }) => {
+                                    let _ = event_tx.send_overflow(skipped).await;
+                                    product_event_forwarding_open = false;
+                                }
+                                Err(_) => {
+                                    product_event_forwarding_open = false;
+                                }
                             }
                         }
                         outcome = &mut invocation => {
@@ -316,7 +329,9 @@ impl RpcState {
             };
 
             while let Ok(Some(event)) = receiver.try_recv() {
-                let _ = event_tx.send(event);
+                if event_tx.send_event(event).await.is_err() {
+                    break;
+                }
             }
 
             let _ = done_tx.send(CodingOperationTaskResult {
@@ -453,7 +468,7 @@ impl RpcState {
         .with_mode(PromptTurnMode::Rpc);
         let team_options = AgentTeamOptions::new(team_id.clone(), task.clone(), prompt_options);
         let mut receiver = session.subscribe_product_events();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = RpcProductEventQueue::new();
         let (done_tx, done_rx) = oneshot::channel();
         let product_event_replay = session.product_event_replay_handle();
 
@@ -474,11 +489,23 @@ impl RpcState {
         tokio::spawn(async move {
             let outcome = {
                 let mut invocation = Box::pin(session.invoke_team(team_options));
+                let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
-                        event = receiver.recv() => {
-                            if let Ok(event) = event {
-                                let _ = event_tx.send(event);
+                        event = receiver.recv(), if product_event_forwarding_open => {
+                            match event {
+                                Ok(event) => {
+                                    if event_tx.send_event(event).await.is_err() {
+                                        product_event_forwarding_open = false;
+                                    }
+                                }
+                                Err(CodingSessionError::EventStreamLag { skipped }) => {
+                                    let _ = event_tx.send_overflow(skipped).await;
+                                    product_event_forwarding_open = false;
+                                }
+                                Err(_) => {
+                                    product_event_forwarding_open = false;
+                                }
                             }
                         }
                         outcome = &mut invocation => {
@@ -489,7 +516,9 @@ impl RpcState {
             };
 
             while let Ok(Some(event)) = receiver.try_recv() {
-                let _ = event_tx.send(event);
+                if event_tx.send_event(event).await.is_err() {
+                    break;
+                }
             }
 
             let _ = done_tx.send(CodingOperationTaskResult {
@@ -583,7 +612,7 @@ impl RpcState {
             None
         };
         let mut receiver = session.subscribe_product_events();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = RpcProductEventQueue::new();
         let (done_tx, done_rx) = oneshot::channel();
         let product_event_replay = session.product_event_replay_handle();
 
@@ -604,11 +633,23 @@ impl RpcState {
             let outcome = {
                 let mut approval =
                     Box::pin(session.approve_delegation_confirmation(operation_id, tool_call_id));
+                let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
-                        event = receiver.recv() => {
-                            if let Ok(event) = event {
-                                let _ = event_tx.send(event);
+                        event = receiver.recv(), if product_event_forwarding_open => {
+                            match event {
+                                Ok(event) => {
+                                    if event_tx.send_event(event).await.is_err() {
+                                        product_event_forwarding_open = false;
+                                    }
+                                }
+                                Err(CodingSessionError::EventStreamLag { skipped }) => {
+                                    let _ = event_tx.send_overflow(skipped).await;
+                                    product_event_forwarding_open = false;
+                                }
+                                Err(_) => {
+                                    product_event_forwarding_open = false;
+                                }
                             }
                         }
                         outcome = &mut approval => {
@@ -619,7 +660,9 @@ impl RpcState {
             };
 
             while let Ok(Some(event)) = receiver.try_recv() {
-                let _ = event_tx.send(event);
+                if event_tx.send_event(event).await.is_err() {
+                    break;
+                }
             }
 
             let _ = done_tx.send(CodingOperationTaskResult {
@@ -702,7 +745,7 @@ impl RpcState {
         .with_mode(PromptTurnMode::Rpc);
         let control = session.prompt_control_handle()?;
         let mut receiver = session.subscribe_product_events();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = RpcProductEventQueue::new();
         let (done_tx, done_rx) = oneshot::channel();
         let product_event_replay = session.product_event_replay_handle();
 
@@ -712,12 +755,22 @@ impl RpcState {
         tokio::spawn(async move {
             let outcome = {
                 let mut prompt = Box::pin(session.prompt(prompt_options));
+                let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
-                        event = receiver.recv() => {
-                            if let Ok(event) = event {
-                                if event_tx.send(event).is_err() {
-                                    continue;
+                        event = receiver.recv(), if product_event_forwarding_open => {
+                            match event {
+                                Ok(event) => {
+                                    if event_tx.send_event(event).await.is_err() {
+                                        product_event_forwarding_open = false;
+                                    }
+                                }
+                                Err(CodingSessionError::EventStreamLag { skipped }) => {
+                                    let _ = event_tx.send_overflow(skipped).await;
+                                    product_event_forwarding_open = false;
+                                }
+                                Err(_) => {
+                                    product_event_forwarding_open = false;
                                 }
                             }
                         }
@@ -729,7 +782,9 @@ impl RpcState {
             };
 
             while let Ok(Some(event)) = receiver.try_recv() {
-                let _ = event_tx.send(event);
+                if event_tx.send_event(event).await.is_err() {
+                    break;
+                }
             }
 
             let _ = done_tx.send(CodingOperationTaskResult {
@@ -806,13 +861,37 @@ impl RpcState {
         };
         let operation_kind = running.operation_kind;
 
-        while let Ok(event) = running.events.try_recv() {
-            let pushed = push_live_product_event(&mut running, &event);
-            if pushed.accepted {
-                self.observe_product_event_submission_for_kind(&event, Some(operation_kind));
-            }
-            for protocol_event in pushed.protocol_events {
-                write_json_line(writer, &protocol_event).await?;
+        while let Ok(item) = running.events.try_recv() {
+            match item {
+                RpcQueuedProductEvent::Event(event) => {
+                    let pushed = push_live_product_event(&mut running, &event);
+                    if pushed.accepted {
+                        self.observe_product_event_submission_for_kind(&event, Some(operation_kind));
+                    }
+                    for protocol_event in pushed.protocol_events {
+                        write_json_line(writer, &protocol_event).await?;
+                    }
+                }
+                RpcQueuedProductEvent::Overflow { skipped } => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error_with_data(
+                            None,
+                            "event_stream",
+                            format!(
+                                "event stream lagged by {skipped} events; client must request a fresh UI snapshot"
+                            ),
+                            serde_json::json!({
+                                "code": "event_stream_lag",
+                                "skipped": skipped,
+                                "recovery": "fresh_snapshot"
+                            }),
+                        ),
+                    )
+                    .await?;
+                    running.events_closed = true;
+                    break;
+                }
             }
         }
 
@@ -996,7 +1075,8 @@ mod tests {
 
     fn state_with_running_prompt_replay(replay: ProductEventReplayHandle) -> RpcState {
         let mut state = RpcState::new(CliRunOptions::default()).unwrap();
-        let (_event_tx, event_rx) = mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = RpcProductEventQueue::for_tests(4);
+        drop(_event_tx);
         let (_done_tx, done_rx) = oneshot::channel();
         state.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
             events: event_rx,
@@ -1021,8 +1101,8 @@ mod tests {
         pending: ProductEvent,
     ) -> RpcState {
         let mut state = RpcState::new(CliRunOptions::default()).unwrap();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        event_tx.send(pending).unwrap();
+        let (event_tx, event_rx) = RpcProductEventQueue::for_tests(4);
+        event_tx.try_send_event(pending).unwrap();
         drop(event_tx);
         let (_done_tx, done_rx) = oneshot::channel();
         state.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
@@ -1078,10 +1158,10 @@ mod tests {
             .await
             .unwrap();
         let replay = session.product_event_replay_handle();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        event_tx.send(prompt_started_event(1, "op_finish")).unwrap();
+        let (event_tx, event_rx) = RpcProductEventQueue::for_tests(4);
+        event_tx.try_send_event(prompt_started_event(1, "op_finish")).unwrap();
         event_tx
-            .send(prompt_completed_event(2, "op_finish"))
+            .try_send_event(prompt_completed_event(2, "op_finish"))
             .unwrap();
         drop(event_tx);
         let (_done_tx, done_rx) = oneshot::channel();
@@ -1268,6 +1348,10 @@ mod tests {
         let pending = match state.running.as_mut().unwrap() {
             RunningPrompt::Coding(running) => running.events.try_recv().unwrap(),
         };
+        let pending = match pending {
+            RpcQueuedProductEvent::Event(event) => event,
+            RpcQueuedProductEvent::Overflow { .. } => unreachable!(),
+        };
         let mut live_writer = TestWriter::default();
         state
             .write_product_event(pending, &mut live_writer)
@@ -1366,8 +1450,8 @@ mod tests {
 
         assert_eq!(prompt_source.matches(&product_subscription).count(), 4);
         assert!(!prompt_source.contains(&compatibility_subscription));
-        assert!(state_source.contains("UnboundedReceiver<ProductEvent>"));
-        assert!(rpc_source.contains("CodingEvent(Option<crate::coding_session::ProductEvent>)"));
+        assert!(state_source.contains("Receiver<RpcQueuedProductEvent>"));
+        assert!(rpc_source.contains("CodingEvent(Option<RpcQueuedProductEvent>)"));
         assert!(prompt_source.contains(&product_adapter));
     }
 }

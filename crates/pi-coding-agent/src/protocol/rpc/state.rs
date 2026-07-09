@@ -1,3 +1,4 @@
+use crate::protocol::rpc::event_queue::RpcQueuedProductEvent;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
@@ -42,7 +43,7 @@ pub(super) enum RunningPrompt {
 }
 
 pub(super) struct CodingRunningPrompt {
-    pub(super) events: mpsc::UnboundedReceiver<ProductEvent>,
+    pub(super) events: mpsc::Receiver<RpcQueuedProductEvent>,
     pub(super) done: oneshot::Receiver<CodingOperationTaskResult>,
     pub(super) control: Option<PromptControlHandle>,
     pub(super) operation_kind: OperationKind,
