@@ -404,7 +404,7 @@ impl CodingEventBridge {
             | CodingAgentEvent::AssistantMessageStarted { .. }
             | CodingAgentEvent::PromptCompleted { .. }
             | CodingAgentEvent::Diagnostic { .. }
-            | CodingAgentEvent::CapabilityChanged => Vec::new(),
+            | CodingAgentEvent::CapabilityChanged { .. } => Vec::new(),
         }
     }
 }

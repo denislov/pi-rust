@@ -58,16 +58,17 @@ pub mod api {
     pub use crate::args::{CliArgs, CliMode, help_text, parse_args};
     pub use crate::coding_session::{
         AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, AgentTeamMemberOutcome,
-        AgentTeamOptions, AgentTeamOutcome, CapabilityStatus, CodingAgentCapabilities,
-        CodingAgentEvent, CodingAgentEventReceiver, CodingAgentSession, CodingAgentSessionExport,
-        CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionSummary,
-        CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
-        DelegationConfirmationMode, DelegationPolicy, PendingDelegationConfirmation,
-        ProfileDiagnostic, ProfileId, ProfileKind, ProfileRegistry, ProfileRegistryOptions,
-        ProfileSource, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
-        SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
-        SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
-        SelfHealingEditRequest, SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+        AgentTeamOptions, AgentTeamOutcome, CapabilityRevocationPolicy, CapabilityStatus,
+        CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver, CodingAgentSession,
+        CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
+        CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
+        CodingDiagnosticSeverity, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
+        PendingDelegationConfirmation, ProfileDiagnostic, ProfileId, ProfileKind, ProfileRegistry,
+        ProfileRegistryOptions, ProfileSource, PromptTurnMode, PromptTurnOptions,
+        PromptTurnOutcome, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
+        SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+        SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
+        TeamStrategy, TeamSupervisor,
     };
     pub use crate::error::CliError;
     pub use crate::models::{ModelRotation, ModelRotationEntry, parse_model_rotation};

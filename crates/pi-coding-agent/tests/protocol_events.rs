@@ -1,8 +1,8 @@
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason, Usage};
 use pi_coding_agent::api::{
-    CodingAgentEvent, CodingSessionError, ProfileKind, SelfHealingEditCheckOutput,
-    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+    CapabilityRevocationPolicy, CodingAgentEvent, CodingSessionError, ProfileKind,
+    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
 use pi_coding_agent::protocol::types::{CompactionReason, ProtocolEvent};
@@ -863,4 +863,26 @@ fn coding_event_adapter_maps_prompt_failure_with_provider() {
             ..
         } if provider == "faux-provider"
     )));
+}
+
+#[test]
+fn coding_event_adapter_maps_capability_changed_to_payloaded_protocol_event() {
+    let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+        "faux".into(),
+        "faux-provider".into(),
+        "faux-model".into(),
+    );
+
+    let events = adapter.push(&CodingAgentEvent::CapabilityChanged {
+        generation: 7,
+        revocation: CapabilityRevocationPolicy::FutureOnly,
+    });
+
+    assert!(matches!(
+        events.as_slice(),
+        [ProtocolEvent::CapabilityChanged {
+            generation: 7,
+            revocation,
+        }] if revocation == "future_only"
+    ));
 }

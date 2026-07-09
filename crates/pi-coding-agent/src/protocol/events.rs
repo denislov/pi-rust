@@ -190,6 +190,13 @@ impl CodingProtocolEventAdapter {
                     profile_id: profile_id.as_str().to_string(),
                 }]
             }
+            CodingAgentEvent::CapabilityChanged {
+                generation,
+                revocation,
+            } => vec![ProtocolEvent::CapabilityChanged {
+                generation: *generation,
+                revocation: revocation.as_str().to_owned(),
+            }],
             CodingAgentEvent::SelfHealingEditStarted {
                 operation_id,
                 path,
@@ -557,8 +564,7 @@ impl CodingProtocolEventAdapter {
             | CodingAgentEvent::SessionWriteCommitted { .. }
             | CodingAgentEvent::SessionWriteSkipped { .. }
             | CodingAgentEvent::PromptStarted { .. }
-            | CodingAgentEvent::Diagnostic { .. }
-            | CodingAgentEvent::CapabilityChanged => Vec::new(),
+            | CodingAgentEvent::Diagnostic { .. } => Vec::new(),
         }
     }
 

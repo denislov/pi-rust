@@ -74,7 +74,7 @@ use capability_snapshot::{
     ActorId, CapabilitySnapshotInput, CapabilitySnapshotService, OperationCapabilitySnapshot,
     SessionReadCapability, SessionWriteCapability,
 };
-pub use capability_snapshot::{FilesystemCapability, ShellCapability};
+pub use capability_snapshot::{CapabilityRevocationPolicy, FilesystemCapability, ShellCapability};
 pub(crate) use delegation::{
     DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
     PendingDelegationConfirmationState, delegation_lineage_for_request, pending_state_from_replay,
@@ -1188,6 +1188,10 @@ impl CodingAgentSession {
                 }
                 self.event_service
                     .emit_default_agent_profile_changed(profile_id);
+                let installed = self
+                    .capability_snapshots
+                    .install_next_generation(CapabilityRevocationPolicy::FutureOnly);
+                self.event_service.emit_capability_changed(installed);
                 Ok(OperationOutcome::SetDefaultAgentProfile)
             }
             Operation::Export(_) | Operation::PluginCommand { .. } => {
@@ -1568,6 +1572,12 @@ impl CodingAgentSession {
         if let Some(plugin_service) = execution.loaded_plugin_service {
             self.plugin_service = plugin_service;
         }
+        if execution.outcome.capability_changed {
+            let installed = self
+                .capability_snapshots
+                .install_next_generation(CapabilityRevocationPolicy::FutureOnly);
+            self.event_service.emit_capability_changed(installed);
+        }
         Ok(execution.outcome)
     }
 
@@ -1913,6 +1923,11 @@ impl CodingAgentSession {
                 panic!("expected persistent coding agent session")
             }
         }
+    }
+
+    #[cfg(test)]
+    fn current_capability_generation_for_tests(&self) -> capability_snapshot::CapabilityGeneration {
+        self.capability_snapshots.current_generation()
     }
 }
 
@@ -2412,7 +2427,7 @@ mod tests {
         assert!(
             emitted_events
                 .iter()
-                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged))
+                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged { .. }))
         );
 
         session
@@ -2555,8 +2570,26 @@ runtime = "lua"
         assert!(
             emitted_events
                 .iter()
-                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged))
+                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged { .. }))
         );
+    }
+
+    #[tokio::test]
+    async fn set_default_profile_installs_future_capability_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_generation_profile")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let first = session.current_capability_generation_for_tests();
+
+        session.set_default_agent_profile_id("reviewer").unwrap();
+        let second = session.current_capability_generation_for_tests();
+
+        assert_eq!(first.get() + 1, second.get());
     }
 
     #[tokio::test]
@@ -4061,7 +4094,7 @@ runtime = "lua"
             CodingAgentEvent::PromptFailed { .. } => "prompt_failed",
             CodingAgentEvent::PromptAborted { .. } => "prompt_aborted",
             CodingAgentEvent::Diagnostic { .. } => "diagnostic",
-            CodingAgentEvent::CapabilityChanged => "capability_changed",
+            CodingAgentEvent::CapabilityChanged { .. } => "capability_changed",
         }
     }
 }

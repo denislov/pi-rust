@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use pi_agent_core::AgentEvent;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock};
 
+use super::capability_snapshot::InstalledCapabilityGeneration;
 use super::{
     CodingAgentEvent, CodingSessionError, ProfileId, ProfileKind,
     event::{ProductEvent, ProductEventSequence},
@@ -136,9 +137,13 @@ impl EventService {
         for diagnostic in &outcome.diagnostics {
             self.emit_diagnostic(None::<String>, diagnostic.message.clone());
         }
-        if outcome.capability_changed {
-            self.emit(CodingAgentEvent::CapabilityChanged);
-        }
+    }
+
+    pub(crate) fn emit_capability_changed(&self, installed: InstalledCapabilityGeneration) {
+        self.emit(CodingAgentEvent::CapabilityChanged {
+            generation: installed.generation.get(),
+            revocation: installed.revocation,
+        });
     }
 
     pub(crate) fn emit_prompt_started(
@@ -976,7 +981,11 @@ mod tests {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
         });
-        let second = service.clone().emit(CodingAgentEvent::CapabilityChanged);
+        let second = service.clone().emit(CodingAgentEvent::CapabilityChanged {
+            generation: 1,
+            revocation:
+                crate::coding_session::capability_snapshot::CapabilityRevocationPolicy::FutureOnly,
+        });
 
         assert_eq!(first.sequence(), ProductEventSequence(1));
         assert_eq!(first.family(), ProductEventFamily::Workflow);
@@ -1002,7 +1011,7 @@ mod tests {
         assert_eq!(second.durability(), &ProductEventDurability::LiveOnly);
         assert!(matches!(
             receiver.try_recv().unwrap(),
-            Some(CodingAgentEvent::CapabilityChanged)
+            Some(CodingAgentEvent::CapabilityChanged { .. })
         ));
     }
 
@@ -1447,9 +1456,30 @@ mod tests {
                 message: "loaded with warning".into(),
             })
         );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_capability_changed_with_generation_and_revocation() {
+        use crate::coding_session::capability_snapshot::{
+            CapabilityGeneration, CapabilityRevocationPolicy, InstalledCapabilityGeneration,
+        };
+
+        let service = EventService::new();
+        let mut receiver = service.subscribe();
+        let installed = InstalledCapabilityGeneration {
+            generation: CapabilityGeneration::new(3),
+            revocation: CapabilityRevocationPolicy::FutureOnly,
+        };
+
+        service.emit_capability_changed(installed);
+
         assert_eq!(
             receiver.try_recv().unwrap(),
-            Some(CodingAgentEvent::CapabilityChanged)
+            Some(CodingAgentEvent::CapabilityChanged {
+                generation: 3,
+                revocation: CapabilityRevocationPolicy::FutureOnly,
+            })
         );
         assert_eq!(receiver.try_recv().unwrap(), None);
     }

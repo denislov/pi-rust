@@ -352,6 +352,8 @@ pub enum ProtocolEvent {
         team_id: String,
         reason: String,
     },
+    #[serde(rename = "capability_changed")]
+    CapabilityChanged { generation: u64, revocation: String },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

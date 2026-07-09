@@ -1,3 +1,4 @@
+use super::capability_snapshot::CapabilityRevocationPolicy;
 use super::{
     CodingSessionError, ProfileId, ProfileKind, SelfHealingEditCheckOutput,
     SelfHealingEditDiagnostic, SelfHealingEditReplacement, operation_control::OperationKind,
@@ -165,7 +166,7 @@ impl ProductEventKind {
             CodingAgentEvent::Diagnostic { .. } => {
                 Self::Diagnostic(DiagnosticProductEventKind::Diagnostic)
             }
-            CodingAgentEvent::CapabilityChanged => {
+            CodingAgentEvent::CapabilityChanged { .. } => {
                 Self::Capability(CapabilityProductEventKind::Changed)
             }
         }
@@ -451,7 +452,7 @@ impl ProductEventDurability {
             | CodingAgentEvent::PromptFailed { .. }
             | CodingAgentEvent::PromptAborted { .. }
             | CodingAgentEvent::Diagnostic { .. }
-            | CodingAgentEvent::CapabilityChanged => Self::LiveOnly,
+            | CodingAgentEvent::CapabilityChanged { .. } => Self::LiveOnly,
         }
     }
 }
@@ -725,7 +726,10 @@ pub enum CodingAgentEvent {
         operation_id: Option<String>,
         message: String,
     },
-    CapabilityChanged,
+    CapabilityChanged {
+        generation: u64,
+        revocation: CapabilityRevocationPolicy,
+    },
 }
 
 #[allow(dead_code)]
@@ -787,7 +791,7 @@ impl CodingAgentEvent {
             Self::Diagnostic { operation_id, .. } => operation_id.as_deref(),
             Self::SessionOpened { .. }
             | Self::DefaultAgentProfileChanged { .. }
-            | Self::CapabilityChanged => None,
+            | Self::CapabilityChanged { .. } => None,
         }
     }
 
@@ -836,7 +840,7 @@ impl CodingAgentEvent {
             | Self::ToolCallUpdated { .. }
             | Self::RuntimeCompactionCompleted { .. }
             | Self::Diagnostic { .. }
-            | Self::CapabilityChanged => None,
+            | Self::CapabilityChanged { .. } => None,
         }
     }
 }
@@ -958,7 +962,12 @@ mod tests {
             ProductEventFamily::Diagnostic
         );
         assert_eq!(
-            CodingAgentEvent::CapabilityChanged.classification().family,
+            CodingAgentEvent::CapabilityChanged {
+                generation: 1,
+                revocation: CapabilityRevocationPolicy::FutureOnly,
+            }
+            .classification()
+            .family,
             ProductEventFamily::Capability
         );
     }
@@ -1013,9 +1022,25 @@ mod tests {
         assert_eq!(progress.operation_id, Some("op_prompt"));
         assert_eq!(progress.terminal_status, None);
 
-        let uncorrelated = CodingAgentEvent::CapabilityChanged.classification();
+        let uncorrelated = CodingAgentEvent::CapabilityChanged {
+            generation: 1,
+            revocation: CapabilityRevocationPolicy::FutureOnly,
+        }
+        .classification();
         assert_eq!(uncorrelated.operation_id, None);
         assert_eq!(uncorrelated.terminal_status, None);
+    }
+
+    #[test]
+    fn capability_changed_event_carries_generation_and_revocation_policy() {
+        let event = CodingAgentEvent::CapabilityChanged {
+            generation: 2,
+            revocation: CapabilityRevocationPolicy::FutureOnly,
+        };
+        assert_eq!(
+            event.classification().family,
+            ProductEventFamily::Capability
+        );
     }
 
     #[test]

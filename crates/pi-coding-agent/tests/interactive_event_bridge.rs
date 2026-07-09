@@ -1,7 +1,7 @@
 use pi_ai::types::{Cost, Usage};
 use pi_coding_agent::api::{
-    CodingAgentEvent, CodingSessionError, ProfileKind, SelfHealingEditCheckOutput,
-    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+    CapabilityRevocationPolicy, CodingAgentEvent, CodingSessionError, ProfileKind,
+    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
 use pi_coding_agent::interactive::{CodingEventBridge, Transcript, TranscriptItem, UiEvent};
 
@@ -527,7 +527,10 @@ fn coding_event_bridge_ignores_session_write_and_capability_events() {
             operation_id: "op_1".to_string(),
             reason: "session persistence disabled".to_string(),
         },
-        CodingAgentEvent::CapabilityChanged,
+        CodingAgentEvent::CapabilityChanged {
+            generation: 1,
+            revocation: CapabilityRevocationPolicy::FutureOnly,
+        },
     ];
 
     for event in ignored {
