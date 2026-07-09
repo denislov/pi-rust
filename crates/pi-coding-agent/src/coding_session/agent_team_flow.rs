@@ -5,9 +5,10 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use pi_ai::types::AssistantMessage;
 
 use super::agent_invocation_flow::{AgentInvocationContext, AgentInvocationOptions};
-use super::capability_snapshot::OperationCapabilitySnapshot;
+use super::capability_snapshot::{ActorId, OperationCapabilitySnapshot};
 use super::delegation::{
-    DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
+    DelegationAuthorizationDecision, DelegationLineageEntry,
+    capability_snapshot_for_delegated_profile, delegation_lineage_for_request,
 };
 use super::event_service::EventService;
 use super::flow_service::FlowService;
@@ -239,6 +240,8 @@ pub(crate) struct AgentTeamContext {
     member_results: Vec<AgentTeamMemberOutcome>,
     supervisor_result: Option<AgentTeamMemberOutcome>,
     final_text: Option<String>,
+    parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
+    child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
 }
@@ -263,9 +266,19 @@ impl AgentTeamContext {
             member_results: Vec::new(),
             supervisor_result: None,
             final_text: None,
+            parent_capability_snapshot: None,
+            child_capability_snapshot: None,
             pending_delegation_confirmations: Vec::new(),
             failure_error: None,
         }
+    }
+
+    pub(crate) fn with_parent_capability_snapshot(
+        mut self,
+        snapshot: OperationCapabilitySnapshot,
+    ) -> Self {
+        self.parent_capability_snapshot = Some(snapshot);
+        self
     }
 
     pub(crate) fn operation_id(&self) -> &str {
@@ -443,9 +456,16 @@ impl AgentTeamContext {
         child_context
             .set_non_persistent_session(format!("agent_team_{}", child_operation_id), Vec::new());
         child_context.enable_live_events(self.event_service.clone());
-        child_context.set_capability_snapshot(OperationCapabilitySnapshot::permissive(
-            child_operation_id.clone(),
-        ));
+        let capability_snapshot = match self.parent_capability_snapshot.as_ref() {
+            Some(parent) => capability_snapshot_for_delegated_profile(
+                parent,
+                child_operation_id.clone(),
+                profile,
+                ActorId::ChildOperation(parent.operation_id.clone()),
+            ),
+            None => OperationCapabilitySnapshot::permissive(child_operation_id.clone()),
+        };
+        child_context.set_capability_snapshot(capability_snapshot);
 
         let mut finished_outcome = None;
         let child_delegations = match FlowService::new()
@@ -474,6 +494,7 @@ impl AgentTeamContext {
             }
         };
         let outcome = if let Some((decisions, prompt_options, runtime_id)) = child_delegations {
+            self.child_capability_snapshot = child_context.capability_snapshot().cloned();
             if let Err(error) = self
                 .execute_authorized_delegations(&decisions, prompt_options)
                 .await
@@ -612,6 +633,9 @@ impl AgentTeamContext {
             self.plugin_service.clone(),
             self.event_service.clone(),
         );
+        if let Some(parent_snapshot) = self.child_capability_snapshot.clone() {
+            context = context.with_parent_capability_snapshot(parent_snapshot);
+        }
         let child_operation_id = context.operation_id().to_owned();
         self.event_service
             .emit_delegation_started(request, child_operation_id.clone());
@@ -661,6 +685,9 @@ impl AgentTeamContext {
             self.plugin_service.clone(),
             self.event_service.clone(),
         );
+        if let Some(parent_snapshot) = self.child_capability_snapshot.clone() {
+            context = context.with_parent_capability_snapshot(parent_snapshot);
+        }
         let child_operation_id = context.operation_id().to_owned();
         self.event_service
             .emit_delegation_started(request, child_operation_id.clone());

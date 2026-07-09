@@ -5,8 +5,13 @@ use pi_agent_core::{AgentResources, AgentTool};
 use serde::{Deserialize, Serialize};
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
+use super::capability_snapshot::{
+    ActorId, ModelCapability, OperationCapabilitySnapshot, ToolCapabilitySet,
+};
 use super::error::CodingSessionError;
-use super::profiles::{DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind};
+use super::profiles::{
+    AgentProfile, DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind,
+};
 use super::prompt::{DelegationRequest, PromptTurnMode, PromptTurnOptions};
 use super::session_log::event::PersistedDelegationRuntimeSeed;
 use super::session_log::replay::ReplayPendingDelegationConfirmation;
@@ -33,6 +38,45 @@ pub(crate) fn delegation_tools(
         tools.push(delegate_team_tool(profile_id, policy.clone()));
     }
     tools
+}
+
+pub(crate) fn capability_snapshot_for_delegated_profile(
+    parent: &OperationCapabilitySnapshot,
+    operation_id: impl Into<String>,
+    profile: &AgentProfile,
+    actor: ActorId,
+) -> OperationCapabilitySnapshot {
+    let mut released_tools = parent
+        .tools
+        .names()
+        .filter(|name| profile.tools.iter().any(|allowed| allowed == name))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for tool in delegation_tools(Some(&profile.id), Some(&profile.delegation)) {
+        if parent.tools.allows(&tool.name) && !released_tools.iter().any(|name| name == &tool.name)
+        {
+            released_tools.push(tool.name);
+        }
+    }
+    OperationCapabilitySnapshot {
+        generation: parent.generation,
+        operation_id: operation_id.into(),
+        actor,
+        model: Some(ModelCapability {
+            profile_id: Some(profile.id.clone()),
+        }),
+        tools: ToolCapabilitySet::from_names(released_tools),
+        commands: Default::default(),
+        filesystem: parent.filesystem.clone(),
+        shell: parent
+            .shell
+            .clone()
+            .filter(|_| profile.tools.iter().any(|name| name == "bash")),
+        session_read: None,
+        session_write: None,
+        ui: None,
+        plugin: parent.plugin.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

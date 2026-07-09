@@ -7,9 +7,10 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 use pi_ai::types::AssistantMessage;
 
 use super::agent_team_flow::{AgentTeamContext, AgentTeamOptions};
-use super::capability_snapshot::OperationCapabilitySnapshot;
+use super::capability_snapshot::{ActorId, OperationCapabilitySnapshot};
 use super::delegation::{
-    DelegationAuthorizationDecision, DelegationLineageEntry, delegation_lineage_for_request,
+    DelegationAuthorizationDecision, DelegationLineageEntry,
+    capability_snapshot_for_delegated_profile, delegation_lineage_for_request,
 };
 use super::event_service::EventService;
 use super::flow_service::FlowService;
@@ -232,6 +233,8 @@ pub(crate) struct AgentInvocationContext {
     child_context: Option<PromptTurnContext>,
     prompt_control_receiver: Option<PromptControlReceiver>,
     prompt_outcome: Option<PromptTurnOutcome>,
+    parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
+    child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
 }
@@ -256,9 +259,19 @@ impl AgentInvocationContext {
             child_context: None,
             prompt_control_receiver: None,
             prompt_outcome: None,
+            parent_capability_snapshot: None,
+            child_capability_snapshot: None,
             pending_delegation_confirmations: Vec::new(),
             failure_error: None,
         }
+    }
+
+    pub(crate) fn with_parent_capability_snapshot(
+        mut self,
+        snapshot: OperationCapabilitySnapshot,
+    ) -> Self {
+        self.parent_capability_snapshot = Some(snapshot);
+        self
     }
 
     pub(crate) fn operation_id(&self) -> &str {
@@ -373,9 +386,16 @@ impl AgentInvocationContext {
             child_context.set_prompt_control_receiver(receiver);
         }
         child_context.enable_live_events(self.event_service.clone());
-        child_context.set_capability_snapshot(OperationCapabilitySnapshot::permissive(
-            self.child_operation_id.clone(),
-        ));
+        let capability_snapshot = match self.parent_capability_snapshot.as_ref() {
+            Some(parent) => capability_snapshot_for_delegated_profile(
+                parent,
+                self.child_operation_id.clone(),
+                profile,
+                ActorId::ChildOperation(parent.operation_id.clone()),
+            ),
+            None => OperationCapabilitySnapshot::permissive(self.child_operation_id.clone()),
+        };
+        child_context.set_capability_snapshot(capability_snapshot);
         self.child_context = Some(child_context);
         Ok(())
     }
@@ -421,6 +441,10 @@ impl AgentInvocationContext {
             self.prompt_outcome = finished_outcome;
             return Ok(());
         };
+        self.child_capability_snapshot = self
+            .child_context
+            .as_ref()
+            .and_then(|context| context.capability_snapshot().cloned());
         if let Err(error) = self
             .execute_authorized_delegations(&decisions, prompt_options)
             .await
@@ -521,6 +545,9 @@ impl AgentInvocationContext {
             self.plugin_service.clone(),
             self.event_service.clone(),
         );
+        if let Some(parent_snapshot) = self.child_capability_snapshot.clone() {
+            context = context.with_parent_capability_snapshot(parent_snapshot);
+        }
         let child_operation_id = context.operation_id().to_owned();
         self.event_service
             .emit_delegation_started(request, child_operation_id.clone());
@@ -570,6 +597,9 @@ impl AgentInvocationContext {
             self.plugin_service.clone(),
             self.event_service.clone(),
         );
+        if let Some(parent_snapshot) = self.child_capability_snapshot.clone() {
+            context = context.with_parent_capability_snapshot(parent_snapshot);
+        }
         let child_operation_id = context.operation_id().to_owned();
         self.event_service
             .emit_delegation_started(request, child_operation_id.clone());
