@@ -53,6 +53,25 @@ fn adapters_do_not_construct_or_run_low_level_agents() {
 }
 
 #[test]
+fn adapters_do_not_access_event_service_directly_for_projection() {
+    let scan = SourceScan::new();
+
+    for relative_path in [
+        "src/protocol/rpc/commands.rs",
+        "src/protocol/rpc/stats.rs",
+        "src/protocol/rpc/prompt.rs",
+        "src/interactive/loop.rs",
+    ] {
+        let source = fs::read_to_string(scan.crate_root.join(relative_path))
+            .unwrap_or_else(|err| panic!("read {relative_path}: {err}"));
+        assert!(
+            !source.contains(".event_service."),
+            "{relative_path} should project through snapshot/product-event facades instead of accessing EventService directly"
+        );
+    }
+}
+
+#[test]
 fn runtime_service_production_paths_require_capability_snapshot() {
     let scan = SourceScan::new();
     let runtime_service_source = fs::read_to_string(

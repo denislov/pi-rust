@@ -7,6 +7,9 @@ const FLOW_SERVICE: &str = include_str!("../src/coding_session/flow_service.rs")
 const MANUAL_COMPACTION_SERVICE: &str =
     include_str!("../src/coding_session/manual_compaction_service.rs");
 const PROMPT_CONTEXT: &str = include_str!("../src/coding_session/prompt.rs");
+const RPC_STATS: &str = include_str!("../src/protocol/rpc/stats.rs");
+const INTERACTIVE_EVENT_BRIDGE: &str = include_str!("../src/interactive/event_bridge.rs");
+const INTERACTIVE_LOOP: &str = include_str!("../src/interactive/loop.rs");
 const SESSION_SERVICE: &str = include_str!("../src/coding_session/session_service.rs");
 
 #[test]
@@ -176,5 +179,41 @@ fn prompt_inner_uses_outcome_helper_for_success_branching() {
     assert!(
         !prompt_inner.contains("PromptTurnOutcome::Success"),
         "prompt_inner should ask PromptTurnOutcome helpers about success state instead of matching the success variant inline"
+    );
+}
+
+#[test]
+fn rpc_state_consumes_ui_snapshot_boundary() {
+    assert!(
+        RPC_STATS.contains(".ui_snapshot("),
+        "RPC state projection should consume the UiSnapshot boundary"
+    );
+    assert!(
+        !RPC_STATS.contains(".persistent_session_service("),
+        "RPC state projection should not bypass UiSnapshot by reading persistent session service directly"
+    );
+}
+
+#[test]
+fn interactive_projection_consumes_product_events() {
+    assert!(
+        INTERACTIVE_EVENT_BRIDGE.contains("UiProjection"),
+        "interactive projection should use UiProjection"
+    );
+    assert!(
+        INTERACTIVE_EVENT_BRIDGE.contains("push_product_event"),
+        "interactive projection should consume product events through UiProjection"
+    );
+    assert!(
+        INTERACTIVE_LOOP.contains("ui_projection: &mut UiProjection"),
+        "interactive prompt-task event application should receive a UiProjection instead of projecting directly through CodingEventBridge"
+    );
+    assert!(
+        INTERACTIVE_LOOP.contains("UiProjection::from_snapshot"),
+        "interactive prompt-task event application should reset projection state from UiSnapshot"
+    );
+    assert!(
+        INTERACTIVE_LOOP.contains("ui_projection.apply_product_event"),
+        "interactive prompt-task event application should consume ProductEvent through UiProjection"
     );
 }
