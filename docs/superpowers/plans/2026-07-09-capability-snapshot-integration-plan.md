@@ -65,7 +65,7 @@ Stage 5 does not redesign public protocol payloads beyond capability generation 
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/session_log/event.rs`
 
-- [ ] **Step 1: Write failing snapshot model tests**
+- [x] **Step 1: Write failing snapshot model tests**
 
 Add this test module to the new file:
 
@@ -140,7 +140,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -150,7 +150,7 @@ cargo test -p pi-coding-agent capability_snapshot --lib
 
 Expected: fail because `capability_snapshot.rs` and the snapshot types do not exist.
 
-- [ ] **Step 3: Add the model and service**
+- [x] **Step 3: Add the model and service**
 
 Create `crates/pi-coding-agent/src/coding_session/capability_snapshot.rs`:
 
@@ -473,7 +473,7 @@ Add this module declaration near the other `coding_session` modules in `crates/p
 mod capability_snapshot;
 ```
 
-- [ ] **Step 4: Run GREEN tests**
+- [x] **Step 4: Run GREEN tests**
 
 Run:
 
@@ -483,7 +483,7 @@ cargo test -p pi-coding-agent capability_snapshot --lib
 
 Expected: both snapshot model tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/capability_snapshot.rs crates/pi-coding-agent/src/coding_session/mod.rs
@@ -497,7 +497,7 @@ git commit -m "feat: add operation capability snapshot model"
 - Modify: `crates/pi-coding-agent/src/coding_session/intent_router.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 
-- [ ] **Step 1: Write failing admission tests**
+- [x] **Step 1: Write failing admission tests**
 
 Add this test to `crates/pi-coding-agent/src/coding_session/operation.rs`:
 
@@ -590,7 +590,7 @@ fn operation_permit_exposes_the_frozen_snapshot_for_execution() {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -601,7 +601,7 @@ cargo test -p pi-coding-agent operation_permit_exposes_the_frozen_snapshot_for_e
 
 Expected: fail because `OperationAdmission::new()` does not accept a snapshot and `OperationPermit` has no snapshot accessor.
 
-- [ ] **Step 3: Attach snapshots to admission and permit**
+- [x] **Step 3: Attach snapshots to admission and permit**
 
 Update `OperationAdmission` in `operation.rs`:
 
@@ -710,7 +710,7 @@ control.begin(admission.kind).map(|guard| {
 })
 ```
 
-- [ ] **Step 4: Route `CodingAgentSession` admission through snapshots**
+- [x] **Step 4: Route `CodingAgentSession` admission through snapshots**
 
 Add a `capability_snapshots` field to `CodingAgentSession` in `mod.rs`:
 
@@ -783,7 +783,7 @@ let snapshot = self
 Ok(OperationAdmission::new(kind, metadata, admitted_at, snapshot))
 ```
 
-- [ ] **Step 5: Run GREEN and regression tests**
+- [x] **Step 5: Run GREEN and regression tests**
 
 Run:
 
@@ -796,7 +796,7 @@ cargo check -p pi-coding-agent
 
 Expected: selected tests pass and the crate checks.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/operation.rs crates/pi-coding-agent/src/coding_session/intent_router.rs crates/pi-coding-agent/src/coding_session/mod.rs
@@ -810,7 +810,7 @@ git commit -m "feat: freeze capability snapshots at operation admission"
 - Modify: `crates/pi-coding-agent/src/coding_session/session_service.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 
-- [ ] **Step 1: Write failing persistence tests**
+- [x] **Step 1: Write failing persistence tests**
 
 Add this test to `session_service.rs`:
 
@@ -867,7 +867,7 @@ fn prompt_transaction_persists_admitted_snapshot_generation() {
 }
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
@@ -877,7 +877,7 @@ cargo test -p pi-coding-agent prompt_transaction_persists_admitted_snapshot_gene
 
 Expected: fail because `begin_prompt_transaction_with_snapshot()` does not exist.
 
-- [ ] **Step 3: Add snapshot-aware transaction constructors**
+- [x] **Step 3: Add snapshot-aware transaction constructors**
 
 In `TurnTransaction`, replace the baseline generation helper with an explicit constructor:
 
@@ -953,7 +953,7 @@ pub(crate) fn begin_plugin_load_transaction_with_snapshot(
 }
 ```
 
-- [ ] **Step 4: Route owner operation paths through snapshot-aware constructors**
+- [x] **Step 4: Route owner operation paths through snapshot-aware constructors**
 
 In `CodingAgentSession`, when a prompt or plugin-load operation has an `OperationPermit`, pass `permit.capability_snapshot()` into `SessionService`:
 
@@ -969,7 +969,7 @@ let mut transaction = session_service
     .begin_plugin_load_transaction_with_snapshot(operation_permit.capability_snapshot());
 ```
 
-- [ ] **Step 5: Run GREEN and regression tests**
+- [x] **Step 5: Run GREEN and regression tests**
 
 Run:
 
@@ -982,7 +982,7 @@ cargo test -p pi-coding-agent session_service --lib
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/session_log/transaction.rs crates/pi-coding-agent/src/coding_session/session_service.rs crates/pi-coding-agent/src/coding_session/mod.rs
@@ -996,7 +996,7 @@ git commit -m "feat: persist admitted capability snapshot generation"
 - Modify: `crates/pi-coding-agent/src/coding_session/prompt_flow.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/prompt.rs`
 
-- [ ] **Step 1: Write failing runtime gating tests**
+- [x] **Step 1: Write failing runtime gating tests**
 
 Add these tests to `runtime_service.rs`:
 
@@ -1040,7 +1040,7 @@ fn runtime_build_filters_tools_through_capability_snapshot() {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -1051,7 +1051,7 @@ cargo test -p pi-coding-agent runtime_build_filters_tools_through_capability_sna
 
 Expected: fail because the capability-aware runtime build method and `AgentRuntimeBuild::tool_names_for_tests()` do not exist.
 
-- [ ] **Step 3: Add capability-aware runtime build**
+- [x] **Step 3: Add capability-aware runtime build**
 
 Add this method in `RuntimeService`:
 
@@ -1169,7 +1169,7 @@ fn runtime_snapshot_with_tools<const N: usize>(tools: [&str; N]) -> RuntimeSnaps
 
 Keep `build_agent_runtime_with_plugins_and_diagnostics()` as a compatibility wrapper that constructs a permissive snapshot only for current tests and migration paths. Add a source guard in Task 10 to prevent new production calls to the compatibility wrapper.
 
-- [ ] **Step 4: Thread the admitted snapshot into `PromptTurnContext`**
+- [x] **Step 4: Thread the admitted snapshot into `PromptTurnContext`**
 
 Add a field and accessor in `PromptTurnContext`:
 
@@ -1203,7 +1203,7 @@ let build = service
     .map_err(|error| error.to_string())?;
 ```
 
-- [ ] **Step 5: Run GREEN and prompt regression tests**
+- [x] **Step 5: Run GREEN and prompt regression tests**
 
 Run:
 
@@ -1216,7 +1216,7 @@ cargo test -p pi-coding-agent agent_profile_runtime
 
 Expected: selected runtime and prompt tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/runtime_service.rs crates/pi-coding-agent/src/coding_session/prompt_flow.rs crates/pi-coding-agent/src/coding_session/prompt.rs
@@ -1233,7 +1233,7 @@ git commit -m "feat: build agent runtime from capability snapshots"
 - Modify: `crates/pi-coding-agent/src/plugins/ui.rs`
 - Modify: `crates/pi-coding-agent/src/plugins/keybind.rs`
 
-- [ ] **Step 1: Write failing plugin capability tests**
+- [x] **Step 1: Write failing plugin capability tests**
 
 Add tests to `plugin_service.rs`:
 
@@ -1268,7 +1268,7 @@ fn run_command_with_capabilities_rejects_ungranted_commands() {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -1279,7 +1279,7 @@ cargo test -p pi-coding-agent run_command_with_capabilities_rejects_ungranted_co
 
 Expected: fail because capability-aware plugin methods do not exist.
 
-- [ ] **Step 3: Add capability-aware plugin collection and execution**
+- [x] **Step 3: Add capability-aware plugin collection and execution**
 
 Add methods to `PluginService`:
 
@@ -1330,7 +1330,7 @@ impl ToolRegistrationHost {
 
 Apply the same `new()` and `capabilities()` shape to command, hook, UI, and keybind hosts.
 
-- [ ] **Step 4: Route plugin command operation through the admitted snapshot**
+- [x] **Step 4: Route plugin command operation through the admitted snapshot**
 
 In `CodingAgentSession::run_sync_operation()`, replace:
 
@@ -1348,7 +1348,7 @@ self.plugin_service.run_command_with_capabilities(
 )
 ```
 
-- [ ] **Step 5: Run GREEN and plugin tests**
+- [x] **Step 5: Run GREEN and plugin tests**
 
 Run:
 
@@ -1361,7 +1361,7 @@ cargo test -p pi-coding-agent rpc_mode plugin --test rpc_mode
 
 Expected: selected plugin tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/plugin_service.rs crates/pi-coding-agent/src/plugins/tool.rs crates/pi-coding-agent/src/plugins/command.rs crates/pi-coding-agent/src/plugins/hook.rs crates/pi-coding-agent/src/plugins/ui.rs crates/pi-coding-agent/src/plugins/keybind.rs crates/pi-coding-agent/src/coding_session/mod.rs
@@ -1381,7 +1381,7 @@ git commit -m "feat: gate plugin features with capability snapshots"
 - Modify: `crates/pi-coding-agent/src/tools/ls.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/self_healing_edit_flow.rs`
 
-- [ ] **Step 1: Write failing filesystem and shell tests**
+- [x] **Step 1: Write failing filesystem and shell tests**
 
 Add tests in `capability_snapshot.rs`:
 
@@ -1407,7 +1407,7 @@ fn shell_handle_requires_shell_capability() {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -1418,7 +1418,7 @@ cargo test -p pi-coding-agent shell_handle_requires_shell_capability --lib
 
 Expected: fail because narrow handle methods do not exist.
 
-- [ ] **Step 3: Add narrow handle helpers**
+- [x] **Step 3: Add narrow handle helpers**
 
 Add to `FilesystemCapability`:
 
@@ -1445,7 +1445,7 @@ pub(crate) fn require(value: Option<&ShellCapability>) -> Result<&ShellCapabilit
 }
 ```
 
-- [ ] **Step 4: Thread handles into builtin tools**
+- [x] **Step 4: Thread handles into builtin tools**
 
 Change builtin tool constructors so tool closures capture the relevant capability:
 
@@ -1467,7 +1467,7 @@ pub(crate) fn bash_tool(shell: ShellCapability, options: BashOptions) -> AgentTo
 
 Apply the same pattern to read/write/edit/grep/find/ls: pass `FilesystemCapability`, call `resolve_path()`, and reject ungranted filesystem access with `unsupported_capability`.
 
-- [ ] **Step 5: Update self-healing edit operations**
+- [x] **Step 5: Update self-healing edit operations**
 
 Change `ExecutionEnvEditOperations` to store `FilesystemCapability`:
 
@@ -1486,7 +1486,7 @@ let filesystem = snapshot.filesystem.clone().ok_or_else(|| CodingSessionError::U
 })?;
 ```
 
-- [ ] **Step 6: Run GREEN and tool tests**
+- [x] **Step 6: Run GREEN and tool tests**
 
 Run:
 
@@ -1502,7 +1502,7 @@ cargo test -p pi-coding-agent self_healing_edit --lib
 
 Expected: selected capability and tool tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/capability_snapshot.rs crates/pi-coding-agent/src/tools/bash.rs crates/pi-coding-agent/src/tools/read.rs crates/pi-coding-agent/src/tools/write.rs crates/pi-coding-agent/src/tools/edit.rs crates/pi-coding-agent/src/tools/grep.rs crates/pi-coding-agent/src/tools/find.rs crates/pi-coding-agent/src/tools/ls.rs crates/pi-coding-agent/src/coding_session/self_healing_edit_flow.rs
@@ -1518,7 +1518,7 @@ git commit -m "feat: gate filesystem and shell tools with capability handles"
 - Modify: `crates/pi-coding-agent/src/coding_session/self_healing_edit_service.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 
-- [ ] **Step 1: Write failing session capability tests**
+- [x] **Step 1: Write failing session capability tests**
 
 Add tests to `session_service.rs`:
 
@@ -1542,7 +1542,7 @@ fn session_write_requires_session_write_capability() {
 }
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
@@ -1552,7 +1552,7 @@ cargo test -p pi-coding-agent session_write_requires_session_write_capability --
 
 Expected: fail because snapshot-aware finalization does not exist.
 
-- [ ] **Step 3: Add read/write guards**
+- [x] **Step 3: Add read/write guards**
 
 Add helper methods to `SessionReadCapability` and `SessionWriteCapability`:
 
@@ -1584,7 +1584,7 @@ Add read guards to export/tree/hydration entrypoints:
 SessionReadCapability::require(snapshot.session_read.as_ref())?;
 ```
 
-- [ ] **Step 4: Route workflow services through guarded methods**
+- [x] **Step 4: Route workflow services through guarded methods**
 
 Update manual compaction, branch summary, self-healing edit, prompt, and fork paths so they call the snapshot-aware methods when an `OperationPermit` is available.
 
@@ -1604,7 +1604,7 @@ For read-only export:
 let replay = session_service.replay_with_snapshot(operation_permit.capability_snapshot())?;
 ```
 
-- [ ] **Step 5: Run GREEN and workflow tests**
+- [x] **Step 5: Run GREEN and workflow tests**
 
 Run:
 
@@ -1617,7 +1617,7 @@ cargo test -p pi-coding-agent rpc_mode
 
 Expected: session service, interactive session, and RPC mode tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/session_service.rs crates/pi-coding-agent/src/coding_session/manual_compaction_service.rs crates/pi-coding-agent/src/coding_session/branch_summary_service.rs crates/pi-coding-agent/src/coding_session/self_healing_edit_service.rs crates/pi-coding-agent/src/coding_session/mod.rs
@@ -1634,7 +1634,7 @@ git commit -m "feat: gate session access with capability snapshots"
 - Modify: `crates/pi-coding-agent/src/protocol/types.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/plugin_load_service.rs`
 
-- [ ] **Step 1: Write failing runtime-write generation tests**
+- [x] **Step 1: Write failing runtime-write generation tests**
 
 Add tests to `coding_session/mod.rs`:
 
@@ -1675,7 +1675,7 @@ fn capability_changed_event_carries_generation_and_revocation_policy() {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 Run:
 
@@ -1686,7 +1686,7 @@ cargo test -p pi-coding-agent capability_changed_event_carries_generation_and_re
 
 Expected: fail because generation installation and payloaded capability events do not exist.
 
-- [ ] **Step 3: Install generations for RuntimeWrite operations**
+- [x] **Step 3: Install generations for RuntimeWrite operations**
 
 In `CodingAgentSession::run_sync_mut_operation()`, after `SetDefaultAgentProfile` succeeds:
 
@@ -1706,7 +1706,7 @@ let installed = self
 self.event_service.emit_capability_changed(installed);
 ```
 
-- [ ] **Step 4: Update product and protocol events**
+- [x] **Step 4: Update product and protocol events**
 
 Change `CodingAgentEvent::CapabilityChanged` to:
 
@@ -1737,7 +1737,7 @@ ProtocolEvent::CapabilityChanged {
 }
 ```
 
-- [ ] **Step 5: Run GREEN and protocol tests**
+- [x] **Step 5: Run GREEN and protocol tests**
 
 Run:
 
@@ -1750,7 +1750,7 @@ cargo test -p pi-coding-agent protocol_events
 
 Expected: event service and protocol event tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/event.rs crates/pi-coding-agent/src/coding_session/event_service.rs crates/pi-coding-agent/src/protocol/events.rs crates/pi-coding-agent/src/protocol/types.rs crates/pi-coding-agent/src/coding_session/plugin_load_service.rs
@@ -1765,7 +1765,7 @@ git commit -m "feat: emit capability generation changes"
 - Modify: `crates/pi-coding-agent/src/coding_session/agent_invocation_flow.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/agent_team_flow.rs`
 
-- [ ] **Step 1: Write failing delegation release tests**
+- [x] **Step 1: Write failing delegation release tests**
 
 Add test to `delegation_execution_service.rs`:
 
@@ -1801,7 +1801,7 @@ async fn delegated_operation_receives_released_tool_capabilities_only() {
 }
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
@@ -1811,7 +1811,7 @@ cargo test -p pi-coding-agent delegated_operation_receives_released_tool_capabil
 
 Expected: fail because child snapshot derivation does not exist.
 
-- [ ] **Step 3: Add child snapshot derivation**
+- [x] **Step 3: Add child snapshot derivation**
 
 Add this helper in `delegation.rs`:
 
@@ -1847,7 +1847,7 @@ pub(crate) fn capability_snapshot_for_delegated_profile(
 }
 ```
 
-- [ ] **Step 4: Thread child snapshots into agent/team flows**
+- [x] **Step 4: Thread child snapshots into agent/team flows**
 
 When invoking delegated agent/team members, derive the child snapshot from the parent snapshot and store it in the delegated `PromptTurnContext`:
 
@@ -1861,7 +1861,7 @@ let child_snapshot = capability_snapshot_for_delegated_profile(
 context.set_capability_snapshot(child_snapshot);
 ```
 
-- [ ] **Step 5: Run GREEN and delegation tests**
+- [x] **Step 5: Run GREEN and delegation tests**
 
 Run:
 
@@ -1874,7 +1874,7 @@ cargo test -p pi-coding-agent agent_team_flow
 
 Expected: delegation, agent invocation, and team flow tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/delegation.rs crates/pi-coding-agent/src/coding_session/delegation_execution_service.rs crates/pi-coding-agent/src/coding_session/agent_invocation_flow.rs crates/pi-coding-agent/src/coding_session/agent_team_flow.rs
@@ -1890,7 +1890,7 @@ git commit -m "feat: derive delegated capability snapshots"
 - Modify: `crates/pi-coding-agent/src/coding_session/runtime_service.rs`
 - Modify: `docs/TODO.md`
 
-- [ ] **Step 1: Write failing source guards**
+- [x] **Step 1: Write failing source guards**
 
 Add guards:
 
@@ -1914,7 +1914,7 @@ fn plugin_command_paths_use_capability_aware_execution() {
 }
 ```
 
-- [ ] **Step 2: Run RED guards**
+- [x] **Step 2: Run RED guards**
 
 Run:
 
@@ -1925,7 +1925,7 @@ cargo test -p pi-coding-agent plugin_command_paths_use_capability_aware_executio
 
 Expected: fail if any production path still bypasses snapshots.
 
-- [ ] **Step 3: Remove compatibility production usage**
+- [x] **Step 3: Remove compatibility production usage**
 
 Keep compatibility helpers only under tests or mark them `#[cfg(test)]`. Production runtime build, plugin command execution, and session writes must use snapshot-aware methods.
 
@@ -1943,7 +1943,7 @@ pub(crate) fn build_agent_runtime_with_plugins_and_diagnostics(
 }
 ```
 
-- [ ] **Step 4: Update TODO progress**
+- [x] **Step 4: Update TODO progress**
 
 Add this progress log entry to `docs/TODO.md`:
 
@@ -1951,7 +1951,7 @@ Add this progress log entry to `docs/TODO.md`:
 - 2026-07-09: Stage 5 capability snapshot integration completed. Operation admission now freezes `OperationCapabilitySnapshot`, runtime and plugin execution consume snapshot-derived capabilities, filesystem/shell/session access uses narrow handles, runtime writes install new capability generations with capability-change events, delegated child operations inherit explicitly released capabilities, and boundary guards prevent production paths from bypassing the snapshot model.
 ```
 
-- [ ] **Step 5: Run boundary and focused regression tests**
+- [x] **Step 5: Run boundary and focused regression tests**
 
 Run:
 
@@ -1964,7 +1964,7 @@ cargo test -p pi-coding-agent capability_snapshot --lib
 
 Expected: boundary guards and snapshot model tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs crates/pi-coding-agent/tests/tool_boundary_guards.rs crates/pi-coding-agent/tests/session_boundary_guards.rs crates/pi-coding-agent/src/coding_session/runtime_service.rs docs/TODO.md
@@ -1977,7 +1977,7 @@ git commit -m "test: guard capability snapshot boundaries"
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-09-capability-snapshot-integration-plan.md`
 
-- [ ] **Step 1: Run full Stage 5 verification**
+- [x] **Step 1: Run full Stage 5 verification**
 
 Run:
 
@@ -2001,7 +2001,7 @@ git diff --check
 
 Expected: every command exits with code 0.
 
-- [ ] **Step 2: Update this plan's verification checklist**
+- [x] **Step 2: Update this plan's verification checklist**
 
 After the commands pass, mark these checkboxes:
 
@@ -2023,7 +2023,7 @@ After the commands pass, mark these checkboxes:
 - [x] `git diff --check`
 ```
 
-- [ ] **Step 3: Update `docs/TODO.md` top-level architecture status**
+- [x] **Step 3: Update `docs/TODO.md` top-level architecture status**
 
 Replace the Stage 5 portion of the active architecture item with:
 
@@ -2031,7 +2031,7 @@ Replace the Stage 5 portion of the active architecture item with:
 Stage 5 capability snapshot integration is complete: operation admission freezes `OperationCapabilitySnapshot`; model/provider, tool, plugin, filesystem, shell, and session access consume snapshot-derived narrow handles; runtime writes install capability generations and emit capability-change events; delegated child operations inherit only explicitly released capabilities; and source guards keep production paths from bypassing snapshots.
 ```
 
-- [ ] **Step 4: Commit closure documentation**
+- [x] **Step 4: Commit closure documentation**
 
 ```bash
 git add docs/TODO.md docs/superpowers/plans/2026-07-09-capability-snapshot-integration-plan.md
