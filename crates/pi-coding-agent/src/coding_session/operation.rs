@@ -251,6 +251,36 @@ pub(crate) enum OperationOutcome {
     Export(ExportOutcome),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct OperationIdempotencyKey(String);
+
+impl OperationIdempotencyKey {
+    const MAX_LEN: usize = 128;
+
+    pub(crate) fn parse(
+        value: impl Into<String>,
+    ) -> Result<Self, crate::coding_session::CodingSessionError> {
+        let value = value.into();
+        let valid = !value.is_empty()
+            && value.len() <= Self::MAX_LEN
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'));
+        if !valid {
+            return Err(crate::coding_session::CodingSessionError::Input {
+                message: "idempotency key must be 1-128 ASCII letters, digits, '-', '_', '.', or ':'"
+                    .into(),
+            });
+        }
+        Ok(Self(value))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::CodingSessionError;
@@ -564,5 +594,19 @@ mod tests {
             OperationOutcome::Prompt(PromptTurnOutcome::Aborted { reason, .. })
                 if reason == "user cancelled"
         ));
+    }
+
+    #[test]
+    fn idempotency_key_accepts_stable_client_keys() {
+        let key = OperationIdempotencyKey::parse("client-123_prompt.retry_1").unwrap();
+
+        assert_eq!(key.as_str(), "client-123_prompt.retry_1");
+    }
+
+    #[test]
+    fn idempotency_key_rejects_empty_or_oversized_values() {
+        assert!(OperationIdempotencyKey::parse("").is_err());
+        assert!(OperationIdempotencyKey::parse("x".repeat(129)).is_err());
+        assert!(OperationIdempotencyKey::parse("contains space").is_err());
     }
 }

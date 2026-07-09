@@ -2468,6 +2468,67 @@ async fn rpc_plain_prompt_while_running_returns_error() {
 }
 
 #[tokio::test]
+async fn rpc_prompt_idempotency_key_deduplicates_running_retry() {
+    let api = "pi-coding-rpc-idempotent-prompt";
+    let release = Arc::new(Notify::new());
+    let opened = Arc::new(AtomicBool::new(false));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(PausingProvider {
+            release: Arc::clone(&release),
+            opened: Arc::clone(&opened),
+        }),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(4096);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"p1\",\"type\":\"prompt\",\"message\":\"hello\",\"idempotencyKey\":\"retry:prompt:1\"}\n",
+        )
+        .await
+        .unwrap();
+    let first = read_rpc_json_line(&mut lines, "initial prompt response").await;
+    assert_eq!(first["success"], true);
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"hello\",\"idempotencyKey\":\"retry:prompt:1\"}\n",
+        )
+        .await
+        .unwrap();
+    let retry = read_rpc_json_matching(&mut lines, "idempotent prompt retry", |value| {
+        value["type"] == "response" && value["command"] == "prompt" && value["id"] == "p2"
+    })
+    .await;
+
+    assert_eq!(retry["success"], true);
+    assert_eq!(retry["data"]["deduplicated"], true);
+    assert_eq!(retry["data"]["operation"], "prompt");
+
+    release.notify_one();
+    drop(input_writer);
+    await_rpc_task_completion(task, &release, "idempotent prompt rpc task").await;
+}
+
+#[tokio::test]
 async fn rpc_state_commands_update_get_state() {
     let api = "pi-coding-rpc-state";
     let _provider_guard =

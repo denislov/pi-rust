@@ -460,6 +460,8 @@ pub enum RpcCommand {
             skip_serializing_if = "Option::is_none"
         )]
         after_snapshot_sequence: Option<u64>,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     #[serde(rename = "steer")]
     Steer {
@@ -504,6 +506,8 @@ pub enum RpcCommand {
         repair_attempts: Option<Vec<Vec<RpcSelfHealingEditReplacement>>>,
         #[serde(rename = "modelRepair")]
         model_repair: Option<RpcSelfHealingEditModelRepair>,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     #[serde(rename = "list_agent_profiles")]
     ListAgentProfiles { id: Option<String> },
@@ -514,6 +518,8 @@ pub enum RpcCommand {
         id: Option<String>,
         #[serde(rename = "profileId")]
         profile_id: String,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     #[serde(rename = "invoke_agent")]
     InvokeAgent {
@@ -521,6 +527,8 @@ pub enum RpcCommand {
         #[serde(rename = "profileId")]
         profile_id: String,
         task: String,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     #[serde(rename = "invoke_team")]
     InvokeTeam {
@@ -528,6 +536,8 @@ pub enum RpcCommand {
         #[serde(rename = "teamId")]
         team_id: String,
         task: String,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     #[serde(rename = "list_delegation_confirmations")]
     ListDelegationConfirmations { id: Option<String> },
@@ -538,6 +548,8 @@ pub enum RpcCommand {
         operation_id: String,
         #[serde(rename = "toolCallId")]
         tool_call_id: String,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     #[serde(rename = "reject_delegation")]
     RejectDelegation {
@@ -547,6 +559,8 @@ pub enum RpcCommand {
         #[serde(rename = "toolCallId")]
         tool_call_id: String,
         reason: Option<String>,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     #[serde(rename = "set_thinking_level")]
     SetThinkingLevel {

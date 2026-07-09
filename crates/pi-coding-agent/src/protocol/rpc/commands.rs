@@ -1,11 +1,12 @@
 use crate::CliError;
 use crate::coding_session::{
     AgentProfile, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    DelegationConfirmationMode, DelegationPolicy, PendingDelegationConfirmation, PluginLoadOutcome,
-    ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource, PromptTurnMode,
-    PromptTurnOptions, SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions,
-    SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
-    SelfHealingEditRequest, SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+    DelegationConfirmationMode, DelegationPolicy, OperationKind, PendingDelegationConfirmation,
+    PluginLoadOutcome, ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind,
+    ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
+    SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+    SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
+    TeamStrategy, TeamSupervisor,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
@@ -86,6 +87,7 @@ impl RpcState {
                 images,
                 streaming_behavior,
                 after_snapshot_sequence,
+                idempotency_key,
             } => {
                 self.handle_prompt(
                     id,
@@ -93,6 +95,7 @@ impl RpcState {
                     images,
                     streaming_behavior,
                     after_snapshot_sequence.map(ProductEventSequence::new),
+                    idempotency_key,
                     writer,
                 )
                 .await
@@ -309,6 +312,7 @@ impl RpcState {
                 check_command,
                 repair_attempts,
                 model_repair,
+                idempotency_key,
             } => {
                 self.handle_self_healing_edit(
                     id,
@@ -317,6 +321,7 @@ impl RpcState {
                     check_command,
                     repair_attempts,
                     model_repair,
+                    idempotency_key,
                     writer,
                 )
                 .await
@@ -325,17 +330,31 @@ impl RpcState {
                 self.handle_list_agent_profiles(id, writer).await
             }
             RpcCommand::ListTeamProfiles { id } => self.handle_list_team_profiles(id, writer).await,
-            RpcCommand::SetDefaultAgentProfile { id, profile_id } => {
-                self.handle_set_default_agent_profile(id, profile_id, writer)
+            RpcCommand::SetDefaultAgentProfile {
+                id,
+                profile_id,
+                idempotency_key,
+            } => {
+                self.handle_set_default_agent_profile(id, profile_id, idempotency_key, writer)
                     .await
             }
             RpcCommand::InvokeAgent {
                 id,
                 profile_id,
                 task,
-            } => self.handle_invoke_agent(id, profile_id, task, writer).await,
-            RpcCommand::InvokeTeam { id, team_id, task } => {
-                self.handle_invoke_team(id, team_id, task, writer).await
+                idempotency_key,
+            } => {
+                self.handle_invoke_agent(id, profile_id, task, idempotency_key, writer)
+                    .await
+            }
+            RpcCommand::InvokeTeam {
+                id,
+                team_id,
+                task,
+                idempotency_key,
+            } => {
+                self.handle_invoke_team(id, team_id, task, idempotency_key, writer)
+                    .await
             }
             RpcCommand::ListDelegationConfirmations { id } => {
                 self.handle_list_delegation_confirmations(id, writer).await
@@ -344,18 +363,33 @@ impl RpcState {
                 id,
                 operation_id,
                 tool_call_id,
+                idempotency_key,
             } => {
-                self.handle_approve_delegation(id, operation_id, tool_call_id, writer)
-                    .await
+                self.handle_approve_delegation(
+                    id,
+                    operation_id,
+                    tool_call_id,
+                    idempotency_key,
+                    writer,
+                )
+                .await
             }
             RpcCommand::RejectDelegation {
                 id,
                 operation_id,
                 tool_call_id,
                 reason,
+                idempotency_key,
             } => {
-                self.handle_reject_delegation(id, operation_id, tool_call_id, reason, writer)
-                    .await
+                self.handle_reject_delegation(
+                    id,
+                    operation_id,
+                    tool_call_id,
+                    reason,
+                    idempotency_key,
+                    writer,
+                )
+                .await
             }
             RpcCommand::SetThinkingLevel { id, level } => {
                 self.thinking_level = level;
@@ -472,11 +506,24 @@ impl RpcState {
         check_command: Option<String>,
         repair_attempts: Option<Vec<Vec<RpcSelfHealingEditReplacement>>>,
         model_repair: Option<RpcSelfHealingEditModelRepair>,
+        idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
+        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
+        if let Some(data) =
+            self.idempotent_retry_response(idempotency_key.as_ref(), "self_healing_edit")?
+        {
+            write_rpc_response(
+                writer,
+                RpcResponse::success(id, "self_healing_edit", Some(data)),
+            )
+            .await?;
+            return Ok(());
+        }
+
         if self.is_streaming() {
             write_rpc_response(
                 writer,
@@ -537,6 +584,13 @@ impl RpcState {
                 request.with_model_repair(self.self_healing_model_repair_options(model_repair));
         }
 
+        let complete_key = idempotency_key.clone();
+        self.remember_idempotency_key(
+            idempotency_key,
+            "self_healing_edit",
+            OperationKind::SelfHealingEdit,
+        );
+
         match session.self_healing_edit_with_options(request).await {
             Ok(outcome) => {
                 let data = rpc_self_healing_edit_data(&outcome);
@@ -553,6 +607,7 @@ impl RpcState {
                 for protocol_event in protocol_events {
                     write_json_line(writer, &protocol_event).await?;
                 }
+                self.mark_idempotency_complete(complete_key.as_ref());
                 Ok(())
             }
             Err(error) => {
@@ -574,6 +629,7 @@ impl RpcState {
                 for protocol_event in protocol_events {
                     write_json_line(writer, &protocol_event).await?;
                 }
+                self.mark_idempotency_complete(complete_key.as_ref());
                 Ok(())
             }
         }
@@ -669,11 +725,24 @@ impl RpcState {
         &mut self,
         id: Option<String>,
         profile_id: String,
+        idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
+        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
+        if let Some(data) = self
+            .idempotent_retry_response(idempotency_key.as_ref(), "set_default_agent_profile")?
+        {
+            write_rpc_response(
+                writer,
+                RpcResponse::success(id, "set_default_agent_profile", Some(data)),
+            )
+            .await?;
+            return Ok(());
+        }
+
         if self.is_streaming() {
             write_rpc_response(
                 writer,
@@ -699,13 +768,7 @@ impl RpcState {
             }
         };
 
-        let mut adapter = RpcCodingEventAdapter::new_with_provider(
-            self.model.api.clone(),
-            self.model.provider.clone(),
-            self.model.id.clone(),
-        );
-        let mut protocol_events = Vec::new();
-        let data = match self.ensure_mutable_coding_session().await {
+        match self.ensure_mutable_coding_session().await {
             Ok(session) => {
                 if !session
                     .agent_profiles()
@@ -723,6 +786,32 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
+            }
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
+        let complete_key = idempotency_key.clone();
+        self.remember_idempotency_key(
+            idempotency_key,
+            "set_default_agent_profile",
+            OperationKind::SetDefaultAgentProfile,
+        );
+
+        let mut adapter = RpcCodingEventAdapter::new_with_provider(
+            self.model.api.clone(),
+            self.model.provider.clone(),
+            self.model.id.clone(),
+        );
+        let mut protocol_events = Vec::new();
+        let data = match self.ensure_mutable_coding_session().await {
+            Ok(session) => {
                 let mut receiver = session.subscribe_product_events();
                 if let Err(error) = session.set_default_agent_profile_id(profile_id.clone()) {
                     write_rpc_response(
@@ -730,6 +819,7 @@ impl RpcState {
                         RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
                     )
                     .await?;
+                    self.mark_idempotency_complete(complete_key.as_ref());
                     return Ok(());
                 }
                 while let Ok(Some(event)) = receiver.try_recv() {
@@ -743,6 +833,7 @@ impl RpcState {
                     RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
                 )
                 .await?;
+                self.mark_idempotency_complete(complete_key.as_ref());
                 return Ok(());
             }
         };
@@ -752,6 +843,7 @@ impl RpcState {
             RpcResponse::success(id, "set_default_agent_profile", Some(data)),
         )
         .await?;
+        self.mark_idempotency_complete(complete_key.as_ref());
         for protocol_event in protocol_events {
             write_json_line(writer, &protocol_event).await?;
         }
@@ -804,11 +896,24 @@ impl RpcState {
         operation_id: String,
         tool_call_id: String,
         reason: Option<String>,
+        idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
+        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
+        if let Some(data) =
+            self.idempotent_retry_response(idempotency_key.as_ref(), "reject_delegation")?
+        {
+            write_rpc_response(
+                writer,
+                RpcResponse::success(id, "reject_delegation", Some(data)),
+            )
+            .await?;
+            return Ok(());
+        }
+
         if self.is_streaming() {
             write_rpc_response(
                 writer,
@@ -822,42 +927,62 @@ impl RpcState {
             return Ok(());
         }
 
-        let Some(session) = self.coding_session.as_mut() else {
-            write_rpc_response(
-                writer,
-                RpcResponse::error(id, "reject_delegation", "no active coding session"),
-            )
-            .await?;
-            return Ok(());
-        };
+        let pending = {
+            let Some(session) = self.coding_session.as_mut() else {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "reject_delegation", "no active coding session"),
+                )
+                .await?;
+                return Ok(());
+            };
 
-        let Some(pending) =
-            session
-                .pending_delegation_confirmations()
-                .into_iter()
-                .find(|pending| {
-                    pending.operation_id == operation_id && pending.tool_call_id == tool_call_id
-                })
-        else {
-            write_rpc_response(
-                writer,
-                RpcResponse::error(
-                    id,
-                    "reject_delegation",
-                    format!(
+            let Some(pending) =
+                session
+                    .pending_delegation_confirmations()
+                    .into_iter()
+                    .find(|pending| {
+                        pending.operation_id == operation_id
+                            && pending.tool_call_id == tool_call_id
+                    })
+            else {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(
+                        id,
+                        "reject_delegation",
+                        format!(
                         "pending delegation confirmation not found: operation_id={operation_id}, tool_call_id={tool_call_id}"
                     ),
-                ),
-            )
-            .await?;
-            return Ok(());
+                    ),
+                )
+                .await?;
+                return Ok(());
+            };
+            pending
         };
+
+        let complete_key = idempotency_key.clone();
+        self.remember_idempotency_key(
+            idempotency_key,
+            "reject_delegation",
+            OperationKind::DelegationConfirmation,
+        );
 
         let reason = reason.unwrap_or_default();
         let reason = if reason.trim().is_empty() {
             "delegation rejected by user".to_string()
         } else {
             reason
+        };
+        let Some(session) = self.coding_session.as_mut() else {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(id, "reject_delegation", "no active coding session"),
+            )
+            .await?;
+            self.mark_idempotency_complete(complete_key.as_ref());
+            return Ok(());
         };
         let mut receiver = session.subscribe_product_events();
         let mut adapter = RpcCodingEventAdapter::new_with_provider(
@@ -873,6 +998,7 @@ impl RpcState {
                 RpcResponse::error(id, "reject_delegation", error.to_string()),
             )
             .await?;
+            self.mark_idempotency_complete(complete_key.as_ref());
             return Ok(());
         }
 
@@ -892,6 +1018,7 @@ impl RpcState {
             ),
         )
         .await?;
+        self.mark_idempotency_complete(complete_key.as_ref());
         for protocol_event in protocol_events {
             write_json_line(writer, &protocol_event).await?;
         }

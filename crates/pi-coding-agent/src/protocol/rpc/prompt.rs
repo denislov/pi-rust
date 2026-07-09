@@ -1,8 +1,8 @@
 use crate::CliError;
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, ClientDraftKind, CodingAgentSession,
-    CodingAgentSessionOptions, CodingSessionError, OperationKind, ProductEvent,
-    ProductEventSequence, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
+    CodingAgentSessionOptions, CodingSessionError, OperationIdempotencyKey, OperationKind,
+    ProductEvent, ProductEventSequence, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
@@ -28,11 +28,18 @@ impl RpcState {
         images: Option<Vec<pi_ai::types::ContentBlock>>,
         streaming_behavior: Option<StreamingBehavior>,
         after_snapshot_sequence: Option<ProductEventSequence>,
+        idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
+        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
+        if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "prompt")? {
+            write_rpc_response(writer, RpcResponse::success(id, "prompt", Some(data))).await?;
+            return Ok(());
+        }
+
         if has_images(&images) {
             write_rpc_response(
                 writer,
@@ -58,7 +65,8 @@ impl RpcState {
             return Ok(());
         }
 
-        self.start_coding_session_prompt(id, message, writer).await
+        self.start_coding_session_prompt(id, message, idempotency_key, writer)
+            .await
     }
 
     async fn handle_streaming_prompt<W>(
@@ -177,11 +185,20 @@ impl RpcState {
         id: Option<String>,
         profile_id: String,
         task: String,
+        idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
+        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
+        if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "invoke_agent")?
+        {
+            write_rpc_response(writer, RpcResponse::success(id, "invoke_agent", Some(data)))
+                .await?;
+            return Ok(());
+        }
+
         if self.is_streaming() {
             write_rpc_response(
                 writer,
@@ -299,6 +316,13 @@ impl RpcState {
         .await?;
         write_json_line(writer, &ProtocolEvent::AgentStart).await?;
 
+        let running_idempotency_key = idempotency_key.clone();
+        self.remember_idempotency_key(
+            idempotency_key,
+            "invoke_agent",
+            OperationKind::AgentInvocation,
+        );
+
         tokio::spawn(async move {
             let outcome = {
                 let mut invocation = Box::pin(session.invoke_agent(invocation_options));
@@ -355,6 +379,7 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
+            idempotency_key: running_idempotency_key,
         }));
 
         Ok(())
@@ -365,11 +390,20 @@ impl RpcState {
         id: Option<String>,
         team_id: String,
         task: String,
+        idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
+        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
+        if let Some(data) = self.idempotent_retry_response(idempotency_key.as_ref(), "invoke_team")?
+        {
+            write_rpc_response(writer, RpcResponse::success(id, "invoke_team", Some(data)))
+                .await?;
+            return Ok(());
+        }
+
         if self.is_streaming() {
             write_rpc_response(
                 writer,
@@ -486,6 +520,9 @@ impl RpcState {
         .await?;
         write_json_line(writer, &ProtocolEvent::AgentStart).await?;
 
+        let running_idempotency_key = idempotency_key.clone();
+        self.remember_idempotency_key(idempotency_key, "invoke_team", OperationKind::AgentTeam);
+
         tokio::spawn(async move {
             let outcome = {
                 let mut invocation = Box::pin(session.invoke_team(team_options));
@@ -542,6 +579,7 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
+            idempotency_key: running_idempotency_key,
         }));
 
         Ok(())
@@ -552,11 +590,21 @@ impl RpcState {
         id: Option<String>,
         operation_id: String,
         tool_call_id: String,
+        idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
+        let idempotency_key = self.parse_idempotency_key(idempotency_key)?;
+        if let Some(data) =
+            self.idempotent_retry_response(idempotency_key.as_ref(), "approve_delegation")?
+        {
+            write_rpc_response(writer, RpcResponse::success(id, "approve_delegation", Some(data)))
+                .await?;
+            return Ok(());
+        }
+
         if self.is_streaming() {
             write_rpc_response(
                 writer,
@@ -629,6 +677,13 @@ impl RpcState {
         .await?;
         write_json_line(writer, &ProtocolEvent::AgentStart).await?;
 
+        let running_idempotency_key = idempotency_key.clone();
+        self.remember_idempotency_key(
+            idempotency_key,
+            "approve_delegation",
+            operation_kind,
+        );
+
         tokio::spawn(async move {
             let outcome = {
                 let mut approval =
@@ -686,6 +741,7 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
+            idempotency_key: running_idempotency_key,
         }));
 
         Ok(())
@@ -695,6 +751,7 @@ impl RpcState {
         &mut self,
         id: Option<String>,
         message: String,
+        idempotency_key: Option<OperationIdempotencyKey>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
@@ -752,6 +809,9 @@ impl RpcState {
         write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await?;
         write_json_line(writer, &ProtocolEvent::AgentStart).await?;
 
+        let running_idempotency_key = idempotency_key.clone();
+        self.remember_idempotency_key(idempotency_key, "prompt", OperationKind::Prompt);
+
         tokio::spawn(async move {
             let outcome = {
                 let mut prompt = Box::pin(session.prompt(prompt_options));
@@ -808,6 +868,7 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
+            idempotency_key: running_idempotency_key,
         }));
 
         Ok(())
@@ -860,6 +921,7 @@ impl RpcState {
             return Ok(());
         };
         let operation_kind = running.operation_kind;
+        self.mark_idempotency_complete(running.idempotency_key.as_ref());
 
         while let Ok(item) = running.events.try_recv() {
             match item {
@@ -1092,6 +1154,7 @@ mod tests {
             adapter_applied_sequence: ProductEventSequence::default(),
             replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
+            idempotency_key: None,
         }));
         state
     }
@@ -1119,6 +1182,7 @@ mod tests {
             adapter_applied_sequence: ProductEventSequence::default(),
             replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
+            idempotency_key: None,
         }));
         state
     }
@@ -1181,6 +1245,7 @@ mod tests {
             adapter_applied_sequence: ProductEventSequence::default(),
             replayed_through_sequence: ProductEventSequence::default(),
             events_closed: false,
+            idempotency_key: None,
         }));
         let mut writer = TestWriter::default();
 

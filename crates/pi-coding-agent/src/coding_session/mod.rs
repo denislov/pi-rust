@@ -94,6 +94,7 @@ use intent_router::{ControlIntent, IntentRouter, QueryIntent};
 use manual_compaction_flow::ManualCompactionOptions;
 use manual_compaction_service::ManualCompactionService;
 use operation::{Operation, OperationAdmission, OperationDispatchMode, OperationOutcome};
+pub(crate) use operation::OperationIdempotencyKey;
 use operation_control::OperationControl;
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
 use plugin_load_flow::PluginLoadOptions;

@@ -6,16 +6,27 @@ use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
     coding_session::AgentTeamOutcome, coding_session::ClientConnectionId,
     coding_session::ClientDraft, coding_session::ClientDraftKind,
-    coding_session::CodingAgentSession, coding_session::OperationKind,
-    coding_session::ProductEvent, coding_session::ProductEventReplayHandle,
-    coding_session::ProductEventSequence, coding_session::PromptControlHandle,
-    coding_session::PromptTurnOutcome, coding_session::SubmittedOperation, config, select_model,
+    coding_session::CodingAgentSession, coding_session::OperationIdempotencyKey,
+    coding_session::OperationKind, coding_session::ProductEvent,
+    coding_session::ProductEventReplayHandle, coding_session::ProductEventSequence,
+    coding_session::PromptControlHandle, coding_session::PromptTurnOutcome,
+    coding_session::SubmittedOperation, config, select_model,
 };
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
 use pi_ai::types::Model;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
+
+const RPC_IDEMPOTENCY_RECORD_LIMIT: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RpcIdempotencyRecord {
+    pub(super) command: &'static str,
+    pub(super) operation_kind: OperationKind,
+    pub(super) completed: bool,
+}
 
 pub(super) struct RpcState {
     pub(super) options: CliRunOptions,
@@ -39,6 +50,8 @@ pub(super) struct RpcState {
     pub(super) steering: Vec<String>,
     pub(super) follow_up: Vec<String>,
     pub(super) negotiated_protocol: RpcNegotiatedProtocolState,
+    pub(super) idempotency_records: HashMap<OperationIdempotencyKey, RpcIdempotencyRecord>,
+    pub(super) idempotency_order: VecDeque<OperationIdempotencyKey>,
 }
 
 pub(super) enum RunningPrompt {
@@ -55,6 +68,7 @@ pub(super) struct CodingRunningPrompt {
     pub(super) adapter_applied_sequence: ProductEventSequence,
     pub(super) replayed_through_sequence: ProductEventSequence,
     pub(super) events_closed: bool,
+    pub(super) idempotency_key: Option<OperationIdempotencyKey>,
 }
 
 pub(super) struct CodingOperationTaskResult {
@@ -130,6 +144,8 @@ impl RpcState {
                 product_events: PRODUCT_EVENT_PROTOCOL_VERSION,
                 ui_snapshot: UI_SNAPSHOT_PROTOCOL_VERSION,
             },
+            idempotency_records: HashMap::new(),
+            idempotency_order: VecDeque::new(),
         })
     }
 
@@ -188,6 +204,75 @@ impl RpcState {
             && let Some(operation_id) = operation_id
         {
             self.clear_submitted_operation(operation_id);
+        }
+    }
+
+    pub(super) fn parse_idempotency_key(
+        &self,
+        key: Option<String>,
+    ) -> Result<Option<OperationIdempotencyKey>, CliError> {
+        key.map(OperationIdempotencyKey::parse)
+            .transpose()
+            .map_err(CliError::from)
+    }
+
+    pub(super) fn idempotent_retry_response(
+        &self,
+        key: Option<&OperationIdempotencyKey>,
+        command: &'static str,
+    ) -> Result<Option<serde_json::Value>, CliError> {
+        let Some(key) = key else {
+            return Ok(None);
+        };
+        let Some(record) = self.idempotency_records.get(key) else {
+            return Ok(None);
+        };
+        if record.command == command {
+            return Ok(Some(serde_json::json!({
+                "deduplicated": true,
+                "operation": record.operation_kind.as_str(),
+                "completed": record.completed
+            })));
+        }
+        Err(CliError::SessionFailure(format!(
+            "idempotency key was already used for {}, not {command}",
+            record.command
+        )))
+    }
+
+    pub(super) fn remember_idempotency_key(
+        &mut self,
+        key: Option<OperationIdempotencyKey>,
+        command: &'static str,
+        operation_kind: OperationKind,
+    ) {
+        let Some(key) = key else {
+            return;
+        };
+        if !self.idempotency_records.contains_key(&key) {
+            self.idempotency_order.push_back(key.clone());
+        }
+        self.idempotency_records.insert(
+            key,
+            RpcIdempotencyRecord {
+                command,
+                operation_kind,
+                completed: false,
+            },
+        );
+        while self.idempotency_order.len() > RPC_IDEMPOTENCY_RECORD_LIMIT {
+            if let Some(expired) = self.idempotency_order.pop_front() {
+                self.idempotency_records.remove(&expired);
+            }
+        }
+    }
+
+    pub(super) fn mark_idempotency_complete(&mut self, key: Option<&OperationIdempotencyKey>) {
+        let Some(key) = key else {
+            return;
+        };
+        if let Some(record) = self.idempotency_records.get_mut(key) {
+            record.completed = true;
         }
     }
 }
