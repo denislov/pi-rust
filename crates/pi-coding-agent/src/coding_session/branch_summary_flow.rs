@@ -10,6 +10,8 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
+use super::capability_snapshot::OperationCapabilitySnapshot;
+use super::plugin_service::PluginService;
 use super::prompt::{PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
 use super::runtime_service::{RuntimeService, scoped_provider_streamer_for_runtime};
 use super::session_log::event::{DiagnosticLevel, PersistedContentBlock, SessionEventEnvelope};
@@ -224,6 +226,7 @@ pub(crate) struct BranchSummaryContext {
     turn_id: String,
     replay: SessionReplay,
     transaction: Option<PromptTurnTransaction>,
+    capability_snapshot: OperationCapabilitySnapshot,
     selected_source_leaf_id: Option<String>,
     selected_target_leaf_id: Option<String>,
     selected_transcript: Vec<TranscriptItem>,
@@ -238,6 +241,7 @@ impl BranchSummaryContext {
         options: BranchSummaryOptions,
         replay: SessionReplay,
         transaction: PromptTurnTransaction,
+        capability_snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         let operation_id = transaction.operation_id().to_owned();
         let turn_id = transaction.turn_id().to_owned();
@@ -247,6 +251,7 @@ impl BranchSummaryContext {
             turn_id,
             replay,
             transaction: Some(transaction),
+            capability_snapshot,
             selected_source_leaf_id: None,
             selected_target_leaf_id: None,
             selected_transcript: Vec::new(),
@@ -375,7 +380,12 @@ impl BranchSummaryContext {
             operation_statuses: Default::default(),
         };
         let service = RuntimeService::new();
-        let agent = service.build_agent_runtime(runtime)?;
+        let build = service.build_agent_runtime_with_capabilities(
+            runtime,
+            &PluginService::new(),
+            &self.capability_snapshot,
+        )?;
+        let agent = build.agent;
         service.hydrate_agent_runtime(&agent, runtime, &selected_replay);
         let messages = agent.messages();
         if messages.is_empty() {
@@ -868,6 +878,7 @@ mod tests {
                 .with_target_leaf_id("leaf_root"),
             replay,
             transaction,
+            OperationCapabilitySnapshot::permissive("op_test"),
         );
         let flow = BranchSummaryFlow::new().unwrap();
 
@@ -931,6 +942,7 @@ mod tests {
                 .with_custom_instructions("keep branch decisions"),
             branch_replay("sess_branch_summary_model"),
             transaction,
+            OperationCapabilitySnapshot::permissive("op_test"),
         );
         let flow = BranchSummaryFlow::new().unwrap();
 
@@ -963,8 +975,12 @@ mod tests {
         .unwrap();
         let replay = service.replay().unwrap();
         let transaction = service.begin_branch_summary_transaction();
-        let mut context =
-            BranchSummaryContext::new(BranchSummaryOptions::new(), replay, transaction);
+        let mut context = BranchSummaryContext::new(
+            BranchSummaryOptions::new(),
+            replay,
+            transaction,
+            OperationCapabilitySnapshot::permissive("op_test"),
+        );
         let flow = BranchSummaryFlow::new().unwrap();
 
         let outcome = flow.run(&mut context).await.unwrap();

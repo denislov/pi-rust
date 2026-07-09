@@ -76,6 +76,7 @@ impl RuntimeService {
         Self
     }
 
+    #[cfg(test)]
     pub(crate) fn build_agent_runtime(
         &self,
         runtime: &RuntimeSnapshot,
@@ -83,6 +84,7 @@ impl RuntimeService {
         self.build_agent_runtime_with_plugins(runtime, &PluginService::new())
     }
 
+    #[cfg(test)]
     pub(crate) fn build_agent_runtime_with_plugins(
         &self,
         runtime: &RuntimeSnapshot,
@@ -93,6 +95,7 @@ impl RuntimeService {
             .agent)
     }
 
+    #[cfg(test)]
     pub(crate) fn build_agent_runtime_with_plugins_and_diagnostics(
         &self,
         runtime: &RuntimeSnapshot,

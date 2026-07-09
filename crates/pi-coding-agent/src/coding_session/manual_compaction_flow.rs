@@ -10,6 +10,8 @@ use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRu
 use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
+use super::capability_snapshot::OperationCapabilitySnapshot;
+use super::plugin_service::PluginService;
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
 use super::runtime_service::{RuntimeService, scoped_provider_streamer_for_runtime};
 use super::session_log::event::SessionEventEnvelope;
@@ -189,6 +191,7 @@ pub(crate) struct ManualCompactionContext {
     turn_id: String,
     replay: SessionReplay,
     transaction: Option<PromptTurnTransaction>,
+    capability_snapshot: OperationCapabilitySnapshot,
     first_kept_message_id: Option<String>,
     tokens_before: Option<u32>,
     summary_messages: Vec<AgentMessage>,
@@ -203,6 +206,7 @@ impl ManualCompactionContext {
         options: ManualCompactionOptions,
         replay: SessionReplay,
         transaction: PromptTurnTransaction,
+        capability_snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         let operation_id = transaction.operation_id().to_owned();
         let turn_id = transaction.turn_id().to_owned();
@@ -212,6 +216,7 @@ impl ManualCompactionContext {
             turn_id,
             replay,
             transaction: Some(transaction),
+            capability_snapshot,
             first_kept_message_id: None,
             tokens_before: None,
             summary_messages: Vec::new(),
@@ -343,7 +348,12 @@ impl ManualCompactionContext {
             return Ok(());
         }
         let service = RuntimeService::new();
-        let agent = service.build_agent_runtime(self.options.runtime())?;
+        let build = service.build_agent_runtime_with_capabilities(
+            self.options.runtime(),
+            &PluginService::new(),
+            &self.capability_snapshot,
+        )?;
+        let agent = build.agent;
         service.hydrate_agent_runtime(&agent, self.options.runtime(), &self.replay);
         let messages = agent.messages();
         if messages.len() < 2 {
@@ -653,6 +663,7 @@ mod tests {
                 .with_custom_instructions("keep decisions"),
             replay,
             transaction,
+            OperationCapabilitySnapshot::permissive("op_test"),
         );
         let flow = ManualCompactionFlow::new().unwrap();
 

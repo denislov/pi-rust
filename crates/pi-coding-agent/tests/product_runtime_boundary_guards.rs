@@ -52,6 +52,96 @@ fn adapters_do_not_construct_or_run_low_level_agents() {
     );
 }
 
+#[test]
+fn runtime_service_production_paths_require_capability_snapshot() {
+    let scan = SourceScan::new();
+    let runtime_service_source = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/runtime_service.rs"),
+    )
+    .expect("read runtime service source");
+
+    assert_fn_is_test_gated(&runtime_service_source, "fn build_agent_runtime(");
+    assert_fn_is_test_gated(
+        &runtime_service_source,
+        "fn build_agent_runtime_with_plugins(",
+    );
+    assert_fn_is_test_gated(
+        &runtime_service_source,
+        "fn build_agent_runtime_with_plugins_and_diagnostics(",
+    );
+    assert_fn_is_not_test_gated(
+        &runtime_service_source,
+        "fn build_agent_runtime_with_capabilities(",
+    );
+
+    let mut violations = Vec::new();
+    collect_source_violations(
+        scan.repo_root(),
+        &scan.crate_root.join("src/coding_session"),
+        &["crates/pi-coding-agent/src/coding_session/runtime_service.rs"],
+        &mut violations,
+        |line| {
+            line.contains(".build_agent_runtime_with_plugins_and_diagnostics(")
+                || line.contains(".build_agent_runtime_with_plugins(")
+                || line.contains(".build_agent_runtime(")
+        },
+    );
+
+    assert!(
+        violations.is_empty(),
+        "production runtime build must route through build_agent_runtime_with_capabilities; permissive compat wrappers must not be called outside runtime_service tests:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn plugin_command_paths_use_capability_aware_execution() {
+    let scan = SourceScan::new();
+    let source = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
+        .expect("read coding session owner source");
+
+    assert!(
+        source.contains("run_command_with_capabilities("),
+        "plugin command execution must use run_command_with_capabilities"
+    );
+    assert!(
+        !source.contains(".run_command(\""),
+        "plugin command execution must not bypass capability-aware dispatch with bare .run_command( calls"
+    );
+}
+
+fn assert_fn_is_test_gated(source: &str, signature: &str) {
+    let preceding = preceding_non_blank_line(source, signature)
+        .unwrap_or_else(|| panic!("signature not found: {signature}"));
+    assert!(
+        preceding.trim() == "#[cfg(test)]",
+        "compat fn `{signature}` must be gated behind #[cfg(test)] so production paths use build_agent_runtime_with_capabilities; preceding line: {preceding:?}"
+    );
+}
+
+fn assert_fn_is_not_test_gated(source: &str, signature: &str) {
+    let preceding = preceding_non_blank_line(source, signature)
+        .unwrap_or_else(|| panic!("signature not found: {signature}"));
+    assert!(
+        preceding.trim() != "#[cfg(test)]",
+        "production fn `{signature}` must not be gated behind #[cfg(test)]"
+    );
+}
+
+fn preceding_non_blank_line<'a>(source: &'a str, signature: &str) -> Option<&'a str> {
+    let lines: Vec<&str> = source.lines().collect();
+    let idx = lines.iter().position(|line| line.contains(signature))?;
+    if idx == 0 {
+        return Some("");
+    }
+    let mut i = idx - 1;
+    while i > 0 && lines[i].trim().is_empty() {
+        i -= 1;
+    }
+    Some(lines[i])
+}
+
 struct SourceScan {
     crate_root: PathBuf,
     repo_root: PathBuf,

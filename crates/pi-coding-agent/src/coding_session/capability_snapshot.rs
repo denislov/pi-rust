@@ -363,6 +363,7 @@ impl CapabilitySnapshotService {
         let reads_session = writes_session || matches!(input.operation_kind, OperationKind::Export);
         let model = match input.operation_kind {
             OperationKind::Prompt
+            | OperationKind::Compact
             | OperationKind::BranchSummary
             | OperationKind::AgentInvocation
             | OperationKind::AgentTeam

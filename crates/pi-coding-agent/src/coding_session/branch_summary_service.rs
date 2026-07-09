@@ -73,7 +73,8 @@ impl BranchSummaryService {
         }
         let replay = session_service.replay()?;
         let transaction = session_service.begin_branch_summary_transaction();
-        let mut context = BranchSummaryContext::new(branch_options, replay, transaction);
+        let mut context =
+            BranchSummaryContext::new(branch_options, replay, transaction, snapshot.clone());
         let operation_id = context.operation_id().to_owned();
         let turn_id = context.turn_id().to_owned();
 

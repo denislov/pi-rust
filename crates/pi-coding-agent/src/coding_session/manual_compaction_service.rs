@@ -31,7 +31,8 @@ impl ManualCompactionService {
         SessionWriteCapability::require(snapshot.session_write.as_ref())?;
         let replay = session_service.replay()?;
         let transaction = session_service.begin_manual_compaction_transaction();
-        let mut context = ManualCompactionContext::new(options, replay, transaction);
+        let mut context =
+            ManualCompactionContext::new(options, replay, transaction, snapshot.clone());
         let operation_id = context.operation_id().to_owned();
         let turn_id = context.turn_id().to_owned();
 
