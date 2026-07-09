@@ -391,8 +391,23 @@ impl ProductEvent {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ProductEventSequence(pub(crate) u64);
+
+#[allow(dead_code)]
+impl ProductEventSequence {
+    pub(crate) fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn get(self) -> u64 {
+        self.0
+    }
+
+    pub(crate) fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1041,6 +1056,29 @@ mod tests {
             event.classification().family,
             ProductEventFamily::Capability
         );
+    }
+
+    #[test]
+    fn product_event_sequence_exposes_stable_cursor_math() {
+        let first = ProductEventSequence::new(1);
+        let second = first.next();
+
+        assert_eq!(first.get(), 1);
+        assert_eq!(second.get(), 2);
+        assert!(second > first);
+        assert_eq!(ProductEventSequence::default(), ProductEventSequence::new(0));
+    }
+
+    #[test]
+    fn product_event_keeps_sequence_accessor_for_projection() {
+        let event = ProductEvent::from_compat_event(
+            ProductEventSequence::new(42),
+            CodingAgentEvent::SessionOpened {
+                session_id: "sess_cursor".into(),
+            },
+        );
+
+        assert_eq!(event.sequence(), ProductEventSequence::new(42));
     }
 
     #[test]
