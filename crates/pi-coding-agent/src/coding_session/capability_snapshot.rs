@@ -156,9 +156,29 @@ pub(crate) struct SessionReadCapability {
     pub(crate) persistent: bool,
 }
 
+impl SessionReadCapability {
+    pub(crate) fn require(
+        value: Option<&SessionReadCapability>,
+    ) -> Result<&SessionReadCapability, CodingSessionError> {
+        value.ok_or_else(|| CodingSessionError::UnsupportedCapability {
+            capability: "session read capability is not granted".into(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionWriteCapability {
     pub(crate) persistent: bool,
+}
+
+impl SessionWriteCapability {
+    pub(crate) fn require(
+        value: Option<&SessionWriteCapability>,
+    ) -> Result<&SessionWriteCapability, CodingSessionError> {
+        value.ok_or_else(|| CodingSessionError::UnsupportedCapability {
+            capability: "session write capability is not granted".into(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

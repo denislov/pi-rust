@@ -1,3 +1,6 @@
+use super::capability_snapshot::{
+    OperationCapabilitySnapshot, SessionReadCapability, SessionWriteCapability,
+};
 use super::event_service::EventService;
 use super::flow_service::FlowService;
 use super::manual_compaction_flow::{
@@ -22,7 +25,10 @@ impl ManualCompactionService {
         flow_service: &FlowService,
         event_service: &EventService,
         options: ManualCompactionOptions,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        SessionReadCapability::require(snapshot.session_read.as_ref())?;
+        SessionWriteCapability::require(snapshot.session_write.as_ref())?;
         let replay = session_service.replay()?;
         let transaction = session_service.begin_manual_compaction_transaction();
         let mut context = ManualCompactionContext::new(options, replay, transaction);

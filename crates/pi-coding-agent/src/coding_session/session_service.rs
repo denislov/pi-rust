@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use pi_agent_core::transcript::{SessionEntry, SessionTreeNode, StoredAgentMessage};
 use pi_ai::types::ContentBlock;
 
-use super::capability_snapshot::OperationCapabilitySnapshot;
+use super::capability_snapshot::{OperationCapabilitySnapshot, SessionWriteCapability};
 use super::event_service::EventService;
 use super::export_flow::{ExportContext, ExportOptions};
 use super::prompt::{PromptTurnContext, PromptTurnOutcome, PromptTurnTransaction};
@@ -485,6 +485,17 @@ impl SessionService {
             session_id: Some(session_id),
             leaf_id: new_leaf_id,
         })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn commit_prompt_transaction_with_snapshot(
+        &mut self,
+        transaction: Option<PromptTurnTransaction>,
+        operation_id: impl Into<String>,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        SessionWriteCapability::require(snapshot.session_write.as_ref())?;
+        self.commit_prompt_transaction(transaction, operation_id)
     }
 
     pub(crate) fn fail_prompt_transaction(
@@ -2220,6 +2231,24 @@ mod tests {
                 .and_then(|text| text.as_str()),
             Some("first prompt")
         );
+    }
+
+    #[test]
+    fn session_write_requires_session_write_capability() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_write_capability")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let snapshot = OperationCapabilitySnapshot::test_without_session_write("op_write");
+        let transaction = service.begin_prompt_transaction_with_snapshot(&snapshot);
+        let operation_id = transaction.operation_id().to_owned();
+
+        let error = service
+            .commit_prompt_transaction_with_snapshot(Some(transaction), operation_id, &snapshot)
+            .unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
     }
 
     fn record_prompt(service: &mut SessionService, text: &str) -> String {

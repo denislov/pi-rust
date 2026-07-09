@@ -72,6 +72,7 @@ use capability_service::CapabilityService;
 pub(crate) use capability_snapshot::PluginCapabilitySet;
 use capability_snapshot::{
     ActorId, CapabilitySnapshotInput, CapabilitySnapshotService, OperationCapabilitySnapshot,
+    SessionReadCapability, SessionWriteCapability,
 };
 pub use capability_snapshot::{FilesystemCapability, ShellCapability};
 pub(crate) use delegation::{
@@ -1116,7 +1117,7 @@ impl CodingAgentSession {
 
         match operation {
             Operation::Export(options) => self
-                .export_current_inner(options)
+                .export_current_inner(options, operation_permit.capability_snapshot())
                 .map(OperationOutcome::Export),
             Operation::PluginCommand { command_id, args } => self
                 .plugin_service
@@ -1206,7 +1207,9 @@ impl CodingAgentSession {
     fn export_current_inner(
         &self,
         options: ExportOptions,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<export_flow::ExportOutcome, CodingSessionError> {
+        SessionReadCapability::require(snapshot.session_read.as_ref())?;
         let SessionPersistence::Persistent(session_service) = &self.persistence else {
             return Err(CodingSessionError::UnsupportedCapability {
                 capability: "export requires a persistent Rust-native session".into(),
@@ -1445,6 +1448,7 @@ impl CodingAgentSession {
                         &self.flow_service,
                         &self.event_service,
                         options,
+                        &snapshot,
                     )
                     .await
                     .map(OperationOutcome::ManualCompaction)
@@ -1473,6 +1477,7 @@ impl CodingAgentSession {
                         source_leaf_id,
                         target_leaf_id,
                         custom_instructions,
+                        &snapshot,
                     )
                     .await
                     .map(OperationOutcome::BranchSummary)
@@ -1505,6 +1510,7 @@ impl CodingAgentSession {
                         check_command,
                         repair_attempts,
                         model_repair_policy,
+                        &snapshot,
                     )
                     .await?;
                 self.event_service
@@ -1884,6 +1890,13 @@ impl CodingAgentSession {
         let transaction = context.take_transaction();
         match &mut self.persistence {
             SessionPersistence::Persistent(session_service) => {
+                let snapshot = context.capability_snapshot().ok_or_else(|| {
+                    CodingSessionError::UnsupportedCapability {
+                        capability: "prompt session write requires operation capability snapshot"
+                            .into(),
+                    }
+                })?;
+                SessionWriteCapability::require(snapshot.session_write.as_ref())?;
                 session_service.finalize_prompt_transaction(transaction, operation_id, outcome)
             }
             SessionPersistence::NonPersistent(state) => {

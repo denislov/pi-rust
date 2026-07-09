@@ -2,6 +2,9 @@ use super::branch_summary_flow::{
     BranchSummaryContext, BranchSummaryOptions, branch_summary_failed_outcome,
     branch_summary_outcome_text, branch_summary_success_outcome,
 };
+use super::capability_snapshot::{
+    OperationCapabilitySnapshot, SessionReadCapability, SessionWriteCapability,
+};
 use super::event_service::EventService;
 use super::flow_service::FlowService;
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome, RuntimeSnapshot};
@@ -56,7 +59,10 @@ impl BranchSummaryService {
         source_leaf_id: String,
         target_leaf_id: String,
         custom_instructions: Option<String>,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        SessionReadCapability::require(snapshot.session_read.as_ref())?;
+        SessionWriteCapability::require(snapshot.session_write.as_ref())?;
         let runtime = branch_summary_runtime(&options)?;
         let mut branch_options = BranchSummaryOptions::new()
             .with_source_leaf_id(source_leaf_id)

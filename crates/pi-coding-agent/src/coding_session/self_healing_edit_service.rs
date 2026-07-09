@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::capability_snapshot::{OperationCapabilitySnapshot, SessionWriteCapability};
 use super::event_service::{EventService, SelfHealingEditEventObserver};
 use super::flow_service::FlowService;
 use super::self_healing_edit_flow::{
@@ -33,7 +34,9 @@ impl SelfHealingEditService {
         check_command: Option<String>,
         repair_attempts: Vec<Vec<SelfHealingEditReplacement>>,
         model_repair_policy: Option<(Arc<dyn SelfHealingEditRepairStrategy>, usize)>,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<SelfHealingEditServiceOutcome, CodingSessionError> {
+        SessionWriteCapability::require(snapshot.session_write.as_ref())?;
         let replacement_count = replacements.len();
         let event_path = path.clone();
         let cwd = session_cwd(session_service).unwrap_or_else(default_cwd);
