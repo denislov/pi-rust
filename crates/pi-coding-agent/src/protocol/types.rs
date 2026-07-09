@@ -590,6 +590,12 @@ pub struct RpcSessionState {
     pub session_file: Option<String>,
     #[serde(rename = "sessionId")]
     pub session_id: String,
+    #[serde(rename = "clientId", skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(rename = "snapshotSequence")]
+    pub snapshot_sequence: u64,
+    #[serde(rename = "capabilityGeneration")]
+    pub capability_generation: u64,
     #[serde(rename = "sessionName", skip_serializing_if = "Option::is_none")]
     pub session_name: Option<String>,
     #[serde(rename = "autoCompactionEnabled")]

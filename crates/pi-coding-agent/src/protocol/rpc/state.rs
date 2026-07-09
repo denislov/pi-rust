@@ -1,9 +1,10 @@
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
-    coding_session::AgentTeamOutcome, coding_session::CodingAgentSession,
-    coding_session::OperationKind, coding_session::ProductEvent,
-    coding_session::PromptControlHandle, coding_session::PromptTurnOutcome, config, select_model,
+    coding_session::AgentTeamOutcome, coding_session::ClientConnectionId,
+    coding_session::ClientDraft, coding_session::CodingAgentSession, coding_session::OperationKind,
+    coding_session::ProductEvent, coding_session::PromptControlHandle,
+    coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
@@ -25,6 +26,8 @@ pub(super) struct RpcState {
     pub(super) active_leaf_id: Option<String>,
     pub(super) messages: Vec<StoredAgentMessage>,
     pub(super) coding_session: Option<CodingAgentSession>,
+    pub(super) client_id: Option<ClientConnectionId>,
+    pub(super) client_drafts: Vec<ClientDraft>,
     pub(super) running: Option<RunningPrompt>,
     pub(super) is_compacting: bool,
     pub(super) steering: Vec<String>,
@@ -105,6 +108,8 @@ impl RpcState {
             active_leaf_id: None,
             messages: Vec::new(),
             coding_session: None,
+            client_id: Some(ClientConnectionId::new("rpc-primary")),
+            client_drafts: Vec::new(),
             running: None,
             is_compacting: false,
             steering: Vec::new(),
