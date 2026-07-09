@@ -981,59 +981,50 @@ impl CodingAgentSession {
         self.operation_control.ensure_idle()?;
         let source_leaf_id = source_leaf_id.into();
         let target_leaf_id = target_leaf_id.into();
+        let operation = Operation::BranchSummary {
+            options,
+            source_leaf_id,
+            target_leaf_id,
+            custom_instructions: None,
+        };
+        let admission = self.resolve_operation_admission(&operation)?;
+        let operation_permit = IntentRouter::admit_operation(
+            &self.operation_control,
+            &admission,
+            OperationDispatchMode::Async,
+        )?;
+        let snapshot = operation_permit.capability_snapshot().clone();
+        let Operation::BranchSummary {
+            options,
+            source_leaf_id,
+            target_leaf_id,
+            custom_instructions,
+        } = operation
+        else {
+            unreachable!("navigation branch summary built a non-branch-summary operation")
+        };
         if let Some(outcome) = self.branch_summary_service.reused_outcome(
             &self.persistence,
             &options,
             source_leaf_id.as_str(),
             target_leaf_id.as_str(),
+            &snapshot,
         )? {
+            drop(operation_permit);
             return Ok(outcome);
         }
 
-        match self
-            .run_operation(Operation::BranchSummary {
+        let outcome = self
+            .run_branch_summary_admitted(
                 options,
                 source_leaf_id,
                 target_leaf_id,
-                custom_instructions: None,
-            })
-            .await?
-        {
-            OperationOutcome::BranchSummary(outcome) => Ok(outcome),
-            OperationOutcome::Prompt(_) => {
-                unreachable!("branch summary operation returned prompt outcome")
-            }
-            OperationOutcome::ManualCompaction(_) => {
-                unreachable!("branch summary operation returned manual compaction outcome")
-            }
-            OperationOutcome::PluginLoad(_) => {
-                unreachable!("branch summary operation returned plugin load outcome")
-            }
-            OperationOutcome::PluginCommand(_) => {
-                unreachable!("branch summary operation returned plugin command outcome")
-            }
-            OperationOutcome::DelegationApproval => {
-                unreachable!("branch summary operation returned delegation approval outcome")
-            }
-            OperationOutcome::DelegationRejection => {
-                unreachable!("branch summary operation returned delegation rejection outcome")
-            }
-            OperationOutcome::SelfHealingEdit(_) => {
-                unreachable!("branch summary operation returned self-healing edit outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("branch summary operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("branch summary operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => {
-                unreachable!("branch summary operation returned export outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!("branch summary operation returned set default agent profile outcome")
-            }
-        }
+                custom_instructions,
+                &snapshot,
+            )
+            .await;
+        drop(operation_permit);
+        outcome
     }
 
     fn from_services(
@@ -1466,26 +1457,16 @@ impl CodingAgentSession {
                 source_leaf_id,
                 target_leaf_id,
                 custom_instructions,
-            } => {
-                let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-                    return Err(CodingSessionError::UnsupportedCapability {
-                        capability: "branch summary without persistent session".into(),
-                    });
-                };
-                self.branch_summary_service
-                    .run_persistent(
-                        session_service,
-                        &self.flow_service,
-                        &self.event_service,
-                        options,
-                        source_leaf_id,
-                        target_leaf_id,
-                        custom_instructions,
-                        &snapshot,
-                    )
-                    .await
-                    .map(OperationOutcome::BranchSummary)
-            }
+            } => self
+                .run_branch_summary_admitted(
+                    options,
+                    source_leaf_id,
+                    target_leaf_id,
+                    custom_instructions,
+                    &snapshot,
+                )
+                .await
+                .map(OperationOutcome::BranchSummary),
             Operation::SelfHealingEdit(request) => {
                 let (path, replacements, check_command, repair_attempts, model_repair) =
                     request.into_parts();
@@ -1551,6 +1532,33 @@ impl CodingAgentSession {
                 .await
                 .map(|_| OperationOutcome::DelegationApproval),
         }
+    }
+
+    async fn run_branch_summary_admitted(
+        &mut self,
+        options: PromptTurnOptions,
+        source_leaf_id: String,
+        target_leaf_id: String,
+        custom_instructions: Option<String>,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "branch summary without persistent session".into(),
+            });
+        };
+        self.branch_summary_service
+            .run_persistent(
+                session_service,
+                &self.flow_service,
+                &self.event_service,
+                options,
+                source_leaf_id,
+                target_leaf_id,
+                custom_instructions,
+                snapshot,
+            )
+            .await
     }
 
     #[allow(dead_code)]

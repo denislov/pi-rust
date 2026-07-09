@@ -98,6 +98,10 @@ fn lexically_normalize(path: &Path) -> PathBuf {
     result
 }
 
+pub(crate) fn tool_uses_filesystem(name: &str) -> bool {
+    matches!(name, "read" | "write" | "edit" | "grep" | "find" | "ls")
+}
+
 impl FilesystemCapability {
     pub fn new(cwd: PathBuf) -> Self {
         Self { cwd }
@@ -384,11 +388,7 @@ impl CapabilitySnapshotService {
         let cwd = input.cwd;
         let filesystem = cwd
             .as_ref()
-            .filter(|_| {
-                allowed_tools
-                    .iter()
-                    .any(|name| name == "read" || name == "edit")
-            })
+            .filter(|_| allowed_tools.iter().any(|name| tool_uses_filesystem(name)))
             .map(|cwd| FilesystemCapability { cwd: cwd.clone() });
         let shell = cwd
             .as_ref()
@@ -473,6 +473,27 @@ mod tests {
         assert!(snapshot.session_read.is_some());
         assert!(snapshot.session_write.is_some());
         assert_eq!(snapshot.plugin.tool_providers, 1);
+    }
+
+    #[test]
+    fn prompt_snapshot_grants_filesystem_for_every_filesystem_tool() {
+        let service = CapabilitySnapshotService::new();
+        for tool in ["read", "write", "edit", "grep", "find", "ls"] {
+            let mut input = input(OperationKind::Prompt);
+            input.runtime_tools = vec![tool.into()];
+            input.profile_tools = vec![tool.into()];
+
+            let snapshot = service.snapshot(input);
+
+            assert!(
+                snapshot.filesystem.is_some(),
+                "{tool} should receive filesystem capability"
+            );
+            assert!(
+                snapshot.tools.allows(tool),
+                "{tool} should remain tool-authorized"
+            );
+        }
     }
 
     #[test]

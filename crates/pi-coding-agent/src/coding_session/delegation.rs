@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::capability_snapshot::{
-    ActorId, ModelCapability, OperationCapabilitySnapshot, ToolCapabilitySet,
+    ActorId, ModelCapability, OperationCapabilitySnapshot, ToolCapabilitySet, tool_uses_filesystem,
 };
 use super::error::CodingSessionError;
 use super::profiles::{
@@ -58,6 +58,7 @@ pub(crate) fn capability_snapshot_for_delegated_profile(
             released_tools.push(tool.name);
         }
     }
+    let releases_filesystem = released_tools.iter().any(|name| tool_uses_filesystem(name));
     OperationCapabilitySnapshot {
         generation: parent.generation,
         operation_id: operation_id.into(),
@@ -67,7 +68,7 @@ pub(crate) fn capability_snapshot_for_delegated_profile(
         }),
         tools: ToolCapabilitySet::from_names(released_tools),
         commands: Default::default(),
-        filesystem: parent.filesystem.clone(),
+        filesystem: parent.filesystem.clone().filter(|_| releases_filesystem),
         shell: parent
             .shell
             .clone()

@@ -2056,6 +2056,25 @@ git commit -m "docs: close capability snapshot integration stage"
 - [x] `cargo check -p pi-coding-agent`
 - [x] `git diff --check`
 
+## Post-Closure Quality Review
+
+2026-07-09 quality review found and fixed three authorization consistency gaps
+without changing the Stage 5 contract:
+
+- Filesystem capability classification now covers every builtin filesystem tool:
+  `read`, `write`, `edit`, `grep`, `find`, and `ls`.
+- Delegated child snapshots no longer inherit a filesystem handle unless at least
+  one released target-profile tool uses filesystem access.
+- Branch-summary navigation reuse now obtains an admitted branch-summary snapshot
+  before checking for reusable cached summaries, and cached-summary reads require
+  `SessionReadCapability`.
+
+Focused regression coverage:
+
+- `prompt_snapshot_grants_filesystem_for_every_filesystem_tool`
+- `delegated_operation_does_not_release_filesystem_without_filesystem_tools`
+- `reused_outcome_requires_session_read_capability`
+
 ## Spec Coverage
 
 - Model/provider access uses `ModelCapability`: Tasks 1, 4.

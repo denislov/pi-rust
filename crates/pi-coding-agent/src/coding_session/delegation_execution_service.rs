@@ -250,4 +250,34 @@ mod tests {
         assert!(child.tools.allows("edit"));
         assert_eq!(child.generation, parent.generation);
     }
+
+    #[test]
+    fn delegated_operation_does_not_release_filesystem_without_filesystem_tools() {
+        let parent = OperationCapabilitySnapshot::test_with_tools("op_parent", ["bash"]);
+        let target_profile = AgentProfile {
+            schema_version: 1,
+            id: ProfileId::from("coder"),
+            display_name: "Coder".into(),
+            description: None,
+            model: None,
+            system_prompt: None,
+            tools: vec!["bash".into()],
+            skills: Vec::new(),
+            supervision: SupervisionPolicy::Session,
+            delegation: DelegationPolicy::default(),
+            source: ProfileSource::BuiltIn,
+            path: None,
+        };
+
+        let child = capability_snapshot_for_delegated_profile(
+            &parent,
+            "op_child",
+            &target_profile,
+            ActorId::ChildOperation("op_parent".into()),
+        );
+
+        assert!(child.tools.allows("bash"));
+        assert!(child.filesystem.is_none());
+        assert!(child.shell.is_some());
+    }
 }

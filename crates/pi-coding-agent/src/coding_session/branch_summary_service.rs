@@ -26,7 +26,9 @@ impl BranchSummaryService {
         options: &PromptTurnOptions,
         source_leaf_id: &str,
         target_leaf_id: &str,
+        snapshot: &OperationCapabilitySnapshot,
     ) -> Result<Option<PromptTurnOutcome>, CodingSessionError> {
+        SessionReadCapability::require(snapshot.session_read.as_ref())?;
         let runtime = branch_summary_runtime(options)?;
         let SessionPersistence::Persistent(session_service) = persistence else {
             return Err(CodingSessionError::UnsupportedCapability {
@@ -121,4 +123,63 @@ fn branch_summary_runtime(
         .ok_or_else(|| CodingSessionError::Config {
             message: "branch summary options do not include a runtime snapshot".into(),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use pi_agent_core::AgentResources;
+
+    use super::super::capability_snapshot::OperationCapabilitySnapshot;
+    use super::super::profiles::ProfileId;
+    use super::super::session_service::{SessionPersistence, TransientSessionState};
+    use super::*;
+    use crate::prompt_options::PromptRunOptions;
+    use crate::runtime::PromptInvocation;
+
+    fn prompt_options() -> PromptTurnOptions {
+        PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: "summarize".into(),
+            model: pi_ai::lookup_model("claude-haiku-4-5").unwrap(),
+            api_key: None,
+            auth_diagnostics: Vec::new(),
+            system_prompt: None,
+            max_turns: Some(1),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: None,
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text("summarize".into()),
+        })
+    }
+
+    #[test]
+    fn reused_outcome_requires_session_read_capability() {
+        let persistence = SessionPersistence::NonPersistent(TransientSessionState::new(
+            ProfileId::from("default"),
+        ));
+        let mut snapshot = OperationCapabilitySnapshot::permissive("op_branch_reuse");
+        snapshot.session_read = None;
+
+        let error = BranchSummaryService::new()
+            .reused_outcome(
+                &persistence,
+                &prompt_options(),
+                "leaf_source",
+                "leaf_target",
+                &snapshot,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
+        assert!(
+            error
+                .to_string()
+                .contains("session read capability is not granted")
+        );
+    }
 }
