@@ -339,7 +339,6 @@ impl ProductEvent {
         self.kind.family()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn sequence(&self) -> ProductEventSequence {
         self.sequence
     }
@@ -390,11 +389,9 @@ impl ProductEvent {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ProductEventSequence(pub(crate) u64);
 
-#[allow(dead_code)]
 impl ProductEventSequence {
     pub(crate) fn new(value: u64) -> Self {
         Self(value)
@@ -404,6 +401,7 @@ impl ProductEventSequence {
         self.0
     }
 
+    #[allow(dead_code)]
     pub(crate) fn next(self) -> Self {
         Self(self.0 + 1)
     }

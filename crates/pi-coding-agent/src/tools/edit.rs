@@ -350,6 +350,7 @@ fn coding_session_error_message(error: CodingSessionError) -> String {
             operation_id,
             message,
         } => format!("partial commit uncertainty for operation {operation_id}: {message}"),
+        gap @ CodingSessionError::EventStreamGap { .. } => gap.to_string(),
     }
 }
 

@@ -15,6 +15,13 @@ pub enum CodingSessionError {
     Resource { message: String },
     #[error("session error: {message}")]
     Session { message: String },
+    #[error(
+        "event stream gap after sequence {requested_after}; oldest available product event is {oldest_available}; client must request a fresh UI snapshot"
+    )]
+    EventStreamGap {
+        requested_after: u64,
+        oldest_available: u64,
+    },
     #[error("partial commit uncertainty for operation {operation_id}: {message}")]
     PartialCommit {
         operation_id: String,
@@ -51,6 +58,7 @@ impl CodingSessionError {
             Self::Input { .. } => "input",
             Self::Resource { .. } => "resource",
             Self::Session { .. } => "session",
+            Self::EventStreamGap { .. } => "event_stream_gap",
             Self::PartialCommit { .. } => "partial_commit",
             Self::SelfHealingEditFailed { .. } => "self_healing_edit_failed",
             Self::Provider { .. } => "provider",
@@ -78,6 +86,9 @@ impl From<CodingSessionError> for CliError {
             | CodingSessionError::Tool { message }
             | CodingSessionError::Flow { message }
             | CodingSessionError::Plugin { message } => CliError::SessionFailure(message),
+            gap @ CodingSessionError::EventStreamGap { .. } => {
+                CliError::SessionFailure(gap.to_string())
+            }
             CodingSessionError::Cancelled => CliError::SessionFailure("cancelled".into()),
             CodingSessionError::UnsupportedCapability { capability } => {
                 CliError::UnsupportedMode(capability)
@@ -125,6 +136,13 @@ mod tests {
                     message: "not open".into(),
                 },
                 "session",
+            ),
+            (
+                CodingSessionError::EventStreamGap {
+                    requested_after: 1,
+                    oldest_available: 3,
+                },
+                "event_stream_gap",
             ),
             (
                 CodingSessionError::PartialCommit {

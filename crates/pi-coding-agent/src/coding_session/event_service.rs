@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use futures::future::{BoxFuture, FutureExt};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 use pi_agent_core::AgentEvent;
@@ -27,7 +27,14 @@ const EVENT_CHANNEL_CAPACITY: usize = 128;
 pub(crate) struct EventService {
     sender: broadcast::Sender<CodingAgentEvent>,
     product_sender: broadcast::Sender<ProductEvent>,
-    next_sequence: Arc<AtomicU64>,
+    publication_state: Arc<Mutex<EventPublicationState>>,
+    retained_capacity: usize,
+}
+
+#[derive(Debug)]
+struct EventPublicationState {
+    next_sequence: u64,
+    retained_product_events: VecDeque<ProductEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,18 +71,76 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
 
 impl EventService {
     pub(crate) fn new() -> Self {
-        let (sender, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-        let (product_sender, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        Self::with_event_capacity(EVENT_CHANNEL_CAPACITY)
+    }
+
+    fn with_event_capacity(capacity: usize) -> Self {
+        let channel_capacity = capacity.max(1);
+        let (sender, _) = broadcast::channel(channel_capacity);
+        let (product_sender, _) = broadcast::channel(channel_capacity);
         Self {
             sender,
             product_sender,
-            next_sequence: Arc::new(AtomicU64::new(1)),
+            publication_state: Arc::new(Mutex::new(EventPublicationState {
+                next_sequence: 1,
+                retained_product_events: VecDeque::with_capacity(capacity),
+            })),
+            retained_capacity: capacity,
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_event_capacity_for_tests(capacity: usize) -> Self {
+        Self::with_event_capacity(capacity)
+    }
+
+    pub(crate) fn current_product_sequence(&self) -> ProductEventSequence {
+        let state = self.publication_state.lock().unwrap();
+        ProductEventSequence::new(state.next_sequence.saturating_sub(1))
+    }
+
+    pub(crate) fn product_events_after(
+        &self,
+        cursor: ProductEventSequence,
+    ) -> Result<Vec<ProductEvent>, CodingSessionError> {
+        let state = self.publication_state.lock().unwrap();
+        let Some(oldest) = state
+            .retained_product_events
+            .front()
+            .map(ProductEvent::sequence)
+        else {
+            return Ok(Vec::new());
+        };
+        if cursor < oldest && cursor != ProductEventSequence::default() {
+            return Err(CodingSessionError::EventStreamGap {
+                requested_after: cursor.get(),
+                oldest_available: oldest.get(),
+            });
+        }
+        Ok(state
+            .retained_product_events
+            .iter()
+            .filter(|event| event.sequence() > cursor)
+            .cloned()
+            .collect())
+    }
+
+    fn retain_product_event(&self, state: &mut EventPublicationState, event: ProductEvent) {
+        if self.retained_capacity == 0 {
+            return;
+        }
+        if state.retained_product_events.len() == self.retained_capacity {
+            state.retained_product_events.pop_front();
+        }
+        state.retained_product_events.push_back(event);
+    }
+
     pub(crate) fn emit(&self, event: CodingAgentEvent) -> ProductEvent {
-        let sequence = ProductEventSequence(self.next_sequence.fetch_add(1, Ordering::Relaxed));
+        let mut state = self.publication_state.lock().unwrap();
+        let sequence = ProductEventSequence::new(state.next_sequence);
+        state.next_sequence += 1;
         let product_event = ProductEvent::from_compat_event(sequence, event);
+        self.retain_product_event(&mut state, product_event.clone());
         let _ = self.product_sender.send(product_event.clone());
         let _ = self
             .sender
@@ -1046,6 +1111,101 @@ mod tests {
             Some(CodingAgentEvent::PromptCompleted { .. })
         ));
         assert_eq!(product_receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn retained_product_events_can_resume_after_cursor() {
+        let service = EventService::new();
+        service.emit(CodingAgentEvent::SessionOpened {
+            session_id: "sess_retained".into(),
+        });
+        service.emit(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "ready".into(),
+        });
+
+        let retained = service
+            .product_events_after(ProductEventSequence::new(1))
+            .unwrap();
+
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].sequence(), ProductEventSequence::new(2));
+    }
+
+    #[test]
+    fn retained_product_events_report_gap_before_oldest_sequence() {
+        let service = EventService::with_event_capacity_for_tests(2);
+        for index in 0..4 {
+            service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: format!("event {index}"),
+            });
+        }
+
+        let error = service
+            .product_events_after(ProductEventSequence::new(1))
+            .unwrap_err();
+
+        assert_eq!(error.code(), "event_stream_gap");
+        assert!(error.to_string().contains("fresh UI snapshot"));
+    }
+
+    #[test]
+    fn zero_retained_capacity_keeps_replay_window_empty() {
+        let service = EventService::with_event_capacity_for_tests(0);
+        service.emit(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "ready".into(),
+        });
+
+        let retained = service
+            .product_events_after(ProductEventSequence::default())
+            .unwrap();
+
+        assert!(retained.is_empty());
+        assert_eq!(
+            service.current_product_sequence(),
+            ProductEventSequence::new(1)
+        );
+    }
+
+    #[test]
+    fn concurrent_emitters_retain_events_in_sequence_order() {
+        const EMITTERS: usize = 256;
+
+        let service = EventService::with_event_capacity_for_tests(EMITTERS);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(EMITTERS));
+        let handles = (0..EMITTERS)
+            .map(|index| {
+                let service = service.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.emit(CodingAgentEvent::Diagnostic {
+                        operation_id: None,
+                        message: format!("event {index}"),
+                    });
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let retained = service
+            .product_events_after(ProductEventSequence::default())
+            .unwrap();
+        let sequences = retained
+            .iter()
+            .map(|event| event.sequence().get())
+            .collect::<Vec<_>>();
+
+        assert_eq!(sequences, (1..=EMITTERS as u64).collect::<Vec<_>>());
+        assert_eq!(
+            service.current_product_sequence(),
+            ProductEventSequence::new(EMITTERS as u64)
+        );
     }
 
     #[test]
