@@ -97,6 +97,24 @@ impl ClientConnection {
             submitted_operation: None,
         }
     }
+
+    pub(crate) fn mark_submitted(&mut self, submitted: SubmittedOperation) {
+        if submitted.kind == OperationKind::Prompt {
+            self.client_drafts
+                .retain(|draft| draft.kind != ClientDraftKind::Prompt);
+        }
+        self.submitted_operation = Some(submitted);
+    }
+
+    pub(crate) fn clear_submitted_operation(&mut self, operation_id: &str) {
+        if self
+            .submitted_operation
+            .as_ref()
+            .is_some_and(|submitted| submitted.operation_id == operation_id)
+        {
+            self.submitted_operation = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -184,6 +202,113 @@ mod tests {
         assert_eq!(connection.id.as_str(), "rpc-1");
         assert_eq!(connection.cursor, snapshot.cursor);
         assert_eq!(connection.client_drafts.len(), 1);
+        assert!(connection.submitted_operation.is_none());
+    }
+
+    #[test]
+    fn submitted_operation_clears_matching_prompt_draft() {
+        let snapshot = UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence: ProductEventSequence::new(12),
+                capability_generation: CapabilityGeneration::new(4),
+            },
+            CodingAgentSessionView {
+                session_id: "sess_submit".into(),
+                default_agent_profile_id: ProfileId::from("default"),
+            },
+            capabilities(),
+            None,
+            vec![
+                ClientDraft::new(ClientDraftKind::Prompt, "prompt draft"),
+                ClientDraft::new(ClientDraftKind::Steer, "steer draft"),
+                ClientDraft::new(ClientDraftKind::FollowUp, "follow-up draft"),
+            ],
+        );
+        let mut connection = ClientConnection::new(ClientConnectionId::new("rpc-1"), snapshot);
+
+        connection.mark_submitted(SubmittedOperation {
+            operation_id: "op_prompt".into(),
+            kind: OperationKind::Prompt,
+        });
+
+        assert_eq!(
+            connection.submitted_operation,
+            Some(SubmittedOperation {
+                operation_id: "op_prompt".into(),
+                kind: OperationKind::Prompt,
+            })
+        );
+        assert_eq!(
+            connection.client_drafts,
+            vec![
+                ClientDraft::new(ClientDraftKind::Steer, "steer draft"),
+                ClientDraft::new(ClientDraftKind::FollowUp, "follow-up draft"),
+            ]
+        );
+    }
+
+    #[test]
+    fn steer_and_follow_up_drafts_remain_client_local_until_submitted() {
+        let snapshot = UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence: ProductEventSequence::new(13),
+                capability_generation: CapabilityGeneration::new(5),
+            },
+            CodingAgentSessionView {
+                session_id: "sess_control_drafts".into(),
+                default_agent_profile_id: ProfileId::from("default"),
+            },
+            capabilities(),
+            None,
+            vec![
+                ClientDraft::new(ClientDraftKind::Steer, "queued steer"),
+                ClientDraft::new(ClientDraftKind::FollowUp, "queued follow-up"),
+            ],
+        );
+        let mut connection = ClientConnection::new(ClientConnectionId::new("rpc-1"), snapshot);
+
+        connection.mark_submitted(SubmittedOperation {
+            operation_id: "op_prompt".into(),
+            kind: OperationKind::Prompt,
+        });
+
+        assert_eq!(
+            connection.client_drafts,
+            vec![
+                ClientDraft::new(ClientDraftKind::Steer, "queued steer"),
+                ClientDraft::new(ClientDraftKind::FollowUp, "queued follow-up"),
+            ]
+        );
+    }
+
+    #[test]
+    fn clear_submitted_operation_only_clears_matching_operation() {
+        let snapshot = UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence: ProductEventSequence::new(14),
+                capability_generation: CapabilityGeneration::new(6),
+            },
+            CodingAgentSessionView {
+                session_id: "sess_clear".into(),
+                default_agent_profile_id: ProfileId::from("default"),
+            },
+            capabilities(),
+            None,
+            Vec::new(),
+        );
+        let mut connection = ClientConnection::new(ClientConnectionId::new("rpc-1"), snapshot);
+        let submitted = SubmittedOperation {
+            operation_id: "op_prompt".into(),
+            kind: OperationKind::Prompt,
+        };
+        connection.mark_submitted(submitted.clone());
+
+        connection.clear_submitted_operation("op_other");
+
+        assert_eq!(connection.submitted_operation, Some(submitted));
+
+        connection.clear_submitted_operation("op_prompt");
+
         assert!(connection.submitted_operation.is_none());
     }
 }

@@ -1,8 +1,8 @@
 use crate::CliError;
 use crate::coding_session::{
-    AgentInvocationOptions, AgentTeamOptions, CodingAgentSession, CodingAgentSessionOptions,
-    CodingSessionError, OperationKind, ProductEvent, ProductEventSequence, ProfileId, ProfileKind,
-    PromptTurnMode, PromptTurnOptions,
+    AgentInvocationOptions, AgentTeamOptions, ClientDraftKind, CodingAgentSession,
+    CodingAgentSessionOptions, CodingSessionError, OperationKind, ProductEvent,
+    ProductEventSequence, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
@@ -759,10 +759,12 @@ impl RpcState {
     }
 
     pub(super) fn enqueue_steer(&mut self, message: String) {
+        self.mirror_client_draft(ClientDraftKind::Steer, message.clone());
         self.steering.push(message);
     }
 
     pub(super) fn enqueue_follow_up(&mut self, message: String) {
+        self.mirror_client_draft(ClientDraftKind::FollowUp, message.clone());
         self.follow_up.push(message);
     }
 
@@ -774,10 +776,18 @@ impl RpcState {
     where
         W: AsyncWrite + Unpin,
     {
-        let Some(RunningPrompt::Coding(running)) = self.running.as_mut() else {
-            return Ok(());
+        let (operation_kind, pushed) = {
+            let Some(RunningPrompt::Coding(running)) = self.running.as_mut() else {
+                return Ok(());
+            };
+            let operation_kind = running.operation_kind;
+            let pushed = push_live_product_event(running, &event);
+            (operation_kind, pushed)
         };
-        for protocol_event in push_live_product_event(running, &event) {
+        if pushed.accepted {
+            self.observe_product_event_submission_for_kind(&event, Some(operation_kind));
+        }
+        for protocol_event in pushed.protocol_events {
             write_json_line(writer, &protocol_event).await?;
         }
         Ok(())
@@ -794,9 +804,14 @@ impl RpcState {
         let Some(RunningPrompt::Coding(mut running)) = self.running.take() else {
             return Ok(());
         };
+        let operation_kind = running.operation_kind;
 
         while let Ok(event) = running.events.try_recv() {
-            for protocol_event in push_live_product_event(&mut running, &event) {
+            let pushed = push_live_product_event(&mut running, &event);
+            if pushed.accepted {
+                self.observe_product_event_submission_for_kind(&event, Some(operation_kind));
+            }
+            for protocol_event in pushed.protocol_events {
                 write_json_line(writer, &protocol_event).await?;
             }
         }
@@ -837,6 +852,8 @@ impl RpcState {
         self.coding_session = Some(result.session);
         self.steering.clear();
         self.follow_up.clear();
+        self.clear_client_drafts(ClientDraftKind::Steer);
+        self.clear_client_drafts(ClientDraftKind::FollowUp);
         outcome
     }
 
@@ -859,38 +876,60 @@ pub(super) async fn reconnect_running_prompt_after(
     state: &mut RpcState,
     cursor: ProductEventSequence,
 ) -> Result<Vec<ProtocolEvent>, CodingSessionError> {
-    let Some(RunningPrompt::Coding(running)) = state.running.as_mut() else {
+    let Some(RunningPrompt::Coding(mut running)) = state.running.take() else {
         return Ok(Vec::new());
     };
     let Some(replay) = running.product_event_replay.as_ref() else {
+        state.running = Some(RunningPrompt::Coding(running));
         return Ok(Vec::new());
+    };
+    let retained_events = match replay.product_events_after(cursor) {
+        Ok(events) => events,
+        Err(error) => {
+            state.running = Some(RunningPrompt::Coding(running));
+            return Err(error);
+        }
     };
 
     let mut protocol_events = Vec::new();
-    for event in replay.product_events_after(cursor)? {
+    let operation_kind = running.operation_kind;
+    for event in retained_events {
         if event.sequence() <= running.adapter_applied_sequence {
             continue;
         }
         let sequence = event.sequence();
+        state.observe_product_event_submission_for_kind(&event, Some(operation_kind));
         protocol_events.extend(running.adapter.push_product_event(&event));
         running.adapter_applied_sequence = running.adapter_applied_sequence.max(sequence);
         running.replayed_through_sequence = running.replayed_through_sequence.max(sequence);
     }
+    state.running = Some(RunningPrompt::Coding(running));
     Ok(protocol_events)
+}
+
+struct LiveProductEventPush {
+    accepted: bool,
+    protocol_events: Vec<ProtocolEvent>,
 }
 
 fn push_live_product_event(
     running: &mut CodingRunningPrompt,
     event: &ProductEvent,
-) -> Vec<ProtocolEvent> {
+) -> LiveProductEventPush {
     let sequence = event.sequence();
     if sequence <= running.replayed_through_sequence || sequence <= running.adapter_applied_sequence
     {
-        return Vec::new();
+        return LiveProductEventPush {
+            accepted: false,
+            protocol_events: Vec::new(),
+        };
     }
     let protocol_events = running.adapter.push_product_event(event);
     running.adapter_applied_sequence = running.adapter_applied_sequence.max(sequence);
-    protocol_events
+    LiveProductEventPush {
+        accepted: true,
+        protocol_events,
+    }
 }
 
 fn rpc_coding_session_root(options: &SessionRunOptions) -> Result<PathBuf, CliError> {
@@ -925,8 +964,8 @@ mod tests {
     use super::*;
     use crate::CliRunOptions;
     use crate::coding_session::{
-        CodingAgentEvent, CodingAgentSessionOptions, CodingSessionError, ProductEvent,
-        ProductEventReplayHandle, ProductEventSequence,
+        ClientDraft, CodingAgentEvent, CodingAgentSessionOptions, CodingSessionError, ProductEvent,
+        ProductEventReplayHandle, ProductEventSequence, PromptTurnOutcome, SubmittedOperation,
     };
     use std::pin::Pin;
     use std::task::{Context, Poll};
@@ -1011,6 +1050,175 @@ mod tests {
             message_id: Some("msg_reconnect".into()),
             text: text.into(),
         }
+    }
+
+    fn prompt_started_event(sequence: u64, operation_id: &str) -> ProductEvent {
+        ProductEvent::from_compat_event(
+            ProductEventSequence::new(sequence),
+            CodingAgentEvent::PromptStarted {
+                operation_id: operation_id.into(),
+                turn_id: "turn_prompt".into(),
+            },
+        )
+    }
+
+    fn prompt_completed_event(sequence: u64, operation_id: &str) -> ProductEvent {
+        ProductEvent::from_compat_event(
+            ProductEventSequence::new(sequence),
+            CodingAgentEvent::PromptCompleted {
+                operation_id: operation_id.into(),
+                turn_id: "turn_prompt".into(),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn rpc_finish_drain_updates_client_submission_state_for_prompt_events() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        event_tx.send(prompt_started_event(1, "op_finish")).unwrap();
+        event_tx
+            .send(prompt_completed_event(2, "op_finish"))
+            .unwrap();
+        drop(event_tx);
+        let (_done_tx, done_rx) = oneshot::channel();
+        let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        state.client_drafts = vec![ClientDraft::new(ClientDraftKind::Prompt, "draft prompt")];
+        state.running = Some(RunningPrompt::Coding(CodingRunningPrompt {
+            events: event_rx,
+            done: done_rx,
+            control: None,
+            operation_kind: OperationKind::Prompt,
+            adapter: RpcCodingEventAdapter::new_with_provider(
+                "test-api".into(),
+                "test-provider".into(),
+                "test-model".into(),
+            ),
+            product_event_replay: Some(replay),
+            adapter_applied_sequence: ProductEventSequence::default(),
+            replayed_through_sequence: ProductEventSequence::default(),
+            events_closed: false,
+        }));
+        let mut writer = TestWriter::default();
+
+        state
+            .finish_coding_running_prompt(
+                Ok(CodingOperationTaskResult {
+                    session,
+                    session_root: None,
+                    outcome: CodingOperationOutcome::Prompt(Ok(PromptTurnOutcome::Aborted {
+                        operation_id: "op_finish".into(),
+                        turn_id: Some("turn_prompt".into()),
+                        reason: "test completed".into(),
+                        session_id: None,
+                    })),
+                }),
+                &mut writer,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            state
+                .client_drafts
+                .iter()
+                .all(|draft| draft.kind != ClientDraftKind::Prompt)
+        );
+        assert!(state.submitted_operation.is_none());
+    }
+
+    #[tokio::test]
+    async fn rpc_reconnect_replay_updates_client_submission_state() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        session.emit_product_event_for_tests(CodingAgentEvent::PromptStarted {
+            operation_id: "op_replay".into(),
+            turn_id: "turn_prompt".into(),
+        });
+        let mut state = state_with_running_prompt_replay(replay);
+        state.client_drafts = vec![ClientDraft::new(ClientDraftKind::Prompt, "draft prompt")];
+
+        reconnect_running_prompt_after(&mut state, ProductEventSequence::default())
+            .await
+            .unwrap();
+
+        assert!(
+            state
+                .client_drafts
+                .iter()
+                .all(|draft| draft.kind != ClientDraftKind::Prompt)
+        );
+        assert_eq!(
+            state.submitted_operation,
+            Some(SubmittedOperation {
+                operation_id: "op_replay".into(),
+                kind: OperationKind::Prompt,
+            })
+        );
+
+        session.emit_product_event_for_tests(CodingAgentEvent::PromptCompleted {
+            operation_id: "op_replay".into(),
+            turn_id: "turn_prompt".into(),
+        });
+        reconnect_running_prompt_after(&mut state, ProductEventSequence::new(1))
+            .await
+            .unwrap();
+
+        assert!(state.submitted_operation.is_none());
+    }
+
+    #[tokio::test]
+    async fn rpc_live_overlap_after_reconnect_does_not_mutate_submission_state() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        let started = session.emit_product_event_for_tests(CodingAgentEvent::PromptStarted {
+            operation_id: "op_overlap".into(),
+            turn_id: "turn_prompt".into(),
+        });
+        session.emit_product_event_for_tests(CodingAgentEvent::PromptCompleted {
+            operation_id: "op_overlap".into(),
+            turn_id: "turn_prompt".into(),
+        });
+        let mut state = state_with_running_prompt_replay(replay);
+        state.client_drafts = vec![ClientDraft::new(ClientDraftKind::Prompt, "draft prompt")];
+
+        reconnect_running_prompt_after(&mut state, ProductEventSequence::default())
+            .await
+            .unwrap();
+
+        assert!(state.submitted_operation.is_none());
+        assert!(
+            state
+                .client_drafts
+                .iter()
+                .all(|draft| draft.kind != ClientDraftKind::Prompt)
+        );
+
+        state.client_drafts = vec![ClientDraft::new(
+            ClientDraftKind::Prompt,
+            "new prompt draft",
+        )];
+        let mut live_writer = TestWriter::default();
+        state
+            .write_product_event(started, &mut live_writer)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            state.client_drafts,
+            vec![ClientDraft::new(
+                ClientDraftKind::Prompt,
+                "new prompt draft"
+            )]
+        );
+        assert!(state.submitted_operation.is_none());
     }
 
     #[tokio::test]

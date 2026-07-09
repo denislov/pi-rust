@@ -209,6 +209,7 @@ impl RpcState {
                 self.messages.clear();
                 self.steering.clear();
                 self.follow_up.clear();
+                self.clear_client_state();
                 self.session_name = None;
                 self.active_session_path = None;
                 self.active_leaf_id = None;
