@@ -48,6 +48,16 @@ pub enum CodingSessionError {
     UnsupportedCapability { capability: String },
     #[error("busy: {operation}")]
     Busy { operation: String },
+    #[error(
+        "event stream lagged by {skipped} events; client must request a fresh UI snapshot"
+    )]
+    EventStreamLag { skipped: u64 },
+    #[error("unsupported protocol version for {family}: requested {requested}, supported {supported}")]
+    UnsupportedProtocolVersion {
+        family: String,
+        requested: String,
+        supported: String,
+    },
 }
 
 impl CodingSessionError {
@@ -68,6 +78,8 @@ impl CodingSessionError {
             Self::Cancelled => "cancelled",
             Self::UnsupportedCapability { .. } => "unsupported_capability",
             Self::Busy { .. } => "busy",
+            Self::EventStreamLag { .. } => "event_stream_lag",
+            Self::UnsupportedProtocolVersion { .. } => "unsupported_protocol_version",
         }
     }
 }
@@ -95,6 +107,12 @@ impl From<CodingSessionError> for CliError {
             }
             CodingSessionError::Busy { operation } => {
                 CliError::SessionFailure(format!("busy: {operation}"))
+            }
+            lag @ CodingSessionError::EventStreamLag { .. } => {
+                CliError::SessionFailure(lag.to_string())
+            }
+            version @ CodingSessionError::UnsupportedProtocolVersion { .. } => {
+                CliError::SessionFailure(version.to_string())
             }
         }
     }
@@ -196,6 +214,18 @@ mod tests {
                     operation: "prompt".into(),
                 },
                 "busy",
+            ),
+            (
+                CodingSessionError::EventStreamLag { skipped: 2 },
+                "event_stream_lag",
+            ),
+            (
+                CodingSessionError::UnsupportedProtocolVersion {
+                    family: "rpc".into(),
+                    requested: "2.0".into(),
+                    supported: "1.0".into(),
+                },
+                "unsupported_protocol_version",
             ),
         ];
 

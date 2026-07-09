@@ -22,12 +22,14 @@ use super::{
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 128;
+const EVENT_RETAINED_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone)]
 pub(crate) struct EventService {
     sender: broadcast::Sender<CodingAgentEvent>,
     product_sender: broadcast::Sender<ProductEvent>,
     publication_state: Arc<Mutex<EventPublicationState>>,
+    channel_capacity: usize,
     retained_capacity: usize,
 }
 
@@ -35,6 +37,16 @@ pub(crate) struct EventService {
 struct EventPublicationState {
     next_sequence: u64,
     retained_product_events: VecDeque<ProductEvent>,
+    dropped_before: Option<ProductEventSequence>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EventBackpressureStatus {
+    pub(crate) channel_capacity: usize,
+    pub(crate) retained_capacity: usize,
+    pub(crate) oldest_retained_sequence: Option<ProductEventSequence>,
+    pub(crate) current_sequence: ProductEventSequence,
+    pub(crate) dropped_before: Option<ProductEventSequence>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,11 +83,11 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
 
 impl EventService {
     pub(crate) fn new() -> Self {
-        Self::with_event_capacity(EVENT_CHANNEL_CAPACITY)
+        Self::with_event_capacities(EVENT_CHANNEL_CAPACITY, EVENT_RETAINED_CAPACITY)
     }
 
-    fn with_event_capacity(capacity: usize) -> Self {
-        let channel_capacity = capacity.max(1);
+    fn with_event_capacities(channel_capacity: usize, retained_capacity: usize) -> Self {
+        let channel_capacity = channel_capacity.max(1);
         let (sender, _) = broadcast::channel(channel_capacity);
         let (product_sender, _) = broadcast::channel(channel_capacity);
         Self {
@@ -83,20 +95,36 @@ impl EventService {
             product_sender,
             publication_state: Arc::new(Mutex::new(EventPublicationState {
                 next_sequence: 1,
-                retained_product_events: VecDeque::with_capacity(capacity),
+                retained_product_events: VecDeque::with_capacity(retained_capacity),
+                dropped_before: None,
             })),
-            retained_capacity: capacity,
+            channel_capacity,
+            retained_capacity,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_event_capacity_for_tests(capacity: usize) -> Self {
-        Self::with_event_capacity(capacity)
+        Self::with_event_capacities(capacity, capacity)
     }
 
     pub(crate) fn current_product_sequence(&self) -> ProductEventSequence {
         let state = self.publication_state.lock().unwrap();
         ProductEventSequence::new(state.next_sequence.saturating_sub(1))
+    }
+
+    pub(crate) fn backpressure_status(&self) -> EventBackpressureStatus {
+        let state = self.publication_state.lock().unwrap();
+        EventBackpressureStatus {
+            channel_capacity: self.channel_capacity,
+            retained_capacity: self.retained_capacity,
+            oldest_retained_sequence: state
+                .retained_product_events
+                .front()
+                .map(ProductEvent::sequence),
+            current_sequence: ProductEventSequence::new(state.next_sequence.saturating_sub(1)),
+            dropped_before: state.dropped_before,
+        }
     }
 
     pub(crate) fn product_events_after(
@@ -127,12 +155,20 @@ impl EventService {
 
     fn retain_product_event(&self, state: &mut EventPublicationState, event: ProductEvent) {
         if self.retained_capacity == 0 {
+            state.dropped_before = Some(event.sequence().next());
             return;
         }
+        let dropped = state.retained_product_events.len() == self.retained_capacity;
         if state.retained_product_events.len() == self.retained_capacity {
             state.retained_product_events.pop_front();
         }
         state.retained_product_events.push_back(event);
+        if dropped {
+            state.dropped_before = state
+                .retained_product_events
+                .front()
+                .map(ProductEvent::sequence);
+        }
     }
 
     pub(crate) fn emit(&self, event: CodingAgentEvent) -> ProductEvent {
@@ -950,9 +986,7 @@ impl ProductEventReceiver {
             Err(broadcast::error::TryRecvError::Empty) => Ok(None),
             Err(broadcast::error::TryRecvError::Closed) => Err(CodingSessionError::Cancelled),
             Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
-                Err(CodingSessionError::Resource {
-                    message: format!("event receiver lagged by {skipped} events"),
-                })
+                Err(CodingSessionError::EventStreamLag { skipped })
             }
         }
     }
@@ -974,9 +1008,7 @@ impl CodingAgentEventReceiver {
             Err(broadcast::error::TryRecvError::Empty) => Ok(None),
             Err(broadcast::error::TryRecvError::Closed) => Err(CodingSessionError::Cancelled),
             Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
-                Err(CodingSessionError::Resource {
-                    message: format!("event receiver lagged by {skipped} events"),
-                })
+                Err(CodingSessionError::EventStreamLag { skipped })
             }
         }
     }
@@ -985,8 +1017,8 @@ impl CodingAgentEventReceiver {
 fn map_recv_error(error: broadcast::error::RecvError) -> CodingSessionError {
     match error {
         broadcast::error::RecvError::Closed => CodingSessionError::Cancelled,
-        broadcast::error::RecvError::Lagged(skipped) => CodingSessionError::Resource {
-            message: format!("event receiver lagged by {skipped} events"),
+        broadcast::error::RecvError::Lagged(skipped) => CodingSessionError::EventStreamLag {
+            skipped,
         },
     }
 }
@@ -2296,5 +2328,46 @@ mod tests {
             })
         );
         assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_reports_bounded_product_event_window() {
+        let service = EventService::with_event_capacity_for_tests(2);
+
+        for index in 0..4 {
+            service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: format!("event {index}"),
+            });
+        }
+
+        let status = service.backpressure_status();
+
+        assert_eq!(status.channel_capacity, 2);
+        assert_eq!(status.retained_capacity, 2);
+        assert_eq!(
+            status.oldest_retained_sequence,
+            Some(ProductEventSequence::new(3))
+        );
+        assert_eq!(status.current_sequence, ProductEventSequence::new(4));
+        assert_eq!(status.dropped_before, Some(ProductEventSequence::new(3)));
+    }
+
+    #[tokio::test]
+    async fn product_event_receiver_lag_reports_snapshot_recovery() {
+        let service = EventService::with_event_capacity_for_tests(1);
+        let mut receiver = service.subscribe_product_events();
+
+        for index in 0..3 {
+            service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: format!("event {index}"),
+            });
+        }
+
+        let error = receiver.recv().await.unwrap_err();
+
+        assert_eq!(error.code(), "event_stream_lag");
+        assert!(error.to_string().contains("client must request a fresh UI snapshot"));
     }
 }
