@@ -411,6 +411,40 @@ impl CodingAgentSession {
         self.event_service.subscribe_product_events()
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn ui_snapshot(&self, client_drafts: Vec<ClientDraft>) -> UiSnapshot {
+        IntentRouter::admit_query(&self.operation_control, QueryIntent::SessionView);
+        UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence: self.event_service.current_product_sequence(),
+                capability_generation: self.capability_snapshots.current_generation(),
+            },
+            self.view(),
+            self.capabilities(),
+            self.operation_control.active(),
+            client_drafts,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn connect_client(
+        &self,
+        id: ClientConnectionId,
+        client_drafts: Vec<ClientDraft>,
+    ) -> (ClientConnection, UiSnapshot) {
+        let snapshot = self.ui_snapshot(client_drafts);
+        let connection = ClientConnection::new(id, snapshot.clone());
+        (connection, snapshot)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn product_events_after(
+        &self,
+        cursor: ProductEventSequence,
+    ) -> Result<Vec<ProductEvent>, CodingSessionError> {
+        self.event_service.product_events_after(cursor)
+    }
+
     pub(crate) fn prompt_control_handle(
         &mut self,
     ) -> Result<PromptControlHandle, CodingSessionError> {
@@ -2054,6 +2088,42 @@ mod tests {
             settings: None,
             invocation: PromptInvocation::Text(prompt.into()),
         })
+    }
+
+    #[tokio::test]
+    async fn ui_snapshot_uses_session_view_capabilities_and_event_cursor() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let snapshot = session.ui_snapshot(Vec::new());
+
+        assert_eq!(snapshot.session, session.view());
+        assert_eq!(snapshot.capabilities, session.capabilities());
+        assert_eq!(
+            snapshot.cursor.last_event_sequence,
+            session.event_service.current_product_sequence()
+        );
+        assert_eq!(
+            snapshot.cursor.capability_generation,
+            session.current_capability_generation_for_tests()
+        );
+        assert_eq!(snapshot.active_operation, None);
+    }
+
+    #[tokio::test]
+    async fn connect_client_returns_connection_and_initial_snapshot() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+
+        let (connection, snapshot) = session.connect_client(
+            ClientConnectionId::new("rpc-primary"),
+            vec![ClientDraft::new(ClientDraftKind::Prompt, "hello")],
+        );
+
+        assert_eq!(connection.id.as_str(), "rpc-primary");
+        assert_eq!(connection.cursor, snapshot.cursor);
+        assert_eq!(connection.client_drafts.len(), 1);
     }
 
     #[tokio::test]
