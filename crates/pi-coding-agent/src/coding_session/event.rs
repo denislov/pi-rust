@@ -1066,7 +1066,10 @@ mod tests {
         assert_eq!(first.get(), 1);
         assert_eq!(second.get(), 2);
         assert!(second > first);
-        assert_eq!(ProductEventSequence::default(), ProductEventSequence::new(0));
+        assert_eq!(
+            ProductEventSequence::default(),
+            ProductEventSequence::new(0)
+        );
     }
 
     #[test]
