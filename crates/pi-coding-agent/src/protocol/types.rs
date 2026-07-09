@@ -625,6 +625,8 @@ pub struct RpcSessionState {
     pub snapshot_sequence: u64,
     #[serde(rename = "capabilityGeneration")]
     pub capability_generation: u64,
+    #[serde(rename = "snapshotVersion")]
+    pub snapshot_version: ProtocolFamilyVersion,
     #[serde(rename = "negotiatedProtocol")]
     pub negotiated_protocol: RpcNegotiatedProtocolState,
     #[serde(rename = "sessionName", skip_serializing_if = "Option::is_none")]

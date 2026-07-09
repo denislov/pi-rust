@@ -117,6 +117,7 @@ use std::sync::Arc;
 use crate::plugins::{
     CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
 };
+use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 
 #[derive(Debug)]
 pub struct CodingAgentSession {
@@ -451,6 +452,7 @@ impl CodingAgentSession {
                 last_event_sequence: self.event_service.current_product_sequence(),
                 capability_generation: self.capability_snapshots.current_generation(),
             },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
             self.view(),
             self.capabilities(),
             self.operation_control.active(),

@@ -4,6 +4,7 @@ use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::types::RpcCapabilities;
 use crate::protocol::types::RpcSessionState;
+use crate::protocol::version::{ProtocolFamilyVersion, UI_SNAPSHOT_PROTOCOL_VERSION};
 use pi_agent_core::transcript::StoredAgentMessage;
 use serde_json::Value;
 
@@ -26,6 +27,7 @@ impl RpcState {
             client_id: self.client_id.as_ref().map(|id| id.as_str().to_owned()),
             snapshot_sequence: projection.snapshot_sequence,
             capability_generation: projection.capability_generation,
+            snapshot_version: projection.snapshot_version,
             negotiated_protocol: self.negotiated_protocol.clone(),
             session_name: self.session_name.clone(),
             auto_compaction_enabled: self.auto_compaction_enabled,
@@ -44,6 +46,7 @@ impl RpcState {
                 capabilities: snapshot.capabilities.into(),
                 snapshot_sequence: snapshot.cursor.last_event_sequence.get(),
                 capability_generation: snapshot.cursor.capability_generation.get(),
+                snapshot_version: snapshot.version,
             };
         }
 
@@ -53,6 +56,7 @@ impl RpcState {
             capabilities: self.capabilities().into(),
             snapshot_sequence: 0,
             capability_generation: 1,
+            snapshot_version: UI_SNAPSHOT_PROTOCOL_VERSION,
         }
     }
 
@@ -157,6 +161,7 @@ struct RpcSessionProjection {
     capabilities: RpcCapabilities,
     snapshot_sequence: u64,
     capability_generation: u64,
+    snapshot_version: ProtocolFamilyVersion,
 }
 
 #[cfg(test)]
@@ -187,6 +192,9 @@ mod tests {
         assert!(value["snapshotSequence"].as_u64().is_some());
         assert_eq!(value["snapshotSequence"], 0);
         assert!(value["capabilityGeneration"].as_u64().unwrap() >= 1);
+        assert_eq!(value["snapshotVersion"]["family"], "ui_snapshot");
+        assert_eq!(value["snapshotVersion"]["major"], 1);
+        assert_eq!(value["snapshotVersion"]["minor"], 0);
     }
 
     #[tokio::test]

@@ -652,6 +652,7 @@ mod tests {
                 last_event_sequence,
                 capability_generation: base.cursor.capability_generation,
             },
+            base.version,
             CodingAgentSessionView {
                 session_id: session_id.into(),
                 default_agent_profile_id: ProfileId::from("default"),

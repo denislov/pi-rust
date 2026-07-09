@@ -5,6 +5,7 @@ use super::capability_snapshot::CapabilityGeneration;
 use super::context::CodingAgentSessionView;
 use super::event::ProductEventSequence;
 use super::operation_control::OperationKind;
+use crate::protocol::version::ProtocolFamilyVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UiSnapshotCursor {
@@ -15,6 +16,7 @@ pub(crate) struct UiSnapshotCursor {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UiSnapshot {
     pub(crate) cursor: UiSnapshotCursor,
+    pub(crate) version: ProtocolFamilyVersion,
     pub(crate) session: CodingAgentSessionView,
     pub(crate) capabilities: CodingAgentCapabilities,
     pub(crate) active_operation: Option<OperationKind>,
@@ -24,6 +26,7 @@ pub(crate) struct UiSnapshot {
 impl UiSnapshot {
     pub(crate) fn new(
         cursor: UiSnapshotCursor,
+        version: ProtocolFamilyVersion,
         session: CodingAgentSessionView,
         capabilities: CodingAgentCapabilities,
         active_operation: Option<OperationKind>,
@@ -31,6 +34,7 @@ impl UiSnapshot {
     ) -> Self {
         Self {
             cursor,
+            version,
             session,
             capabilities,
             active_operation,
@@ -126,6 +130,7 @@ mod tests {
     use crate::coding_session::operation_control::OperationKind;
     use crate::coding_session::profiles::ProfileId;
     use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
+    use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 
     fn capabilities() -> CodingAgentCapabilities {
         CodingAgentCapabilities {
@@ -165,6 +170,7 @@ mod tests {
                 last_event_sequence: ProductEventSequence::new(7),
                 capability_generation: CapabilityGeneration::new(3),
             },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
             CodingAgentSessionView {
                 session_id: "sess_ui".into(),
                 default_agent_profile_id: ProfileId::from("reviewer"),
@@ -188,6 +194,7 @@ mod tests {
                 last_event_sequence: ProductEventSequence::new(11),
                 capability_generation: CapabilityGeneration::new(2),
             },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
             CodingAgentSessionView {
                 session_id: "sess_client".into(),
                 default_agent_profile_id: ProfileId::from("default"),
@@ -212,6 +219,7 @@ mod tests {
                 last_event_sequence: ProductEventSequence::new(12),
                 capability_generation: CapabilityGeneration::new(4),
             },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
             CodingAgentSessionView {
                 session_id: "sess_submit".into(),
                 default_agent_profile_id: ProfileId::from("default"),
@@ -254,6 +262,7 @@ mod tests {
                 last_event_sequence: ProductEventSequence::new(13),
                 capability_generation: CapabilityGeneration::new(5),
             },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
             CodingAgentSessionView {
                 session_id: "sess_control_drafts".into(),
                 default_agent_profile_id: ProfileId::from("default"),
@@ -288,6 +297,7 @@ mod tests {
                 last_event_sequence: ProductEventSequence::new(14),
                 capability_generation: CapabilityGeneration::new(6),
             },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
             CodingAgentSessionView {
                 session_id: "sess_clear".into(),
                 default_agent_profile_id: ProfileId::from("default"),
@@ -310,5 +320,28 @@ mod tests {
         connection.clear_submitted_operation("op_prompt");
 
         assert!(connection.submitted_operation.is_none());
+    }
+
+    #[test]
+    fn ui_snapshot_carries_projection_version() {
+        let snapshot = UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence: ProductEventSequence::new(7),
+                capability_generation: CapabilityGeneration::new(3),
+            },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
+            CodingAgentSessionView {
+                session_id: "sess_version".into(),
+                default_agent_profile_id: ProfileId::from("default"),
+            },
+            capabilities(),
+            None,
+            Vec::new(),
+        );
+
+        assert_eq!(snapshot.version.family, "ui_snapshot");
+        assert_eq!(snapshot.version.major, 1);
+        assert_eq!(snapshot.version.minor, 0);
+        assert_eq!(snapshot.version, UI_SNAPSHOT_PROTOCOL_VERSION);
     }
 }
