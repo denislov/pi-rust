@@ -1003,7 +1003,7 @@ git commit -m "chore: deprecate broad session workflow methods"
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
 - Modify: `crates/pi-coding-agent/tests/api_boundary_guards.rs`
 
-- [ ] **Step 1: Add failing guard against exporting compatibility receiver from `api`**
+- [x] **Step 1: Add failing guard against exporting compatibility receiver from `api`**
 
 Add this test to `crates/pi-coding-agent/tests/api_boundary_guards.rs`:
 
@@ -1013,6 +1013,7 @@ fn stable_api_does_not_export_compatibility_event_receiver() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lib_source = fs::read_to_string(crate_root.join("src/lib.rs"))
         .expect("pi-coding-agent lib.rs should be readable");
+    let compatibility_receiver = ["CodingAgent", "EventReceiver"].concat();
     let api_module = lib_source
         .split("pub mod api {")
         .nth(1)
@@ -1022,13 +1023,17 @@ fn stable_api_does_not_export_compatibility_event_receiver() {
         .expect("api module should end before test support");
 
     assert!(
-        !api_module.contains("CodingAgentEventReceiver"),
-        "stable api should export CodingAgentProductEventReceiver instead of compatibility CodingAgentEventReceiver"
+        !api_module.contains(&compatibility_receiver),
+        "stable api should export the product-event receiver instead of the compatibility receiver"
     );
 }
 ```
 
-- [ ] **Step 2: Run RED guard**
+Construct the compatibility type name at runtime so the Stage 5 recursive source guard can keep
+scanning this test file without mistaking the guard assertion itself for a compatibility receiver
+consumer.
+
+- [x] **Step 2: Run RED guard**
 
 Run:
 
@@ -1038,13 +1043,13 @@ cargo test -p pi-coding-agent --test api_boundary_guards stable_api_does_not_exp
 
 Expected: FAIL because `CodingAgentEventReceiver` is currently exported from `pi_coding_agent::api`.
 
-- [ ] **Step 3: Remove compatibility receiver from stable facade**
+- [x] **Step 3: Remove compatibility receiver from stable facade**
 
 In `crates/pi-coding-agent/src/lib.rs`, remove `CodingAgentEventReceiver` from the `pub mod api` `pub use crate::coding_session::{ ... }` list.
 
 Keep `CodingAgentEvent` exported in this stage so compatibility payload matching remains available. Do not remove it until a later plan expands `CodingAgentProductEvent` beyond family/kind metadata.
 
-- [ ] **Step 4: Update public API test imports**
+- [x] **Step 4: Update public API test imports**
 
 In `crates/pi-coding-agent/tests/public_api.rs`, remove `CodingAgentEventReceiver` from the `use pi_coding_agent::api::{ ... }` list and replace receiver smoke checks with:
 
@@ -1052,21 +1057,22 @@ In `crates/pi-coding-agent/tests/public_api.rs`, remove `CodingAgentEventReceive
 let _receiver_type_name = std::any::type_name::<CodingAgentProductEventReceiver>();
 ```
 
-- [ ] **Step 5: Run GREEN checks**
+- [x] **Step 5: Run GREEN checks**
 
 Run:
 
 ```bash
 cargo test -p pi-coding-agent --test api_boundary_guards stable_api_does_not_export_compatibility_event_receiver -- --nocapture
 cargo test -p pi-coding-agent --test public_api
+cargo test -p pi-coding-agent --test event_boundary_guards first_party_code_does_not_consume_compatibility_event_subscription -- --nocapture
 ```
 
-Expected: both pass.
+Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/lib.rs crates/pi-coding-agent/tests/api_boundary_guards.rs crates/pi-coding-agent/tests/public_api.rs
+git add crates/pi-coding-agent/src/lib.rs crates/pi-coding-agent/tests/api_boundary_guards.rs crates/pi-coding-agent/tests/public_api.rs docs/TODO.md docs/superpowers/plans/2026-07-10-operation-runtime-stage-8-public-facade-narrowing-plan.md
 git commit -m "chore: narrow stable event receiver facade"
 ```
 

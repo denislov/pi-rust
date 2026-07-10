@@ -8,19 +8,19 @@ use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
     CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
     CliRunOptions, CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId,
-    CodingAgentEvent, CodingAgentEventReceiver, CodingAgentOperation, CodingAgentOperationOutcome,
-    CodingAgentProductEvent, CodingAgentProductEventReceiver, CodingAgentSession,
-    CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
-    CodingAgentSessionSummary, CodingAgentSessionView, CodingAgentSnapshot,
-    CodingAgentSnapshotCursor, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
-    ColorValue, CompactionProtocolResult, CompactionReason, ContextFile, DetectionConfidence,
-    DetectionSource, ModelRotation, ModelRotationEntry, PendingDelegationConfirmation,
-    PrintModeOptions, ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode,
-    PromptTurnOptions, PromptTurnOutcome, ProtocolDelegationFoldedBlock, ProtocolEvent,
-    ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS,
-    ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions, RpcCapabilities,
-    RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata,
-    RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
+    CodingAgentEvent, CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentProductEvent,
+    CodingAgentProductEventReceiver, CodingAgentSession, CodingAgentSessionExport,
+    CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionSummary,
+    CodingAgentSessionView, CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic,
+    CodingDiagnosticSeverity, CodingSessionError, ColorValue, CompactionProtocolResult,
+    CompactionReason, ContextFile, DetectionConfidence, DetectionSource, ModelRotation,
+    ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions, ProfileId,
+    PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
+    ProtocolDelegationFoldedBlock, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
+    ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor,
+    ResolvedTheme, ResourceLoadOptions, RpcCapabilities, RpcCapabilityStatus, RpcCommand,
+    RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata, RpcResponse,
+    RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
     SelfHealingEditRequest, SessionMode, StreamingBehavior, TerminalTheme, ThemeBg, ThemeColor,
@@ -382,7 +382,7 @@ async fn coding_session_public_api_symbols_are_importable() {
 
     let mut receiver = session.subscribe();
     assert!(receiver.try_recv().unwrap().is_none());
-    let _receiver_type_name = std::any::type_name::<CodingAgentEventReceiver>();
+    let _receiver_type_name = std::any::type_name::<CodingAgentProductEventReceiver>();
     let _export_type_name = std::any::type_name::<CodingAgentSessionExport>();
     let _export_item_type_name = std::any::type_name::<CodingAgentSessionExportItem>();
     let _pending_delegation_type_name = std::any::type_name::<PendingDelegationConfirmation>();

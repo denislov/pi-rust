@@ -112,3 +112,23 @@ fn preceding_non_blank_line<'a>(source: &'a str, signature: &str) -> Option<&'a 
     }
     Some(lines[i])
 }
+
+#[test]
+fn stable_api_does_not_export_compatibility_event_receiver() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let lib_source = fs::read_to_string(crate_root.join("src/lib.rs"))
+        .expect("pi-coding-agent lib.rs should be readable");
+    let compatibility_receiver = ["CodingAgent", "EventReceiver"].concat();
+    let api_module = lib_source
+        .split("pub mod api {")
+        .nth(1)
+        .expect("api module should exist")
+        .split("\n}\n\n#[cfg")
+        .next()
+        .expect("api module should end before test support");
+
+    assert!(
+        !api_module.contains(&compatibility_receiver),
+        "stable api should export the product-event receiver instead of the compatibility receiver"
+    );
+}
