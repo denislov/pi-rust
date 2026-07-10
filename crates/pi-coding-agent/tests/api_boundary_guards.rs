@@ -117,6 +117,11 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
         "CodingAgentOperationOutcome::AgentTeam(",
         "CodingAgentOperationOutcome::PluginLoad(",
         "CodingAgentOperationOutcome::PluginCommand(",
+        "CodingAgentOperationOutcome::DefaultAgentProfileChanged",
+        "CodingAgentOperationOutcome::DelegationApproved",
+        "CodingAgentOperationOutcome::DelegationRejected",
+        "CodingAgentOperationOutcome::SessionForked",
+        "CodingAgentOperationOutcome::ActiveLeafSwitched",
         "CodingAgentOperationOutcome::Export(",
         "CodingAgentOperationOutcome::ExportHtml(",
     ] {

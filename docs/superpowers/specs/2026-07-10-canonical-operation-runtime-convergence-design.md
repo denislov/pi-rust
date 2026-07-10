@@ -165,11 +165,13 @@ The single internal-to-public outcome projection owns all exhaustive matching. A
 
 ## Session Navigation Semantics
 
-`SwitchActiveLeaf` mutates the existing persistent session by recording the existing Rust-native `active_leaf.changed` event. It rejects non-persistent sessions and unknown leaves without partial mutation.
+`SwitchActiveLeaf` mutates the existing persistent session by recording the existing Rust-native `active_leaf.changed` event. It rejects non-persistent sessions and unknown leaves without partial mutation. If the event append succeeds but the manifest update fails, the operation returns explicit `PartialCommit` uncertainty with the admitted operation ID; replay remains authoritative for the durable leaf transition.
 
-`ForkSession` replaces the live `CodingAgentSession` owner's persistent session with the newly forked Rust-native session while preserving the current public owner value. The operation returns `SessionForked`; callers read the new state through `snapshot()` or `view()`.
+`ForkSession` transitions the live `CodingAgentSession` owner to the newly forked Rust-native persistence while retaining owner-scoped runtime and event services. The operation replaces only persistence and replay-derived state such as pending delegation confirmations and startup recovery markers. Plugin registrations, capability generations, workflow/runtime services, product-event retention, replay handles, and existing subscribers remain live. The retained `EventService` publishes the new `SessionOpened` transition, so product-event sequence remains monotonic across the fork. The operation returns `SessionForked`; callers read the new state through `snapshot()` or `view()`.
 
-The existing interactive navigation task already owns and returns the session after navigation, so it can continue to hand the mutated owner back to the interactive loop. Because the current fork implementation reconstructs session-owned services, an adapter must acquire a new product-event receiver after the operation. Stage 11 will define retained replay and connection semantics across lifecycle transitions; Stage 9 keeps the existing adapter behavior and immediately refreshes the snapshot.
+The existing interactive navigation task already owns and returns the session after navigation, so it can continue to hand the mutated owner back to the interactive loop. Adapters retain their existing product-event receivers across canonical fork and immediately refresh the snapshot. Stage 11 still owns explicit client detach, reconnect, and longer-lived lifecycle semantics.
+
+Fork persistence is cleanup-protected because the current store has no staging/publish primitive. Any failure after the target session directory is created removes that target before returning the original error. If cleanup itself fails, the fork returns `PartialCommit` with the admitted operation ID and the target session identity instead of reporting an ordinary failure.
 
 ## Branch Summary Navigation Semantics
 

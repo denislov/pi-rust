@@ -247,7 +247,7 @@ async fn coding_session_run_dispatches_public_runtime_operations() {
     assert!(
         fork_error
             .to_string()
-            .contains("fork session execution is not implemented yet")
+            .contains("fork requires a persistent Rust-native session")
     );
 
     let switch_error = session
@@ -260,7 +260,7 @@ async fn coding_session_run_dispatches_public_runtime_operations() {
     assert!(
         switch_error
             .to_string()
-            .contains("active leaf switch execution is not implemented yet")
+            .contains("active leaf navigation requires a persistent Rust-native session")
     );
 }
 

@@ -406,23 +406,31 @@ git commit -m "refactor: make session run canonical dispatcher"
 ### Task 3: Complete Sync-Mutable And Navigation Operations
 
 **Files:**
-- Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
-- Modify: `crates/pi-coding-agent/src/coding_session/operation_control.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/intent_router.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/public_operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/session_service.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/session_log/store.rs`
+- Modify: `crates/pi-coding-agent/tests/api_boundary_guards.rs`
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/specs/2026-07-10-canonical-operation-runtime-convergence-design.md`
+- Modify: `docs/superpowers/plans/2026-07-10-canonical-operation-runtime-convergence-plan.md`
 
-- [ ] **Step 1: Write failing behavior tests**
+- [x] **Step 1: Write failing behavior tests**
 
 Add owner tests using existing persistent-session fixtures for successful active-leaf switch, fork replacement, and branch-summary reuse through canonical `run()`.
 
 - `canonical_run_switches_active_leaf`: create a persistent session with two leaves using the existing prompt fixture pattern, call `run(CodingAgentOperation::SwitchActiveLeaf { target_leaf_id })`, assert `ActiveLeafSwitched`, and assert `hydrate_current()?.summary.active_leaf_id` is the target.
 - `canonical_run_forks_current_session`: create a persistent session with a committed leaf, call `run(CodingAgentOperation::ForkSession { target_leaf_id })`, assert `SessionForked`, then assert the owned session id changed while the forked replay retains the selected transcript.
 - `canonical_run_reuses_branch_summary_when_requested`: adapt `branch_summary_navigation_reuses_existing_summary_without_rewriting_session` to call `run(CodingAgentOperation::BranchSummary { reuse: ReuseExisting, ... })`; assert the existing summary is returned, no new product events are emitted, and the event log remains byte-for-byte unchanged.
+- `canonical_fork_preserves_owner_runtime_and_event_stream`: load a deterministic plugin command, advance the capability generation, subscribe before fork, and assert plugin state, capability generation, subscriber continuity, post-fork events, and monotonic product sequence survive the persistence transition.
+- `canonical_switch_reports_partial_commit_after_durable_leaf_change`: inject manifest failure after the leaf-change append and assert explicit `PartialCommit` plus replay-authoritative active-leaf state.
+- Store/session-service copy cleanup tests: inject failures while creating blobs/index/manifest/event-log state, after the created event, after provenance, at manifest update, and during cleanup; assert ordinary failures leave no filesystem/listed target and cleanup failure escalates to `PartialCommit`.
 
 Keep existing Task 2 profile success and fork/switch rejection coverage as dispatcher groundwork, not as Task 3 RED.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 ```bash
 cargo test -p pi-coding-agent coding_session::tests::canonical_run_switches_active_leaf -- --nocapture
@@ -436,24 +444,34 @@ Expected: FAIL because fork/switch still return Task 2's temporary `UnsupportedC
 
 Task 2 added `SwitchActiveLeaf` to `OperationKind`, mapped it to `"switch_active_leaf"`, assigned `ClientRoot`/`SessionWriteRoot`/`SyncMutable` metadata, and routed both fork and switch through explicit temporary `UnsupportedCapability` arms. This is dispatcher groundwork only; successful navigation behavior remains incomplete.
 
-- [ ] **Step 4: Implement active-leaf switch and fork**
+- [x] **Step 4: Implement active-leaf switch and fork**
 
-In `run_sync_mut_operation()` replace the unsupported fork arm and add switch:
+In `run_sync_mut_operation()`, transition only persistence and replay-derived owner state. Retain the live event, plugin, capability, runtime, workflow, profile, and option services:
 
 ```rust
 Operation::ForkSession { target_leaf_id } => {
+    let operation_id = operation_permit.capability_snapshot().operation_id.clone();
     let SessionPersistence::Persistent(session_service) = &self.persistence else {
         return Err(CodingSessionError::UnsupportedCapability {
             capability: "fork requires a persistent Rust-native session".into(),
         });
     };
-    let forked_service = session_service.fork_current(target_leaf_id.as_deref())?;
-    let replacement = Self::from_services(
-        forked_service,
-        self.default_plugin_load_options.clone(),
-        self.profile_registry.clone(),
+    let mut forked_service = session_service.fork_current_admitted(
+        target_leaf_id.as_deref(),
+        &operation_id,
     )?;
-    *self = replacement;
+    let forked_session_id = forked_service.session_id().to_owned();
+    let replay_state = match replay_derived_owner_state(&mut forked_service) {
+        Ok(replay_state) => replay_state,
+        Err(error) => {
+            return Err(forked_service.cleanup_failed_transition(&operation_id, error));
+        }
+    };
+    drop(operation_permit);
+    self.persistence = SessionPersistence::Persistent(forked_service);
+    self.pending_delegation_confirmations = replay_state.pending_delegation_confirmations;
+    *self.startup_recovery_markers.lock().unwrap() = replay_state.startup_recovery_markers;
+    self.event_service.emit_session_opened(forked_session_id);
     Ok(OperationOutcome::ForkSession)
 }
 Operation::SwitchActiveLeaf { target_leaf_id } => {
@@ -462,22 +480,37 @@ Operation::SwitchActiveLeaf { target_leaf_id } => {
             capability: "active leaf navigation requires a persistent Rust-native session".into(),
         });
     };
-    session_service.switch_active_leaf(&target_leaf_id)?;
+    session_service.switch_active_leaf(
+        &target_leaf_id,
+        &operation_permit.capability_snapshot().operation_id,
+    )?;
     Ok(OperationOutcome::SwitchActiveLeaf)
 }
 ```
 
 Update all exhaustive dispatcher matches.
 
-- [ ] **Step 5: Move branch-summary reuse into operation dispatch**
+- [x] **Step 4a: Preserve owner runtime and event continuity across fork**
+
+Install the forked `SessionService` plus replay-derived pending confirmations/startup markers inside the existing owner. Retain all other owner services and publish `SessionOpened` through the retained `EventService` so existing receivers and product sequence continue across the transition.
+
+- [x] **Step 4b: Harden active-leaf partial-commit semantics**
+
+Thread the admitted operation ID into `SessionService::switch_active_leaf`. If the durable `ActiveLeafChanged` append succeeds but manifest update fails, return `CodingSessionError::PartialCommit`; keep the standalone leaf-change event outside operation replay filtering so replay remains authoritative.
+
+- [x] **Step 4c: Clean up failed fork publication**
+
+Make `SessionLogStore::create_session` self-cleaning after its new-directory creation succeeds, add a bounded `remove_session` primitive for later copy stages, and cleanup every fork-copy failure after target creation. A private store create-error distinguishes successful cleanup from cleanup failure without introducing operation concepts into the store. Return the original error when cleanup succeeds; return `PartialCommit` with the admitted/generated operation ID when cleanup also fails. Use shared test-only failure injection to cover blobs/index/manifest/event-log initialization, created-event append, provenance append, manifest update, and cleanup failure.
+
+- [x] **Step 5: Move branch-summary reuse into operation dispatch**
 
 In the async `Operation::BranchSummary` arm, call `branch_summary_service.reused_outcome(...)` when `reuse_existing` is true, returning `OperationOutcome::BranchSummary(outcome)` before starting a new flow.
 
-- [ ] **Step 6: Update intent-router source tests**
+- [x] **Step 6: Update intent-router source tests**
 
 Replace direct-fork admission assertions with metadata/dispatcher assertions for `ForkSession`, `SwitchActiveLeaf`, and `SetDefaultAgentProfile`.
 
-- [ ] **Step 7: Run GREEN tests**
+- [x] **Step 7: Run GREEN tests**
 
 ```bash
 cargo test -p pi-coding-agent coding_session::operation -- --nocapture
@@ -490,10 +523,10 @@ cargo test -p pi-coding-agent --test public_api
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/coding_session/operation.rs crates/pi-coding-agent/src/coding_session/operation_control.rs crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/intent_router.rs crates/pi-coding-agent/tests/public_api.rs
+git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/intent_router.rs crates/pi-coding-agent/src/coding_session/public_operation.rs crates/pi-coding-agent/src/coding_session/session_service.rs crates/pi-coding-agent/src/coding_session/session_log/store.rs crates/pi-coding-agent/tests/api_boundary_guards.rs crates/pi-coding-agent/tests/public_api.rs docs/TODO.md docs/superpowers/specs/2026-07-10-canonical-operation-runtime-convergence-design.md docs/superpowers/plans/2026-07-10-canonical-operation-runtime-convergence-plan.md
 git commit -m "feat: complete session mutation operations"
 ```
 
@@ -708,7 +741,7 @@ assert!(matches!(outcome, CodingAgentOperationOutcome::SessionForked));
 send_ui_snapshot(&event_tx, &session);
 ```
 
-Return the mutated `session`; do not reuse the pre-fork receiver.
+Return the mutated `session`; retain and continue using the pre-fork receiver, then refresh the snapshot.
 
 - [ ] **Step 5: Migrate loop mutations**
 

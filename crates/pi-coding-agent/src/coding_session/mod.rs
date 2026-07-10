@@ -217,6 +217,34 @@ fn default_cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+struct ReplayDerivedOwnerState {
+    pending_delegation_confirmations: PendingDelegationConfirmationQueue,
+    startup_recovery_markers: Vec<StartupRecoveryMarker>,
+}
+
+fn replay_derived_owner_state(
+    session_service: &mut SessionService,
+) -> Result<ReplayDerivedOwnerState, CodingSessionError> {
+    let startup_recovery_markers = session_service.take_startup_recovery_markers();
+    let replay = session_service.replay()?;
+    let cwd = replay
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_cwd);
+    let pending_delegation_confirmations = PendingDelegationConfirmationQueue::from_pending(
+        replay
+            .pending_delegation_confirmations
+            .into_iter()
+            .map(|pending| pending_state_from_replay(pending, &cwd))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    Ok(ReplayDerivedOwnerState {
+        pending_delegation_confirmations,
+        startup_recovery_markers,
+    })
+}
+
 impl CodingAgentSession {
     pub async fn run(
         &mut self,
@@ -1224,20 +1252,7 @@ impl CodingAgentSession {
         profile_registry: ProfileRegistry,
     ) -> Result<Self, CodingSessionError> {
         let mut session_service = session_service;
-        let startup_recovery_markers = session_service.take_startup_recovery_markers();
-        let replay = session_service.replay()?;
-        let cwd = replay
-            .cwd
-            .as_deref()
-            .map(PathBuf::from)
-            .unwrap_or_else(default_cwd);
-        let pending_delegation_confirmations = PendingDelegationConfirmationQueue::from_pending(
-            replay
-                .pending_delegation_confirmations
-                .into_iter()
-                .map(|pending| pending_state_from_replay(pending, &cwd))
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+        let replay_state = replay_derived_owner_state(&mut session_service)?;
         let event_service = EventService::new();
         event_service.emit_session_opened(session_service.session_id().to_owned());
 
@@ -1252,14 +1267,14 @@ impl CodingAgentSession {
             profile_registry,
             default_plugin_load_options,
             operation_control: OperationControl::new(),
-            pending_delegation_confirmations,
+            pending_delegation_confirmations: replay_state.pending_delegation_confirmations,
             branch_summary_service: BranchSummaryService::new(),
             delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
             capability_snapshots: CapabilitySnapshotService::new(),
-            startup_recovery_markers: Mutex::new(startup_recovery_markers),
+            startup_recovery_markers: Mutex::new(replay_state.startup_recovery_markers),
         };
 
         Ok(session)
@@ -1339,7 +1354,7 @@ impl CodingAgentSession {
         operation: Operation,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
-        let _operation_permit = IntentRouter::admit_operation(
+        let operation_permit = IntentRouter::admit_operation(
             &self.operation_control,
             &admission,
             OperationDispatchMode::SyncMutable,
@@ -1363,14 +1378,44 @@ impl CodingAgentSession {
                 )?;
                 Ok(OperationOutcome::DelegationRejection)
             }
-            Operation::ForkSession { .. } => Err(CodingSessionError::UnsupportedCapability {
-                capability: "fork session execution is not implemented yet".into(),
-            }),
+            Operation::ForkSession { target_leaf_id } => {
+                let operation_id = operation_permit.capability_snapshot().operation_id.clone();
+                let SessionPersistence::Persistent(session_service) = &self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability: "fork requires a persistent Rust-native session".into(),
+                    });
+                };
+                let mut forked_service = session_service
+                    .fork_current_admitted(target_leaf_id.as_deref(), &operation_id)?;
+                let forked_session_id = forked_service.session_id().to_owned();
+                let replay_state = match replay_derived_owner_state(&mut forked_service) {
+                    Ok(replay_state) => replay_state,
+                    Err(error) => {
+                        return Err(forked_service.cleanup_failed_transition(&operation_id, error));
+                    }
+                };
+                drop(operation_permit);
+                self.persistence = SessionPersistence::Persistent(forked_service);
+                self.pending_delegation_confirmations =
+                    replay_state.pending_delegation_confirmations;
+                *self.startup_recovery_markers.lock().unwrap() =
+                    replay_state.startup_recovery_markers;
+                self.event_service.emit_session_opened(forked_session_id);
+                Ok(OperationOutcome::ForkSession)
+            }
             Operation::SwitchActiveLeaf { target_leaf_id } => {
-                let _ = target_leaf_id;
-                Err(CodingSessionError::UnsupportedCapability {
-                    capability: "active leaf switch execution is not implemented yet".into(),
-                })
+                let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability:
+                            "active leaf navigation requires a persistent Rust-native session"
+                                .into(),
+                    });
+                };
+                session_service.switch_active_leaf(
+                    &target_leaf_id,
+                    &operation_permit.capability_snapshot().operation_id,
+                )?;
+                Ok(OperationOutcome::SwitchActiveLeaf)
             }
             Operation::SetDefaultAgentProfile { profile_id } => {
                 match &mut self.persistence {
@@ -1663,7 +1708,17 @@ impl CodingAgentSession {
                 custom_instructions,
                 reuse_existing,
             } => {
-                let _ = reuse_existing;
+                if reuse_existing
+                    && let Some(outcome) = self.branch_summary_service.reused_outcome(
+                        &self.persistence,
+                        &options,
+                        source_leaf_id.as_str(),
+                        target_leaf_id.as_str(),
+                        operation_permit.capability_snapshot(),
+                    )?
+                {
+                    return Ok(OperationOutcome::BranchSummary(outcome));
+                }
                 self.run_branch_summary_admitted(
                     options,
                     source_leaf_id,
@@ -3129,6 +3184,317 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn canonical_run_switches_active_leaf() {
+        let api = "coding-session-canonical-switch-active-leaf";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("root answer", StopReason::Stop),
+                FauxProvider::text_call("branch answer", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_canonical_switch_active_leaf")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let target_leaf_id = match session
+            .prompt(prompt_options(api, "root question"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected root prompt success, got {other:?}"),
+        };
+        session
+            .prompt(prompt_options(api, "branch question"))
+            .await
+            .unwrap();
+
+        let outcome = session
+            .run(CodingAgentOperation::SwitchActiveLeaf {
+                target_leaf_id: target_leaf_id.clone(),
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            CodingAgentOperationOutcome::ActiveLeafSwitched
+        ));
+        let hydrated = session.hydrate_current().unwrap().unwrap();
+        assert_eq!(
+            hydrated.summary.active_leaf_id.as_deref(),
+            Some(target_leaf_id.as_str())
+        );
+        assert_eq!(
+            session
+                .persistent_session_service()
+                .replay()
+                .unwrap()
+                .active_leaf_id
+                .as_deref(),
+            Some(target_leaf_id.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn canonical_run_forks_current_session() {
+        let api = "coding-session-canonical-fork-current-session";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("keep answer", StopReason::Stop),
+                FauxProvider::text_call("drop answer", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_canonical_fork_source")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let target_leaf_id = match session
+            .prompt(prompt_options(api, "keep prompt"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected selected prompt success, got {other:?}"),
+        };
+        session
+            .prompt(prompt_options(api, "drop prompt"))
+            .await
+            .unwrap();
+        let original_session_id = session.persistent_session_service().session_id().to_owned();
+
+        let outcome = session
+            .run(CodingAgentOperation::ForkSession {
+                target_leaf_id: Some(target_leaf_id.clone()),
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            CodingAgentOperationOutcome::SessionForked
+        ));
+        let hydrated = session.hydrate_current().unwrap().unwrap();
+        assert_ne!(hydrated.summary.session_id, original_session_id);
+        assert_eq!(
+            hydrated.summary.active_leaf_id.as_deref(),
+            Some(target_leaf_id.as_str())
+        );
+        assert!(hydrated.transcript.iter().any(|item| matches!(
+            item,
+            CodingAgentSessionTranscriptItem::User { text } if text == "keep prompt"
+        )));
+        assert!(!hydrated.transcript.iter().any(|item| matches!(
+            item,
+            CodingAgentSessionTranscriptItem::User { text } if text == "drop prompt"
+        )));
+        let replay = session.persistent_session_service().replay().unwrap();
+        assert_eq!(
+            replay.active_leaf_id.as_deref(),
+            Some(target_leaf_id.as_str())
+        );
+        assert!(replay.transcript.iter().any(|item| matches!(
+            item,
+            TranscriptItem::UserInput { text, .. } if text == "keep prompt"
+        )));
+        assert!(!replay.transcript.iter().any(|item| matches!(
+            item,
+            TranscriptItem::UserInput { text, .. } if text == "drop prompt"
+        )));
+    }
+
+    #[tokio::test]
+    async fn canonical_fork_preserves_owner_runtime_and_event_stream() {
+        let api = "coding-session-canonical-fork-owner-continuity";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("keep answer", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_canonical_fork_owner_continuity")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let target_leaf_id = match session
+            .prompt(prompt_options(api, "keep prompt"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected selected prompt success, got {other:?}"),
+        };
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
+        session
+            .load_plugins(
+                PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
+                    PluginLoadManifest::new(
+                        "session-plugin-command",
+                        "Session Plugin Command",
+                        "1.0.0",
+                        PluginSource::FirstParty,
+                    ),
+                    registry,
+                )),
+            )
+            .await
+            .unwrap();
+        session
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: ProfileId::from("reviewer"),
+            })
+            .await
+            .unwrap();
+        let capability_generation_before = session.current_capability_generation_for_tests();
+        let mut events = session.subscribe_product_events();
+
+        session
+            .run(CodingAgentOperation::ForkSession {
+                target_leaf_id: Some(target_leaf_id),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            session.current_capability_generation_for_tests(),
+            capability_generation_before
+        );
+        let command = session
+            .run(CodingAgentOperation::PluginCommand {
+                command_id: "plugin.say_hello".into(),
+                args: serde_json::Value::Null,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            command,
+            CodingAgentOperationOutcome::PluginCommand(output) if output == "hello"
+        ));
+        session
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: ProfileId::from("default"),
+            })
+            .await
+            .unwrap();
+
+        let emitted = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert!(
+            emitted.iter().any(|event| matches!(
+                event.compatibility_event(),
+                CodingAgentEvent::SessionOpened { session_id }
+                    if session_id == &session.view().session_id
+            )),
+            "pre-fork receiver should observe the forked session transition: {emitted:#?}"
+        );
+        assert!(
+            emitted.iter().any(|event| matches!(
+                event.compatibility_event(),
+                CodingAgentEvent::DefaultAgentProfileChanged { profile_id }
+                    if profile_id == &ProfileId::from("default")
+            )),
+            "pre-fork receiver should observe post-fork runtime events: {emitted:#?}"
+        );
+        assert!(
+            emitted
+                .windows(2)
+                .all(|events| events[0].sequence() < events[1].sequence()),
+            "product event sequence should stay monotonic across fork: {emitted:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn canonical_switch_reports_partial_commit_after_durable_leaf_change() {
+        let api = "coding-session-canonical-switch-partial-commit";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("root answer", StopReason::Stop),
+                FauxProvider::text_call("branch answer", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_canonical_switch_partial_commit")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let target_leaf_id = match session
+            .prompt(prompt_options(api, "root question"))
+            .await
+            .unwrap()
+        {
+            PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            } => leaf_id,
+            other => panic!("expected root prompt success, got {other:?}"),
+        };
+        session
+            .prompt(prompt_options(api, "branch question"))
+            .await
+            .unwrap();
+        let manifest_path = session
+            .persistent_session_service()
+            .session_dir()
+            .join("session.json");
+        let mut permissions = std::fs::metadata(&manifest_path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&manifest_path, permissions).unwrap();
+
+        let error = session
+            .run(CodingAgentOperation::SwitchActiveLeaf {
+                target_leaf_id: target_leaf_id.clone(),
+            })
+            .await
+            .unwrap_err();
+
+        let mut permissions = std::fs::metadata(&manifest_path).unwrap().permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&manifest_path, permissions).unwrap();
+        assert!(matches!(
+            &error,
+            CodingSessionError::PartialCommit { operation_id, .. }
+                if operation_id.starts_with("op_")
+        ));
+        assert_eq!(error.code(), "partial_commit");
+        assert_eq!(
+            session
+                .persistent_session_service()
+                .replay()
+                .unwrap()
+                .active_leaf_id
+                .as_deref(),
+            Some(target_leaf_id.as_str())
+        );
+    }
+
+    #[tokio::test]
     async fn run_sync_operation_plugin_command_uses_guard_and_preserves_plugin_error() {
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
@@ -3831,7 +4197,7 @@ runtime = "lua"
     }
 
     #[tokio::test]
-    async fn branch_summary_navigation_reuses_existing_summary_without_rewriting_session() {
+    async fn canonical_run_reuses_branch_summary_when_requested() {
         let api = "coding-session-branch-summary-navigation-reuse";
         let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
@@ -3883,36 +4249,52 @@ runtime = "lua"
         let event_log_path = temp
             .path()
             .join("sess_branch_summary_navigation_reuse/events.jsonl");
-        let event_log_before = std::fs::read_to_string(&event_log_path).unwrap();
-        let summary_count_before = event_log_before.matches("branch.summary.created").count();
-        let mut events = session.subscribe();
+        let event_log_before = std::fs::read(&event_log_path).unwrap();
+        let event_count_before = event_log_before.split(|byte| *byte == b'\n').count();
+        let event_log_text_before = String::from_utf8(event_log_before.clone()).unwrap();
+        let summary_count_before = event_log_text_before
+            .matches("branch.summary.created")
+            .count();
+        let mut events = session.subscribe_product_events_public();
 
         let outcome = session
-            .summarize_branch_for_navigation(
-                prompt_options(api, ""),
-                branch_leaf.clone(),
-                root_leaf.clone(),
-            )
+            .run(CodingAgentOperation::BranchSummary {
+                options: prompt_options(api, ""),
+                source_leaf_id: branch_leaf.clone(),
+                target_leaf_id: root_leaf.clone(),
+                custom_instructions: None,
+                reuse: BranchSummaryReusePolicy::ReuseExisting,
+            })
             .await
             .unwrap();
 
         assert!(matches!(
             &outcome,
-            PromptTurnOutcome::Success {
+            CodingAgentOperationOutcome::BranchSummary(PromptTurnOutcome::Success {
                 final_text,
                 session_id: Some(session_id),
                 leaf_id: Some(active_leaf),
                 ..
-            } if final_text.contains("model branch summary")
+            }) if final_text.contains("model branch summary")
                 && session_id == "sess_branch_summary_navigation_reuse"
                 && active_leaf.as_str() == branch_leaf.as_str()
         ));
         let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
         assert!(emitted_events.is_empty(), "{emitted_events:#?}");
-        let event_log_after = std::fs::read_to_string(&event_log_path).unwrap();
+        let event_log_after = std::fs::read(&event_log_path).unwrap();
         assert_eq!(event_log_after, event_log_before);
+        assert_eq!(
+            event_log_after.split(|byte| *byte == b'\n').count(),
+            event_count_before
+        );
         assert_eq!(summary_count_before, 1);
-        assert_eq!(event_log_after.matches("branch.summary.created").count(), 1);
+        assert_eq!(
+            String::from_utf8(event_log_after)
+                .unwrap()
+                .matches("branch.summary.created")
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]

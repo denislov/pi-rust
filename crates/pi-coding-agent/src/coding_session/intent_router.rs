@@ -502,21 +502,43 @@ mod tests {
     }
 
     #[test]
-    fn session_mutation_facade_routes_through_intent_admission() {
-        let source = include_str!("mod.rs");
+    fn canonical_session_run_owns_mutation_dispatch() {
+        let session_source = include_str!("mod.rs");
+        let operation_source = include_str!("operation.rs");
 
         assert!(
-            source.contains("run_sync_mut_operation(Operation::SetDefaultAgentProfile"),
+            session_source.contains("run_sync_mut_operation(Operation::SetDefaultAgentProfile"),
             "set_default_agent_profile_id should route through run_sync_mut_operation"
         );
         assert!(
-            source.contains("Operation::ForkSession"),
-            "fork_current_session should construct a ForkSession operation"
+            session_source.contains(
+                "OperationDispatchMode::SyncMutable => self.run_sync_mut_operation(operation)?"
+            ),
+            "public run should own sync-mutable operation dispatch"
         );
-        // 3 dispatcher admit_operation calls + 1 fork_current_session direct call = 4
         assert!(
-            source.matches("IntentRouter::admit_operation(").count() >= 4,
-            "session mutation should admit through IntentRouter (dispatchers + fork)"
+            session_source
+                .matches("IntentRouter::admit_operation(")
+                .count()
+                >= 3,
+            "the three canonical dispatchers should admit through IntentRouter"
+        );
+        for expected in [
+            "Self::ForkSession { .. } => OperationMetadata::new(",
+            "Self::SwitchActiveLeaf { .. } => OperationMetadata::new(",
+            "Self::SetDefaultAgentProfile { .. } => OperationMetadata::new(",
+        ] {
+            assert!(
+                operation_source.contains(expected),
+                "sync-mutable operation metadata should include {expected}"
+            );
+        }
+        assert!(
+            operation_source
+                .matches("OperationDispatchMode::SyncMutable,")
+                .count()
+                >= 3,
+            "fork, active-leaf switch, and default-profile mutation should be sync-mutable"
         );
     }
 }

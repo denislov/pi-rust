@@ -15,7 +15,8 @@ use super::self_healing_edit_flow::{SelfHealingEditOutcome, SelfHealingEditReque
 pub enum BranchSummaryReusePolicy {
     /// Always create a new summary for the requested branch pair.
     AlwaysCreate,
-    /// Reserved for Task 3, when canonical dispatch will reuse a matching persisted summary.
+    /// Reuse a matching persisted summary without emitting events or rewriting the session log.
+    /// A new summary is created when no matching persisted summary exists.
     ReuseExisting,
 }
 
@@ -68,12 +69,12 @@ pub enum CodingAgentOperation {
         tool_call_id: String,
         reason: String,
     },
-    /// Declare a session fork request; execution remains unsupported until Task 3.
+    /// Move this owner to a forked persistent session while retaining live runtime state.
     ForkSession {
         /// The leaf to fork from, or the current active leaf when omitted.
         target_leaf_id: Option<String>,
     },
-    /// Declare an active-leaf switch; execution remains unsupported until Task 3.
+    /// Make an existing committed leaf active in a persistent session.
     SwitchActiveLeaf {
         target_leaf_id: String,
     },
@@ -202,6 +203,8 @@ mod tests {
     use super::*;
     use crate::coding_session::context::CodingAgentSessionSummary;
     use crate::coding_session::export_flow::ExportOutcome;
+    use crate::coding_session::plugin_service::PluginDiagnostic;
+    use crate::plugins::PluginCapabilities;
     use crate::runtime::PromptInvocation;
 
     fn branch_summary_reuse_flag(reuse: BranchSummaryReusePolicy) -> bool {
@@ -256,5 +259,28 @@ mod tests {
             outcome,
             CodingAgentOperationOutcome::ExportHtml(projected) if projected == path
         ));
+    }
+
+    #[test]
+    fn plugin_load_outcome_projects_non_empty_public_fields() {
+        let projected = CodingAgentPluginLoadOutcome::from(PluginLoadOutcome {
+            loaded_plugin_ids: vec!["plugin.loaded".into()],
+            diagnostics: vec![PluginDiagnostic {
+                plugin_id: Some("plugin.diagnostic".into()),
+                message: "plugin diagnostic message".into(),
+            }],
+            capabilities: PluginCapabilities::new(),
+            capability_changed: true,
+        });
+
+        assert_eq!(projected.loaded_plugin_ids, vec!["plugin.loaded"]);
+        assert_eq!(
+            projected.diagnostics,
+            vec![CodingAgentPluginDiagnostic {
+                plugin_id: Some("plugin.diagnostic".into()),
+                message: "plugin diagnostic message".into(),
+            }]
+        );
+        assert!(projected.capability_changed);
     }
 }

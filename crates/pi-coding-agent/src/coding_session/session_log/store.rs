@@ -1,6 +1,9 @@
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
 
 use super::event::SessionEventEnvelope;
 use super::manifest::{
@@ -13,17 +16,144 @@ use crate::coding_session::{CodingSessionError, ProfileId};
 #[derive(Debug, Clone)]
 pub(crate) struct SessionLogStore {
     root: PathBuf,
+    #[cfg(test)]
+    failures: Arc<Mutex<StoreFailureState>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StoreFailurePoint {
+    CreateBlobs,
+    CreateIndex,
+    WriteManifest,
+    CreateEventLog,
+    AppendEvents,
+    UpdateManifest,
+    RemoveSession,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct StoreFailureState {
+    create_blobs: Option<usize>,
+    create_index: Option<usize>,
+    write_manifest: Option<usize>,
+    create_event_log: Option<usize>,
+    append_events: Option<usize>,
+    update_manifest: Option<usize>,
+    remove_session: Option<usize>,
+}
+
+#[derive(Debug)]
+pub(crate) enum SessionCreateError {
+    Create(CodingSessionError),
+    CleanupFailed {
+        session_id: String,
+        session_dir: PathBuf,
+        create_error: CodingSessionError,
+        cleanup_error: CodingSessionError,
+    },
+}
+
+impl SessionCreateError {
+    #[cfg(test)]
+    pub(crate) fn code(&self) -> &'static str {
+        "session"
+    }
+}
+
+impl fmt::Display for SessionCreateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Create(error) => error.fmt(formatter),
+            Self::CleanupFailed {
+                session_id,
+                session_dir,
+                create_error,
+                cleanup_error,
+            } => write!(
+                formatter,
+                "session initialization failed for {session_id} at {}: {create_error}; cleanup failed: {cleanup_error}",
+                session_dir.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SessionCreateError {}
+
+impl From<CodingSessionError> for SessionCreateError {
+    fn from(error: CodingSessionError) -> Self {
+        Self::Create(error)
+    }
+}
+
+impl From<SessionCreateError> for CodingSessionError {
+    fn from(error: SessionCreateError) -> Self {
+        match error {
+            SessionCreateError::Create(error) => error,
+            cleanup_failed @ SessionCreateError::CleanupFailed { .. } => {
+                CodingSessionError::Session {
+                    message: cleanup_failed.to_string(),
+                }
+            }
+        }
+    }
 }
 
 impl SessionLogStore {
     pub(crate) fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            #[cfg(test)]
+            failures: Arc::new(Mutex::new(StoreFailureState::default())),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_after(&self, point: StoreFailurePoint, successful_calls: usize) {
+        let mut failures = self.failures.lock().unwrap();
+        let target = match point {
+            StoreFailurePoint::CreateBlobs => &mut failures.create_blobs,
+            StoreFailurePoint::CreateIndex => &mut failures.create_index,
+            StoreFailurePoint::WriteManifest => &mut failures.write_manifest,
+            StoreFailurePoint::CreateEventLog => &mut failures.create_event_log,
+            StoreFailurePoint::AppendEvents => &mut failures.append_events,
+            StoreFailurePoint::UpdateManifest => &mut failures.update_manifest,
+            StoreFailurePoint::RemoveSession => &mut failures.remove_session,
+        };
+        *target = Some(successful_calls);
+    }
+
+    #[cfg(test)]
+    fn fail_if_injected(&self, point: StoreFailurePoint) -> Result<(), CodingSessionError> {
+        let mut failures = self.failures.lock().unwrap();
+        let target = match point {
+            StoreFailurePoint::CreateBlobs => &mut failures.create_blobs,
+            StoreFailurePoint::CreateIndex => &mut failures.create_index,
+            StoreFailurePoint::WriteManifest => &mut failures.write_manifest,
+            StoreFailurePoint::CreateEventLog => &mut failures.create_event_log,
+            StoreFailurePoint::AppendEvents => &mut failures.append_events,
+            StoreFailurePoint::UpdateManifest => &mut failures.update_manifest,
+            StoreFailurePoint::RemoveSession => &mut failures.remove_session,
+        };
+        let Some(remaining) = target.as_mut() else {
+            return Ok(());
+        };
+        if *remaining > 0 {
+            *remaining -= 1;
+            return Ok(());
+        }
+        *target = None;
+        Err(session_error(format!(
+            "injected session store failure at {point:?}"
+        )))
     }
 
     pub(crate) fn create_session(
         &self,
         options: CreateSessionOptions,
-    ) -> Result<SessionHandle, CodingSessionError> {
+    ) -> Result<SessionHandle, SessionCreateError> {
         let session_id = normalize_session_id(&options.session_id)?;
         fs::create_dir_all(&self.root).map_err(|error| {
             session_error(format!(
@@ -37,7 +167,8 @@ impl SessionLogStore {
             return Err(session_error(format!(
                 "session directory already exists: {}",
                 session_dir.display()
-            )));
+            ))
+            .into());
         }
 
         fs::create_dir(&session_dir).map_err(|error| {
@@ -46,21 +177,41 @@ impl SessionLogStore {
                 session_dir.display()
             ))
         })?;
-        fs::create_dir(session_dir.join("blobs")).map_err(|error| {
-            session_error(format!(
-                "failed to create blobs directory for {session_id}: {error}"
-            ))
-        })?;
-        fs::create_dir(session_dir.join("index")).map_err(|error| {
-            session_error(format!(
-                "failed to create index directory for {session_id}: {error}"
-            ))
-        })?;
-
-        let manifest = SessionManifest::new(session_id, options.created_at)
+        let manifest = SessionManifest::new(session_id.clone(), options.created_at)
             .with_default_agent_profile_id(options.default_agent_profile_id);
-        write_manifest(&session_dir, &manifest)?;
-        create_empty_event_log(&session_dir)?;
+        let initialization = (|| -> Result<(), CodingSessionError> {
+            #[cfg(test)]
+            self.fail_if_injected(StoreFailurePoint::CreateBlobs)?;
+            fs::create_dir(session_dir.join("blobs")).map_err(|error| {
+                session_error(format!(
+                    "failed to create blobs directory for {session_id}: {error}"
+                ))
+            })?;
+            #[cfg(test)]
+            self.fail_if_injected(StoreFailurePoint::CreateIndex)?;
+            fs::create_dir(session_dir.join("index")).map_err(|error| {
+                session_error(format!(
+                    "failed to create index directory for {session_id}: {error}"
+                ))
+            })?;
+            #[cfg(test)]
+            self.fail_if_injected(StoreFailurePoint::WriteManifest)?;
+            write_manifest(&session_dir, &manifest)?;
+            #[cfg(test)]
+            self.fail_if_injected(StoreFailurePoint::CreateEventLog)?;
+            create_empty_event_log(&session_dir)
+        })();
+        if let Err(create_error) = initialization {
+            return Err(match self.remove_created_session_dir(&session_dir) {
+                Ok(()) => SessionCreateError::Create(create_error),
+                Err(cleanup_error) => SessionCreateError::CleanupFailed {
+                    session_id,
+                    session_dir,
+                    create_error,
+                    cleanup_error,
+                },
+            });
+        }
 
         Ok(SessionHandle {
             session_dir,
@@ -160,6 +311,8 @@ impl SessionLogStore {
         handle: &SessionHandle,
         events: &[SessionEventEnvelope],
     ) -> Result<(), CodingSessionError> {
+        #[cfg(test)]
+        self.fail_if_injected(StoreFailurePoint::AppendEvents)?;
         let event_log_path = event_log_path(&handle.session_dir, &handle.manifest)?;
         let mut next_sequence =
             next_session_sequence(&event_log_path, &handle.manifest.session_id)?;
@@ -246,10 +399,28 @@ impl SessionLogStore {
         handle: &SessionHandle,
         patch: ManifestPatch,
     ) -> Result<(), CodingSessionError> {
+        #[cfg(test)]
+        self.fail_if_injected(StoreFailurePoint::UpdateManifest)?;
         let mut manifest = read_manifest(&handle.session_dir)?;
         patch.apply(&mut manifest);
         validate_manifest(&manifest)?;
         write_manifest(&handle.session_dir, &manifest)
+    }
+
+    pub(crate) fn remove_session(&self, handle: &SessionHandle) -> Result<(), CodingSessionError> {
+        let session_dir = self.resolve_existing_session_dir(handle.session_dir())?;
+        self.remove_created_session_dir(&session_dir)
+    }
+
+    fn remove_created_session_dir(&self, session_dir: &Path) -> Result<(), CodingSessionError> {
+        #[cfg(test)]
+        self.fail_if_injected(StoreFailurePoint::RemoveSession)?;
+        fs::remove_dir_all(&session_dir).map_err(|error| {
+            session_error(format!(
+                "failed to remove session directory {}: {error}",
+                session_dir.display()
+            ))
+        })
     }
 
     fn resolve_existing_session_dir(&self, path: &Path) -> Result<PathBuf, CodingSessionError> {
@@ -604,6 +775,30 @@ mod tests {
 
         let event_log = fs::read_to_string(handle.event_log_path().unwrap()).unwrap();
         assert!(event_log.is_empty());
+    }
+
+    #[test]
+    fn create_session_cleans_up_every_failed_initialization_stage() {
+        for (stage, session_id) in [
+            (StoreFailurePoint::CreateBlobs, "sess_fail_blobs"),
+            (StoreFailurePoint::CreateIndex, "sess_fail_index"),
+            (StoreFailurePoint::WriteManifest, "sess_fail_manifest"),
+            (StoreFailurePoint::CreateEventLog, "sess_fail_event_log"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = SessionLogStore::new(temp.path());
+            store.fail_after(stage, 0);
+
+            let error = store
+                .create_session(create_options(session_id))
+                .unwrap_err();
+
+            assert_eq!(error.code(), "session");
+            assert!(
+                !temp.path().join(session_id).exists(),
+                "failed stage {stage:?} should not leave a visible target"
+            );
+        }
     }
 
     #[test]

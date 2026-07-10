@@ -17,7 +17,8 @@ use super::session_log::replay::{
     MessageStatus, SessionRecoverySummary, SessionReplay, ToolCallStatus, TranscriptItem,
 };
 use super::session_log::store::{
-    CreateSessionOptions, ManifestPatch, SessionHandle, SessionLogStore, SessionSummary,
+    CreateSessionOptions, ManifestPatch, SessionCreateError, SessionHandle, SessionLogStore,
+    SessionSummary,
 };
 use super::session_log::transaction::TurnTransaction;
 use super::{
@@ -119,6 +120,7 @@ impl SessionService {
             &clock,
             option_cwd_string(options),
             option_default_agent_profile_id(options),
+            None,
         )
     }
 
@@ -165,6 +167,7 @@ impl SessionService {
             &clock,
             option_cwd_string(options),
             option_default_agent_profile_id(options),
+            None,
         )
     }
 
@@ -209,14 +212,30 @@ impl SessionService {
     }
 
     pub(crate) fn clone_current(&self) -> Result<Self, CodingSessionError> {
-        self.copy_to_new_session(None, SessionCopyKind::Clone)
+        self.copy_to_new_session(None, SessionCopyKind::Clone, None)
     }
 
     pub(crate) fn fork_current(
         &self,
         target_leaf_id: Option<&str>,
     ) -> Result<Self, CodingSessionError> {
-        self.copy_to_new_session(target_leaf_id, SessionCopyKind::Fork)
+        self.copy_to_new_session(target_leaf_id, SessionCopyKind::Fork, None)
+    }
+
+    pub(crate) fn fork_current_admitted(
+        &self,
+        target_leaf_id: Option<&str>,
+        operation_id: &str,
+    ) -> Result<Self, CodingSessionError> {
+        self.copy_to_new_session(target_leaf_id, SessionCopyKind::Fork, Some(operation_id))
+    }
+
+    pub(crate) fn cleanup_failed_transition(
+        self,
+        operation_id: &str,
+        error: CodingSessionError,
+    ) -> CodingSessionError {
+        cleanup_failed_session_copy(&self.store, &self.handle, operation_id, error)
     }
 
     pub(crate) fn session_id(&self) -> &str {
@@ -339,6 +358,7 @@ impl SessionService {
     pub(crate) fn switch_active_leaf(
         &mut self,
         target_leaf_id: &str,
+        operation_id: &str,
     ) -> Result<(), CodingSessionError> {
         let target_leaf_id = normalize_leaf_id(target_leaf_id)?;
         let events = self.store.read_events(&self.handle)?;
@@ -361,12 +381,17 @@ impl SessionService {
             },
         );
         self.store.append_events(&self.handle, &[event])?;
-        self.store.update_manifest(
+        if let Err(error) = self.store.update_manifest(
             &self.handle,
             ManifestPatch::new()
                 .updated_at(updated_at)
                 .active_leaf_id(Some(target_leaf_id)),
-        )?;
+        ) {
+            return Err(CodingSessionError::PartialCommit {
+                operation_id: operation_id.to_owned(),
+                message: error.to_string(),
+            });
+        }
         self.handle = self.store.open_session_id(&session_id)?;
         Ok(())
     }
@@ -898,6 +923,7 @@ impl SessionService {
         &self,
         target_leaf_id: Option<&str>,
         kind: SessionCopyKind,
+        admitted_operation_id: Option<&str>,
     ) -> Result<Self, CodingSessionError> {
         let target_leaf_id = resolve_copy_target_leaf(self.handle.manifest(), target_leaf_id)?;
         let source_events = self.store.read_events(&self.handle)?;
@@ -909,6 +935,9 @@ impl SessionService {
 
         let mut ids = SystemIdGenerator;
         let clock = SystemClock;
+        let operation_id = admitted_operation_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| ids.next_operation_id());
         let replay = self.replay()?;
         let target_session_id = ids.next_session_id();
         let mut target = Self::create_with_id(
@@ -918,39 +947,53 @@ impl SessionService {
             &clock,
             replay.cwd,
             self.default_agent_profile_id().clone(),
+            Some(&operation_id),
         )?;
 
-        let provenance = SessionEventEnvelope::new(
-            target.session_id().to_owned(),
-            ids.next_event_id(),
-            clock.now_rfc3339(),
-            kind.provenance_event(self.session_id().to_owned(), target_leaf_id.clone()),
-        );
-        target.store.append_events(&target.handle, &[provenance])?;
+        let copy_result = (|| {
+            let provenance = SessionEventEnvelope::new(
+                target.session_id().to_owned(),
+                ids.next_event_id(),
+                clock.now_rfc3339(),
+                kind.provenance_event(self.session_id().to_owned(), target_leaf_id.clone()),
+            );
+            target.store.append_events(&target.handle, &[provenance])?;
 
-        let branch_summary_operations =
-            branch_summary_operation_ids_for_target(&source_events[cutoff + 1..], &target_leaf_id);
-        let copied_events = source_events[..=cutoff]
-            .iter()
-            .chain(source_events[cutoff + 1..].iter().filter(|event| {
-                should_copy_branch_summary_operation(
-                    event,
-                    &target_leaf_id,
-                    &branch_summary_operations,
-                )
-            }))
-            .filter(|event| should_copy_source_event(event))
-            .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
-            .collect::<Vec<_>>();
-        target.store.append_events(&target.handle, &copied_events)?;
-        target.store.update_manifest(
-            &target.handle,
-            ManifestPatch::new()
-                .updated_at(clock.now_rfc3339())
-                .active_leaf_id(Some(target_leaf_id)),
-        )?;
-        let session_id = target.session_id().to_owned();
-        target.handle = target.store.open_session_id(&session_id)?;
+            let branch_summary_operations = branch_summary_operation_ids_for_target(
+                &source_events[cutoff + 1..],
+                &target_leaf_id,
+            );
+            let copied_events = source_events[..=cutoff]
+                .iter()
+                .chain(source_events[cutoff + 1..].iter().filter(|event| {
+                    should_copy_branch_summary_operation(
+                        event,
+                        &target_leaf_id,
+                        &branch_summary_operations,
+                    )
+                }))
+                .filter(|event| should_copy_source_event(event))
+                .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
+                .collect::<Vec<_>>();
+            target.store.append_events(&target.handle, &copied_events)?;
+            target.store.update_manifest(
+                &target.handle,
+                ManifestPatch::new()
+                    .updated_at(clock.now_rfc3339())
+                    .active_leaf_id(Some(target_leaf_id)),
+            )?;
+            let session_id = target.session_id().to_owned();
+            target.handle = target.store.open_session_id(&session_id)?;
+            Ok(())
+        })();
+        if let Err(error) = copy_result {
+            return Err(cleanup_failed_session_copy(
+                &target.store,
+                &target.handle,
+                &operation_id,
+                error,
+            ));
+        }
 
         Ok(target)
     }
@@ -962,19 +1005,55 @@ impl SessionService {
         clock: &impl Clock,
         cwd: Option<String>,
         default_agent_profile_id: ProfileId,
+        copy_operation_id: Option<&str>,
     ) -> Result<Self, CodingSessionError> {
         let created_at = clock.now_rfc3339();
-        let handle = store.create_session(
+        let handle = match store.create_session(
             CreateSessionOptions::new(session_id, created_at.clone())
                 .default_agent_profile_id(default_agent_profile_id),
-        )?;
+        ) {
+            Ok(handle) => handle,
+            Err(SessionCreateError::CleanupFailed {
+                session_id,
+                session_dir,
+                create_error,
+                cleanup_error,
+            }) => match copy_operation_id {
+                Some(operation_id) => {
+                    return Err(CodingSessionError::PartialCommit {
+                        operation_id: operation_id.to_owned(),
+                        message: format!(
+                            "session copy failed while creating {session_id} at {}: {create_error}; cleanup failed: {cleanup_error}",
+                            session_dir.display()
+                        ),
+                    });
+                }
+                None => {
+                    return Err(SessionCreateError::CleanupFailed {
+                        session_id,
+                        session_dir,
+                        create_error,
+                        cleanup_error,
+                    }
+                    .into());
+                }
+            },
+            Err(error) => return Err(error.into()),
+        };
         let created = SessionEventEnvelope::new(
             handle.manifest().session_id.clone(),
             ids.next_event_id(),
             created_at,
             SessionEventData::SessionCreated { cwd },
         );
-        store.append_events(&handle, &[created])?;
+        if let Err(error) = store.append_events(&handle, &[created]) {
+            return Err(match copy_operation_id {
+                Some(operation_id) => {
+                    cleanup_failed_session_copy(&store, &handle, operation_id, error)
+                }
+                None => error,
+            });
+        }
 
         Ok(Self::from_handle(store, handle))
     }
@@ -1021,6 +1100,24 @@ impl SessionService {
     fn next_leaf_id() -> String {
         let mut ids = SystemIdGenerator;
         ids.next_leaf_id()
+    }
+}
+
+fn cleanup_failed_session_copy(
+    store: &SessionLogStore,
+    handle: &SessionHandle,
+    operation_id: &str,
+    copy_error: CodingSessionError,
+) -> CodingSessionError {
+    match store.remove_session(handle) {
+        Ok(()) => copy_error,
+        Err(cleanup_error) => CodingSessionError::PartialCommit {
+            operation_id: operation_id.to_owned(),
+            message: format!(
+                "session copy failed after creating {}: {copy_error}; cleanup failed: {cleanup_error}",
+                handle.manifest().session_id
+            ),
+        },
     }
 }
 
@@ -1432,6 +1529,7 @@ mod tests {
     use super::*;
     use crate::coding_session::session_log::event::PersistedContentBlock;
     use crate::coding_session::session_log::replay::OperationReplayStatus;
+    use crate::coding_session::session_log::store::StoreFailurePoint;
 
     #[test]
     fn create_uses_explicit_session_id() {
@@ -2188,6 +2286,127 @@ mod tests {
     }
 
     #[test]
+    fn fork_current_cleans_up_when_created_event_append_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_cleanup_created")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        let sessions_before = service.store.list_sessions().unwrap();
+        service.store.fail_after(StoreFailurePoint::AppendEvents, 0);
+
+        let error = service.fork_current(Some(&target_leaf)).unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert_eq!(service.store.list_sessions().unwrap(), sessions_before);
+    }
+
+    #[test]
+    fn fork_current_cleans_up_when_provenance_append_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_cleanup_provenance")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        let sessions_before = service.store.list_sessions().unwrap();
+        service.store.fail_after(StoreFailurePoint::AppendEvents, 1);
+
+        let error = service.fork_current(Some(&target_leaf)).unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert_eq!(service.store.list_sessions().unwrap(), sessions_before);
+    }
+
+    #[test]
+    fn fork_current_cleans_up_when_manifest_update_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_cleanup_manifest")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        let sessions_before = service.store.list_sessions().unwrap();
+        service
+            .store
+            .fail_after(StoreFailurePoint::UpdateManifest, 0);
+
+        let error = service.fork_current(Some(&target_leaf)).unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert_eq!(service.store.list_sessions().unwrap(), sessions_before);
+    }
+
+    #[test]
+    fn fork_current_reports_partial_commit_when_cleanup_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_cleanup_failure")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        service.store.fail_after(StoreFailurePoint::AppendEvents, 1);
+        service
+            .store
+            .fail_after(StoreFailurePoint::RemoveSession, 0);
+
+        let error = service.fork_current(Some(&target_leaf)).unwrap_err();
+
+        assert!(matches!(
+            &error,
+            CodingSessionError::PartialCommit { operation_id, message }
+                if operation_id.starts_with("op_")
+                    && message.contains("cleanup failed")
+        ));
+    }
+
+    #[test]
+    fn fork_current_cleans_up_when_manifest_creation_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_cleanup_manifest_creation")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        let sessions_before = service.store.list_sessions().unwrap();
+        service
+            .store
+            .fail_after(StoreFailurePoint::WriteManifest, 0);
+
+        let error = service.fork_current(Some(&target_leaf)).unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert_eq!(service.store.list_sessions().unwrap(), sessions_before);
+    }
+
+    #[test]
+    fn fork_current_reports_partial_commit_when_create_stage_cleanup_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_fork_create_cleanup_failure")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let target_leaf = record_prompt(&mut service, "keep prompt");
+        service
+            .store
+            .fail_after(StoreFailurePoint::WriteManifest, 0);
+        service
+            .store
+            .fail_after(StoreFailurePoint::RemoveSession, 0);
+
+        let error = service.fork_current(Some(&target_leaf)).unwrap_err();
+
+        assert!(matches!(
+            &error,
+            CodingSessionError::PartialCommit { operation_id, message }
+                if operation_id.starts_with("op_")
+                    && message.contains("cleanup failed")
+                    && message.contains("sess_")
+        ));
+    }
+
+    #[test]
     fn switch_active_leaf_records_event_and_updates_manifest() {
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
@@ -2197,7 +2416,9 @@ mod tests {
         let root_leaf = record_prompt(&mut service, "root prompt");
         let branch_leaf = record_prompt(&mut service, "branch prompt");
 
-        service.switch_active_leaf(&root_leaf).unwrap();
+        service
+            .switch_active_leaf(&root_leaf, "op_switch_leaf")
+            .unwrap();
 
         assert_eq!(service.active_leaf_id(), Some(root_leaf.as_str()));
         assert_eq!(
@@ -2241,7 +2462,9 @@ mod tests {
         let known_leaf = record_prompt(&mut service, "known prompt");
         let before_events = service.store.read_events(&service.handle).unwrap();
 
-        let error = service.switch_active_leaf("leaf_missing").unwrap_err();
+        let error = service
+            .switch_active_leaf("leaf_missing", "op_switch_missing")
+            .unwrap_err();
 
         assert_eq!(error.code(), "session");
         assert_eq!(
