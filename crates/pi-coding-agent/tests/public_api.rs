@@ -9,26 +9,26 @@ use pi_coding_agent::api::{
     CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
     CliRunOptions, CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId,
     CodingAgentEvent, CodingAgentEventReceiver, CodingAgentOperation, CodingAgentOperationOutcome,
-    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
-    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
-    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic, CodingDiagnosticSeverity,
-    CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
-    DetectionConfidence, DetectionSource, ModelRotation, ModelRotationEntry,
-    PendingDelegationConfirmation, PrintModeOptions, ProfileId, PromptInvocation, PromptRunOptions,
-    PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, ProtocolDelegationFoldedBlock,
-    ProtocolEvent, ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement,
-    REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions,
-    RpcCapabilities, RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus,
-    RpcDelegationRenderingMetadata, RpcResponse, RpcSelfHealingEditModelRepair,
-    RpcSelfHealingEditReplacement, RpcSessionState, SelfHealingEditCheckOutput,
-    SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
-    SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest, SessionMode,
-    StreamingBehavior, TerminalTheme, ThemeBg, ThemeColor, ThemeExportColors, ThemeJson,
-    ToolExecutionResult, ToolFilter, build_agent_resources, builtin_dark, builtin_tools,
-    detect_terminal_background, discover_context_files, filter_tools, get_resolved_theme_colors,
-    get_theme_export_colors, get_theme_for_rgb_color, help_text, is_light_theme, parse_args,
-    parse_model_rotation, parse_osc11_background_color, render_diagnostics, resolve,
-    resolve_resource_paths,
+    CodingAgentProductEvent, CodingAgentProductEventReceiver, CodingAgentSession,
+    CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
+    CodingAgentSessionSummary, CodingAgentSessionView, CodingAgentSnapshot,
+    CodingAgentSnapshotCursor, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
+    ColorValue, CompactionProtocolResult, CompactionReason, ContextFile, DetectionConfidence,
+    DetectionSource, ModelRotation, ModelRotationEntry, PendingDelegationConfirmation,
+    PrintModeOptions, ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode,
+    PromptTurnOptions, PromptTurnOutcome, ProtocolDelegationFoldedBlock, ProtocolEvent,
+    ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS,
+    ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions, RpcCapabilities,
+    RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata,
+    RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
+    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
+    SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
+    SelfHealingEditRequest, SessionMode, StreamingBehavior, TerminalTheme, ThemeBg, ThemeColor,
+    ThemeExportColors, ThemeJson, ToolExecutionResult, ToolFilter, build_agent_resources,
+    builtin_dark, builtin_tools, detect_terminal_background, discover_context_files, filter_tools,
+    get_resolved_theme_colors, get_theme_export_colors, get_theme_for_rgb_color, help_text,
+    is_light_theme, parse_args, parse_model_rotation, parse_osc11_background_color,
+    render_diagnostics, resolve, resolve_resource_paths,
 };
 use support::ProviderGuard;
 
@@ -156,6 +156,12 @@ async fn coding_session_snapshot_public_facade_is_importable() {
     let connected: CodingAgentClientConnection = session.connect(client_id.clone());
     assert_eq!(connected.client_id, client_id);
     assert_eq!(connected.snapshot.session.session_id, session_id);
+}
+
+#[test]
+fn coding_session_product_event_subscription_public_facade_is_importable() {
+    let _event_type_name = std::any::type_name::<CodingAgentProductEvent>();
+    let _receiver_type_name = std::any::type_name::<CodingAgentProductEventReceiver>();
 }
 
 #[test]

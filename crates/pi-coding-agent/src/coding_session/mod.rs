@@ -69,8 +69,8 @@ pub use prompt::{
 };
 pub use public_operation::{CodingAgentOperation, CodingAgentOperationOutcome};
 pub use public_projection::{
-    CodingAgentClientConnection, CodingAgentClientId, CodingAgentSnapshot,
-    CodingAgentSnapshotCursor,
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentProductEvent,
+    CodingAgentProductEventReceiver, CodingAgentSnapshot, CodingAgentSnapshotCursor,
 };
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
@@ -495,6 +495,10 @@ impl CodingAgentSession {
         let receiver = self.event_service.subscribe_product_events();
         self.emit_pending_startup_recovery_markers();
         receiver
+    }
+
+    pub fn subscribe_product_events_public(&self) -> CodingAgentProductEventReceiver {
+        CodingAgentProductEventReceiver::new(self.subscribe_product_events())
     }
 
     fn emit_pending_startup_recovery_markers(&self) {
@@ -2295,6 +2299,45 @@ mod tests {
             CodingAgentEvent::OperationRecovered { operation_id, .. }
                 if operation_id == "op_in_doubt"
         ));
+    }
+
+    #[tokio::test]
+    async fn public_product_event_receiver_maps_internal_product_events() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let mut receiver = session.subscribe_product_events_public();
+        session.emit_product_event_for_tests(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "public event".into(),
+        });
+
+        let event = receiver.recv().await.unwrap();
+        assert_eq!(event.sequence, 1);
+        assert_eq!(event.family, "Diagnostic");
+        assert_eq!(event.kind, "Diagnostic(Diagnostic)");
+    }
+
+    #[tokio::test]
+    async fn public_product_event_receiver_supports_non_blocking_receive() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let mut receiver = session.subscribe_product_events_public();
+
+        assert_eq!(receiver.try_recv().unwrap(), None);
+
+        session.emit_product_event_for_tests(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "public event".into(),
+        });
+        let event = receiver
+            .try_recv()
+            .unwrap()
+            .expect("emitted event should be available without blocking");
+        assert_eq!(event.sequence, 1);
+        assert_eq!(event.family, "Diagnostic");
+        assert_eq!(event.kind, "Diagnostic(Diagnostic)");
     }
 
     #[tokio::test]

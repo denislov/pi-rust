@@ -78,7 +78,7 @@ Important current compatibility surfaces:
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
 - Modify: `crates/pi-coding-agent/src/lib.rs`
 
-- [ ] **Step 1: Add failing root compatibility export guard**
+- [x] **Step 1: Add failing root compatibility export guard**
 
 Add this test to `crates/pi-coding-agent/tests/api_boundary_guards.rs`:
 
@@ -118,7 +118,7 @@ fn root_reexports_are_explicit_compatibility_surface() {
 }
 ```
 
-- [ ] **Step 2: Run RED guard**
+- [x] **Step 2: Run RED guard**
 
 Run:
 
@@ -128,7 +128,7 @@ cargo test -p pi-coding-agent --test api_boundary_guards root_reexports_are_expl
 
 Expected: FAIL because root `pub use` lines are not yet marked deprecated.
 
-- [ ] **Step 3: Mark root re-exports as compatibility surface**
+- [x] **Step 3: Mark root re-exports as compatibility surface**
 
 In `crates/pi-coding-agent/src/lib.rs`, add this attribute before each root-level `pub use` that appears before `pub mod api`:
 
@@ -155,7 +155,7 @@ pub use tools::builtin_tools;
 
 Keep the `api` module itself non-deprecated.
 
-- [ ] **Step 4: Update public API smoke imports**
+- [x] **Step 4: Update public API smoke imports**
 
 In `crates/pi-coding-agent/tests/public_api.rs`, keep importing from `pi_coding_agent::api`. Add a small regression check proving root compatibility is not used by the test:
 
@@ -170,7 +170,7 @@ fn public_api_tests_use_stable_facade_imports() {
 }
 ```
 
-- [ ] **Step 5: Run GREEN guard and public API tests**
+- [x] **Step 5: Run GREEN guard and public API tests**
 
 Run:
 
@@ -181,7 +181,7 @@ cargo test -p pi-coding-agent --test public_api public_api_tests_use_stable_faca
 
 Expected: both tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/lib.rs crates/pi-coding-agent/tests/api_boundary_guards.rs crates/pi-coding-agent/tests/public_api.rs
@@ -195,7 +195,7 @@ git commit -m "chore: mark root coding-agent facade compatibility"
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
 
-- [ ] **Step 1: Write failing public operation facade test**
+- [x] **Step 1: Write failing public operation facade test**
 
 Add imports to `crates/pi-coding-agent/tests/public_api.rs`:
 
@@ -228,7 +228,7 @@ async fn coding_session_run_public_operation_facade_is_importable() {
 }
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
@@ -238,7 +238,7 @@ cargo test -p pi-coding-agent --test public_api coding_session_run_public_operat
 
 Expected: FAIL because `CodingAgentOperation`, `CodingAgentOperationOutcome`, and `CodingAgentSession::run` do not exist.
 
-- [ ] **Step 3: Add public operation facade types**
+- [x] **Step 3: Add public operation facade types**
 
 Create `crates/pi-coding-agent/src/coding_session/public_operation.rs`:
 
@@ -281,7 +281,7 @@ pub enum CodingAgentOperationOutcome {
 }
 ```
 
-- [ ] **Step 4: Wire module exports**
+- [x] **Step 4: Wire module exports**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, add the module:
 
@@ -301,7 +301,7 @@ In `crates/pi-coding-agent/src/lib.rs`, add these to `pub mod api`:
 CodingAgentOperation, CodingAgentOperationOutcome,
 ```
 
-- [ ] **Step 5: Implement `CodingAgentSession::run`**
+- [x] **Step 5: Implement `CodingAgentSession::run`**
 
 Add this method to the public `impl CodingAgentSession` in `crates/pi-coding-agent/src/coding_session/mod.rs`:
 
@@ -352,7 +352,7 @@ pub async fn run(
 
 This first implementation intentionally delegates to existing public methods so behavior remains unchanged. Later tasks move callers to `run` and deprecate broad methods.
 
-- [ ] **Step 6: Run GREEN test**
+- [x] **Step 6: Run GREEN test**
 
 Run:
 
@@ -362,7 +362,7 @@ cargo test -p pi-coding-agent --test public_api coding_session_run_public_operat
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/public_operation.rs crates/pi-coding-agent/src/lib.rs crates/pi-coding-agent/tests/public_api.rs
@@ -377,7 +377,7 @@ git commit -m "feat: add public coding session operation facade"
 - Modify: `crates/pi-coding-agent/src/lib.rs`
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
 
-- [ ] **Step 1: Write failing snapshot facade test**
+- [x] **Step 1: Write failing snapshot facade test**
 
 Add imports in `crates/pi-coding-agent/tests/public_api.rs`:
 
@@ -406,7 +406,7 @@ async fn coding_session_snapshot_public_facade_is_importable() {
 }
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
@@ -416,7 +416,7 @@ cargo test -p pi-coding-agent --test public_api coding_session_snapshot_public_f
 
 Expected: FAIL because the public snapshot facade does not exist.
 
-- [ ] **Step 3: Add public projection facade types**
+- [x] **Step 3: Add public projection facade types**
 
 Create `crates/pi-coding-agent/src/coding_session/public_projection.rs`:
 
@@ -501,7 +501,7 @@ pub(crate) fn id(&self) -> &ClientConnectionId {
 }
 ```
 
-- [ ] **Step 4: Wire snapshot methods**
+- [x] **Step 4: Wire snapshot methods**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, add:
 
@@ -537,7 +537,7 @@ CodingAgentClientConnection, CodingAgentClientId, CodingAgentSnapshot,
 CodingAgentSnapshotCursor,
 ```
 
-- [ ] **Step 5: Run GREEN test**
+- [x] **Step 5: Run GREEN test**
 
 Run:
 
@@ -547,7 +547,7 @@ cargo test -p pi-coding-agent --test public_api coding_session_snapshot_public_f
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/public_projection.rs crates/pi-coding-agent/src/lib.rs crates/pi-coding-agent/tests/public_api.rs
@@ -564,7 +564,7 @@ git commit -m "feat: add public coding session snapshot facade"
 - Modify: `crates/pi-coding-agent/src/lib.rs`
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
 
-- [ ] **Step 1: Write failing public product-event subscription test**
+- [x] **Step 1: Write failing public product-event subscription test**
 
 Add imports in `crates/pi-coding-agent/tests/public_api.rs`:
 
@@ -603,7 +603,7 @@ async fn public_product_event_receiver_maps_internal_product_events() {
 }
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run:
 
@@ -613,7 +613,7 @@ cargo test -p pi-coding-agent coding_session_product_event_subscription_public_f
 
 Expected: FAIL because public product-event facade types and subscription method do not exist.
 
-- [ ] **Step 3: Add public product event facade type**
+- [x] **Step 3: Add public product event facade type**
 
 In `crates/pi-coding-agent/src/coding_session/public_projection.rs`, add:
 
@@ -663,7 +663,7 @@ impl CodingAgentProductEventReceiver {
 
 Use the existing crate-internal `ProductEvent::kind()` accessor when building the public facade value.
 
-- [ ] **Step 4: Add public subscription method**
+- [x] **Step 4: Add public subscription method**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, add:
 
@@ -675,7 +675,7 @@ pub fn subscribe_product_events_public(&self) -> CodingAgentProductEventReceiver
 
 Add `CodingAgentProductEvent` and `CodingAgentProductEventReceiver` to the public re-export list and `pi_coding_agent::api`.
 
-- [ ] **Step 5: Run GREEN tests**
+- [x] **Step 5: Run GREEN tests**
 
 Run:
 
@@ -686,7 +686,7 @@ cargo test -p pi-coding-agent --test public_api coding_session_public_api_symbol
 
 Expected: both tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/event.rs crates/pi-coding-agent/src/coding_session/event_service.rs crates/pi-coding-agent/src/coding_session/public_projection.rs crates/pi-coding-agent/src/lib.rs crates/pi-coding-agent/tests/public_api.rs
