@@ -27,6 +27,7 @@ mod profiles;
 mod prompt;
 mod prompt_flow;
 mod public_operation;
+mod public_projection;
 mod runtime_service;
 mod self_healing_edit_flow;
 mod self_healing_edit_service;
@@ -67,6 +68,10 @@ pub use prompt::{
     PromptTurnOutcome,
 };
 pub use public_operation::{CodingAgentOperation, CodingAgentOperationOutcome};
+pub use public_projection::{
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentSnapshot,
+    CodingAgentSnapshotCursor,
+};
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
@@ -509,6 +514,16 @@ impl CodingAgentSession {
     pub(crate) fn product_event_replay_handle(&self) -> ProductEventReplayHandle {
         self.emit_pending_startup_recovery_markers();
         ProductEventReplayHandle::new(self.event_service.clone())
+    }
+
+    pub fn snapshot(&self) -> CodingAgentSnapshot {
+        self.ui_snapshot(Vec::new()).into()
+    }
+
+    pub fn connect(&self, id: CodingAgentClientId) -> CodingAgentClientConnection {
+        let internal_id = public_projection::internal_client_id(&id);
+        let (connection, snapshot) = self.connect_client(internal_id, Vec::new());
+        public_projection::public_client_connection(id, connection, snapshot)
     }
 
     #[allow(dead_code)]

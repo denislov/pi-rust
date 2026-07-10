@@ -66,16 +66,18 @@ pub mod api {
     pub use crate::coding_session::{
         AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, AgentTeamMemberOutcome,
         AgentTeamOptions, AgentTeamOutcome, CapabilityRevocationPolicy, CapabilityStatus,
-        CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver, CodingAgentOperation,
+        CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId,
+        CodingAgentEvent, CodingAgentEventReceiver, CodingAgentOperation,
         CodingAgentOperationOutcome, CodingAgentSession, CodingAgentSessionExport,
         CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionSummary,
-        CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError,
-        DelegationConfirmationMode, DelegationPolicy, PendingDelegationConfirmation,
-        ProfileDiagnostic, ProfileId, ProfileKind, ProfileRegistry, ProfileRegistryOptions,
-        ProfileSource, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
-        SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
-        SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
-        SelfHealingEditRequest, SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+        CodingAgentSessionView, CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic,
+        CodingDiagnosticSeverity, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
+        PendingDelegationConfirmation, ProfileDiagnostic, ProfileId, ProfileKind, ProfileRegistry,
+        ProfileRegistryOptions, ProfileSource, PromptTurnMode, PromptTurnOptions,
+        PromptTurnOutcome, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
+        SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+        SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
+        TeamStrategy, TeamSupervisor,
     };
     pub use crate::error::CliError;
     pub use crate::models::{ModelRotation, ModelRotationEntry, parse_model_rotation};

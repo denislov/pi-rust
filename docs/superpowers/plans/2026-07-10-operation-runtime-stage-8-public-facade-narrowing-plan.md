@@ -395,13 +395,14 @@ async fn coding_session_snapshot_public_facade_is_importable() {
         .unwrap();
 
     let snapshot: CodingAgentSnapshot = session.snapshot();
-    assert_eq!(snapshot.session.session_id, "in-memory");
+    let session_id = snapshot.session.session_id.clone();
+    assert!(session_id.starts_with("runtime_sess_"));
     assert_eq!(snapshot.cursor.last_event_sequence, 0);
 
     let client_id = CodingAgentClientId::new("public-client");
     let connected = session.connect(client_id.clone());
     assert_eq!(connected.client_id, client_id);
-    assert_eq!(connected.snapshot.session.session_id, "in-memory");
+    assert_eq!(connected.snapshot.session.session_id, session_id);
 }
 ```
 

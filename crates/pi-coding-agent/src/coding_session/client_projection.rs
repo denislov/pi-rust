@@ -102,6 +102,10 @@ impl ClientConnection {
         }
     }
 
+    pub(crate) fn id(&self) -> &ClientConnectionId {
+        &self.id
+    }
+
     pub(crate) fn mark_submitted(&mut self, submitted: SubmittedOperation) {
         if submitted.kind == OperationKind::Prompt {
             self.client_drafts

@@ -7,10 +7,11 @@ use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
     CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
-    CliRunOptions, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
-    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentSession,
-    CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
-    CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity,
+    CliRunOptions, CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId,
+    CodingAgentEvent, CodingAgentEventReceiver, CodingAgentOperation, CodingAgentOperationOutcome,
+    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
+    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
+    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic, CodingDiagnosticSeverity,
     CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
     DetectionConfidence, DetectionSource, ModelRotation, ModelRotationEntry,
     PendingDelegationConfirmation, PrintModeOptions, ProfileId, PromptInvocation, PromptRunOptions,
@@ -137,6 +138,24 @@ async fn coding_session_run_public_operation_facade_is_importable() {
         .unwrap();
 
     assert!(matches!(outcome, CodingAgentOperationOutcome::Export(_)));
+}
+
+#[tokio::test]
+async fn coding_session_snapshot_public_facade_is_importable() {
+    let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+
+    let snapshot: CodingAgentSnapshot = session.snapshot();
+    let session_id = snapshot.session.session_id.clone();
+    assert!(session_id.starts_with("runtime_sess_"));
+    assert_eq!(snapshot.cursor.last_event_sequence, 0);
+    let _cursor_type_name = std::any::type_name::<CodingAgentSnapshotCursor>();
+
+    let client_id = CodingAgentClientId::new("public-client");
+    let connected: CodingAgentClientConnection = session.connect(client_id.clone());
+    assert_eq!(connected.client_id, client_id);
+    assert_eq!(connected.snapshot.session.session_id, session_id);
 }
 
 #[test]
