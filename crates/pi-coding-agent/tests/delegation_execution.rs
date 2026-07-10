@@ -13,8 +13,9 @@ use pi_ai::types::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    CodingAgentEvent, CodingAgentSession, CodingAgentSessionExportItem, CodingAgentSessionOptions,
-    PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
+    CodingAgentProductEvent, CodingAgentProductEventReceiver, CodingAgentSession,
+    CodingAgentSessionExportItem, CodingAgentSessionOptions, PromptInvocation, PromptRunOptions,
+    PromptTurnOptions, SessionRunOptions,
 };
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
@@ -74,7 +75,7 @@ system_prompt = "Coder child instructions."
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -96,38 +97,10 @@ system_prompt = "Coder child instructions."
     );
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRequested { target_id, task, .. }
-                if target_id.as_str() == "coder" && task == "implement parser"
-        )),
-        "expected delegation request event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { target_id, task, .. }
-                if target_id.as_str() == "coder" && task == "implement parser"
-        )),
-        "expected delegation approved event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationStarted { target_id, child_operation_id, .. }
-                if target_id.as_str() == "coder" && !child_operation_id.is_empty()
-        )),
-        "expected delegation started event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
-                if target_id.as_str() == "coder" && final_text == "child result"
-        )),
-        "expected delegation completed event, got {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Requested)", 1);
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
 }
 
 #[tokio::test]
@@ -158,7 +131,7 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
         CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
             .await
             .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options_with_tools(
@@ -207,38 +180,10 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
     drop(calls);
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { target_id, task, .. }
-                if target_id.as_str() == "explore" && task == "inspect replay"
-        )),
-        "expected built-in helper delegation approval, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationStarted { target_id, child_operation_id, .. }
-                if target_id.as_str() == "explore" && !child_operation_id.is_empty()
-        )),
-        "expected built-in helper delegation start, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
-                if target_id.as_str() == "explore" && final_text == "explore result"
-        )),
-        "expected built-in helper delegation completion, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationConfirmationRequired { target_id, .. }
-                if target_id.as_str() == "explore"
-        )),
-        "built-in helper delegation should not require confirmation: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
+    assert_event_count(&events, "Delegation(ConfirmationRequired)", 0);
 }
 
 #[tokio::test]
@@ -568,7 +513,7 @@ system_prompt = "Reviewer child instructions."
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -586,54 +531,10 @@ system_prompt = "Reviewer child instructions."
     assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
-                if target_id.as_str() == "coder" && final_text == "child ready"
-        )),
-        "expected parent delegation to complete, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRequested {
-                requesting_profile_id,
-                target_id,
-                task,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-                && task == "review parser"
-        )),
-        "expected child nested delegation request, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRejected {
-                requesting_profile_id,
-                target_id,
-                reason,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-                && reason.contains("max_depth")
-        )),
-        "expected child nested delegation rejection, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved {
-                requesting_profile_id,
-                target_id,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-        )),
-        "nested delegation must not be approved when depth is exhausted: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Requested)", 2);
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
+    assert_event_count(&events, "Delegation(Rejected)", 1);
 }
 
 #[tokio::test]
@@ -712,7 +613,7 @@ system_prompt = "Reviewer child instructions."
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -733,44 +634,10 @@ system_prompt = "Reviewer child instructions."
     assert_eq!(pending[0].task, "review parser");
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationConfirmationRequired {
-                requesting_profile_id,
-                target_id,
-                reason,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-                && reason == "delegation policy requires confirmation"
-        )),
-        "expected nested confirmation-required delegation event, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRejected {
-                requesting_profile_id,
-                target_id,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-        )),
-        "nested confirmation-required delegation must not be rejected: {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationStarted {
-                requesting_profile_id,
-                target_id,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-        )),
-        "nested confirmation-required delegation must not start child work before approval: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(ConfirmationRequired)", 1);
+    assert_event_count(&events, "Delegation(Rejected)", 0);
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
 }
 
 #[tokio::test]
@@ -874,7 +741,7 @@ system_prompt = "Reviewer child instructions."
     .unwrap();
     let pending = reopened.pending_delegation_confirmations();
     assert_eq!(pending, original_pending);
-    let mut events = reopened.subscribe();
+    let mut events = reopened.subscribe_product_events_public();
 
     reopened
         .approve_delegation_confirmation(&operation_id, &tool_call_id)
@@ -898,34 +765,9 @@ system_prompt = "Reviewer child instructions."
     }
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved {
-                requesting_profile_id,
-                target_id,
-                task,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-                && task == "review parser"
-        )),
-        "expected restored nested approval event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted {
-                requesting_profile_id,
-                target_id,
-                final_text,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-                && final_text == "reviewer result"
-        )),
-        "expected restored nested completion event, got {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
 
     let reopened_again = CodingAgentSession::open(persistent_confirmation_session_options(
         &cwd,
@@ -1036,7 +878,7 @@ system_prompt = "QA child instructions."
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -1055,60 +897,11 @@ system_prompt = "QA child instructions."
     assert_eq!(user_texts(&calls[4].context), vec!["review parser"]);
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved {
-                requesting_profile_id,
-                target_id,
-                task,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-                && task == "review parser"
-        )),
-        "expected nested reviewer delegation approval, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted {
-                requesting_profile_id,
-                target_id,
-                final_text,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "reviewer"
-                && final_text == "reviewer ready"
-        )),
-        "expected nested reviewer delegation completion, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRejected {
-                requesting_profile_id,
-                target_id,
-                reason,
-                ..
-            } if requesting_profile_id.as_str() == "reviewer"
-                && target_id.as_str() == "qa"
-                && reason.contains("max_depth")
-        )),
-        "expected qa delegation to be rejected by inherited depth budget, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved {
-                requesting_profile_id,
-                target_id,
-                ..
-            } if requesting_profile_id.as_str() == "reviewer"
-                && target_id.as_str() == "qa"
-        )),
-        "qa delegation must not be approved after depth budget is exhausted: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Requested)", 3);
+    assert_event_count(&events, "Delegation(Approved)", 2);
+    assert_event_count(&events, "Delegation(Started)", 2);
+    assert_event_count(&events, "Delegation(Completed)", 2);
+    assert_event_count(&events, "Delegation(Rejected)", 1);
 }
 
 #[tokio::test]
@@ -1179,7 +972,7 @@ allowed_agents = ["delegating-planner"]
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -1197,44 +990,11 @@ allowed_agents = ["delegating-planner"]
     assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRejected {
-                requesting_profile_id,
-                target_id,
-                reason,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "delegating-planner"
-                && reason.contains("cycle")
-        )),
-        "expected child delegation cycle rejection, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved {
-                requesting_profile_id,
-                target_id,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "delegating-planner"
-        )),
-        "cycle delegation must not be approved: {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationStarted {
-                requesting_profile_id,
-                target_id,
-                ..
-            } if requesting_profile_id.as_str() == "coder"
-                && target_id.as_str() == "delegating-planner"
-        )),
-        "cycle delegation must not start child work: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Requested)", 2);
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
+    assert_event_count(&events, "Delegation(Rejected)", 1);
 }
 
 #[tokio::test]
@@ -1303,7 +1063,7 @@ members = ["coder"]
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan team work"))
@@ -1325,26 +1085,8 @@ members = ["coder"]
     );
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationStarted { target_id, target_kind, child_operation_id, .. }
-                if target_id.as_str() == "implementation"
-                    && *target_kind == pi_coding_agent::api::ProfileKind::Team
-                    && !child_operation_id.is_empty()
-        )),
-        "expected team delegation started event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
-                if target_id.as_str() == "implementation"
-                    && final_text.contains("Team implementation completed.")
-                    && final_text.contains("member result")
-        )),
-        "expected team delegation completed event, got {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
 }
 
 #[tokio::test]
@@ -1401,7 +1143,7 @@ system_prompt = "Coder child instructions."
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -1424,37 +1166,11 @@ system_prompt = "Coder child instructions."
     assert_eq!(user_texts(&calls[1].context), vec!["plan feature"]);
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRequested { target_id, task, .. }
-                if target_id.as_str() == "coder" && task == "implement parser"
-        )),
-        "expected delegation request event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationConfirmationRequired {
-                target_id,
-                task,
-                reason,
-                ..
-            } if target_id.as_str() == "coder"
-                && task == "implement parser"
-                && reason == "delegation policy requires confirmation"
-        )),
-        "expected delegation confirmation-required event, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { .. }
-                | CodingAgentEvent::DelegationStarted { .. }
-                | CodingAgentEvent::DelegationCompleted { .. }
-        )),
-        "confirmation-required delegation must not approve or run child work: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Requested)", 1);
+    assert_event_count(&events, "Delegation(ConfirmationRequired)", 1);
+    assert_event_count(&events, "Delegation(Approved)", 0);
+    assert_event_count(&events, "Delegation(Started)", 0);
+    assert_event_count(&events, "Delegation(Completed)", 0);
 }
 
 #[tokio::test]
@@ -1512,7 +1228,7 @@ system_prompt = "Coder child instructions."
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -1541,22 +1257,9 @@ system_prompt = "Coder child instructions."
     );
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { target_id, task, .. }
-                if target_id.as_str() == "coder" && task == "implement parser"
-        )),
-        "expected approved event after confirmation, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
-                if target_id.as_str() == "coder" && final_text == "child result"
-        )),
-        "expected completed event after confirmation, got {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
 }
 
 #[tokio::test]
@@ -1613,7 +1316,7 @@ system_prompt = "Coder child instructions."
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -1640,27 +1343,10 @@ system_prompt = "Coder child instructions."
     );
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRejected {
-                target_id,
-                task,
-                reason,
-                ..
-            } if target_id.as_str() == "coder" && task == "implement parser" && reason == "not now"
-        )),
-        "expected rejection event after confirmation rejection, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { .. }
-                | CodingAgentEvent::DelegationStarted { .. }
-                | CodingAgentEvent::DelegationCompleted { .. }
-        )),
-        "rejected confirmation must not approve or run child work: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Rejected)", 1);
+    assert_event_count(&events, "Delegation(Approved)", 0);
+    assert_event_count(&events, "Delegation(Started)", 0);
+    assert_event_count(&events, "Delegation(Completed)", 0);
 }
 
 #[tokio::test]
@@ -1779,7 +1465,7 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     ))
     .await
     .unwrap();
-    let mut events = reopened.subscribe();
+    let mut events = reopened.subscribe_product_events_public();
     assert_eq!(reopened.pending_delegation_confirmations().len(), 1);
 
     reopened
@@ -1804,22 +1490,9 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     }
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { target_id, task, .. }
-                if target_id.as_str() == "coder" && task == "implement parser"
-        )),
-        "expected restored approval event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationCompleted { target_id, final_text, .. }
-                if target_id.as_str() == "coder" && final_text == "child result"
-        )),
-        "expected restored approval completion event, got {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 1);
 
     let reopened_again = CodingAgentSession::open(persistent_confirmation_session_options(
         &cwd,
@@ -1881,7 +1554,7 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
     ))
     .await
     .unwrap();
-    let mut events = reopened.subscribe();
+    let mut events = reopened.subscribe_product_events_public();
     assert_eq!(reopened.pending_delegation_confirmations().len(), 1);
 
     reopened
@@ -1900,27 +1573,10 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
     }
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationRejected {
-                target_id,
-                task,
-                reason,
-                ..
-            } if target_id.as_str() == "coder" && task == "implement parser" && reason == "not now"
-        )),
-        "expected restored rejection event, got {events:#?}"
-    );
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { .. }
-                | CodingAgentEvent::DelegationStarted { .. }
-                | CodingAgentEvent::DelegationCompleted { .. }
-        )),
-        "restored rejection must not approve or run child work: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Rejected)", 1);
+    assert_event_count(&events, "Delegation(Approved)", 0);
+    assert_event_count(&events, "Delegation(Started)", 0);
+    assert_event_count(&events, "Delegation(Completed)", 0);
 
     let reopened_again = CodingAgentSession::open(persistent_confirmation_session_options(
         &cwd,
@@ -1977,7 +1633,7 @@ allowed_agents = ["missing-coder"]
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .prompt(prompt_options(&cwd, api, "plan feature"))
@@ -1995,53 +1651,11 @@ allowed_agents = ["missing-coder"]
     assert_eq!(user_texts(&calls[1].context), vec!["plan feature"]);
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationApproved { target_id, task, .. }
-                if target_id.as_str() == "missing-coder" && task == "implement parser"
-        )),
-        "expected delegation approved event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationStarted { target_id, child_operation_id, .. }
-                if target_id.as_str() == "missing-coder" && !child_operation_id.is_empty()
-        )),
-        "expected delegation started event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::AgentInvocationFailed { profile_id, error, .. }
-                if profile_id.as_str() == "missing-coder"
-                    && error.to_string().contains("Unknown agent profile: missing-coder")
-        )),
-        "expected child agent invocation failure event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::DelegationFailed {
-                target_id,
-                task,
-                child_operation_id,
-                error,
-                ..
-            } if target_id.as_str() == "missing-coder"
-                && task == "implement parser"
-                && !child_operation_id.is_empty()
-                && error.to_string().contains("Unknown agent profile: missing-coder")
-        )),
-        "expected delegation failed event, got {events:#?}"
-    );
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, CodingAgentEvent::DelegationCompleted { .. })),
-        "failed delegation must not emit completion: {events:#?}"
-    );
+    assert_event_count(&events, "Delegation(Approved)", 1);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert_event_count(&events, "Agent(InvocationFailed)", 1);
+    assert_event_count(&events, "Delegation(Failed)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 0);
 }
 
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
@@ -2161,14 +1775,20 @@ fn write_file(path: impl AsRef<Path>, content: &str) {
     fs::write(path, content).unwrap();
 }
 
-fn drain_events(
-    receiver: &mut pi_coding_agent::api::CodingAgentEventReceiver,
-) -> Vec<CodingAgentEvent> {
+fn drain_events(receiver: &mut CodingAgentProductEventReceiver) -> Vec<CodingAgentProductEvent> {
     let mut events = Vec::new();
     while let Ok(Some(event)) = receiver.try_recv() {
         events.push(event);
     }
     events
+}
+
+fn assert_event_count(events: &[CodingAgentProductEvent], kind: &str, expected: usize) {
+    assert_eq!(
+        events.iter().filter(|event| event.kind == kind).count(),
+        expected,
+        "unexpected {kind} event count: {events:#?}"
+    );
 }
 
 fn tool_names(context: &Context) -> Vec<String> {

@@ -697,15 +697,17 @@ git commit -m "feat: expose public product event facade"
 
 **Files:**
 - Modify: `crates/pi-coding-agent/tests/agent_invocation.rs`
+- Modify: `crates/pi-coding-agent/tests/agent_profile_session.rs`
 - Modify: `crates/pi-coding-agent/tests/agent_team_flow.rs`
 - Modify: `crates/pi-coding-agent/tests/delegation_execution.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs` tests
 - Modify: `crates/pi-coding-agent/tests/event_boundary_guards.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/json_mode.rs` tests
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/commands.rs`
 - Modify: `crates/pi-coding-agent/src/protocol/rpc/prompt.rs`
 - Modify: `crates/pi-coding-agent/src/interactive/prompt_task.rs`
 
-- [ ] **Step 1: Add failing source guard against first-party compatibility subscriptions**
+- [x] **Step 1: Add failing source guard against first-party compatibility subscriptions**
 
 Add this test to `crates/pi-coding-agent/tests/event_boundary_guards.rs`:
 
@@ -792,7 +794,7 @@ fn collect_source_violations(
 }
 ```
 
-- [ ] **Step 2: Run RED guard**
+- [x] **Step 2: Run RED guard**
 
 Run:
 
@@ -802,7 +804,7 @@ cargo test -p pi-coding-agent --test event_boundary_guards first_party_code_does
 
 Expected: FAIL and list existing `.subscribe()` or `CodingAgentEventReceiver` usages.
 
-- [ ] **Step 3: Replace integration-test compatibility receiver helpers**
+- [x] **Step 3: Replace integration-test compatibility receiver helpers**
 
 For tests that only wait for product-visible lifecycle events, replace:
 
@@ -830,7 +832,7 @@ receiver: &mut pi_coding_agent::api::CodingAgentProductEventReceiver,
 
 Update assertions to inspect public product-event `family` and `kind` strings first. Keep payload-specific compatibility-event assertions only in focused compatibility tests.
 
-- [ ] **Step 4: Keep adapter production paths on internal ProductEvent**
+- [x] **Step 4: Keep adapter production paths on internal ProductEvent**
 
 Verify production adapter files already use internal `ProductEvent` paths:
 
@@ -840,7 +842,12 @@ rg -n "\\.subscribe\\(\\)|CodingAgentEventReceiver" crates/pi-coding-agent/src/p
 
 Expected after edits: no matches, except comments in boundary tests.
 
-- [ ] **Step 5: Run GREEN migration checks**
+The RED scan also found compatibility usage in `agent_profile_session.rs` and a split-string
+compatibility assertion in the `json_mode.rs` unit tests. The profile test now consumes the
+public product-event facade, while the JSON-mode assertion still checks the same forbidden source
+pattern without embedding it as a guard violation itself.
+
+- [x] **Step 5: Run GREEN migration checks**
 
 Run:
 
@@ -853,10 +860,10 @@ cargo test -p pi-coding-agent --test event_boundary_guards first_party_code_does
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add crates/pi-coding-agent/tests/agent_invocation.rs crates/pi-coding-agent/tests/agent_team_flow.rs crates/pi-coding-agent/tests/delegation_execution.rs crates/pi-coding-agent/tests/event_boundary_guards.rs
+git add crates/pi-coding-agent/src/protocol/json_mode.rs crates/pi-coding-agent/tests/agent_invocation.rs crates/pi-coding-agent/tests/agent_profile_session.rs crates/pi-coding-agent/tests/agent_team_flow.rs crates/pi-coding-agent/tests/delegation_execution.rs crates/pi-coding-agent/tests/event_boundary_guards.rs docs/TODO.md docs/superpowers/plans/2026-07-10-operation-runtime-stage-8-public-facade-narrowing-plan.md
 git commit -m "test: migrate first-party event subscriptions"
 ```
 

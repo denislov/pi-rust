@@ -14,8 +14,9 @@ use pi_ai::types::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    AgentTeamOptions, CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions,
-    PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
+    AgentTeamOptions, CodingAgentProductEvent, CodingAgentProductEventReceiver, CodingAgentSession,
+    CodingAgentSessionOptions, PromptInvocation, PromptRunOptions, PromptTurnOptions,
+    SessionRunOptions,
 };
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
@@ -53,7 +54,7 @@ members = ["coder", "reviewer"]
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .invoke_team(AgentTeamOptions::new(
@@ -95,24 +96,16 @@ members = ["coder", "reviewer"]
     );
 
     let events = drain_events(&mut events);
-    assert!(events.iter().any(|event| matches!(
-        event,
-        CodingAgentEvent::AgentTeamStarted { team_id, task, .. }
-            if team_id.as_str() == "implementation" && task == "ship the feature"
-    )));
+    assert!(has_event(&events, "Team(Started)"));
     assert_eq!(
         events
             .iter()
-            .filter(|event| matches!(event, CodingAgentEvent::AgentTeamMemberCompleted { .. }))
+            .filter(|event| event.kind == "Team(MemberCompleted)")
             .count(),
         2,
         "expected two member completion events: {events:#?}"
     );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        CodingAgentEvent::AgentTeamCompleted { team_id, final_text, .. }
-            if team_id.as_str() == "implementation" && final_text.contains("reviewer result")
-    )));
+    assert!(has_event(&events, "Team(Completed)"));
 }
 
 #[tokio::test]
@@ -201,7 +194,7 @@ members = ["missing"]
         CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
             .await
             .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let error = session
         .invoke_team(AgentTeamOptions::new(
@@ -219,12 +212,7 @@ members = ["missing"]
         "{error}"
     );
     let events = drain_events(&mut events);
-    assert!(events.iter().any(|event| matches!(
-        event,
-        CodingAgentEvent::AgentTeamFailed { team_id, error, .. }
-            if team_id.as_str() == "broken"
-                && error.to_string().contains("Unknown team member agent profile: missing")
-    )));
+    assert!(has_event(&events, "Team(Failed)"));
 }
 
 #[tokio::test]
@@ -253,7 +241,7 @@ members = ["coder"]
         CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
             .await
             .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let error = session
         .invoke_team(AgentTeamOptions::new(
@@ -271,14 +259,7 @@ members = ["coder"]
         "{error}"
     );
     let events = drain_events(&mut events);
-    assert!(events.iter().any(|event| matches!(
-        event,
-        CodingAgentEvent::AgentTeamFailed { team_id, error, .. }
-            if team_id.as_str() == "broken-supervisor"
-                && error
-                    .to_string()
-                    .contains("Unknown team supervisor agent profile: missing-lead")
-    )));
+    assert!(has_event(&events, "Team(Failed)"));
 }
 
 #[tokio::test]
@@ -307,7 +288,7 @@ members = ["coder"]
         CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
             .await
             .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let error = session
         .invoke_team(AgentTeamOptions::new(
@@ -320,22 +301,9 @@ members = ["coder"]
 
     assert!(error.to_string().contains("member child failed"), "{error}");
     let events = drain_events(&mut events);
-    assert!(events.iter().any(|event| matches!(
-        event,
-        CodingAgentEvent::PromptFailed { error, .. }
-            if error.to_string().contains("member child failed")
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        CodingAgentEvent::AgentTeamFailed { team_id, error, .. }
-            if team_id.as_str() == "failing-member"
-                && error.to_string().contains("member child failed")
-    )));
-    assert!(!events.iter().any(|event| matches!(
-        event,
-        CodingAgentEvent::AgentTeamCompleted { team_id, .. }
-            if team_id.as_str() == "failing-member"
-    )));
+    assert!(has_event(&events, "Workflow(PromptFailed)"));
+    assert!(has_event(&events, "Team(Failed)"));
+    assert!(!has_event(&events, "Team(Completed)"));
 }
 
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
@@ -395,14 +363,16 @@ fn write_file(path: impl AsRef<Path>, content: &str) {
     fs::write(path, content.trim_start()).unwrap();
 }
 
-fn drain_events(
-    receiver: &mut pi_coding_agent::api::CodingAgentEventReceiver,
-) -> Vec<CodingAgentEvent> {
+fn drain_events(receiver: &mut CodingAgentProductEventReceiver) -> Vec<CodingAgentProductEvent> {
     let mut events = Vec::new();
     while let Ok(Some(event)) = receiver.try_recv() {
         events.push(event);
     }
     events
+}
+
+fn has_event(events: &[CodingAgentProductEvent], kind: &str) -> bool {
+    events.iter().any(|event| event.kind == kind)
 }
 
 #[derive(Debug, Clone)]

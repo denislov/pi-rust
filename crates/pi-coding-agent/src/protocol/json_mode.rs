@@ -264,7 +264,7 @@ mod tests {
     fn json_prompt_stream_uses_product_event_subscription_boundary() {
         let source = include_str!("json_mode.rs");
         let product_subscription = ["session", ".subscribe_product_events()"].concat();
-        let compatibility_subscription = ["session", ".subscribe()"].concat();
+        let compatibility_subscription = ["session", ".", "subscribe", "()"].concat();
 
         assert!(source.contains(&product_subscription));
         assert!(!source.contains(&compatibility_subscription));

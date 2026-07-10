@@ -229,6 +229,83 @@ fn workspace_path(relative: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn first_party_code_does_not_consume_compatibility_event_subscription() {
+    let scan_roots = [
+        "crates/pi-coding-agent/src/protocol",
+        "crates/pi-coding-agent/src/interactive",
+        "crates/pi-coding-agent/tests",
+    ];
+    let repo_root = workspace_path("");
+    let allowed = [
+        "crates/pi-coding-agent/tests/public_api.rs",
+        "crates/pi-coding-agent/tests/event_boundary_guards.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for root in scan_roots {
+        collect_source_violations(
+            &repo_root,
+            &repo_root.join(root),
+            &allowed,
+            &mut violations,
+            |line| line.contains(".subscribe()") || line.contains("CodingAgentEventReceiver"),
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "first-party code should consume ProductEvent or public product-event facades instead of compatibility CodingAgentEventReceiver:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn collect_source_violations(
+    repo_root: &std::path::Path,
+    path: &std::path::Path,
+    allowed_files: &[&str],
+    violations: &mut Vec<String>,
+    is_violation: impl Copy + Fn(&str) -> bool,
+) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return;
+    };
+    if metadata.is_dir() {
+        let mut entries = std::fs::read_dir(path)
+            .expect("read source directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read source entries");
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries {
+            collect_source_violations(
+                repo_root,
+                &entry.path(),
+                allowed_files,
+                violations,
+                is_violation,
+            );
+        }
+        return;
+    }
+    if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+        return;
+    }
+    let relative = path
+        .strip_prefix(repo_root)
+        .expect("scanned file should be under repo root")
+        .to_string_lossy()
+        .replace('\\', "/");
+    if allowed_files.contains(&relative.as_str()) {
+        return;
+    }
+    let content = std::fs::read_to_string(path).expect("read source file");
+    for (line_index, line) in content.lines().enumerate() {
+        if is_violation(line) {
+            violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
+        }
+    }
+}
+
+#[test]
 fn rpc_protocol_exposes_optional_version_negotiation_state() {
     let types_rs = std::fs::read_to_string(workspace_path(
         "crates/pi-coding-agent/src/protocol/types.rs",

@@ -1,6 +1,4 @@
-use pi_coding_agent::api::{
-    CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, ProfileId,
-};
+use pi_coding_agent::api::{CodingAgentSession, CodingAgentSessionOptions, ProfileId};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -38,7 +36,7 @@ async fn set_default_agent_profile_updates_manifest_and_emits_event() {
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     assert_eq!(
         session.view().default_agent_profile_id,
@@ -50,11 +48,12 @@ async fn set_default_agent_profile_updates_manifest_and_emits_event() {
     assert_eq!(session.view().default_agent_profile_id.as_str(), "reviewer");
     let manifest = read_manifest(temp.path(), "sess_profile_switch");
     assert_eq!(manifest["default_agent_profile_id"], "reviewer");
-    assert!(matches!(
-        events.try_recv().unwrap(),
-        Some(CodingAgentEvent::DefaultAgentProfileChanged { profile_id, .. })
-            if profile_id.as_str() == "reviewer"
-    ));
+    let event = events
+        .try_recv()
+        .unwrap()
+        .expect("profile change should emit a public product event");
+    assert_eq!(event.family, "Profile");
+    assert_eq!(event.kind, "Profile(DefaultChanged)");
 }
 
 fn read_manifest(root: &std::path::Path, session_id: &str) -> serde_json::Value {

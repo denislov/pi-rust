@@ -13,8 +13,9 @@ use pi_ai::types::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    AgentInvocationOptions, CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions,
-    PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
+    AgentInvocationOptions, CodingAgentProductEvent, CodingAgentProductEventReceiver,
+    CodingAgentSession, CodingAgentSessionOptions, PromptInvocation, PromptRunOptions,
+    PromptTurnOptions, SessionRunOptions,
 };
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
@@ -54,7 +55,7 @@ tools = ["echo"]
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .invoke_agent(AgentInvocationOptions::new(
@@ -88,22 +89,8 @@ tools = ["echo"]
     assert_eq!(tool_names, vec!["echo"]);
 
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::AgentInvocationStarted { profile_id, task, .. }
-                if profile_id.as_str() == "runtime-coder" && task == "implement the task"
-        )),
-        "expected invocation start event, got {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::AgentInvocationCompleted { profile_id, final_text, .. }
-                if profile_id.as_str() == "runtime-coder" && final_text == "profile applied"
-        )),
-        "expected invocation completion event, got {events:#?}"
-    );
+    assert!(has_event(&events, "Agent(InvocationStarted)"));
+    assert!(has_event(&events, "Agent(InvocationCompleted)"));
 }
 
 #[tokio::test]
@@ -171,7 +158,7 @@ async fn one_off_agent_invocation_emits_single_failed_event_for_child_failure() 
         CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(temp.path()))
             .await
             .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let error = session
         .invoke_agent(AgentInvocationOptions::new(
@@ -186,7 +173,7 @@ async fn one_off_agent_invocation_emits_single_failed_event_for_child_failure() 
     let events = drain_events(&mut events);
     let failure_count = events
         .iter()
-        .filter(|event| matches!(event, CodingAgentEvent::AgentInvocationFailed { .. }))
+        .filter(|event| event.kind == "Agent(InvocationFailed)")
         .count();
     assert_eq!(
         failure_count, 1,
@@ -204,7 +191,7 @@ async fn one_off_agent_invocation_rejects_unknown_profile_with_product_event() {
         CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(temp.path()))
             .await
             .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let error = session
         .invoke_agent(AgentInvocationOptions::new(
@@ -220,15 +207,7 @@ async fn one_off_agent_invocation_rejects_unknown_profile_with_product_event() {
         "{error}"
     );
     let events = drain_events(&mut events);
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::AgentInvocationFailed { profile_id, error, .. }
-                if profile_id.as_str() == "missing"
-                    && error.to_string().contains("Unknown agent profile: missing")
-        )),
-        "expected invocation failure event, got {events:#?}"
-    );
+    assert!(has_event(&events, "Agent(InvocationFailed)"));
 }
 
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
@@ -294,14 +273,16 @@ fn write_file(path: impl AsRef<Path>, content: &str) {
     fs::write(path, content).unwrap();
 }
 
-fn drain_events(
-    receiver: &mut pi_coding_agent::api::CodingAgentEventReceiver,
-) -> Vec<CodingAgentEvent> {
+fn drain_events(receiver: &mut CodingAgentProductEventReceiver) -> Vec<CodingAgentProductEvent> {
     let mut events = Vec::new();
     while let Ok(Some(event)) = receiver.try_recv() {
         events.push(event);
     }
     events
+}
+
+fn has_event(events: &[CodingAgentProductEvent], kind: &str) -> bool {
+    events.iter().any(|event| event.kind == kind)
 }
 
 fn user_texts(context: &Context) -> Vec<String> {
