@@ -82,7 +82,7 @@
 - Modify: `crates/pi-coding-agent/src/lib.rs`
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
 
-- [ ] **Step 1: Write the failing public contract test**
+- [x] **Step 1: Write the failing public contract test**
 
 Add imports in `crates/pi-coding-agent/tests/public_api.rs`:
 
@@ -136,7 +136,7 @@ fn canonical_operation_runtime_variants_are_public() {
 }
 ```
 
-- [ ] **Step 2: Run the RED public API test**
+- [x] **Step 2: Run the RED public API test**
 
 Run:
 
@@ -146,7 +146,7 @@ cargo test -p pi-coding-agent --test public_api canonical_operation_runtime_vari
 
 Expected: FAIL because the Stage 9 variants and support types are not exported.
 
-- [ ] **Step 3: Define the complete public request and outcome types**
+- [x] **Step 3: Define the complete public request and outcome types**
 
 Replace the enum definitions in `public_operation.rs` with:
 
@@ -221,15 +221,15 @@ pub enum CodingAgentOperationOutcome {
 
 Import `ProfileId` and retain the existing option/outcome imports.
 
-- [ ] **Step 4: Re-export the support types**
+- [x] **Step 4: Re-export the support types**
 
 In `coding_session/mod.rs` re-export all five public operation types. In `lib.rs`, add them to `pi_coding_agent::api`.
 
-- [ ] **Step 5: Run the GREEN public contract test**
+- [x] **Step 5: Run the GREEN public contract test**
 
 Run the command from Step 2. Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/pi-coding-agent/src/coding_session/public_operation.rs crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/lib.rs crates/pi-coding-agent/tests/public_api.rs

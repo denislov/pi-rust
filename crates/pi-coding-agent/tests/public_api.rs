@@ -6,9 +6,10 @@ use pi_agent_core::AgentResources;
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
-    CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
-    CliRunOptions, CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId,
-    CodingAgentEvent, CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentProductEvent,
+    BranchSummaryReusePolicy, CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity,
+    CliError, CliOutput, CliRunOptions, CodingAgentCapabilities, CodingAgentClientConnection,
+    CodingAgentClientId, CodingAgentEvent, CodingAgentOperation, CodingAgentOperationOutcome,
+    CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome, CodingAgentProductEvent,
     CodingAgentProductEventReceiver, CodingAgentSession, CodingAgentSessionExport,
     CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionSummary,
     CodingAgentSessionView, CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic,
@@ -120,6 +121,45 @@ fn public_api_tests_use_stable_facade_imports() {
             .any(|line| line.trim_start().starts_with(&forbidden_import)),
         "public API tests should import stable symbols through pi_coding_agent::api"
     );
+}
+
+#[test]
+fn canonical_operation_runtime_variants_are_public() {
+    let _ = CodingAgentOperation::PluginLoad;
+    let _ = CodingAgentOperation::PluginCommand {
+        command_id: "plugin.command".into(),
+        args: serde_json::json!({"value": 1}),
+    };
+    let _ = CodingAgentOperation::SetDefaultAgentProfile {
+        profile_id: ProfileId::from("reviewer"),
+    };
+    let _ = CodingAgentOperation::ApproveDelegation {
+        operation_id: "op_parent".into(),
+        tool_call_id: "tool_delegate".into(),
+    };
+    let _ = CodingAgentOperation::RejectDelegation {
+        operation_id: "op_parent".into(),
+        tool_call_id: "tool_delegate".into(),
+        reason: "not now".into(),
+    };
+    let _ = CodingAgentOperation::ForkSession {
+        target_leaf_id: Some("leaf_target".into()),
+    };
+    let _ = CodingAgentOperation::SwitchActiveLeaf {
+        target_leaf_id: "leaf_target".into(),
+    };
+    let _ = BranchSummaryReusePolicy::ReuseExisting;
+    let _ = CodingAgentPluginLoadOutcome {
+        loaded_plugin_ids: vec!["sample".into()],
+        diagnostics: vec![CodingAgentPluginDiagnostic {
+            plugin_id: Some("sample".into()),
+            message: "loaded".into(),
+        }],
+        capability_changed: true,
+    };
+    let _ = CodingAgentOperationOutcome::DelegationApproved;
+    let _ = CodingAgentOperationOutcome::SessionForked;
+    let _ = CodingAgentOperationOutcome::ActiveLeafSwitched;
 }
 
 #[tokio::test]

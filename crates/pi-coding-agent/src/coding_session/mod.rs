@@ -67,7 +67,10 @@ pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
 };
-pub use public_operation::{CodingAgentOperation, CodingAgentOperationOutcome};
+pub use public_operation::{
+    BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
+    CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome,
+};
 pub use public_projection::{
     CodingAgentClientConnection, CodingAgentClientId, CodingAgentProductEvent,
     CodingAgentProductEventReceiver, CodingAgentSnapshot, CodingAgentSnapshotCursor,
@@ -234,6 +237,7 @@ impl CodingAgentSession {
                 source_leaf_id,
                 target_leaf_id,
                 custom_instructions,
+                reuse: _,
             } => self
                 .summarize_branch(options, source_leaf_id, target_leaf_id, custom_instructions)
                 .await
@@ -250,6 +254,17 @@ impl CodingAgentSession {
                 .invoke_team(options)
                 .await
                 .map(CodingAgentOperationOutcome::AgentTeam),
+            CodingAgentOperation::PluginLoad
+            | CodingAgentOperation::PluginCommand { .. }
+            | CodingAgentOperation::SetDefaultAgentProfile { .. }
+            | CodingAgentOperation::ApproveDelegation { .. }
+            | CodingAgentOperation::RejectDelegation { .. }
+            | CodingAgentOperation::ForkSession { .. }
+            | CodingAgentOperation::SwitchActiveLeaf { .. } => {
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability: "canonical operation dispatch is not implemented yet".into(),
+                })
+            }
             CodingAgentOperation::ExportCurrent => self
                 .export_current()
                 .map(CodingAgentOperationOutcome::Export),
