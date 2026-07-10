@@ -110,10 +110,11 @@ use self_healing_edit_service::SelfHealingEditService;
 use session_log::event::PersistedDelegationStatus;
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use session_service::{
-    FinalizedSessionWrite, SessionPersistence, SessionService, TransientSessionState,
+    FinalizedSessionWrite, SessionPersistence, SessionService, StartupRecoveryMarker,
+    TransientSessionState,
 };
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::plugins::{
     CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
@@ -139,6 +140,7 @@ pub struct CodingAgentSession {
     manual_compaction_service: ManualCompactionService,
     self_healing_edit_service: SelfHealingEditService,
     capability_snapshots: CapabilitySnapshotService,
+    startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
 }
 
 #[derive(Debug, Clone)]
@@ -434,19 +436,39 @@ impl CodingAgentSession {
     }
 
     pub fn subscribe(&self) -> CodingAgentEventReceiver {
-        self.event_service.subscribe()
+        let receiver = self.event_service.subscribe();
+        self.emit_pending_startup_recovery_markers();
+        receiver
     }
 
     pub(crate) fn subscribe_product_events(&self) -> ProductEventReceiver {
-        self.event_service.subscribe_product_events()
+        let receiver = self.event_service.subscribe_product_events();
+        self.emit_pending_startup_recovery_markers();
+        receiver
+    }
+
+    fn emit_pending_startup_recovery_markers(&self) {
+        let markers = {
+            let mut markers = self.startup_recovery_markers.lock().unwrap();
+            std::mem::take(&mut *markers)
+        };
+        for marker in markers {
+            self.event_service.emit_operation_recovered(
+                marker.operation_id,
+                marker.recovery_id,
+                marker.reason,
+            );
+        }
     }
 
     pub(crate) fn product_event_replay_handle(&self) -> ProductEventReplayHandle {
+        self.emit_pending_startup_recovery_markers();
         ProductEventReplayHandle::new(self.event_service.clone())
     }
 
     #[allow(dead_code)]
     pub(crate) fn ui_snapshot(&self, client_drafts: Vec<ClientDraft>) -> UiSnapshot {
+        self.emit_pending_startup_recovery_markers();
         IntentRouter::admit_query(&self.operation_control, QueryIntent::SessionView);
         UiSnapshot::new(
             UiSnapshotCursor {
@@ -477,6 +499,7 @@ impl CodingAgentSession {
         &self,
         cursor: ProductEventSequence,
     ) -> Result<Vec<ProductEvent>, CodingSessionError> {
+        self.emit_pending_startup_recovery_markers();
         self.event_service.product_events_after(cursor)
     }
 
@@ -1148,15 +1171,8 @@ impl CodingAgentSession {
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
             capability_snapshots: CapabilitySnapshotService::new(),
+            startup_recovery_markers: Mutex::new(startup_recovery_markers),
         };
-
-        for marker in startup_recovery_markers {
-            session.event_service.emit_operation_recovered(
-                marker.operation_id,
-                marker.recovery_id,
-                marker.reason,
-            );
-        }
 
         Ok(session)
     }
@@ -1184,6 +1200,7 @@ impl CodingAgentSession {
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
             capability_snapshots: CapabilitySnapshotService::new(),
+            startup_recovery_markers: Mutex::new(Vec::new()),
         })
     }
 
@@ -2176,6 +2193,48 @@ mod tests {
         assert_eq!(connection.id.as_str(), "rpc-primary");
         assert_eq!(connection.cursor, snapshot.cursor);
         assert_eq!(connection.client_drafts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_product_event_is_visible_to_first_subscriber() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = session_log::store::SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(session_log::store::CreateSessionOptions::new(
+                "sess_startup_recovery_projection",
+                "2026-07-09T00:00:00Z",
+            ))
+            .unwrap();
+        let started = SessionEventEnvelope::new(
+            "sess_startup_recovery_projection",
+            "evt_started",
+            "2026-07-09T00:00:01Z",
+            SessionEventData::OperationStarted {
+                operation: crate::coding_session::session_log::event::OperationKind::Prompt,
+                runtime_generation: Default::default(),
+            },
+        )
+        .with_operation_id("op_in_doubt");
+        store.append_events(&handle, &[started]).unwrap();
+
+        let session = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_startup_recovery_projection")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let mut receiver = session.subscribe_product_events();
+
+        let event = receiver
+            .try_recv()
+            .unwrap()
+            .expect("startup recovery should be projected after subscription");
+        assert!(matches!(
+            event.compatibility_event(),
+            CodingAgentEvent::OperationRecovered { operation_id, .. }
+                if operation_id == "op_in_doubt"
+        ));
     }
 
     #[tokio::test]

@@ -41,7 +41,10 @@ impl RpcState {
         if let Some(session) = self.coding_session.as_ref() {
             let snapshot = session.ui_snapshot(self.client_drafts.clone());
             return RpcSessionProjection {
-                session_id: snapshot.session.session_id,
+                session_id: self
+                    .active_leaf_id
+                    .clone()
+                    .unwrap_or(snapshot.session.session_id),
                 pending_message_count: snapshot.client_drafts.len(),
                 capabilities: snapshot.capabilities.into(),
                 snapshot_sequence: snapshot.cursor.last_event_sequence.get(),

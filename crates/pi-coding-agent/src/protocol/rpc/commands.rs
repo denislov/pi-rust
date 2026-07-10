@@ -2,8 +2,8 @@ use crate::CliError;
 use crate::coding_session::{
     AgentProfile, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     DelegationConfirmationMode, DelegationPolicy, OperationKind, PendingDelegationConfirmation,
-    PluginLoadOutcome, ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind,
-    ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
+    PluginLoadOutcome, ProductEventReceiver, ProductEventSequence, ProfileDiagnostic, ProfileId,
+    ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
     SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
     SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
     TeamStrategy, TeamSupervisor,
@@ -14,7 +14,7 @@ use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
 use crate::protocol::types::{
-    RpcCommand, RpcHelloResponse, RpcResponse, RpcSelfHealingEditModelRepair,
+    ProtocolEvent, RpcCommand, RpcHelloResponse, RpcResponse, RpcSelfHealingEditModelRepair,
     RpcSelfHealingEditReplacement,
 };
 use crate::protocol::version::{
@@ -613,27 +613,19 @@ impl RpcState {
         match session.self_healing_edit_with_options(request).await {
             Ok(outcome) => {
                 let data = rpc_self_healing_edit_data(&outcome);
-                let mut protocol_events = Vec::new();
-                while let Ok(Some(event)) = receiver.try_recv() {
-                    protocol_events.extend(adapter.push_product_event(&event));
-                }
+                let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
                 self.coding_session = Some(session);
                 write_rpc_response(
                     writer,
                     RpcResponse::success(id, "self_healing_edit", Some(data)),
                 )
                 .await?;
-                for protocol_event in protocol_events {
-                    write_json_line(writer, &protocol_event).await?;
-                }
+                write_drained_protocol_events(writer, drained).await?;
                 self.mark_idempotency_complete(complete_key.as_ref());
                 Ok(())
             }
             Err(error) => {
-                let mut protocol_events = Vec::new();
-                while let Ok(Some(event)) = receiver.try_recv() {
-                    protocol_events.extend(adapter.push_product_event(&event));
-                }
+                let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
                 let response = match rpc_self_healing_edit_error_data(&error) {
                     Some(data) => RpcResponse::error_with_data(
                         id,
@@ -645,9 +637,7 @@ impl RpcState {
                 };
                 self.coding_session = Some(session);
                 write_rpc_response(writer, response).await?;
-                for protocol_event in protocol_events {
-                    write_json_line(writer, &protocol_event).await?;
-                }
+                write_drained_protocol_events(writer, drained).await?;
                 self.mark_idempotency_complete(complete_key.as_ref());
                 Ok(())
             }
@@ -848,7 +838,6 @@ impl RpcState {
             self.model.provider.clone(),
             self.model.id.clone(),
         );
-        let mut protocol_events = Vec::new();
         let data = match self.ensure_mutable_coding_session().await {
             Ok(session) => {
                 let mut receiver = session.subscribe_product_events();
@@ -861,10 +850,11 @@ impl RpcState {
                     self.mark_idempotency_complete(complete_key.as_ref());
                     return Ok(());
                 }
-                while let Ok(Some(event)) = receiver.try_recv() {
-                    protocol_events.extend(adapter.push_product_event(&event));
-                }
-                serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() })
+                let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
+                (
+                    serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() }),
+                    drained,
+                )
             }
             Err(error) => {
                 write_rpc_response(
@@ -876,6 +866,7 @@ impl RpcState {
                 return Ok(());
             }
         };
+        let (data, drained) = data;
 
         write_rpc_response(
             writer,
@@ -883,9 +874,7 @@ impl RpcState {
         )
         .await?;
         self.mark_idempotency_complete(complete_key.as_ref());
-        for protocol_event in protocol_events {
-            write_json_line(writer, &protocol_event).await?;
-        }
+        write_drained_protocol_events(writer, drained).await?;
         Ok(())
     }
 
@@ -1059,10 +1048,7 @@ impl RpcState {
             return Ok(());
         }
 
-        let mut protocol_events = Vec::new();
-        while let Ok(Some(event)) = receiver.try_recv() {
-            protocol_events.extend(adapter.push_product_event(&event));
-        }
+        let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
         write_rpc_response(
             writer,
             RpcResponse::success(
@@ -1076,9 +1062,7 @@ impl RpcState {
         )
         .await?;
         self.mark_idempotency_complete(complete_key.as_ref());
-        for protocol_event in protocol_events {
-            write_json_line(writer, &protocol_event).await?;
-        }
+        write_drained_protocol_events(writer, drained).await?;
         Ok(())
     }
 
@@ -1508,15 +1492,114 @@ fn rpc_plugin_reload_data(outcome: &PluginLoadOutcome) -> serde_json::Value {
     })
 }
 
+struct DrainedRpcProtocolEvents {
+    protocol_events: Vec<ProtocolEvent>,
+    skipped: Option<u64>,
+}
+
+fn drain_product_events_to_protocol_events(
+    receiver: &mut ProductEventReceiver,
+    adapter: &mut RpcCodingEventAdapter,
+) -> DrainedRpcProtocolEvents {
+    let mut protocol_events = Vec::new();
+    let mut skipped = None;
+    loop {
+        match receiver.try_recv() {
+            Ok(Some(event)) => protocol_events.extend(adapter.push_product_event(&event)),
+            Ok(None) => break,
+            Err(CodingSessionError::EventStreamLag { skipped: count }) => {
+                skipped = Some(count);
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    DrainedRpcProtocolEvents {
+        protocol_events,
+        skipped,
+    }
+}
+
+async fn write_drained_protocol_events<W>(
+    writer: &mut W,
+    drained: DrainedRpcProtocolEvents,
+) -> Result<(), CliError>
+where
+    W: AsyncWrite + Unpin,
+{
+    for protocol_event in drained.protocol_events {
+        write_json_line(writer, &protocol_event).await?;
+    }
+    if let Some(skipped) = drained.skipped {
+        write_event_stream_lag_response(writer, skipped).await?;
+    }
+    Ok(())
+}
+
+async fn write_event_stream_lag_response<W>(writer: &mut W, skipped: u64) -> Result<(), CliError>
+where
+    W: AsyncWrite + Unpin,
+{
+    write_rpc_response(
+        writer,
+        RpcResponse::error_with_data(
+            None,
+            "event_stream",
+            format!(
+                "event stream lagged by {skipped} events; client must request a fresh UI snapshot"
+            ),
+            serde_json::json!({
+                "code": "event_stream_lag",
+                "skipped": skipped,
+                "recovery": "fresh_snapshot"
+            }),
+        ),
+    )
+    .await
+}
+
 pub(super) fn has_images(images: &Option<Vec<pi_ai::types::ContentBlock>>) -> bool {
     images.as_ref().is_some_and(|images| !images.is_empty())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::coding_session::{CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions};
+
+    #[tokio::test]
+    async fn rpc_sync_product_event_drain_reports_receiver_lag() {
+        let session = CodingAgentSession::non_persistent_with_event_capacity_for_tests(
+            CodingAgentSessionOptions::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        let mut receiver = session.subscribe_product_events();
+        for index in 0..3 {
+            session.emit_product_event_for_tests(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: format!("lagged sync event {index}"),
+            });
+        }
+        let mut adapter = RpcCodingEventAdapter::new_with_provider(
+            "test-api".into(),
+            "test-provider".into(),
+            "test-model".into(),
+        );
+
+        let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
+
+        assert_eq!(drained.skipped, Some(2));
+        assert!(drained.protocol_events.is_empty());
+    }
+
     #[test]
     fn rpc_sync_commands_use_product_event_stream_boundary() {
-        let source = include_str!("commands.rs");
+        let source = include_str!("commands.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
         let product_subscription = [".", "subscribe_product_events()"].concat();
         let compatibility_subscription = [".", "subscribe()"].concat();
         let product_adapter = ["adapter", ".push_product_event(&event)"].concat();

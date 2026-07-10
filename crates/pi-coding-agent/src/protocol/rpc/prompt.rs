@@ -2,7 +2,8 @@ use crate::CliError;
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, ClientDraftKind, CodingAgentSession,
     CodingAgentSessionOptions, CodingSessionError, OperationIdempotencyKey, OperationKind,
-    ProductEvent, ProductEventSequence, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
+    ProductEvent, ProductEventReceiver, ProductEventSequence, ProfileId, ProfileKind,
+    PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
@@ -42,6 +43,17 @@ impl RpcState {
                 return Ok(());
             }
         };
+        if self.is_streaming() && after_snapshot_sequence.is_some() {
+            self.handle_streaming_prompt(
+                id,
+                message,
+                streaming_behavior,
+                after_snapshot_sequence,
+                writer,
+            )
+            .await?;
+            return Ok(());
+        }
         match self.idempotent_retry_response(idempotency_key.as_ref(), "prompt") {
             Ok(Some(data)) => {
                 write_rpc_response(writer, RpcResponse::success(id, "prompt", Some(data))).await?;
@@ -387,11 +399,7 @@ impl RpcState {
                 }
             };
 
-            while let Ok(Some(event)) = receiver.try_recv() {
-                if event_tx.send_event(event).await.is_err() {
-                    break;
-                }
-            }
+            drain_product_events_to_rpc_queue(&mut receiver, &event_tx).await;
 
             let _ = done_tx.send(CodingOperationTaskResult {
                 session,
@@ -607,11 +615,7 @@ impl RpcState {
                 }
             };
 
-            while let Ok(Some(event)) = receiver.try_recv() {
-                if event_tx.send_event(event).await.is_err() {
-                    break;
-                }
-            }
+            drain_product_events_to_rpc_queue(&mut receiver, &event_tx).await;
 
             let _ = done_tx.send(CodingOperationTaskResult {
                 session,
@@ -787,11 +791,7 @@ impl RpcState {
                 }
             };
 
-            while let Ok(Some(event)) = receiver.try_recv() {
-                if event_tx.send_event(event).await.is_err() {
-                    break;
-                }
-            }
+            drain_product_events_to_rpc_queue(&mut receiver, &event_tx).await;
 
             let _ = done_tx.send(CodingOperationTaskResult {
                 session,
@@ -914,11 +914,7 @@ impl RpcState {
                 }
             };
 
-            while let Ok(Some(event)) = receiver.try_recv() {
-                if event_tx.send_event(event).await.is_err() {
-                    break;
-                }
-            }
+            drain_product_events_to_rpc_queue(&mut receiver, &event_tx).await;
 
             let _ = done_tx.send(CodingOperationTaskResult {
                 session,
@@ -1086,6 +1082,27 @@ impl RpcState {
             },
         )
         .await
+    }
+}
+
+async fn drain_product_events_to_rpc_queue(
+    receiver: &mut ProductEventReceiver,
+    event_tx: &RpcProductEventQueue,
+) {
+    loop {
+        match receiver.try_recv() {
+            Ok(Some(event)) => {
+                if event_tx.send_event(event).await.is_err() {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(CodingSessionError::EventStreamLag { skipped }) => {
+                let _ = event_tx.send_overflow(skipped).await;
+                break;
+            }
+            Err(_) => break,
+        }
     }
 }
 
@@ -1354,6 +1371,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rpc_final_product_event_drain_reports_receiver_lag() {
+        let session = CodingAgentSession::non_persistent_with_event_capacity_for_tests(
+            CodingAgentSessionOptions::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        let mut receiver = session.subscribe_product_events();
+        for index in 0..3 {
+            session.emit_product_event_for_tests(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: format!("lagged event {index}"),
+            });
+        }
+        let (event_tx, mut event_rx) = RpcProductEventQueue::for_tests(4);
+
+        drain_product_events_to_rpc_queue(&mut receiver, &event_tx).await;
+        drop(event_tx);
+
+        assert_eq!(
+            event_rx.recv().await.unwrap(),
+            RpcQueuedProductEvent::Overflow { skipped: 2 }
+        );
+    }
+
+    #[tokio::test]
     async fn rpc_reconnect_replay_updates_client_submission_state() {
         let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
@@ -1393,6 +1436,37 @@ mod tests {
             .unwrap();
 
         assert!(state.submitted_operation.is_none());
+    }
+
+    #[tokio::test]
+    async fn rpc_idempotent_prompt_retry_with_snapshot_cursor_replays_events() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let replay = session.product_event_replay_handle();
+        session.emit_product_event_for_tests(assistant_delta_event("replayed retry marker"));
+        let mut state = state_with_running_prompt_replay(replay);
+        let key = OperationIdempotencyKey::parse("retry:prompt:reconnect").unwrap();
+        state.remember_idempotency_key(Some(key.clone()), "prompt", OperationKind::Prompt);
+        let mut writer = TestWriter::default();
+
+        state
+            .handle_prompt(
+                Some("retry".into()),
+                "hello".into(),
+                None,
+                None,
+                Some(ProductEventSequence::default()),
+                Some(key.as_str().to_owned()),
+                &mut writer,
+            )
+            .await
+            .unwrap();
+
+        let output = String::from_utf8(writer.bytes).unwrap();
+        assert!(output.contains("\"id\":\"retry\""), "{output}");
+        assert!(!output.contains("\"deduplicated\":true"), "{output}");
+        assert!(output.contains("replayed retry marker"), "{output}");
     }
 
     #[tokio::test]
@@ -1584,7 +1658,10 @@ mod tests {
 
     #[test]
     fn rpc_running_prompt_uses_product_event_stream_boundary() {
-        let prompt_source = include_str!("prompt.rs");
+        let prompt_source = include_str!("prompt.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
         let state_source = include_str!("state.rs");
         let rpc_source = include_str!("../rpc.rs");
         let product_subscription = [".", "subscribe_product_events()"].concat();
