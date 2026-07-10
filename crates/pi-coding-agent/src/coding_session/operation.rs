@@ -31,12 +31,16 @@ pub(crate) enum Operation {
         source_leaf_id: String,
         target_leaf_id: String,
         custom_instructions: Option<String>,
+        reuse_existing: bool,
     },
     SelfHealingEdit(SelfHealingEditRequest),
     AgentInvocation(AgentInvocationOptions),
     AgentTeam(AgentTeamOptions),
     ForkSession {
         target_leaf_id: Option<String>,
+    },
+    SwitchActiveLeaf {
+        target_leaf_id: String,
     },
     SetDefaultAgentProfile {
         profile_id: ProfileId,
@@ -129,6 +133,12 @@ impl Operation {
             ),
             Self::ForkSession { .. } => OperationMetadata::new(
                 Some(OperationKind::ForkSession),
+                OperationOrigin::ClientRoot,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::SyncMutable,
+            ),
+            Self::SwitchActiveLeaf { .. } => OperationMetadata::new(
+                Some(OperationKind::SwitchActiveLeaf),
                 OperationOrigin::ClientRoot,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::SyncMutable,
@@ -248,6 +258,10 @@ pub(crate) enum OperationOutcome {
     AgentInvocation(AgentInvocationOutcome),
     AgentTeam(AgentTeamOutcome),
     SetDefaultAgentProfile,
+    #[allow(dead_code)]
+    ForkSession,
+    #[allow(dead_code)]
+    SwitchActiveLeaf,
     Export(ExportOutcome),
 }
 
@@ -397,6 +411,7 @@ mod tests {
             source_leaf_id: "source_leaf".into(),
             target_leaf_id: "target_leaf".into(),
             custom_instructions: Some("keep details".into()),
+            reuse_existing: false,
         };
 
         assert_eq!(operation.kind(), OperationKind::BranchSummary);

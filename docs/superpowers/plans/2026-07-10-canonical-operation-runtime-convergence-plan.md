@@ -241,10 +241,14 @@ git commit -m "feat: expand canonical coding operations"
 **Files:**
 - Modify: `crates/pi-coding-agent/src/coding_session/public_operation.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/operation.rs`
+- Modify: `crates/pi-coding-agent/src/coding_session/operation_control.rs`
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
 - Modify: `crates/pi-coding-agent/tests/api_boundary_guards.rs`
+- Modify: `crates/pi-coding-agent/tests/public_api.rs`
+- Modify: `docs/TODO.md`
+- Modify: `docs/superpowers/plans/2026-07-10-canonical-operation-runtime-convergence-plan.md`
 
-- [ ] **Step 1: Replace the Stage 8 deprecation guard with a RED canonical-dispatch guard**
+- [x] **Step 1: Replace the Stage 8 deprecation guard with a RED canonical-dispatch guard**
 
 Add a brace-counting `function_body()` helper to `api_boundary_guards.rs`, then add:
 
@@ -258,17 +262,29 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
         .expect("CodingAgentSession::run should exist");
 
     assert!(run_body.contains("into_internal("));
+    assert!(run_body.contains("operation.metadata().dispatch_mode"));
     assert!(run_body.contains("OperationDispatchMode::Async"));
     assert!(run_body.contains("OperationDispatchMode::SyncReadOnly"));
     assert!(run_body.contains("OperationDispatchMode::SyncMutable"));
     assert!(run_body.contains("run_operation(operation).await"));
     assert!(run_body.contains("run_sync_operation(operation)"));
     assert!(run_body.contains("run_sync_mut_operation(operation)"));
+    assert!(run_body.contains("CodingAgentOperationOutcome::from_internal(outcome)"));
 
     for forbidden in [
         ".prompt(", ".compact(", ".summarize_branch(",
         ".self_healing_edit_with_options(", ".invoke_agent(", ".invoke_team(",
         ".export_current(", ".export_current_html(",
+        "CodingAgentOperationOutcome::Prompt(",
+        "CodingAgentOperationOutcome::Compact(",
+        "CodingAgentOperationOutcome::BranchSummary(",
+        "CodingAgentOperationOutcome::SelfHealingEdit(",
+        "CodingAgentOperationOutcome::AgentInvocation(",
+        "CodingAgentOperationOutcome::AgentTeam(",
+        "CodingAgentOperationOutcome::PluginLoad(",
+        "CodingAgentOperationOutcome::PluginCommand(",
+        "CodingAgentOperationOutcome::Export(",
+        "CodingAgentOperationOutcome::ExportHtml(",
     ] {
         assert!(!run_body.contains(forbidden),
             "CodingAgentSession::run must not call compatibility workflow {forbidden}");
@@ -276,7 +292,7 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
 }
 ```
 
-- [ ] **Step 2: Run the RED dispatcher guard**
+- [x] **Step 2: Run the RED dispatcher guard**
 
 ```bash
 cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_the_canonical_operation_dispatcher -- --nocapture
@@ -284,7 +300,7 @@ cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_t
 
 Expected: FAIL because `run()` still calls deprecated wrappers.
 
-- [ ] **Step 3: Add public-to-internal conversion**
+- [x] **Step 3: Add public-to-internal conversion**
 
 In `public_operation.rs`, implement `CodingAgentOperation::into_internal(self, plugin_load: PluginLoadOptions) -> Operation` with this complete mapping:
 
@@ -321,8 +337,9 @@ match self {
 ```
 
 Update internal `Operation::BranchSummary` with `reuse_existing: bool`, and add `Operation::SwitchActiveLeaf`.
+Add the `SwitchActiveLeaf` operation kind and sync-mutable metadata now so canonical `run()` reaches an explicit temporary `UnsupportedCapability` result. Successful fork/switch execution remains Task 3.
 
-- [ ] **Step 4: Add the one internal-to-public outcome projection**
+- [x] **Step 4: Add the one internal-to-public outcome projection**
 
 Implement `CodingAgentOperationOutcome::from_internal(OperationOutcome)`:
 
@@ -350,7 +367,7 @@ match outcome {
 
 Implement `From<PluginLoadOutcome> for CodingAgentPluginLoadOutcome` by projecting loaded ids, `plugin_id`/`message` diagnostics, and `capability_changed`. Do not expose internal `capabilities`.
 
-- [ ] **Step 5: Rewrite `CodingAgentSession::run()`**
+- [x] **Step 5: Rewrite `CodingAgentSession::run()`**
 
 ```rust
 pub async fn run(
@@ -370,7 +387,7 @@ pub async fn run(
 
 Remove `#[allow(deprecated)]` from `run()`.
 
-- [ ] **Step 6: Run GREEN dispatcher tests**
+- [x] **Step 6: Run GREEN dispatcher tests**
 
 ```bash
 cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_the_canonical_operation_dispatcher -- --nocapture
@@ -379,10 +396,10 @@ cargo test -p pi-coding-agent --test public_api coding_session_run_public_operat
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/coding_session/public_operation.rs crates/pi-coding-agent/src/coding_session/operation.rs crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/tests/api_boundary_guards.rs
+git add crates/pi-coding-agent/src/coding_session/public_operation.rs crates/pi-coding-agent/src/coding_session/operation.rs crates/pi-coding-agent/src/coding_session/operation_control.rs crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/tests/api_boundary_guards.rs crates/pi-coding-agent/tests/public_api.rs docs/TODO.md docs/superpowers/plans/2026-07-10-canonical-operation-runtime-convergence-plan.md
 git commit -m "refactor: make session run canonical dispatcher"
 ```
 
@@ -397,38 +414,27 @@ git commit -m "refactor: make session run canonical dispatcher"
 
 - [ ] **Step 1: Write failing behavior tests**
 
-Add public tests for `SetDefaultAgentProfile` success and non-persistent `SwitchActiveLeaf` rejection. Add owner tests using existing session fixtures for successful active-leaf switch, fork replacement, delegation approval/rejection, and branch-summary reuse.
+Add owner tests using existing persistent-session fixtures for successful active-leaf switch, fork replacement, and branch-summary reuse through canonical `run()`.
 
-Representative public test:
+- `canonical_run_switches_active_leaf`: create a persistent session with two leaves using the existing prompt fixture pattern, call `run(CodingAgentOperation::SwitchActiveLeaf { target_leaf_id })`, assert `ActiveLeafSwitched`, and assert `hydrate_current()?.summary.active_leaf_id` is the target.
+- `canonical_run_forks_current_session`: create a persistent session with a committed leaf, call `run(CodingAgentOperation::ForkSession { target_leaf_id })`, assert `SessionForked`, then assert the owned session id changed while the forked replay retains the selected transcript.
+- `canonical_run_reuses_branch_summary_when_requested`: adapt `branch_summary_navigation_reuses_existing_summary_without_rewriting_session` to call `run(CodingAgentOperation::BranchSummary { reuse: ReuseExisting, ... })`; assert the existing summary is returned, no new product events are emitted, and the event log remains byte-for-byte unchanged.
 
-```rust
-#[tokio::test]
-async fn canonical_run_rejects_non_persistent_leaf_navigation() {
-    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-        .await
-        .unwrap();
-    let error = session
-        .run(CodingAgentOperation::SwitchActiveLeaf {
-            target_leaf_id: "leaf_missing".into(),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(error.code(), "unsupported_capability");
-}
-```
+Keep existing Task 2 profile success and fork/switch rejection coverage as dispatcher groundwork, not as Task 3 RED.
 
 - [ ] **Step 2: Run RED tests**
 
 ```bash
-cargo test -p pi-coding-agent --test public_api canonical_run_rejects_non_persistent_leaf_navigation -- --nocapture
+cargo test -p pi-coding-agent coding_session::tests::canonical_run_switches_active_leaf -- --nocapture
 cargo test -p pi-coding-agent coding_session::tests::canonical_run_forks_current_session -- --nocapture
+cargo test -p pi-coding-agent coding_session::tests::canonical_run_reuses_branch_summary_when_requested -- --nocapture
 ```
 
-Expected: FAIL because switch/fork dispatch is incomplete.
+Expected: FAIL because fork/switch still return Task 2's temporary `UnsupportedCapability`, and canonical branch-summary dispatch carries but does not apply `reuse_existing`.
 
-- [ ] **Step 3: Add metadata and operation kind coverage**
+- [x] **Step 3: Establish operation kind, metadata, and temporary unsupported behavior (completed in Task 2)**
 
-Add `SwitchActiveLeaf` to `OperationKind`, map it to `"switch_active_leaf"`, and give `Operation::SwitchActiveLeaf` `ClientRoot`, `SessionWriteRoot`, `SyncMutable` metadata.
+Task 2 added `SwitchActiveLeaf` to `OperationKind`, mapped it to `"switch_active_leaf"`, assigned `ClientRoot`/`SessionWriteRoot`/`SyncMutable` metadata, and routed both fork and switch through explicit temporary `UnsupportedCapability` arms. This is dispatcher groundwork only; successful navigation behavior remains incomplete.
 
 - [ ] **Step 4: Implement active-leaf switch and fork**
 
@@ -476,8 +482,10 @@ Replace direct-fork admission assertions with metadata/dispatcher assertions for
 ```bash
 cargo test -p pi-coding-agent coding_session::operation -- --nocapture
 cargo test -p pi-coding-agent coding_session::intent_router -- --nocapture
+cargo test -p pi-coding-agent coding_session::tests::canonical_run_switches_active_leaf -- --nocapture
 cargo test -p pi-coding-agent coding_session::tests::canonical_run_forks_current_session -- --nocapture
-cargo test -p pi-coding-agent --test public_api canonical_run_ -- --nocapture
+cargo test -p pi-coding-agent coding_session::tests::canonical_run_reuses_branch_summary_when_requested -- --nocapture
+cargo test -p pi-coding-agent --test public_api
 ```
 
 Expected: PASS.

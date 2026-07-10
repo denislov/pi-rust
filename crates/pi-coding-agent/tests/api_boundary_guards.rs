@@ -76,41 +76,76 @@ fn root_reexports_are_explicit_compatibility_surface() {
 }
 
 #[test]
-fn broad_session_workflow_methods_are_deprecated_in_favor_of_run() {
+fn coding_session_run_is_the_canonical_operation_dispatcher() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
         .expect("coding session owner should be readable");
-    for signature in [
-        "pub async fn prompt(",
-        "pub async fn compact(",
-        "pub async fn summarize_branch(",
-        "pub async fn self_healing_edit_with_options(",
-        "pub async fn invoke_agent(",
-        "pub async fn invoke_team(",
-        "pub fn export_current_html(",
-        "pub fn export_current(",
+    let run_body =
+        function_body(&source, "pub async fn run(").expect("CodingAgentSession::run should exist");
+
+    for required in [
+        "into_internal(",
+        "operation.metadata().dispatch_mode",
+        "OperationDispatchMode::Async",
+        "OperationDispatchMode::SyncReadOnly",
+        "OperationDispatchMode::SyncMutable",
+        "run_operation(operation).await",
+        "run_sync_operation(operation)",
+        "run_sync_mut_operation(operation)",
+        "CodingAgentOperationOutcome::from_internal(outcome)",
     ] {
-        let preceding = preceding_non_blank_line(&source, signature)
-            .unwrap_or_else(|| panic!("missing method signature: {signature}"));
-        assert_eq!(
-            preceding.trim(),
-            "#[deprecated(note = \"use CodingAgentSession::run instead\")]",
-            "{signature} should be deprecated after CodingAgentSession::run is available"
+        assert!(
+            run_body.contains(required),
+            "CodingAgentSession::run should contain {required}"
+        );
+    }
+
+    for forbidden in [
+        ".prompt(",
+        ".compact(",
+        ".summarize_branch(",
+        ".self_healing_edit_with_options(",
+        ".invoke_agent(",
+        ".invoke_team(",
+        ".export_current(",
+        ".export_current_html(",
+        "CodingAgentOperationOutcome::Prompt(",
+        "CodingAgentOperationOutcome::Compact(",
+        "CodingAgentOperationOutcome::BranchSummary(",
+        "CodingAgentOperationOutcome::SelfHealingEdit(",
+        "CodingAgentOperationOutcome::AgentInvocation(",
+        "CodingAgentOperationOutcome::AgentTeam(",
+        "CodingAgentOperationOutcome::PluginLoad(",
+        "CodingAgentOperationOutcome::PluginCommand(",
+        "CodingAgentOperationOutcome::Export(",
+        "CodingAgentOperationOutcome::ExportHtml(",
+    ] {
+        assert!(
+            !run_body.contains(forbidden),
+            "CodingAgentSession::run must not call compatibility workflow {forbidden}"
         );
     }
 }
 
-fn preceding_non_blank_line<'a>(source: &'a str, signature: &str) -> Option<&'a str> {
-    let lines: Vec<&str> = source.lines().collect();
-    let idx = lines.iter().position(|line| line.contains(signature))?;
-    if idx == 0 {
-        return Some("");
+fn function_body<'a>(source: &'a str, signature: &str) -> Option<&'a str> {
+    let signature_start = source.find(signature)?;
+    let body_start = signature_start + source[signature_start..].find('{')?;
+    let mut depth = 0usize;
+
+    for (offset, character) in source[body_start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(&source[body_start + 1..body_start + offset]);
+                }
+            }
+            _ => {}
+        }
     }
-    let mut i = idx - 1;
-    while i > 0 && lines[i].trim().is_empty() {
-        i -= 1;
-    }
-    Some(lines[i])
+
+    None
 }
 
 #[test]

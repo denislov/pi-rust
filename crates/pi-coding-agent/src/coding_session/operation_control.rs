@@ -16,6 +16,7 @@ pub(crate) enum OperationKind {
     AgentTeam,
     Export,
     ForkSession,
+    SwitchActiveLeaf,
     SetDefaultAgentProfile,
     #[allow(dead_code)]
     SelfHealingEdit,
@@ -34,6 +35,7 @@ impl OperationKind {
             Self::AgentTeam => "agent_team",
             Self::Export => "export",
             Self::ForkSession => "fork_session",
+            Self::SwitchActiveLeaf => "switch_active_leaf",
             Self::SetDefaultAgentProfile => "set_default_agent_profile",
             Self::SelfHealingEdit => "self_healing_edit",
         }

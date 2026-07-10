@@ -218,60 +218,18 @@ fn default_cwd() -> PathBuf {
 }
 
 impl CodingAgentSession {
-    #[allow(deprecated)]
     pub async fn run(
         &mut self,
         operation: CodingAgentOperation,
     ) -> Result<CodingAgentOperationOutcome, CodingSessionError> {
-        match operation {
-            CodingAgentOperation::Prompt(options) => self
-                .prompt(options)
-                .await
-                .map(CodingAgentOperationOutcome::Prompt),
-            CodingAgentOperation::Compact(options) => self
-                .compact(options)
-                .await
-                .map(CodingAgentOperationOutcome::Compact),
-            CodingAgentOperation::BranchSummary {
-                options,
-                source_leaf_id,
-                target_leaf_id,
-                custom_instructions,
-                reuse: _,
-            } => self
-                .summarize_branch(options, source_leaf_id, target_leaf_id, custom_instructions)
-                .await
-                .map(CodingAgentOperationOutcome::BranchSummary),
-            CodingAgentOperation::SelfHealingEdit(request) => self
-                .self_healing_edit_with_options(request)
-                .await
-                .map(CodingAgentOperationOutcome::SelfHealingEdit),
-            CodingAgentOperation::InvokeAgent(options) => self
-                .invoke_agent(options)
-                .await
-                .map(CodingAgentOperationOutcome::AgentInvocation),
-            CodingAgentOperation::InvokeTeam(options) => self
-                .invoke_team(options)
-                .await
-                .map(CodingAgentOperationOutcome::AgentTeam),
-            CodingAgentOperation::PluginLoad
-            | CodingAgentOperation::PluginCommand { .. }
-            | CodingAgentOperation::SetDefaultAgentProfile { .. }
-            | CodingAgentOperation::ApproveDelegation { .. }
-            | CodingAgentOperation::RejectDelegation { .. }
-            | CodingAgentOperation::ForkSession { .. }
-            | CodingAgentOperation::SwitchActiveLeaf { .. } => {
-                Err(CodingSessionError::UnsupportedCapability {
-                    capability: "canonical operation dispatch is not implemented yet".into(),
-                })
-            }
-            CodingAgentOperation::ExportCurrent => self
-                .export_current()
-                .map(CodingAgentOperationOutcome::Export),
-            CodingAgentOperation::ExportCurrentHtml(path) => self
-                .export_current_html(path)
-                .map(CodingAgentOperationOutcome::ExportHtml),
-        }
+        let operation = operation.into_internal(self.default_plugin_load_options.clone());
+        let dispatch_mode = operation.metadata().dispatch_mode;
+        let outcome = match dispatch_mode {
+            OperationDispatchMode::Async => self.run_operation(operation).await?,
+            OperationDispatchMode::SyncReadOnly => self.run_sync_operation(operation)?,
+            OperationDispatchMode::SyncMutable => self.run_sync_mut_operation(operation)?,
+        };
+        Ok(CodingAgentOperationOutcome::from_internal(outcome))
     }
 
     pub async fn create(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
@@ -417,6 +375,9 @@ impl CodingAgentSession {
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("export operation returned agent team outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("export operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!("export operation returned set default agent profile outcome")
             }
@@ -454,6 +415,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::AgentTeam(_) => {
                 unreachable!("export operation returned agent team outcome")
+            }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("export operation returned navigation outcome")
             }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!("export operation returned set default agent profile outcome")
@@ -707,6 +671,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("delegation approval operation returned export outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("delegation approval operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!(
                     "delegation approval operation returned set default agent profile outcome"
@@ -757,6 +724,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("delegation rejection operation returned export outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("delegation rejection operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!(
                     "delegation rejection operation returned set default agent profile outcome"
@@ -800,6 +770,9 @@ impl CodingAgentSession {
                 unreachable!("prompt operation returned agent team outcome")
             }
             OperationOutcome::Export(_) => unreachable!("prompt operation returned export outcome"),
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("prompt operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!("prompt operation returned set default agent profile outcome")
             }
@@ -845,6 +818,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::Export(_) => {
                 unreachable!("manual compaction operation returned export outcome")
+            }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("manual compaction operation returned navigation outcome")
             }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!(
@@ -904,6 +880,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("self-healing edit operation returned export outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("self-healing edit operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!(
                     "self-healing edit operation returned set default agent profile outcome"
@@ -952,6 +931,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("agent invocation operation returned export outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("agent invocation operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!(
                     "agent invocation operation returned set default agent profile outcome"
@@ -996,6 +978,9 @@ impl CodingAgentSession {
             }
             OperationOutcome::Export(_) => {
                 unreachable!("agent team operation returned export outcome")
+            }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("agent team operation returned navigation outcome")
             }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!("agent team operation returned set default agent profile outcome")
@@ -1064,6 +1049,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("plugin command operation returned export outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("plugin command operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!("plugin command operation returned set default agent profile outcome")
             }
@@ -1106,6 +1094,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("plugin load operation returned export outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("plugin load operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!("plugin load operation returned set default agent profile outcome")
             }
@@ -1126,6 +1117,7 @@ impl CodingAgentSession {
                 source_leaf_id: source_leaf_id.into(),
                 target_leaf_id: target_leaf_id.into(),
                 custom_instructions,
+                reuse_existing: false,
             })
             .await?
         {
@@ -1160,6 +1152,9 @@ impl CodingAgentSession {
             OperationOutcome::Export(_) => {
                 unreachable!("branch summary operation returned export outcome")
             }
+            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
+                unreachable!("branch summary operation returned navigation outcome")
+            }
             OperationOutcome::SetDefaultAgentProfile => {
                 unreachable!("branch summary operation returned set default agent profile outcome")
             }
@@ -1180,6 +1175,7 @@ impl CodingAgentSession {
             source_leaf_id,
             target_leaf_id,
             custom_instructions: None,
+            reuse_existing: true,
         };
         let admission = self.resolve_operation_admission(&operation)?;
         let operation_permit = IntentRouter::admit_operation(
@@ -1193,6 +1189,7 @@ impl CodingAgentSession {
             source_leaf_id,
             target_leaf_id,
             custom_instructions,
+            reuse_existing: _,
         } = operation
         else {
             unreachable!("navigation branch summary built a non-branch-summary operation")
@@ -1330,6 +1327,7 @@ impl CodingAgentSession {
             | Operation::AgentInvocation(_)
             | Operation::AgentTeam(_)
             | Operation::ForkSession { .. }
+            | Operation::SwitchActiveLeaf { .. }
             | Operation::SetDefaultAgentProfile { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
@@ -1366,8 +1364,14 @@ impl CodingAgentSession {
                 Ok(OperationOutcome::DelegationRejection)
             }
             Operation::ForkSession { .. } => Err(CodingSessionError::UnsupportedCapability {
-                capability: "fork session is admitted through fork_current_session".into(),
+                capability: "fork session execution is not implemented yet".into(),
             }),
+            Operation::SwitchActiveLeaf { target_leaf_id } => {
+                let _ = target_leaf_id;
+                Err(CodingSessionError::UnsupportedCapability {
+                    capability: "active leaf switch execution is not implemented yet".into(),
+                })
+            }
             Operation::SetDefaultAgentProfile { profile_id } => {
                 match &mut self.persistence {
                     SessionPersistence::Persistent(session_service) => {
@@ -1657,8 +1661,10 @@ impl CodingAgentSession {
                 source_leaf_id,
                 target_leaf_id,
                 custom_instructions,
-            } => self
-                .run_branch_summary_admitted(
+                reuse_existing,
+            } => {
+                let _ = reuse_existing;
+                self.run_branch_summary_admitted(
                     options,
                     source_leaf_id,
                     target_leaf_id,
@@ -1666,7 +1672,8 @@ impl CodingAgentSession {
                     &snapshot,
                 )
                 .await
-                .map(OperationOutcome::BranchSummary),
+                .map(OperationOutcome::BranchSummary)
+            }
             Operation::SelfHealingEdit(request) => {
                 let (path, replacements, check_command, repair_attempts, model_repair) =
                     request.into_parts();
@@ -1715,6 +1722,7 @@ impl CodingAgentSession {
             | Operation::PluginCommand { .. }
             | Operation::RejectDelegationConfirmation { .. }
             | Operation::ForkSession { .. }
+            | Operation::SwitchActiveLeaf { .. }
             | Operation::SetDefaultAgentProfile { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
@@ -3367,6 +3375,7 @@ runtime = "lua"
             source_leaf_id: "source_leaf".into(),
             target_leaf_id: "target_leaf".into(),
             custom_instructions: None,
+            reuse_existing: false,
         };
 
         let error = session.run_operation(operation).await.unwrap_err();

@@ -31,7 +31,7 @@ use pi_coding_agent::api::{
     is_light_theme, parse_args, parse_model_rotation, parse_osc11_background_color,
     render_diagnostics, resolve, resolve_resource_paths,
 };
-use support::ProviderGuard;
+use support::{EnvGuard, ProviderGuard};
 
 fn model(api: &str) -> Model {
     Model {
@@ -125,6 +125,15 @@ fn public_api_tests_use_stable_facade_imports() {
 
 #[test]
 fn canonical_operation_runtime_variants_are_public() {
+    let branch_summary = |reuse| CodingAgentOperation::BranchSummary {
+        options: PromptTurnOptions::new(PromptInvocation::Text("summarize".into())),
+        source_leaf_id: "leaf_source".into(),
+        target_leaf_id: "leaf_target".into(),
+        custom_instructions: None,
+        reuse,
+    };
+    let _ = branch_summary(BranchSummaryReusePolicy::AlwaysCreate);
+    let _ = branch_summary(BranchSummaryReusePolicy::ReuseExisting);
     let _ = CodingAgentOperation::PluginLoad;
     let _ = CodingAgentOperation::PluginCommand {
         command_id: "plugin.command".into(),
@@ -148,8 +157,7 @@ fn canonical_operation_runtime_variants_are_public() {
     let _ = CodingAgentOperation::SwitchActiveLeaf {
         target_leaf_id: "leaf_target".into(),
     };
-    let _ = BranchSummaryReusePolicy::ReuseExisting;
-    let _ = CodingAgentPluginLoadOutcome {
+    let plugin_load = CodingAgentPluginLoadOutcome {
         loaded_plugin_ids: vec!["sample".into()],
         diagnostics: vec![CodingAgentPluginDiagnostic {
             plugin_id: Some("sample".into()),
@@ -157,7 +165,11 @@ fn canonical_operation_runtime_variants_are_public() {
         }],
         capability_changed: true,
     };
+    let _ = CodingAgentOperationOutcome::PluginLoad(plugin_load);
+    let _ = CodingAgentOperationOutcome::PluginCommand("ok".into());
+    let _ = CodingAgentOperationOutcome::DefaultAgentProfileChanged;
     let _ = CodingAgentOperationOutcome::DelegationApproved;
+    let _ = CodingAgentOperationOutcome::DelegationRejected;
     let _ = CodingAgentOperationOutcome::SessionForked;
     let _ = CodingAgentOperationOutcome::ActiveLeafSwitched;
 }
@@ -178,6 +190,78 @@ async fn coding_session_run_public_operation_facade_is_importable() {
         .unwrap();
 
     assert!(matches!(outcome, CodingAgentOperationOutcome::Export(_)));
+}
+
+#[tokio::test]
+async fn coding_session_run_dispatches_public_runtime_operations() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    let global = temp.path().join("global");
+    std::fs::create_dir_all(project.join(".pi-rust/plugins")).unwrap();
+    std::fs::create_dir_all(global.join("plugins")).unwrap();
+    let _env = EnvGuard::with_pi_rust_dir(&global);
+    let mut session =
+        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&project))
+            .await
+            .unwrap();
+
+    let plugin_load = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
+    let CodingAgentOperationOutcome::PluginLoad(plugin_load) = plugin_load else {
+        panic!("plugin load should return the public plugin-load projection")
+    };
+    assert!(plugin_load.loaded_plugin_ids.is_empty());
+    assert!(plugin_load.diagnostics.is_empty());
+    assert!(!plugin_load.capability_changed);
+
+    let profile_change = session
+        .run(CodingAgentOperation::SetDefaultAgentProfile {
+            profile_id: ProfileId::from("reviewer"),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        profile_change,
+        CodingAgentOperationOutcome::DefaultAgentProfileChanged
+    ));
+    assert_eq!(
+        session.snapshot().session.default_agent_profile_id,
+        ProfileId::from("reviewer")
+    );
+
+    let plugin_command_error = session
+        .run(CodingAgentOperation::PluginCommand {
+            command_id: "missing.command".into(),
+            args: serde_json::json!({}),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(plugin_command_error.code(), "unsupported_capability");
+
+    let fork_error = session
+        .run(CodingAgentOperation::ForkSession {
+            target_leaf_id: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(fork_error.code(), "unsupported_capability");
+    assert!(
+        fork_error
+            .to_string()
+            .contains("fork session execution is not implemented yet")
+    );
+
+    let switch_error = session
+        .run(CodingAgentOperation::SwitchActiveLeaf {
+            target_leaf_id: "leaf_target".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(switch_error.code(), "unsupported_capability");
+    assert!(
+        switch_error
+            .to_string()
+            .contains("active leaf switch execution is not implemented yet")
+    );
 }
 
 #[tokio::test]
