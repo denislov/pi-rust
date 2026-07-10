@@ -1191,7 +1191,7 @@ git commit -m "chore: deprecate compatibility event subscription"
 - Modify: `docs/TODO.md`
 - Modify: `docs/superpowers/plans/2026-07-10-operation-runtime-stage-8-public-facade-narrowing-plan.md`
 
-- [ ] **Step 1: Run full Stage 8 verification**
+- [x] **Step 1: Run full Stage 8 verification**
 
 Run:
 
@@ -1210,11 +1210,11 @@ git diff --check
 
 Expected: every command exits with code 0.
 
-- [ ] **Step 2: Update this plan's verification checklist**
+- [x] **Step 2: Update this plan's verification checklist**
 
 After the commands pass, mark the corresponding checklist entries below.
 
-- [ ] **Step 3: Update the project checklist**
+- [x] **Step 3: Update the project checklist**
 
 Update the active operation-runtime item in `docs/TODO.md` so the Stage 8 portion says:
 
@@ -1228,7 +1228,7 @@ Add a progress log entry:
 - 2026-07-10: Stage 8 public facade narrowing/deletion completed. The stable facade now exposes operation execution, snapshot/client, and product-event subscription boundaries; root compatibility re-exports and broad session workflow methods are deprecated; first-party adapter/test consumers use snapshot plus product-event surfaces; and remaining compatibility event subscription has an explicit deletion boundary.
 ```
 
-- [ ] **Step 4: Commit closure documentation**
+- [x] **Step 4: Commit closure documentation**
 
 ```bash
 git add docs/TODO.md docs/superpowers/plans/2026-07-10-operation-runtime-stage-8-public-facade-narrowing-plan.md
@@ -1237,16 +1237,16 @@ git commit -m "docs: close runtime facade narrowing stage"
 
 ## Verification Checklist
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo test -p pi-coding-agent --test api_boundary_guards`
-- [ ] `cargo test -p pi-coding-agent --test event_boundary_guards`
-- [ ] `cargo test -p pi-coding-agent --test product_runtime_boundary_guards`
-- [ ] `cargo test -p pi-coding-agent --test public_api`
-- [ ] `cargo test -p pi-coding-agent --test rpc_mode`
-- [ ] `cargo test -p pi-coding-agent --test interactive_mode`
-- [ ] `cargo check --workspace`
-- [ ] `cargo test --workspace`
-- [ ] `git diff --check`
+- [x] `cargo fmt --check`
+- [x] `cargo test -p pi-coding-agent --test api_boundary_guards`
+- [x] `cargo test -p pi-coding-agent --test event_boundary_guards`
+- [x] `cargo test -p pi-coding-agent --test product_runtime_boundary_guards`
+- [x] `cargo test -p pi-coding-agent --test public_api`
+- [x] `cargo test -p pi-coding-agent --test rpc_mode`
+- [x] `cargo test -p pi-coding-agent --test interactive_mode`
+- [x] `cargo check --workspace`
+- [x] `cargo test --workspace`
+- [x] `git diff --check`
 
 ## Spec Coverage
 
