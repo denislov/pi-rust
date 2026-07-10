@@ -488,6 +488,8 @@ impl CodingAgentSession {
         }
     }
 
+    #[deprecated(note = "use subscribe_product_events_public instead")]
+    #[allow(deprecated)]
     pub fn subscribe(&self) -> CodingAgentEventReceiver {
         let receiver = self.event_service.subscribe();
         self.emit_pending_startup_recovery_markers();

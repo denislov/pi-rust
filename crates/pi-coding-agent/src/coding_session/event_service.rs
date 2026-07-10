@@ -711,6 +711,7 @@ impl EventService {
         })
     }
 
+    #[deprecated(note = "use ProductEventReceiver instead")]
     pub(crate) fn subscribe(&self) -> CodingAgentEventReceiver {
         CodingAgentEventReceiver {
             inner: self.sender.subscribe(),

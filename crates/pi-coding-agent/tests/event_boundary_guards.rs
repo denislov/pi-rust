@@ -259,6 +259,30 @@ fn first_party_code_does_not_consume_compatibility_event_subscription() {
     );
 }
 
+#[test]
+fn compatibility_subscribe_is_not_a_stable_runtime_path() {
+    let owner_source = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/coding_session/mod.rs",
+    ))
+    .expect("read coding session owner");
+    let event_service_source = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/coding_session/event_service.rs",
+    ))
+    .expect("read event service");
+
+    assert!(
+        owner_source
+            .contains("#[deprecated(note = \"use subscribe_product_events_public instead\")]")
+            || owner_source.contains("#[cfg(test)]\n    pub fn subscribe("),
+        "CodingAgentSession::subscribe compatibility path should be deprecated or test-gated"
+    );
+    assert!(
+        event_service_source.contains("#[deprecated(note = \"use ProductEventReceiver instead\")]")
+            || event_service_source.contains("#[cfg(test)]\n    pub(crate) fn subscribe("),
+        "EventService compatibility CodingAgentEvent subscribe path should be deprecated or test-gated"
+    );
+}
+
 fn collect_source_violations(
     repo_root: &std::path::Path,
     path: &std::path::Path,

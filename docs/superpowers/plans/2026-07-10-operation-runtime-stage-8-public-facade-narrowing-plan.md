@@ -1084,7 +1084,7 @@ git commit -m "chore: narrow stable event receiver facade"
 - Modify: `crates/pi-coding-agent/tests/event_boundary_guards.rs`
 - Modify: `crates/pi-coding-agent/tests/api_boundary_guards.rs`
 
-- [ ] **Step 1: Add failing guard that compatibility subscribe is test-gated or deprecated**
+- [x] **Step 1: Add failing guard that compatibility subscribe is test-gated or deprecated**
 
 Add this test to `crates/pi-coding-agent/tests/event_boundary_guards.rs`:
 
@@ -1113,7 +1113,7 @@ fn compatibility_subscribe_is_not_a_stable_runtime_path() {
 }
 ```
 
-- [ ] **Step 2: Run RED guard**
+- [x] **Step 2: Run RED guard**
 
 Run:
 
@@ -1123,7 +1123,7 @@ cargo test -p pi-coding-agent --test event_boundary_guards compatibility_subscri
 
 Expected: FAIL because compatibility subscribe is still a normal public method.
 
-- [ ] **Step 3: Deprecate compatibility subscribe**
+- [x] **Step 3: Deprecate compatibility subscribe**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, change:
 
@@ -1153,7 +1153,7 @@ pub(crate) fn subscribe(&self) -> CodingAgentEventReceiver {
 
 Add `#[allow(deprecated)]` only around the owner compatibility wrapper that delegates to `event_service.subscribe()`.
 
-- [ ] **Step 4: Remove or gate compatibility receiver when remaining callers are gone**
+- [x] **Step 4: Remove or gate compatibility receiver when remaining callers are gone**
 
 Run:
 
@@ -1163,7 +1163,7 @@ rg -n "CodingAgentEventReceiver|\\.subscribe\\(\\)" crates/pi-coding-agent/src c
 
 Keep `CodingAgentEventReceiver` and `CodingAgentSession::subscribe()` deprecated in this stage. Record this deletion stop condition in `docs/TODO.md`: remove both after a later product-event payload plan lets compatibility tests stop matching `CodingAgentEvent` payloads directly.
 
-- [ ] **Step 5: Run GREEN checks**
+- [x] **Step 5: Run GREEN checks**
 
 Run:
 
@@ -1175,10 +1175,10 @@ cargo test -p pi-coding-agent --test public_api
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/event_service.rs crates/pi-coding-agent/tests/event_boundary_guards.rs docs/TODO.md
+git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/coding_session/event_service.rs crates/pi-coding-agent/tests/event_boundary_guards.rs docs/TODO.md docs/superpowers/plans/2026-07-10-operation-runtime-stage-8-public-facade-narrowing-plan.md
 git commit -m "chore: deprecate compatibility event subscription"
 ```
 
