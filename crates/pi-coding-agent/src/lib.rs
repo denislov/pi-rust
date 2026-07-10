@@ -38,16 +38,23 @@ pub mod theme;
 #[doc(hidden)]
 pub mod tools;
 
+#[deprecated(note = "use pi_coding_agent::api instead")]
 pub use args::{CliArgs, CliMode, help_text, parse_args};
+#[deprecated(note = "use pi_coding_agent::api instead")]
 pub use error::CliError;
+#[deprecated(note = "use pi_coding_agent::api instead")]
 pub use print_mode::{PrintModeOptions, run_print_mode};
+#[deprecated(note = "use pi_coding_agent::api instead")]
 pub use prompt_options::PromptRunOptions;
+#[deprecated(note = "use pi_coding_agent::api instead")]
 pub use runtime::{
     CliRunOptions, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, PromptInvocation, SessionMode,
     SessionRunOptions, build_agent_config, effective_no_context_files, effective_session_dir,
     select_model,
 };
+#[deprecated(note = "use pi_coding_agent::api instead")]
 pub use session::{ResolvedSessionTarget, encode_cwd};
+#[deprecated(note = "use pi_coding_agent::api instead")]
 pub use tools::builtin_tools;
 
 /// Stable library facade for embedding or scripting `pi-coding-agent`.

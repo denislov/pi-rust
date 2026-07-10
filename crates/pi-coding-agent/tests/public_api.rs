@@ -109,6 +109,18 @@ fn public_api_symbols_are_importable() {
 }
 
 #[test]
+fn public_api_tests_use_stable_facade_imports() {
+    let source = include_str!("public_api.rs");
+    let forbidden_import = "use pi_coding_agent::".to_owned() + "{";
+    assert!(
+        !source
+            .lines()
+            .any(|line| line.trim_start().starts_with(&forbidden_import)),
+        "public API tests should import stable symbols through pi_coding_agent::api"
+    );
+}
+
+#[test]
 fn model_rotation_surface_is_importable_from_api_facade() {
     let rotation = parse_model_rotation("gpt-4*:high,claude-*:medium").unwrap();
     let _rotation_type_name = std::any::type_name::<ModelRotation>();
