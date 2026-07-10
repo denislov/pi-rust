@@ -606,6 +606,7 @@ fn send_ui_snapshot(
     let _ = event_tx.send(PromptTaskEvent::Snapshot(session.ui_snapshot(Vec::new())));
 }
 
+#[allow(deprecated)]
 async fn run_coding_prompt_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -677,6 +678,7 @@ async fn run_coding_prompt_task(
     })
 }
 
+#[allow(deprecated)]
 async fn run_coding_agent_invocation_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -749,6 +751,7 @@ async fn run_coding_agent_invocation_task(
     Ok(AgentInvocationTaskResult { session })
 }
 
+#[allow(deprecated)]
 async fn run_coding_agent_team_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -844,6 +847,7 @@ async fn run_coding_delegation_approval_task(
     Ok(DelegationApprovalTaskResult { session })
 }
 
+#[allow(deprecated)]
 async fn run_coding_compact_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -899,6 +903,7 @@ async fn run_coding_compact_task(
     })
 }
 
+#[allow(deprecated)]
 async fn run_coding_self_healing_edit_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -1151,6 +1156,7 @@ fn plugin_ui_dialogs(session: &CodingAgentSession) -> Vec<PluginUiDialog> {
         .collect()
 }
 
+#[allow(deprecated)]
 async fn run_coding_branch_summary_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,

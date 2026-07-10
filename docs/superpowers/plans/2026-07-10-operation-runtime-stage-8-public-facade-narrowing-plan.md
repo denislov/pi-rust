@@ -871,10 +871,19 @@ git commit -m "test: migrate first-party event subscriptions"
 
 **Files:**
 - Modify: `crates/pi-coding-agent/src/coding_session/mod.rs`
+- Modify: `crates/pi-coding-agent/src/interactive/prompt_task.rs`
+- Modify: `crates/pi-coding-agent/src/print_mode.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/json_mode.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/commands.rs`
+- Modify: `crates/pi-coding-agent/src/protocol/rpc/prompt.rs`
 - Modify: `crates/pi-coding-agent/tests/api_boundary_guards.rs`
+- Modify: `crates/pi-coding-agent/tests/agent_invocation.rs`
+- Modify: `crates/pi-coding-agent/tests/agent_profile_runtime.rs`
+- Modify: `crates/pi-coding-agent/tests/agent_team_flow.rs`
+- Modify: `crates/pi-coding-agent/tests/delegation_execution.rs`
 - Modify: `crates/pi-coding-agent/tests/public_api.rs`
 
-- [ ] **Step 1: Add failing guard for broad workflow method deprecations**
+- [x] **Step 1: Add failing guard for broad workflow method deprecations**
 
 Add this test to `crates/pi-coding-agent/tests/api_boundary_guards.rs`:
 
@@ -922,7 +931,7 @@ fn preceding_non_blank_line<'a>(source: &'a str, signature: &str) -> Option<&'a 
 }
 ```
 
-- [ ] **Step 2: Run RED guard**
+- [x] **Step 2: Run RED guard**
 
 Run:
 
@@ -932,7 +941,7 @@ cargo test -p pi-coding-agent --test api_boundary_guards broad_session_workflow_
 
 Expected: FAIL because methods are not yet deprecated.
 
-- [ ] **Step 3: Add deprecation attributes**
+- [x] **Step 3: Add deprecation attributes**
 
 In `crates/pi-coding-agent/src/coding_session/mod.rs`, add this attribute to each broad public workflow method listed in the test:
 
@@ -944,7 +953,12 @@ Because the first `run` implementation delegates to these wrappers, add `#[allow
 
 Do not deprecate `create`, `open`, `open_or_create`, `non_persistent`, `list`, `capabilities`, `view`, `snapshot`, `connect`, or public product-event subscription methods.
 
-- [ ] **Step 4: Update public API tests to use `run` for operation smoke coverage**
+Existing first-party adapter functions and compatibility behavior suites still exercise the broad
+methods during this transition. They carry narrow `allow(deprecated)` scopes so builds remain
+warning-free. Delete those allowances when each call site moves to `CodingAgentSession::run` or a
+direct crate-internal operation dispatcher; they are not a permanent compatibility policy.
+
+- [x] **Step 4: Update public API tests to use `run` for operation smoke coverage**
 
 In `crates/pi-coding-agent/tests/public_api.rs`, replace the direct export workflow smoke call with `CodingAgentSession::run`:
 
@@ -964,7 +978,7 @@ For compatibility-specific tests that still intentionally call deprecated method
 
 to the smallest function scope.
 
-- [ ] **Step 5: Run GREEN checks**
+- [x] **Step 5: Run GREEN checks**
 
 Run:
 
@@ -975,10 +989,10 @@ cargo test -p pi-coding-agent --test public_api
 
 Expected: both pass without new warnings promoted to errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/tests/api_boundary_guards.rs crates/pi-coding-agent/tests/public_api.rs
+git add crates/pi-coding-agent/src/coding_session/mod.rs crates/pi-coding-agent/src/interactive/prompt_task.rs crates/pi-coding-agent/src/print_mode.rs crates/pi-coding-agent/src/protocol/json_mode.rs crates/pi-coding-agent/src/protocol/rpc/commands.rs crates/pi-coding-agent/src/protocol/rpc/prompt.rs crates/pi-coding-agent/tests/api_boundary_guards.rs crates/pi-coding-agent/tests/agent_invocation.rs crates/pi-coding-agent/tests/agent_profile_runtime.rs crates/pi-coding-agent/tests/agent_team_flow.rs crates/pi-coding-agent/tests/delegation_execution.rs crates/pi-coding-agent/tests/public_api.rs docs/TODO.md docs/superpowers/plans/2026-07-10-operation-runtime-stage-8-public-facade-narrowing-plan.md
 git commit -m "chore: deprecate broad session workflow methods"
 ```
 

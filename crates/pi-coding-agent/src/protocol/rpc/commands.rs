@@ -498,6 +498,7 @@ impl RpcState {
             .with_max_attempts(policy.max_attempts.unwrap_or(1))
     }
 
+    #[allow(deprecated)]
     async fn handle_self_healing_edit<W>(
         &mut self,
         id: Option<String>,

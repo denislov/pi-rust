@@ -311,6 +311,7 @@ fn protocol_wire_types_are_importable_from_api_facade() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn coding_session_public_api_symbols_are_importable() {
     let temp = tempfile::tempdir().unwrap();
     let options = CodingAgentSessionOptions::new()
@@ -522,6 +523,7 @@ async fn coding_session_self_healing_edit_persists_typed_events() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn coding_session_self_healing_edit_with_check_command_records_output() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -574,6 +576,7 @@ async fn coding_session_self_healing_edit_with_check_command_records_output() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn coding_session_self_healing_edit_uses_planned_repair_attempts() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -623,6 +626,7 @@ async fn coding_session_self_healing_edit_uses_planned_repair_attempts() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -770,6 +774,7 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn coding_session_self_healing_edit_model_repair_invalid_json_preserves_check_output() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -866,6 +871,7 @@ async fn coding_session_self_healing_edit_model_repair_invalid_json_preserves_ch
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn coding_session_self_healing_edit_failed_check_exposes_output() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");

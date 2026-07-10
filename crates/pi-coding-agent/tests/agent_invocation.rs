@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 mod support;
 
 use std::fs;

@@ -84,6 +84,7 @@ pub async fn run_json_mode(options: PromptRunOptions) -> CliOutput {
     }
 }
 
+#[allow(deprecated)]
 async fn run_json_prompt(
     options: PromptRunOptions,
     stdout: &mut String,

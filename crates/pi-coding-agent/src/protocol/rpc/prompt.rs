@@ -207,6 +207,7 @@ impl RpcState {
         }
     }
 
+    #[allow(deprecated)]
     pub(super) async fn handle_invoke_agent<W>(
         &mut self,
         id: Option<String>,
@@ -428,6 +429,7 @@ impl RpcState {
         Ok(())
     }
 
+    #[allow(deprecated)]
     pub(super) async fn handle_invoke_team<W>(
         &mut self,
         id: Option<String>,
@@ -820,6 +822,7 @@ impl RpcState {
         Ok(())
     }
 
+    #[allow(deprecated)]
     async fn start_coding_session_prompt<W>(
         &mut self,
         id: Option<String>,

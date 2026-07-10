@@ -74,3 +74,41 @@ fn root_reexports_are_explicit_compatibility_surface() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn broad_session_workflow_methods_are_deprecated_in_favor_of_run() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
+        .expect("coding session owner should be readable");
+    for signature in [
+        "pub async fn prompt(",
+        "pub async fn compact(",
+        "pub async fn summarize_branch(",
+        "pub async fn self_healing_edit_with_options(",
+        "pub async fn invoke_agent(",
+        "pub async fn invoke_team(",
+        "pub fn export_current_html(",
+        "pub fn export_current(",
+    ] {
+        let preceding = preceding_non_blank_line(&source, signature)
+            .unwrap_or_else(|| panic!("missing method signature: {signature}"));
+        assert_eq!(
+            preceding.trim(),
+            "#[deprecated(note = \"use CodingAgentSession::run instead\")]",
+            "{signature} should be deprecated after CodingAgentSession::run is available"
+        );
+    }
+}
+
+fn preceding_non_blank_line<'a>(source: &'a str, signature: &str) -> Option<&'a str> {
+    let lines: Vec<&str> = source.lines().collect();
+    let idx = lines.iter().position(|line| line.contains(signature))?;
+    if idx == 0 {
+        return Some("");
+    }
+    let mut i = idx - 1;
+    while i > 0 && lines[i].trim().is_empty() {
+        i -= 1;
+    }
+    Some(lines[i])
+}

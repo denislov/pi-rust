@@ -105,6 +105,7 @@ fn session_prompt_options_from_print_options(options: PrintModeOptions) -> Promp
     }
 }
 
+#[allow(deprecated)]
 async fn run_print_mode_with_coding_session(
     options: PromptRunOptions,
 ) -> Result<PromptTurnOutcome, CliError> {
@@ -128,6 +129,7 @@ async fn run_print_mode_with_coding_session(
     Ok(outcome)
 }
 
+#[allow(deprecated)]
 async fn run_non_persistent_print_mode(
     options: PromptRunOptions,
 ) -> Result<PromptTurnOutcome, CliError> {

@@ -215,6 +215,7 @@ fn default_cwd() -> PathBuf {
 }
 
 impl CodingAgentSession {
+    #[allow(deprecated)]
     pub async fn run(
         &mut self,
         operation: CodingAgentOperation,
@@ -362,6 +363,7 @@ impl CodingAgentSession {
         })
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub fn export_current_html(
         &self,
         path: impl AsRef<Path>,
@@ -406,6 +408,7 @@ impl CodingAgentSession {
         }
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub fn export_current(&self) -> Result<CodingAgentSessionExport, CodingSessionError> {
         match self.run_sync_operation(Operation::Export(ExportOptions::view()))? {
             OperationOutcome::Export(outcome) => Ok(outcome.export),
@@ -745,6 +748,7 @@ impl CodingAgentSession {
         }
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub async fn prompt(
         &mut self,
         options: PromptTurnOptions,
@@ -785,6 +789,7 @@ impl CodingAgentSession {
         }
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub async fn compact(
         &mut self,
         options: PromptTurnOptions,
@@ -832,6 +837,7 @@ impl CodingAgentSession {
         }
     }
 
+    #[allow(deprecated)]
     pub async fn self_healing_edit(
         &mut self,
         path: impl Into<String>,
@@ -841,6 +847,7 @@ impl CodingAgentSession {
             .await
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub async fn self_healing_edit_with_options(
         &mut self,
         request: SelfHealingEditRequest,
@@ -888,6 +895,7 @@ impl CodingAgentSession {
         }
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub async fn invoke_agent(
         &mut self,
         options: AgentInvocationOptions,
@@ -935,6 +943,7 @@ impl CodingAgentSession {
         }
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub async fn invoke_team(
         &mut self,
         options: AgentTeamOptions,
@@ -1086,6 +1095,7 @@ impl CodingAgentSession {
         }
     }
 
+    #[deprecated(note = "use CodingAgentSession::run instead")]
     pub async fn summarize_branch(
         &mut self,
         options: PromptTurnOptions,
@@ -2123,6 +2133,7 @@ fn apply_finalized_session_write(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use std::{
         fs,
