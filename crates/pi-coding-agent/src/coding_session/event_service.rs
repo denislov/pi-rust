@@ -1038,6 +1038,7 @@ fn map_recv_error(error: broadcast::error::RecvError) -> CodingSessionError {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use pi_agent_core::{AgentEvent, AgentToolOutput, AgentToolResult, ProviderRequestSnapshot};
     use pi_ai::types::{

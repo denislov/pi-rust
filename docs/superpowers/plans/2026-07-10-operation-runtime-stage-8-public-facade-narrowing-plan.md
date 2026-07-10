@@ -1151,7 +1151,10 @@ to:
 pub(crate) fn subscribe(&self) -> CodingAgentEventReceiver {
 ```
 
-Add `#[allow(deprecated)]` only around the owner compatibility wrapper that delegates to `event_service.subscribe()`.
+In production code, add `#[allow(deprecated)]` only around the owner compatibility wrapper that
+delegates to `event_service.subscribe()`. The focused `event_service` `#[cfg(test)]` module may
+allow deprecation while it verifies compatibility-stream semantics, keeping workspace test output
+clean without weakening runtime callers.
 
 - [x] **Step 4: Remove or gate compatibility receiver when remaining callers are gone**
 
