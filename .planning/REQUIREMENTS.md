@@ -96,49 +96,49 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUDIT-01 | TBD | Pending |
-| AUDIT-02 | TBD | Pending |
-| AUDIT-03 | TBD | Pending |
-| FACADE-01 | TBD | Pending |
-| FACADE-02 | TBD | Pending |
-| FACADE-03 | TBD | Pending |
-| FACADE-04 | TBD | Pending |
-| FACADE-05 | TBD | Pending |
-| ADAPT-01 | TBD | Pending |
-| ADAPT-02 | TBD | Pending |
-| ADAPT-03 | TBD | Pending |
-| ADAPT-04 | TBD | Pending |
-| RPC-01 | TBD | Pending |
-| RPC-02 | TBD | Pending |
-| RPC-03 | TBD | Pending |
-| RPC-04 | TBD | Pending |
-| INTER-01 | TBD | Pending |
-| INTER-02 | TBD | Pending |
-| INTER-03 | TBD | Pending |
-| INTER-04 | TBD | Pending |
-| INTER-05 | TBD | Pending |
-| TEST-01 | TBD | Pending |
-| TEST-02 | TBD | Pending |
-| TEST-03 | TBD | Pending |
-| TEST-04 | TBD | Pending |
-| DELETE-01 | TBD | Pending |
-| DELETE-02 | TBD | Pending |
-| DELETE-03 | TBD | Pending |
-| DELETE-04 | TBD | Pending |
-| GUARD-01 | TBD | Pending |
-| GUARD-02 | TBD | Pending |
-| GUARD-03 | TBD | Pending |
-| GUARD-04 | TBD | Pending |
-| CLOSE-01 | TBD | Pending |
-| CLOSE-02 | TBD | Pending |
-| CLOSE-03 | TBD | Pending |
-| CLOSE-04 | TBD | Pending |
+| AUDIT-01 | Phase 1 | Pending |
+| AUDIT-02 | Phase 1 | Pending |
+| AUDIT-03 | Phase 1 | Pending |
+| FACADE-01 | Phase 2 | Pending |
+| FACADE-02 | Phase 2 | Pending |
+| FACADE-03 | Phase 2 | Pending |
+| FACADE-04 | Phase 2 | Pending |
+| FACADE-05 | Phase 2 | Pending |
+| ADAPT-01 | Phase 3 | Pending |
+| ADAPT-02 | Phase 3 | Pending |
+| ADAPT-03 | Phase 3 | Pending |
+| ADAPT-04 | Phase 3 | Pending |
+| RPC-01 | Phase 3 | Pending |
+| RPC-02 | Phase 3 | Pending |
+| RPC-03 | Phase 3 | Pending |
+| RPC-04 | Phase 3 | Pending |
+| INTER-01 | Phase 3 | Pending |
+| INTER-02 | Phase 3 | Pending |
+| INTER-03 | Phase 3 | Pending |
+| INTER-04 | Phase 3 | Pending |
+| INTER-05 | Phase 3 | Pending |
+| TEST-01 | Phase 4 | Pending |
+| TEST-02 | Phase 4 | Pending |
+| TEST-03 | Phase 4 | Pending |
+| TEST-04 | Phase 4 | Pending |
+| DELETE-01 | Phase 4 | Pending |
+| DELETE-02 | Phase 4 | Pending |
+| DELETE-03 | Phase 4 | Pending |
+| DELETE-04 | Phase 4 | Pending |
+| GUARD-01 | Phase 5 | Pending |
+| GUARD-02 | Phase 5 | Pending |
+| GUARD-03 | Phase 5 | Pending |
+| GUARD-04 | Phase 5 | Pending |
+| CLOSE-01 | Phase 5 | Pending |
+| CLOSE-02 | Phase 5 | Pending |
+| CLOSE-03 | Phase 5 | Pending |
+| CLOSE-04 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 37 total
-- Mapped to phases: 0
-- Unmapped: 37
+- Mapped to phases: 37
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-11*
-*Last updated: 2026-07-11 after initial definition*
+*Last updated: 2026-07-11 after roadmap mapping*
