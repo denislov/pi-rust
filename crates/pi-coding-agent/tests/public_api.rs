@@ -8,25 +8,26 @@ use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
     CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput,
     CliRunOptions, CodingAgentCapabilities, CodingAgentEvent, CodingAgentEventReceiver,
-    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
-    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
-    CodingDiagnosticSeverity, CodingSessionError, ColorValue, CompactionProtocolResult,
-    CompactionReason, ContextFile, DetectionConfidence, DetectionSource, ModelRotation,
-    ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions, ProfileId,
-    PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
-    ProtocolDelegationFoldedBlock, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
-    ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor,
-    ResolvedTheme, ResourceLoadOptions, RpcCapabilities, RpcCapabilityStatus, RpcCommand,
-    RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata, RpcResponse,
-    RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
-    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
-    SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
-    SelfHealingEditRequest, SessionMode, StreamingBehavior, TerminalTheme, ThemeBg, ThemeColor,
-    ThemeExportColors, ThemeJson, ToolExecutionResult, ToolFilter, build_agent_resources,
-    builtin_dark, builtin_tools, detect_terminal_background, discover_context_files, filter_tools,
-    get_resolved_theme_colors, get_theme_export_colors, get_theme_for_rgb_color, help_text,
-    is_light_theme, parse_args, parse_model_rotation, parse_osc11_background_color,
-    render_diagnostics, resolve, resolve_resource_paths,
+    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentSession,
+    CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
+    CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity,
+    CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
+    DetectionConfidence, DetectionSource, ModelRotation, ModelRotationEntry,
+    PendingDelegationConfirmation, PrintModeOptions, ProfileId, PromptInvocation, PromptRunOptions,
+    PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, ProtocolDelegationFoldedBlock,
+    ProtocolEvent, ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement,
+    REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions,
+    RpcCapabilities, RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus,
+    RpcDelegationRenderingMetadata, RpcResponse, RpcSelfHealingEditModelRepair,
+    RpcSelfHealingEditReplacement, RpcSessionState, SelfHealingEditCheckOutput,
+    SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
+    SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest, SessionMode,
+    StreamingBehavior, TerminalTheme, ThemeBg, ThemeColor, ThemeExportColors, ThemeJson,
+    ToolExecutionResult, ToolFilter, build_agent_resources, builtin_dark, builtin_tools,
+    detect_terminal_background, discover_context_files, filter_tools, get_resolved_theme_colors,
+    get_theme_export_colors, get_theme_for_rgb_color, help_text, is_light_theme, parse_args,
+    parse_model_rotation, parse_osc11_background_color, render_diagnostics, resolve,
+    resolve_resource_paths,
 };
 use support::ProviderGuard;
 
@@ -118,6 +119,24 @@ fn public_api_tests_use_stable_facade_imports() {
             .any(|line| line.trim_start().starts_with(&forbidden_import)),
         "public API tests should import stable symbols through pi_coding_agent::api"
     );
+}
+
+#[tokio::test]
+async fn coding_session_run_public_operation_facade_is_importable() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_public_run")
+            .with_session_log_root(temp.path()),
+    )
+    .await
+    .unwrap();
+    let outcome = session
+        .run(CodingAgentOperation::ExportCurrent)
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, CodingAgentOperationOutcome::Export(_)));
 }
 
 #[test]

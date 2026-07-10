@@ -26,6 +26,7 @@ mod plugin_service;
 mod profiles;
 mod prompt;
 mod prompt_flow;
+mod public_operation;
 mod runtime_service;
 mod self_healing_edit_flow;
 mod self_healing_edit_service;
@@ -65,6 +66,7 @@ pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
 };
+pub use public_operation::{CodingAgentOperation, CodingAgentOperationOutcome};
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
@@ -208,6 +210,49 @@ fn default_cwd() -> PathBuf {
 }
 
 impl CodingAgentSession {
+    pub async fn run(
+        &mut self,
+        operation: CodingAgentOperation,
+    ) -> Result<CodingAgentOperationOutcome, CodingSessionError> {
+        match operation {
+            CodingAgentOperation::Prompt(options) => self
+                .prompt(options)
+                .await
+                .map(CodingAgentOperationOutcome::Prompt),
+            CodingAgentOperation::Compact(options) => self
+                .compact(options)
+                .await
+                .map(CodingAgentOperationOutcome::Compact),
+            CodingAgentOperation::BranchSummary {
+                options,
+                source_leaf_id,
+                target_leaf_id,
+                custom_instructions,
+            } => self
+                .summarize_branch(options, source_leaf_id, target_leaf_id, custom_instructions)
+                .await
+                .map(CodingAgentOperationOutcome::BranchSummary),
+            CodingAgentOperation::SelfHealingEdit(request) => self
+                .self_healing_edit_with_options(request)
+                .await
+                .map(CodingAgentOperationOutcome::SelfHealingEdit),
+            CodingAgentOperation::InvokeAgent(options) => self
+                .invoke_agent(options)
+                .await
+                .map(CodingAgentOperationOutcome::AgentInvocation),
+            CodingAgentOperation::InvokeTeam(options) => self
+                .invoke_team(options)
+                .await
+                .map(CodingAgentOperationOutcome::AgentTeam),
+            CodingAgentOperation::ExportCurrent => self
+                .export_current()
+                .map(CodingAgentOperationOutcome::Export),
+            CodingAgentOperation::ExportCurrentHtml(path) => self
+                .export_current_html(path)
+                .map(CodingAgentOperationOutcome::ExportHtml),
+        }
+    }
+
     pub async fn create(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::create(&options)?;
         let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
