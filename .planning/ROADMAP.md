@@ -45,9 +45,13 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   5. Stable API checks demonstrate that internal operations, dispatch metadata, plugin load options, services, and Flow nodes remain inaccessible to callers.
 
 **Plans**: 3 plans
+**Wave 1**
 
 - [ ] 02-01-PLAN.md — Close the stable facade signature graph and enforce privacy.
 - [ ] 02-02-PLAN.md — Prove the independent 15-variant dispatch and outcome contract.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-03-PLAN.md — Verify high-risk durable semantics and complete the Phase 2 gate.
 
 ### Phase 3: Production Adapter Convergence
