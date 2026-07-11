@@ -6,16 +6,18 @@ use pi_agent_core::AgentResources;
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
-    BranchSummaryReusePolicy, CapabilityStatus, CliArgs, CliDiagnostic, CliDiagnosticSeverity,
-    CliError, CliOutput, CliRunOptions, CodingAgentCapabilities, CodingAgentClientConnection,
-    CodingAgentClientId, CodingAgentEvent, CodingAgentOperation, CodingAgentOperationOutcome,
-    CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome, CodingAgentProductEvent,
-    CodingAgentProductEventReceiver, CodingAgentSession, CodingAgentSessionExport,
-    CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionSummary,
-    CodingAgentSessionView, CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic,
-    CodingDiagnosticSeverity, CodingSessionError, ColorValue, CompactionProtocolResult,
-    CompactionReason, ContextFile, DetectionConfidence, DetectionSource, ModelRotation,
-    ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions, ProfileId,
+    AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, AgentTeamMemberOutcome,
+    AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CapabilityStatus, CliArgs,
+    CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput, CliRunOptions,
+    CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId, CodingAgentEvent,
+    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginDiagnostic,
+    CodingAgentPluginLoadOutcome, CodingAgentProductEvent, CodingAgentProductEventReceiver,
+    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
+    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
+    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic, CodingDiagnosticSeverity,
+    CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
+    DetectionConfidence, DetectionSource, ModelRotation, ModelRotationEntry,
+    PendingDelegationConfirmation, PrintModeOptions, ProfileDiagnostic, ProfileId,
     PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
     ProtocolDelegationFoldedBlock, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
     ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor,
@@ -24,14 +26,130 @@ use pi_coding_agent::api::{
     RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
-    SelfHealingEditRequest, SessionMode, StreamingBehavior, TerminalTheme, ThemeBg, ThemeColor,
-    ThemeExportColors, ThemeJson, ToolExecutionResult, ToolFilter, build_agent_resources,
-    builtin_dark, builtin_tools, detect_terminal_background, discover_context_files, filter_tools,
-    get_resolved_theme_colors, get_theme_export_colors, get_theme_for_rgb_color, help_text,
-    is_light_theme, parse_args, parse_model_rotation, parse_osc11_background_color,
-    render_diagnostics, resolve, resolve_resource_paths,
+    SelfHealingEditRequest, SessionMode, StreamingBehavior, TeamProfile, TerminalTheme, ThemeBg,
+    ThemeColor, ThemeExportColors, ThemeJson, ToolExecutionResult, ToolFilter,
+    build_agent_resources, builtin_dark, builtin_tools, detect_terminal_background,
+    discover_context_files, filter_tools, get_resolved_theme_colors, get_theme_export_colors,
+    get_theme_for_rgb_color, help_text, is_light_theme, parse_args, parse_model_rotation,
+    parse_osc11_background_color, render_diagnostics, resolve, resolve_resource_paths,
 };
 use support::{EnvGuard, ProviderGuard};
+
+async fn approve_delegation_contract(
+    session: &mut CodingAgentSession,
+) -> Result<(), CodingSessionError> {
+    session
+        .approve_delegation_confirmation(String::new(), String::new())
+        .await
+}
+
+#[test]
+fn stable_api_signature_closure_is_importable() {
+    fn name<T>() -> &'static str {
+        std::any::type_name::<T>()
+    }
+
+    let prompt = || PromptTurnOptions::new(PromptInvocation::Text("test".into()));
+    let operations = [
+        CodingAgentOperation::Prompt(prompt()),
+        CodingAgentOperation::Compact(prompt()),
+        CodingAgentOperation::BranchSummary {
+            options: prompt(),
+            source_leaf_id: "source".into(),
+            target_leaf_id: "target".into(),
+            custom_instructions: None,
+            reuse: BranchSummaryReusePolicy::ReuseExisting,
+        },
+        CodingAgentOperation::SelfHealingEdit(SelfHealingEditRequest::new(
+            "src/lib.rs",
+            vec![SelfHealingEditReplacement::new("old", "new")],
+        )),
+        CodingAgentOperation::InvokeAgent(AgentInvocationOptions::new(
+            "reviewer",
+            "review",
+            prompt(),
+        )),
+        CodingAgentOperation::InvokeTeam(AgentTeamOptions::new("review", "review", prompt())),
+        CodingAgentOperation::PluginLoad,
+        CodingAgentOperation::PluginCommand {
+            command_id: "plugin.command".into(),
+            args: serde_json::Value::Null,
+        },
+        CodingAgentOperation::SetDefaultAgentProfile {
+            profile_id: ProfileId::from("reviewer"),
+        },
+        CodingAgentOperation::ApproveDelegation {
+            operation_id: "operation".into(),
+            tool_call_id: "tool".into(),
+        },
+        CodingAgentOperation::RejectDelegation {
+            operation_id: "operation".into(),
+            tool_call_id: "tool".into(),
+            reason: "rejected".into(),
+        },
+        CodingAgentOperation::ForkSession {
+            target_leaf_id: None,
+        },
+        CodingAgentOperation::SwitchActiveLeaf {
+            target_leaf_id: "leaf".into(),
+        },
+        CodingAgentOperation::ExportCurrent,
+        CodingAgentOperation::ExportCurrentHtml("session.html".into()),
+    ];
+    assert_eq!(operations.len(), 15);
+
+    for type_name in [
+        name::<CodingAgentOperationOutcome>(),
+        name::<PromptTurnOutcome>(),
+        name::<SelfHealingEditOutcome>(),
+        name::<AgentInvocationOutcome>(),
+        name::<AgentTeamOutcome>(),
+        name::<AgentTeamMemberOutcome>(),
+        name::<CodingAgentPluginLoadOutcome>(),
+        name::<CodingAgentPluginDiagnostic>(),
+        name::<CodingAgentSessionExport>(),
+        name::<CodingSessionError>(),
+        name::<CodingAgentSessionOptions>(),
+        name::<CodingAgentSessionSummary>(),
+        name::<CodingAgentSessionView>(),
+        name::<CodingAgentSnapshot>(),
+        name::<CodingAgentSnapshotCursor>(),
+        name::<CodingAgentCapabilities>(),
+        name::<CapabilityStatus>(),
+        name::<CodingAgentProductEvent>(),
+        name::<CodingAgentProductEventReceiver>(),
+        name::<CodingAgentClientId>(),
+        name::<CodingAgentClientConnection>(),
+        name::<AgentProfile>(),
+        name::<TeamProfile>(),
+        name::<ProfileDiagnostic>(),
+        name::<PendingDelegationConfirmation>(),
+    ] {
+        assert!(type_name.starts_with("pi_coding_agent::"), "{type_name}");
+    }
+
+    let _create = CodingAgentSession::create;
+    let _open = CodingAgentSession::open;
+    let _open_or_create = CodingAgentSession::open_or_create;
+    let _non_persistent = CodingAgentSession::non_persistent;
+    let _list = CodingAgentSession::list;
+    let _run = CodingAgentSession::run;
+    let _snapshot = CodingAgentSession::snapshot;
+    let _view = CodingAgentSession::view;
+    let _capabilities = CodingAgentSession::capabilities;
+    let _subscribe = CodingAgentSession::subscribe_product_events_public;
+    let _connect = CodingAgentSession::connect;
+    let _profiles = CodingAgentSession::agent_profiles;
+    let _teams = CodingAgentSession::team_profiles;
+    let _diagnostics = CodingAgentSession::profile_diagnostics;
+    let _pending = CodingAgentSession::pending_delegation_confirmations;
+    let _set_default =
+        |session: &mut CodingAgentSession| session.set_default_agent_profile_id(String::new());
+    let _approve = approve_delegation_contract;
+    let _reject = |session: &mut CodingAgentSession| {
+        session.reject_delegation_confirmation(String::new(), String::new(), String::new())
+    };
+}
 
 fn model(api: &str) -> Model {
     Model {
