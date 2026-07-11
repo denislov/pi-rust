@@ -1,3 +1,4 @@
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::CliOutput;
 use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
@@ -84,7 +85,6 @@ pub async fn run_json_mode(options: PromptRunOptions) -> CliOutput {
     }
 }
 
-#[allow(deprecated)]
 async fn run_json_prompt(
     options: PromptRunOptions,
     stdout: &mut String,
@@ -96,7 +96,14 @@ async fn run_json_prompt(
     let (done_tx, mut done_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
-        let _ = done_tx.send(session.prompt(prompt_options).await);
+        let result = session
+            .run(CodingAgentOperation::Prompt(prompt_options))
+            .await
+            .map(|outcome| match outcome {
+                CodingAgentOperationOutcome::Prompt(outcome) => outcome,
+                _ => unreachable!("prompt operation returned a different public outcome"),
+            });
+        let _ = done_tx.send(result);
     });
 
     loop {

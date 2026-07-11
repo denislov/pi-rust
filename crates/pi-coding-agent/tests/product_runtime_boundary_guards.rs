@@ -322,6 +322,65 @@ fn adapters_do_not_construct_or_run_low_level_agents() {
 }
 
 #[test]
+fn production_json_and_print_use_canonical_operations() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    // JSON/print adapter files must submit Prompt operations through
+    // CodingAgentSession::run instead of deprecated broad workflow methods, and
+    // must not suppress deprecation warnings in production source. Test-only
+    // allowances inside #[cfg(test)] modules are preserved. print_mode.rs joins
+    // this guard once its persistent and transient branches are migrated.
+    let adapter_files = ["src/protocol/json_mode.rs"];
+    let deprecated_workflow_methods = [
+        "prompt",
+        "compact",
+        "self_healing_edit_with_options",
+        "invoke_agent",
+        "invoke_team",
+        "summarize_branch",
+        "export_current",
+        "export_current_html",
+    ];
+
+    for relative_path in adapter_files {
+        let path = scan.crate_root.join(relative_path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {relative_path}: {err}"));
+        let sanitized = sanitize_rust_source(&source);
+        for (index, line) in sanitized.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || line_is_cfg_test_gated(&sanitized, index) {
+                continue;
+            }
+            if trimmed.contains("#[allow(deprecated)]") {
+                violations.push(format!(
+                    "{relative_path}:{}: production adapter suppresses deprecation: {}",
+                    index + 1,
+                    trimmed
+                ));
+            }
+            for method in deprecated_workflow_methods {
+                let pattern = format!(".{method}(");
+                if trimmed.contains(&pattern) {
+                    violations.push(format!(
+                        "{relative_path}:{}: production adapter calls deprecated broad workflow method `{method}` instead of CodingAgentSession::run: {}",
+                        index + 1,
+                        trimmed
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "JSON/print production adapters must route operations through CodingAgentSession::run and must not suppress deprecated broad workflow calls:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn adapters_do_not_access_event_service_directly_for_projection() {
     let scan = SourceScan::new();
 
