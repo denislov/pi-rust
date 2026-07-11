@@ -16,6 +16,8 @@ use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator}
 use super::session_log::replay::{
     MessageStatus, SessionRecoverySummary, SessionReplay, ToolCallStatus, TranscriptItem,
 };
+#[cfg(test)]
+use super::session_log::store::StoreFailurePoint;
 use super::session_log::store::{
     CreateSessionOptions, ManifestPatch, SessionCreateError, SessionHandle, SessionLogStore,
     SessionSummary,
@@ -803,6 +805,15 @@ impl SessionService {
     #[cfg(test)]
     pub(crate) fn session_dir(&self) -> &Path {
         self.handle.session_dir()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_store_after_for_tests(
+        &self,
+        point: StoreFailurePoint,
+        successful_calls: usize,
+    ) {
+        self.store.fail_after(point, successful_calls);
     }
 
     #[allow(dead_code)]

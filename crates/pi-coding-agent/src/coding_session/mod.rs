@@ -2239,6 +2239,7 @@ mod tests {
         PersistedContentBlock, SessionEventData, SessionEventEnvelope,
     };
     use crate::coding_session::session_log::replay::{MessageStatus, TranscriptItem};
+    use crate::coding_session::session_log::store::StoreFailurePoint;
     use crate::plugins::{
         CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginId,
         PluginMetadata, PluginRegistry, PluginSource, ToolProvider, ToolRegistrationHost,
@@ -4374,12 +4375,283 @@ runtime = "lua"
 
     #[tokio::test]
     async fn canonical_run_preserves_navigation_and_branch_summary_durability() {
-        todo!("exercise canonical fork, switch, and branch-summary reuse durability")
+        let api = "coding-session-canonical-navigation-durability";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("root answer", StopReason::Stop),
+                FauxProvider::text_call("branch answer", StopReason::Stop),
+                FauxProvider::text_call("durable branch summary", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let source_options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_canonical_navigation_durability")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::create(source_options.clone())
+            .await
+            .unwrap();
+        let root_leaf = match session
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                api,
+                "root question",
+            )))
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            }) => leaf_id,
+            other => panic!("expected root prompt success, got {other:?}"),
+        };
+        let branch_leaf = match session
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                api,
+                "branch question",
+            )))
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            }) => leaf_id,
+            other => panic!("expected branch prompt success, got {other:?}"),
+        };
+
+        let switch = session
+            .run(CodingAgentOperation::SwitchActiveLeaf {
+                target_leaf_id: root_leaf.clone(),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            switch,
+            CodingAgentOperationOutcome::ActiveLeafSwitched
+        ));
+        assert_eq!(
+            session
+                .hydrate_current()
+                .unwrap()
+                .unwrap()
+                .summary
+                .active_leaf_id,
+            Some(root_leaf.clone())
+        );
+        let reopened = CodingAgentSession::open(source_options.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened
+                .persistent_session_service()
+                .replay()
+                .unwrap()
+                .active_leaf_id,
+            Some(root_leaf.clone())
+        );
+
+        let generated = session
+            .run(CodingAgentOperation::BranchSummary {
+                options: prompt_options(api, ""),
+                source_leaf_id: branch_leaf.clone(),
+                target_leaf_id: root_leaf.clone(),
+                custom_instructions: None,
+                reuse: BranchSummaryReusePolicy::AlwaysCreate,
+            })
+            .await
+            .unwrap();
+        let expected_summary = match generated {
+            CodingAgentOperationOutcome::BranchSummary(PromptTurnOutcome::Success {
+                final_text,
+                ..
+            }) => final_text,
+            other => panic!("expected generated branch summary, got {other:?}"),
+        };
+        let event_log_path = temp
+            .path()
+            .join("sess_canonical_navigation_durability/events.jsonl");
+        let event_log_before_reuse = std::fs::read(&event_log_path).unwrap();
+        let mut reuse_events = session.subscribe_product_events_public();
+        let reused = session
+            .run(CodingAgentOperation::BranchSummary {
+                options: prompt_options(api, ""),
+                source_leaf_id: branch_leaf.clone(),
+                target_leaf_id: root_leaf.clone(),
+                custom_instructions: None,
+                reuse: BranchSummaryReusePolicy::ReuseExisting,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            reused,
+            CodingAgentOperationOutcome::BranchSummary(PromptTurnOutcome::Success {
+                final_text,
+                ..
+            }) if final_text == expected_summary
+        ));
+        assert!(reuse_events.try_recv().unwrap().is_none());
+        assert_eq!(
+            std::fs::read(&event_log_path).unwrap(),
+            event_log_before_reuse
+        );
+        let reopened = CodingAgentSession::open(source_options).await.unwrap();
+        assert_eq!(
+            reopened
+                .persistent_session_service()
+                .branch_summary_for(&branch_leaf, &root_leaf)
+                .unwrap()
+                .as_deref(),
+            Some(expected_summary.as_str())
+        );
+
+        let capability_generation = session.current_capability_generation_for_tests();
+        let mut fork_events = session.subscribe_product_events();
+        let source_session_id = session.view().session_id;
+        let forked = session
+            .run(CodingAgentOperation::ForkSession {
+                target_leaf_id: Some(root_leaf.clone()),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(forked, CodingAgentOperationOutcome::SessionForked));
+        assert_ne!(session.view().session_id, source_session_id);
+        assert_eq!(
+            session.view().session_id,
+            session
+                .hydrate_current()
+                .unwrap()
+                .unwrap()
+                .summary
+                .session_id
+        );
+        assert_eq!(
+            session.current_capability_generation_for_tests(),
+            capability_generation
+        );
+        let emitted = std::iter::from_fn(|| fork_events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert!(emitted.iter().any(|event| matches!(
+            event.compatibility_event(),
+            CodingAgentEvent::SessionOpened { session_id }
+                if session_id == &session.view().session_id
+        )));
+        assert!(
+            emitted
+                .windows(2)
+                .all(|pair| pair[0].sequence() < pair[1].sequence())
+        );
     }
 
     #[tokio::test]
     async fn canonical_durable_mutations_distinguish_no_commit_partial_commit_and_replay() {
-        todo!("exercise pre-append failure and post-append partial commit boundaries")
+        let api = "coding-session-canonical-mutation-boundaries";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("root answer", StopReason::Stop),
+                FauxProvider::text_call("branch answer", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_canonical_mutation_boundaries")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
+        let root_leaf = match session
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                api,
+                "root question",
+            )))
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            }) => leaf_id,
+            other => panic!("expected root prompt success, got {other:?}"),
+        };
+        let branch_leaf = match session
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                api,
+                "branch question",
+            )))
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            }) => leaf_id,
+            other => panic!("expected branch prompt success, got {other:?}"),
+        };
+        let event_log_path = temp
+            .path()
+            .join("sess_canonical_mutation_boundaries/events.jsonl");
+        let manifest_path = temp
+            .path()
+            .join("sess_canonical_mutation_boundaries/session.json");
+        let events_before = std::fs::read(&event_log_path).unwrap();
+        let manifest_before = std::fs::read(&manifest_path).unwrap();
+
+        session
+            .persistent_session_service()
+            .fail_store_after_for_tests(StoreFailurePoint::AppendEvents, 0);
+        let error = session
+            .run(CodingAgentOperation::SwitchActiveLeaf {
+                target_leaf_id: root_leaf.clone(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "session");
+        assert_eq!(std::fs::read(&event_log_path).unwrap(), events_before);
+        assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest_before);
+        assert_eq!(
+            session.view().session_id,
+            "sess_canonical_mutation_boundaries"
+        );
+        let reopened = CodingAgentSession::open(options.clone()).await.unwrap();
+        assert_eq!(
+            reopened
+                .persistent_session_service()
+                .replay()
+                .unwrap()
+                .active_leaf_id,
+            Some(branch_leaf.clone())
+        );
+
+        session
+            .persistent_session_service()
+            .fail_store_after_for_tests(StoreFailurePoint::UpdateManifest, 0);
+        let error = session
+            .run(CodingAgentOperation::SwitchActiveLeaf {
+                target_leaf_id: root_leaf.clone(),
+            })
+            .await
+            .unwrap_err();
+        let operation_id = match &error {
+            CodingSessionError::PartialCommit { operation_id, .. } => operation_id,
+            other => panic!("expected partial commit, got {other:?}"),
+        };
+        assert!(!operation_id.is_empty());
+        assert_eq!(error.code(), "partial_commit");
+        assert_eq!(
+            session
+                .persistent_session_service()
+                .replay()
+                .unwrap()
+                .active_leaf_id,
+            Some(root_leaf.clone())
+        );
+        let reopened = CodingAgentSession::open(options).await.unwrap();
+        assert_eq!(
+            reopened
+                .persistent_session_service()
+                .replay()
+                .unwrap()
+                .active_leaf_id,
+            Some(root_leaf)
+        );
     }
 
     #[tokio::test]
