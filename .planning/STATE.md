@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: canonical-facade-correctness
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-07-11T05:57:17.025Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-07-11T06:31:55.480Z"
 last_activity: 2026-07-11
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -29,17 +29,17 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 ## Current Position
 
 Phase: 02 (canonical-facade-correctness) — EXECUTING
-Plan: 2 of 3
-Status: Executing Phase 02
+Plan: 3 of 3
+Status: Ready to execute
 Last activity: 2026-07-11 — Phase 02 execution started
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 3
+- Total plans completed: 5
 - Average duration: -
 - Total execution time: 0.0 hours
 
@@ -58,6 +58,7 @@ Progress: [███████░░░] 67%
 | Phase 01 P01 | 7min | 2 tasks | 3 files |
 | Phase 01 P02 | 38min | 3 tasks | 2 files |
 | Phase 02 P01 | 8 min | 2 tasks | 3 files |
+| Phase 02 P02 | 25 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,9 @@ Recent decisions affecting current work:
 - [Phase ?]: 01-03: Added F-BASE-01 informational finding for completed baseline; fixed validator blocking-finding bug per D-15/D-16; Phase 1 audit final with Nyquist validation approved
 - [Phase 02]: 02-01: Existing stable facade already closed positive caller signature graph; evidence added without widening exports — The facade-only closure test compiled without production additions
 - [Phase 02]: 02-01: ProfileRegistry and ProfileRegistryOptions remain implementation-private — Callers consume projected profile query results rather than registry ownership
+- [Phase 02]: 02-02: Keep ExportCurrent and ExportCurrentHtml as distinct test-owned expectations even though both map to private Export options. — This detects collapse of the two public export inputs without changing the private production enum.
+- [Phase 02]: 02-02: Prove dispatcher selection with fixed metadata assertions plus public run behavior, without production instrumentation. — Owner metadata and observable outcomes provide independent evidence without changing runtime semantics for tests.
+- [Phase 02]: 02-02: Keep ProfileRegistry behavior coverage owner-scoped after registry types were removed from the stable api facade. — The tests require implementation ownership and should not force private registries back into the public API.
 
 ### Pending Todos
 
@@ -95,6 +99,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-11T05:57:17.020Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-07-11T06:31:55.328Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None

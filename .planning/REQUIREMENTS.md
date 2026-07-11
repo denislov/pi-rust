@@ -14,8 +14,8 @@
 ### Canonical Facade
 
 - [x] **FACADE-01**: First-party callers can obtain the complete stable `CodingAgentOperation`, outcome, and required support types through `pi_coding_agent::api`
-- [ ] **FACADE-02**: `CodingAgentSession::run` converts every public operation to an internal operation and selects the async, sync-read-only, or sync-mutable dispatcher from operation metadata
-- [ ] **FACADE-03**: Every internal operation outcome is projected through one exhaustive mapping into a public operation outcome
+- [x] **FACADE-02**: `CodingAgentSession::run` converts every public operation to an internal operation and selects the async, sync-read-only, or sync-mutable dispatcher from operation metadata
+- [x] **FACADE-03**: Every internal operation outcome is projected through one exhaustive mapping into a public operation outcome
 - [x] **FACADE-04**: Internal operations, dispatch metadata, plugin load options, services, and Flow nodes are not exposed through the stable API
 - [ ] **FACADE-05**: Fork, active-leaf switch, branch-summary reuse, plugin, profile, and delegation operations preserve their persistence, event-continuity, and error semantics
 
@@ -100,8 +100,8 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | AUDIT-02 | Phase 1 | Complete |
 | AUDIT-03 | Phase 1 | Complete |
 | FACADE-01 | Phase 2 | Complete |
-| FACADE-02 | Phase 2 | Pending |
-| FACADE-03 | Phase 2 | Pending |
+| FACADE-02 | Phase 2 | Complete |
+| FACADE-03 | Phase 2 | Complete |
 | FACADE-04 | Phase 2 | Complete |
 | FACADE-05 | Phase 2 | Pending |
 | ADAPT-01 | Phase 3 | Pending |
