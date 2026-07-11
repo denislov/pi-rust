@@ -1,10 +1,10 @@
 use crate::CliError;
-use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome};
 use crate::coding_session::{
     AgentProfile, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     DelegationConfirmationMode, DelegationPolicy, OperationKind, PendingDelegationConfirmation,
-    PluginLoadOutcome, ProductEventReceiver, ProductEventSequence, ProfileDiagnostic, ProfileId,
-    ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
+    ProductEventReceiver, ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind,
+    ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
     SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
     SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
     TeamStrategy, TeamSupervisor,
@@ -1136,32 +1136,50 @@ impl RpcState {
             },
         };
 
-        if should_load_plugins && let Err(error) = session.reload_plugins().await {
-            self.coding_session = Some(session);
-            write_rpc_response(
-                writer,
-                RpcResponse::error(id, "plugin_command", error.to_string()),
-            )
-            .await?;
-            return Ok(());
-        }
-
-        match session.run_plugin_command(&command_id, args) {
-            Ok(output) => {
+        if should_load_plugins {
+            if let Err(error) = session
+                .run(CodingAgentOperation::PluginLoad)
+                .await
+                .and_then(|outcome| match outcome {
+                    CodingAgentOperationOutcome::PluginLoad(_) => Ok(()),
+                    _ => unreachable!("plugin load operation returned a different public outcome"),
+                })
+            {
                 self.coding_session = Some(session);
                 write_rpc_response(
                     writer,
-                    RpcResponse::success(
-                        id,
-                        "plugin_command",
-                        Some(serde_json::json!({
-                            "commandId": command_id,
-                            "output": output,
-                        })),
-                    ),
+                    RpcResponse::error(id, "plugin_command", error.to_string()),
                 )
-                .await
+                .await?;
+                return Ok(());
             }
+        }
+
+        match session
+            .run(CodingAgentOperation::PluginCommand {
+                command_id: command_id.clone(),
+                args,
+            })
+            .await
+        {
+            Ok(operation_outcome) => match operation_outcome {
+                CodingAgentOperationOutcome::PluginCommand(output) => {
+                    self.coding_session = Some(session);
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::success(
+                            id,
+                            "plugin_command",
+                            Some(serde_json::json!({
+                                "commandId": command_id,
+                                "output": output,
+                            })),
+                        ),
+                    )
+                    .await
+                }
+                _ => unreachable!("plugin command operation returned a different public outcome"),
+            },
             Err(error) => {
                 self.coding_session = Some(session);
                 write_rpc_response(
@@ -1202,12 +1220,15 @@ impl RpcState {
             },
         };
 
-        match session.reload_plugins().await {
-            Ok(outcome) => {
-                let data = rpc_plugin_reload_data(&outcome);
-                self.coding_session = Some(session);
-                write_rpc_response(writer, RpcResponse::success(id, "reload", Some(data))).await
-            }
+        match session.run(CodingAgentOperation::PluginLoad).await {
+            Ok(operation_outcome) => match operation_outcome {
+                CodingAgentOperationOutcome::PluginLoad(outcome) => {
+                    let data = rpc_plugin_reload_data(&outcome);
+                    self.coding_session = Some(session);
+                    write_rpc_response(writer, RpcResponse::success(id, "reload", Some(data))).await
+                }
+                _ => unreachable!("plugin load operation returned a different public outcome"),
+            },
             Err(error) => {
                 self.coding_session = Some(session);
                 write_rpc_response(writer, RpcResponse::error(id, "reload", error.to_string()))
@@ -1485,7 +1506,7 @@ fn rpc_team_strategy(strategy: &TeamStrategy) -> &'static str {
     }
 }
 
-fn rpc_plugin_reload_data(outcome: &PluginLoadOutcome) -> serde_json::Value {
+fn rpc_plugin_reload_data(outcome: &CodingAgentPluginLoadOutcome) -> serde_json::Value {
     let diagnostics = outcome
         .diagnostics
         .iter()

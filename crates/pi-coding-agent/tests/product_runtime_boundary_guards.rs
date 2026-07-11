@@ -380,6 +380,72 @@ fn production_json_and_print_use_canonical_operations() {
 }
 
 #[test]
+fn production_rpc_uses_canonical_operations() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    // RPC production source must submit operations through
+    // CodingAgentSession::run instead of replaced broad workflow methods
+    // (both deprecated and non-deprecated), and must not suppress
+    // deprecation warnings in production source. Test-only allowances
+    // inside #[cfg(test)] modules are preserved.
+    let replaced_workflow_methods = [
+        // Deprecated broad workflow methods
+        "prompt",
+        "compact",
+        "self_healing_edit",
+        "self_healing_edit_with_options",
+        "invoke_agent",
+        "invoke_team",
+        "summarize_branch",
+        "export_current",
+        "export_current_html",
+        // Non-deprecated methods replaced by canonical operations
+        "approve_delegation_confirmation",
+        "reject_delegation_confirmation",
+        "set_default_agent_profile_id",
+        "reload_plugins",
+        "run_plugin_command",
+    ];
+
+    for path in rust_files_under(&scan.crate_root.join("src/protocol/rpc")) {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source =
+            fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {relative}: {err}"));
+        let sanitized = sanitize_rust_source(&source);
+        for (index, line) in sanitized.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || line_is_cfg_test_gated(&sanitized, index) {
+                continue;
+            }
+            if trimmed.contains("#[allow(deprecated)]") {
+                violations.push(format!(
+                    "{relative}:{}: production RPC source suppresses deprecation: {}",
+                    index + 1,
+                    trimmed
+                ));
+            }
+            for method in replaced_workflow_methods {
+                let pattern = format!(".{method}(");
+                if trimmed.contains(&pattern) {
+                    violations.push(format!(
+                        "{relative}:{}: production RPC source calls replaced workflow method `{method}` instead of CodingAgentSession::run: {}",
+                        index + 1,
+                        trimmed
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "RPC production source must route operations through CodingAgentSession::run and must not call replaced broad workflow methods or suppress deprecation:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn adapters_do_not_access_event_service_directly_for_projection() {
     let scan = SourceScan::new();
 
