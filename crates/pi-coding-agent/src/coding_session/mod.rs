@@ -4373,6 +4373,16 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn canonical_run_preserves_navigation_and_branch_summary_durability() {
+        todo!("exercise canonical fork, switch, and branch-summary reuse durability")
+    }
+
+    #[tokio::test]
+    async fn canonical_durable_mutations_distinguish_no_commit_partial_commit_and_replay() {
+        todo!("exercise pre-append failure and post-append partial commit boundaries")
+    }
+
+    #[tokio::test]
     async fn compact_persistent_session_records_events_and_replays_summary() {
         let api = "coding-session-compact";
         let _provider_guard = crate::test_support::ProviderGuard::register(
