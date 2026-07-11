@@ -4655,6 +4655,16 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn canonical_run_preserves_plugin_profile_and_delegation_contracts() {
+        todo!("exercise canonical plugin, profile, approval, and rejection contracts")
+    }
+
+    #[tokio::test]
+    async fn canonical_delegation_decisions_distinguish_no_commit_partial_commit_and_replay() {
+        todo!("exercise delegation decision failure timing and replay authority")
+    }
+
+    #[tokio::test]
     async fn compact_persistent_session_records_events_and_replays_summary() {
         let api = "coding-session-compact";
         let _provider_guard = crate::test_support::ProviderGuard::register(
