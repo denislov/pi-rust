@@ -200,12 +200,251 @@ impl From<PluginLoadOutcome> for CodingAgentPluginLoadOutcome {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::coding_session::context::CodingAgentSessionSummary;
     use crate::coding_session::export_flow::ExportOutcome;
+    use crate::coding_session::operation::OperationDispatchMode;
     use crate::coding_session::plugin_service::PluginDiagnostic;
     use crate::plugins::PluginCapabilities;
     use crate::runtime::PromptInvocation;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ExpectedInternalOperationVariant {
+        Prompt,
+        ManualCompaction,
+        BranchSummary,
+        SelfHealingEdit,
+        AgentInvocation,
+        AgentTeam,
+        PluginLoad,
+        PluginCommand,
+        SetDefaultAgentProfile,
+        ApproveDelegationConfirmation,
+        RejectDelegationConfirmation,
+        ForkSession,
+        SwitchActiveLeaf,
+        ExportView,
+        ExportHtml,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    enum ExpectedPublicOutcomeFamily {
+        Prompt,
+        Compact,
+        BranchSummary,
+        SelfHealingEdit,
+        AgentInvocation,
+        AgentTeam,
+        PluginLoad,
+        PluginCommand,
+        DefaultAgentProfileChanged,
+        DelegationApproved,
+        DelegationRejected,
+        SessionForked,
+        ActiveLeafSwitched,
+        Export,
+        ExportHtml,
+    }
+
+    struct OperationContractCase {
+        public_variant: &'static str,
+        build_operation: fn() -> CodingAgentOperation,
+        expected_internal: ExpectedInternalOperationVariant,
+        expected_dispatch: OperationDispatchMode,
+        expected_outcome: ExpectedPublicOutcomeFamily,
+    }
+
+    fn prompt_operation_options() -> PromptTurnOptions {
+        PromptTurnOptions::new(PromptInvocation::Text("contract".into()))
+    }
+
+    fn operation_contract_cases() -> [OperationContractCase; 15] {
+        [
+            OperationContractCase {
+                public_variant: "Prompt",
+                build_operation: || CodingAgentOperation::Prompt(prompt_operation_options()),
+                expected_internal: ExpectedInternalOperationVariant::Prompt,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::Prompt,
+            },
+            OperationContractCase {
+                public_variant: "Compact",
+                build_operation: || CodingAgentOperation::Compact(prompt_operation_options()),
+                expected_internal: ExpectedInternalOperationVariant::ManualCompaction,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::Compact,
+            },
+            OperationContractCase {
+                public_variant: "BranchSummary",
+                build_operation: || CodingAgentOperation::BranchSummary {
+                    options: prompt_operation_options(),
+                    source_leaf_id: "leaf_source".into(),
+                    target_leaf_id: "leaf_target".into(),
+                    custom_instructions: Some("contract instructions".into()),
+                    reuse: BranchSummaryReusePolicy::ReuseExisting,
+                },
+                expected_internal: ExpectedInternalOperationVariant::BranchSummary,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::BranchSummary,
+            },
+            OperationContractCase {
+                public_variant: "SelfHealingEdit",
+                build_operation: || {
+                    CodingAgentOperation::SelfHealingEdit(SelfHealingEditRequest::new(
+                        "src/lib.rs",
+                        Vec::new(),
+                    ))
+                },
+                expected_internal: ExpectedInternalOperationVariant::SelfHealingEdit,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::SelfHealingEdit,
+            },
+            OperationContractCase {
+                public_variant: "InvokeAgent",
+                build_operation: || {
+                    CodingAgentOperation::InvokeAgent(AgentInvocationOptions::new(
+                        "agent",
+                        "task",
+                        prompt_operation_options(),
+                    ))
+                },
+                expected_internal: ExpectedInternalOperationVariant::AgentInvocation,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::AgentInvocation,
+            },
+            OperationContractCase {
+                public_variant: "InvokeTeam",
+                build_operation: || {
+                    CodingAgentOperation::InvokeTeam(AgentTeamOptions::new(
+                        "team",
+                        "task",
+                        prompt_operation_options(),
+                    ))
+                },
+                expected_internal: ExpectedInternalOperationVariant::AgentTeam,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::AgentTeam,
+            },
+            OperationContractCase {
+                public_variant: "PluginLoad",
+                build_operation: || CodingAgentOperation::PluginLoad,
+                expected_internal: ExpectedInternalOperationVariant::PluginLoad,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::PluginLoad,
+            },
+            OperationContractCase {
+                public_variant: "PluginCommand",
+                build_operation: || CodingAgentOperation::PluginCommand {
+                    command_id: "plugin.command".into(),
+                    args: serde_json::json!({"contract": true}),
+                },
+                expected_internal: ExpectedInternalOperationVariant::PluginCommand,
+                expected_dispatch: OperationDispatchMode::SyncReadOnly,
+                expected_outcome: ExpectedPublicOutcomeFamily::PluginCommand,
+            },
+            OperationContractCase {
+                public_variant: "SetDefaultAgentProfile",
+                build_operation: || CodingAgentOperation::SetDefaultAgentProfile {
+                    profile_id: ProfileId::from("reviewer"),
+                },
+                expected_internal: ExpectedInternalOperationVariant::SetDefaultAgentProfile,
+                expected_dispatch: OperationDispatchMode::SyncMutable,
+                expected_outcome: ExpectedPublicOutcomeFamily::DefaultAgentProfileChanged,
+            },
+            OperationContractCase {
+                public_variant: "ApproveDelegation",
+                build_operation: || CodingAgentOperation::ApproveDelegation {
+                    operation_id: "op_parent".into(),
+                    tool_call_id: "tool_delegate".into(),
+                },
+                expected_internal: ExpectedInternalOperationVariant::ApproveDelegationConfirmation,
+                expected_dispatch: OperationDispatchMode::Async,
+                expected_outcome: ExpectedPublicOutcomeFamily::DelegationApproved,
+            },
+            OperationContractCase {
+                public_variant: "RejectDelegation",
+                build_operation: || CodingAgentOperation::RejectDelegation {
+                    operation_id: "op_parent".into(),
+                    tool_call_id: "tool_delegate".into(),
+                    reason: "not now".into(),
+                },
+                expected_internal: ExpectedInternalOperationVariant::RejectDelegationConfirmation,
+                expected_dispatch: OperationDispatchMode::SyncMutable,
+                expected_outcome: ExpectedPublicOutcomeFamily::DelegationRejected,
+            },
+            OperationContractCase {
+                public_variant: "ForkSession",
+                build_operation: || CodingAgentOperation::ForkSession {
+                    target_leaf_id: Some("leaf_target".into()),
+                },
+                expected_internal: ExpectedInternalOperationVariant::ForkSession,
+                expected_dispatch: OperationDispatchMode::SyncMutable,
+                expected_outcome: ExpectedPublicOutcomeFamily::SessionForked,
+            },
+            OperationContractCase {
+                public_variant: "SwitchActiveLeaf",
+                build_operation: || CodingAgentOperation::SwitchActiveLeaf {
+                    target_leaf_id: "leaf_target".into(),
+                },
+                expected_internal: ExpectedInternalOperationVariant::SwitchActiveLeaf,
+                expected_dispatch: OperationDispatchMode::SyncMutable,
+                expected_outcome: ExpectedPublicOutcomeFamily::ActiveLeafSwitched,
+            },
+            OperationContractCase {
+                public_variant: "ExportCurrent",
+                build_operation: || CodingAgentOperation::ExportCurrent,
+                expected_internal: ExpectedInternalOperationVariant::ExportView,
+                expected_dispatch: OperationDispatchMode::SyncReadOnly,
+                expected_outcome: ExpectedPublicOutcomeFamily::Export,
+            },
+            OperationContractCase {
+                public_variant: "ExportCurrentHtml",
+                build_operation: || {
+                    CodingAgentOperation::ExportCurrentHtml(PathBuf::from("session.html"))
+                },
+                expected_internal: ExpectedInternalOperationVariant::ExportHtml,
+                expected_dispatch: OperationDispatchMode::SyncReadOnly,
+                expected_outcome: ExpectedPublicOutcomeFamily::ExportHtml,
+            },
+        ]
+    }
+
+    fn internal_operation_variant(operation: &Operation) -> ExpectedInternalOperationVariant {
+        match operation {
+            Operation::Prompt(_) => ExpectedInternalOperationVariant::Prompt,
+            Operation::ManualCompaction(_) => ExpectedInternalOperationVariant::ManualCompaction,
+            Operation::PluginLoad(_) => ExpectedInternalOperationVariant::PluginLoad,
+            Operation::PluginCommand { .. } => ExpectedInternalOperationVariant::PluginCommand,
+            Operation::ApproveDelegationConfirmation { .. } => {
+                ExpectedInternalOperationVariant::ApproveDelegationConfirmation
+            }
+            Operation::RejectDelegationConfirmation { .. } => {
+                ExpectedInternalOperationVariant::RejectDelegationConfirmation
+            }
+            Operation::BranchSummary { .. } => ExpectedInternalOperationVariant::BranchSummary,
+            Operation::SelfHealingEdit(_) => ExpectedInternalOperationVariant::SelfHealingEdit,
+            Operation::AgentInvocation(_) => ExpectedInternalOperationVariant::AgentInvocation,
+            Operation::AgentTeam(_) => ExpectedInternalOperationVariant::AgentTeam,
+            Operation::ForkSession { .. } => ExpectedInternalOperationVariant::ForkSession,
+            Operation::SwitchActiveLeaf { .. } => {
+                ExpectedInternalOperationVariant::SwitchActiveLeaf
+            }
+            Operation::SetDefaultAgentProfile { .. } => {
+                ExpectedInternalOperationVariant::SetDefaultAgentProfile
+            }
+            Operation::Export(options) => {
+                if options == &ExportOptions::view() {
+                    ExpectedInternalOperationVariant::ExportView
+                } else if options == &ExportOptions::html("session.html") {
+                    ExpectedInternalOperationVariant::ExportHtml
+                } else {
+                    panic!("unexpected export options in operation contract: {options:?}")
+                }
+            }
+        }
+    }
 
     fn branch_summary_reuse_flag(reuse: BranchSummaryReusePolicy) -> bool {
         let operation = CodingAgentOperation::BranchSummary {
@@ -238,7 +477,15 @@ mod tests {
         let cases = operation_contract_cases();
 
         assert_eq!(cases.len(), 15);
-        for case in cases {
+        assert_eq!(
+            cases
+                .iter()
+                .map(|case| case.expected_outcome)
+                .collect::<HashSet<_>>()
+                .len(),
+            15
+        );
+        for case in &cases {
             let operation = (case.build_operation)().into_internal(PluginLoadOptions::new());
             assert_eq!(
                 internal_operation_variant(&operation),
