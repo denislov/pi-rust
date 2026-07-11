@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 01
 current_phase_name: evidence-based-baseline
-status: executing
+status: verifying
 stopped_at: Phase 1 context gathered
-last_updated: "2026-07-11T01:28:14.072Z"
+last_updated: "2026-07-11T01:38:34.971Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 0
+  completed_plans: 3
+  percent: 20
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 
 Phase: 01 (evidence-based-baseline) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-10 — Phase 01 execution started
 
 Progress: [..........] 0%
@@ -72,6 +72,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 01-01: Wave 0 ownership at task 01-01-01; Nyquist compliance pending until Plan 01-03 final gate
 - [Phase 01]: 01-02: Populated 15-row Operation Matrix from live source with 46 evidence IDs, 26 production callers, 32 test callers, 16 compatibility methods, 4 authority conflicts, and 8 findings; corrected 3 non-deprecated methods and fixed validator SIGPIPE/taxonomy bugs
 - [Phase 01]: 01-02: Corrected compatibility inventory - set_default_agent_profile_id, approve_delegation_confirmation, reject_delegation_confirmation are NOT deprecated; routed missing Stage 9 guards to Phase 5 hardening
+- [Phase ?]: 01-03: Added F-BASE-01 informational finding for completed baseline; fixed validator blocking-finding bug per D-15/D-16; Phase 1 audit final with Nyquist validation approved
 
 ### Pending Todos
 
@@ -91,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-11T01:27:55.203Z
+Last session: 2026-07-11T01:38:19.515Z
 Stopped at: Phase 1 context gathered
 Resume file: .planning/phases/01-evidence-based-baseline/01-CONTEXT.md

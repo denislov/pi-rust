@@ -7,9 +7,9 @@
 
 ### Baseline Audit
 
-- [ ] **AUDIT-01**: Maintainers can determine the trustworthy Stage 9 completion state from current source, tests, boundary guards, and Git history rather than prior plan checkboxes
-- [ ] **AUDIT-02**: The audit identifies each live-session product operation's public variant, internal mapping, dispatch mode, outcome projection, production callers, and test callers
-- [ ] **AUDIT-03**: The audit clearly separates completed baseline behavior, actual gaps, obsolete plan content, and Stage 10 scope
+- [x] **AUDIT-01**: Maintainers can determine the trustworthy Stage 9 completion state from current source, tests, boundary guards, and Git history rather than prior plan checkboxes
+- [x] **AUDIT-02**: The audit identifies each live-session product operation's public variant, internal mapping, dispatch mode, outcome projection, production callers, and test callers
+- [x] **AUDIT-03**: The audit clearly separates completed baseline behavior, actual gaps, obsolete plan content, and Stage 10 scope
 
 ### Canonical Facade
 
@@ -96,9 +96,9 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUDIT-01 | Phase 1 | Pending |
-| AUDIT-02 | Phase 1 | Pending |
-| AUDIT-03 | Phase 1 | Pending |
+| AUDIT-01 | Phase 1 | Complete |
+| AUDIT-02 | Phase 1 | Complete |
+| AUDIT-03 | Phase 1 | Complete |
 | FACADE-01 | Phase 2 | Pending |
 | FACADE-02 | Phase 2 | Pending |
 | FACADE-03 | Phase 2 | Pending |
@@ -135,6 +135,7 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | CLOSE-04 | Phase 5 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 37 total
 - Mapped to phases: 37
 - Unmapped: 0

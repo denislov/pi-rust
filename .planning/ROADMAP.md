@@ -6,7 +6,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 
 ## Phases
 
-- [ ] **Phase 1: Evidence-Based Baseline** - Establish the authoritative Stage 9 completion state and exact remaining gap set from live evidence.
+- [x] **Phase 1: Evidence-Based Baseline** - Establish the authoritative Stage 9 completion state and exact remaining gap set from live evidence. (completed 2026-07-11)
 - [ ] **Phase 2: Canonical Facade Correctness** - Make the stable public operation contract and its internal dispatch path complete, exhaustive, and behavior-preserving.
 - [ ] **Phase 3: Production Adapter Convergence** - Route JSON, print, RPC, and interactive product work through canonical operations without changing adapter behavior.
 - [ ] **Phase 4: Test Convergence and Compatibility Deletion** - Move behavior coverage to `run()` and remove the replaced broad session methods after every caller has migrated.
@@ -25,11 +25,11 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   2. Every live-session product operation is listed with its public variant, internal mapping, dispatch mode, public outcome, production callers, and test callers.
   3. The audit classifies each finding as completed baseline, actual Stage 9 gap, obsolete plan content, or deferred Stage 10 work.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 - [x] 01-01-PLAN.md
 - [x] 01-02-PLAN.md
-- [ ] 01-03-PLAN.md
+- [x] 01-03-PLAN.md
 
 ### Phase 2: Canonical Facade Correctness
 
@@ -98,7 +98,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Evidence-Based Baseline | 2/3 | In Progress|  |
+| 1. Evidence-Based Baseline | 3/3 | Complete   | 2026-07-11 |
 | 2. Canonical Facade Correctness | 0/TBD | Not started | - |
 | 3. Production Adapter Convergence | 0/TBD | Not started | - |
 | 4. Test Convergence and Compatibility Deletion | 0/TBD | Not started | - |
