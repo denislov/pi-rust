@@ -1,5 +1,5 @@
-use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::CliError;
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PromptTurnOptions,
     PromptTurnOutcome,
@@ -135,7 +135,6 @@ async fn run_print_mode_with_coding_session(
     Ok(outcome)
 }
 
-#[allow(deprecated)]
 async fn run_non_persistent_print_mode(
     options: PromptRunOptions,
 ) -> Result<PromptTurnOutcome, CliError> {
@@ -147,7 +146,14 @@ async fn run_non_persistent_print_mode(
         .unwrap_or_default();
     let mut session = CodingAgentSession::non_persistent(coding_options).await?;
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
-    Ok(session.prompt(prompt_options).await?)
+    let outcome = match session
+        .run(CodingAgentOperation::Prompt(prompt_options))
+        .await?
+    {
+        CodingAgentOperationOutcome::Prompt(outcome) => outcome,
+        _ => unreachable!("prompt operation returned a different public outcome"),
+    };
+    Ok(outcome)
 }
 
 fn ensure_non_persistent_print_target(

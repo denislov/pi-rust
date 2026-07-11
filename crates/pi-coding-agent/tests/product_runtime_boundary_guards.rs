@@ -329,9 +329,8 @@ fn production_json_and_print_use_canonical_operations() {
     // JSON/print adapter files must submit Prompt operations through
     // CodingAgentSession::run instead of deprecated broad workflow methods, and
     // must not suppress deprecation warnings in production source. Test-only
-    // allowances inside #[cfg(test)] modules are preserved. print_mode.rs joins
-    // this guard once its persistent and transient branches are migrated.
-    let adapter_files = ["src/protocol/json_mode.rs"];
+    // allowances inside #[cfg(test)] modules are preserved.
+    let adapter_files = ["src/protocol/json_mode.rs", "src/print_mode.rs"];
     let deprecated_workflow_methods = [
         "prompt",
         "compact",
@@ -345,8 +344,8 @@ fn production_json_and_print_use_canonical_operations() {
 
     for relative_path in adapter_files {
         let path = scan.crate_root.join(relative_path);
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("read {relative_path}: {err}"));
+        let source =
+            fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {relative_path}: {err}"));
         let sanitized = sanitize_rust_source(&source);
         for (index, line) in sanitized.lines().enumerate() {
             let trimmed = line.trim();

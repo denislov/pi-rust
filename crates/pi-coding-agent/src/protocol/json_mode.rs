@@ -1,5 +1,5 @@
-use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::CliOutput;
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     ProductEvent, ProductEventReceiver, PromptTurnOptions, PromptTurnOutcome,
