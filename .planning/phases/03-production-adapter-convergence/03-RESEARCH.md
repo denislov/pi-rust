@@ -386,15 +386,15 @@ Source basis: Stage 9 design and Phase 2 durability evidence. [VERIFIED: design 
 |---|-------|---------|---------------|
 | — | None. Planning recommendations are grounded in current source, tests, planning contracts, Git history, or installed official crate documentation. | — | — |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should Phase 3 add narrow RED/GREEN source-guard tests or use command-only source audits?**
+1. **RESOLVED: Phase 3 uses narrow executable adapter-specific source guards/audits.**
    - What we know: requirements demand zero production calls/suppressions, while parser-complete recursive hardening is Phase 5. [VERIFIED: requirements/context]
-   - Recommendation: add narrowly scoped checks in the existing boundary test only where they give an isolated plan gate; do not refactor the scanner/parser or consolidate the final recursive guard.
+   - Decision: Plans 03-01, 03-03, and 03-06 add narrowly scoped checks in the existing boundary suite where they provide isolated adapter gates. Recursive parser-complete source-guard hardening remains Phase 5; Phase 3 does not refactor or generalize the scanner/parser.
 
-2. **Does any current interactive production path require `SwitchActiveLeaf`?**
+2. **RESOLVED: Do not introduce `SwitchActiveLeaf` in Phase 3.**
    - What we know: current production scans show none; existing tree navigation is summary-then-fork and behavior tests assert a fork. [VERIFIED: source/tests]
-   - Recommendation: do not invent a switch path. Keep an explicit production scan and only migrate a switch caller if implementation-time CodeGraph finds one missed by the current audit.
+   - Decision: Current CodeGraph/research found no first-party production adapter caller. Plan 03-06 preserves summary-then-fork navigation and keeps only an implementation-time closure scan for a genuinely missed caller; it does not invent new switch behavior.
 
 ## Environment Availability
 
