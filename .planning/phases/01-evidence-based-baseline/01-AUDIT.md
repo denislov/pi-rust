@@ -222,7 +222,32 @@ caller roots are:
 
 | Caller File | Caller Symbol | Operation | Canonical (run) | Compatibility Path | Evidence |
 |-------------|---------------|-----------|-----------------|--------------------|---------|
-| _(populated by Plan 01-02)_ | - | - | - | - | - |
+| print_mode.rs:128 | run_persistent_print | Prompt | no | .prompt() with #[allow(deprecated)] at :108 | SCAN-PROD-02, SCAN-PROD-03 |
+| print_mode.rs:144 | run_transient_print | Prompt | no | .prompt() with #[allow(deprecated)] at :132 | SCAN-PROD-02, SCAN-PROD-03 |
+| protocol/json_mode.rs:99 | run_json_mode | Prompt | no | .prompt() with #[allow(deprecated)] at :87 | SCAN-PROD-02, SCAN-PROD-03 |
+| protocol/rpc/prompt.rs:893 | run_prompt_background | Prompt | no | .prompt() with #[allow(deprecated)] at :825 | SCAN-PROD-02, SCAN-PROD-03 |
+| protocol/rpc/prompt.rs:376 | run_agent_background | InvokeAgent | no | .invoke_agent() with #[allow(deprecated)] at :210 | SCAN-PROD-02, SCAN-PROD-03 |
+| protocol/rpc/prompt.rs:593 | run_team_background | InvokeTeam | no | .invoke_team() with #[allow(deprecated)] at :432 | SCAN-PROD-02, SCAN-PROD-03 |
+| protocol/rpc/prompt.rs:769 | run_delegation_approval | ApproveDelegation | no | .approve_delegation_confirmation() with #[allow(deprecated)] at :825 | SCAN-PROD-02, SCAN-PROD-03, SRC-OP-07 |
+| protocol/rpc/commands.rs:614 | handle_self_healing_edit | SelfHealingEdit | no | .self_healing_edit_with_options() with #[allow(deprecated)] at :501 | SCAN-PROD-02, SCAN-PROD-03 |
+| protocol/rpc/commands.rs:845 | handle_set_default_profile | SetDefaultAgentProfile | no | .set_default_agent_profile_id() (not deprecated, no allow) | SCAN-PROD-02, SRC-OP-07 |
+| protocol/rpc/commands.rs:1041 | handle_reject_delegation | RejectDelegation | no | .reject_delegation_confirmation() (not deprecated, no allow) | SCAN-PROD-02, SRC-OP-07 |
+| protocol/rpc/commands.rs:1125,1191 | handle_plugin_load | PluginLoad | no | .reload_plugins() (crate-private, not deprecated) | SCAN-PROD-02, SRC-OP-09 |
+| protocol/rpc/commands.rs:1135 | handle_plugin_command | PluginCommand | no | .run_plugin_command() (crate-private, not deprecated) | SCAN-PROD-02, SRC-OP-09 |
+| interactive/prompt_task.rs:634 | run_prompt_background | Prompt | no | .prompt() with #[allow(deprecated)] at :609 | SCAN-PROD-02, SCAN-PROD-03 |
+| interactive/prompt_task.rs:712 | run_agent_background | InvokeAgent | no | .invoke_agent() with #[allow(deprecated)] at :681 | SCAN-PROD-02, SCAN-PROD-03 |
+| interactive/prompt_task.rs:784 | run_team_background | InvokeTeam | no | .invoke_team() with #[allow(deprecated)] at :754 | SCAN-PROD-02, SCAN-PROD-03 |
+| interactive/prompt_task.rs:823 | run_delegation_approval | ApproveDelegation | no | .approve_delegation_confirmation() with #[allow(deprecated)] at :850 | SCAN-PROD-02, SCAN-PROD-03, SRC-OP-07 |
+| interactive/prompt_task.rs:874 | run_compact | Compact | no | .compact() with #[allow(deprecated)] at :850 | SCAN-PROD-02, SCAN-PROD-03 |
+| interactive/prompt_task.rs:930 | run_self_healing_edit | SelfHealingEdit | no | .self_healing_edit_with_options() with #[allow(deprecated)] at :906 | SCAN-PROD-02, SCAN-PROD-03 |
+| interactive/prompt_task.rs:979,1042 | run_plugin_reload | PluginLoad | no | .reload_plugins() (crate-private, not deprecated) | SCAN-PROD-02, SRC-OP-09 |
+| interactive/prompt_task.rs:1068 | run_plugin_command | PluginCommand | no | .run_plugin_command() (crate-private, not deprecated) | SCAN-PROD-02, SRC-OP-09 |
+| interactive/prompt_task.rs:1186 | run_branch_summary | BranchSummary | no | .summarize_branch() with #[allow(deprecated)] at :1159 | SCAN-PROD-02, SCAN-PROD-03 |
+| interactive/prompt_task.rs:1276 | fork_session | ForkSession | no | .fork_current_session() (crate-private, not deprecated) | SCAN-PROD-02, SRC-OP-09 |
+| interactive/loop.rs:805,1998-2047,2390 | set_default_agent_profile | SetDefaultAgentProfile | no | .set_default_agent_profile_id() (not deprecated, no allow) | SCAN-PROD-02, SRC-OP-07 |
+| interactive/loop.rs:1331 | reject_delegation | RejectDelegation | no | .reject_delegation_confirmation() (not deprecated, no allow) | SCAN-PROD-02, SRC-OP-07 |
+| interactive/root.rs:1298 | apply_profile | SetDefaultAgentProfile | no | .set_default_agent_profile_id() (not deprecated, no allow) | SCAN-PROD-02, SRC-OP-07 |
+| interactive/session_actions.rs:389 | export_session_html | ExportCurrentHtml | no | CodingAgentSession::export_session_html() (static helper, not deprecated instance method) | SCAN-PROD-02 |
 
 ---
 
@@ -238,7 +263,47 @@ Test caller inventory is populated by Plan 01-02 from live source scans. The exp
 
 | Test File | Test Name | Operation | Canonical (run) | Compatibility Path | Evidence |
 |-----------|-----------|-----------|-----------------|--------------------|---------|
-| _(populated by Plan 01-02)_ | - | - | - | - | - |
+| public_api.rs:127 | canonical_operation_runtime_variants_are_public | all 15 variants | yes (constructs all variants, asserts public) | - | TEST-API-01 |
+| public_api.rs:178 | coding_session_run_public_operation_facade_is_importable | ExportCurrent | yes (run) | - | TEST-API-03 |
+| public_api.rs:196 | coding_session_run_dispatchs_public_runtime_operations | PluginLoad, SetDefaultAgentProfile, PluginCommand, ForkSession, SwitchActiveLeaf | yes (run) | - | TEST-API-02 |
+| public_api.rs:540 | prompt error test | Prompt | no | .prompt() | TEST-API-05, SCAN-TEST-02 |
+| public_api.rs:545 | summarize_branch test | BranchSummary | no | .summarize_branch() | TEST-API-05, SCAN-TEST-02 |
+| public_api.rs:584-1091 | self_healing_edit tests (7 tests) | SelfHealingEdit | no | .self_healing_edit() / .self_healing_edit_with_options() | TEST-API-04, SCAN-TEST-02 |
+| agent_invocation.rs:63,110,138,166,199 | invoke_agent tests (5 tests) | InvokeAgent | no | .invoke_agent() | TEST-INT-01, SCAN-TEST-02 |
+| agent_invocation.rs:147 | export_current assertion | ExportCurrent | no | .export_current() | TEST-INT-01, SCAN-TEST-02 |
+| agent_team_flow.rs:62,144,202,249,296 | invoke_team tests (5 tests) | InvokeTeam | no | .invoke_team() | TEST-INT-02, SCAN-TEST-02 |
+| agent_team_flow.rs:94 | export_current assertion | ExportCurrent | no | .export_current() | TEST-INT-02, SCAN-TEST-02 |
+| agent_profile_runtime.rs:63,141 | prompt tests (2 tests) | Prompt | no | .prompt() | TEST-INT-04, SCAN-TEST-02 |
+| delegation_execution.rs | prompt/approve/reject delegation tests (17+ calls) | Prompt, ApproveDelegation, RejectDelegation, ExportCurrent | no | .prompt(), .approve_delegation_confirmation(), .reject_delegation_confirmation(), .export_current() | TEST-INT-03, SCAN-TEST-02 |
+| agent_profile_session.rs:46 | set_default_agent_profile_id test | SetDefaultAgentProfile | no | .set_default_agent_profile_id() | TEST-INT-05, SCAN-TEST-02 |
+| mod.rs:3187 | canonical_run_switches_active_leaf | SwitchActiveLeaf | yes (run) | - | TEST-OWNER-01 |
+| mod.rs:3248 | canonical_run_forks_current_session | ForkSession | yes (run) | - | TEST-OWNER-02 |
+| mod.rs:3323 | canonical_fork_preserves_owner_runtime_and_event_stream | ForkSession | yes (run, event continuity) | - | TEST-OWNER-03 |
+| mod.rs:3430 | canonical_switch_reports_partial_commit_after_durable_leaf_change | SwitchActiveLeaf | yes (run, partial commit) | - | TEST-OWNER-04 |
+| mod.rs:3562 | delegation_approval_operation_kind_uses_pending_team_target | ApproveDelegation | partial (tests dynamic kind resolution, not run()) | - | TEST-OWNER-05 |
+| mod.rs:3593 | resolve_operation_admission_returns_structured_dynamic_contract | ApproveDelegation | partial (tests admission contract, not run()) | - | TEST-OWNER-06 |
+| mod.rs:4200 | canonical_run_reuses_branch_summary_when_requested | BranchSummary | yes (run) | - | TEST-OWNER-07 |
+| mod.rs:4115 | branch_summary_persistent_session_records_model_summary | BranchSummary | no | .summarize_branch() | TEST-OWNER-08 |
+| mod.rs:4325,4415 | compact behavior tests (2 tests) | Compact | no | .compact() | TEST-OWNER-08 |
+| api_boundary_guards.rs:79 | coding_session_run_is_the_canonical_operation_dispatcher | (source-scan guard for run body) | yes (guards dispatch primitives, rejects compat calls in run body) | - | GUARD-DISPATCH-01 |
+| api_boundary_guards.rs:5 | root_public_modules_are_marked_migration_private | (visibility guard) | - | - | GUARD-VIS-01 |
+| api_boundary_guards.rs:44 | root_reexports_are_explicit_compatibility_surface | (re-export guard) | - | - | GUARD-VIS-02 |
+| api_boundary_guards.rs:157 | stable_api_does_not_export_compatibility_event_receiver | (API surface guard) | - | - | GUARD-VIS-03 |
+| product_runtime_boundary_guards.rs:5 | product_sources_do_not_register_global_provider_runtime_outside_compat_boundary | (runtime boundary) | - | - | GUARD-PROD-01 |
+| product_runtime_boundary_guards.rs:28 | adapters_do_not_construct_or_run_low_level_agents | (adapter boundary) | - | - | GUARD-PROD-02 |
+| product_runtime_boundary_guards.rs:56 | adapters_do_not_access_event_service_directly_for_projection | (event boundary) | - | - | GUARD-PROD-03 |
+| product_runtime_boundary_guards.rs:75 | runtime_service_production_paths_require_capability_snapshot | (capability boundary) | - | - | GUARD-PROD-04 |
+| product_runtime_boundary_guards.rs:118 | plugin_command_paths_use_capability_aware_execution | (plugin boundary) | - | - | GUARD-PROD-05 |
+| product_runtime_boundary_guards.rs:249 | rpc_running_product_events_do_not_use_unbounded_channels | (channel boundary) | - | - | GUARD-PROD-06 |
+| product_runtime_boundary_guards.rs:270 | event_receiver_lag_maps_to_snapshot_recovery_error | (recovery boundary) | - | - | GUARD-PROD-07 |
+
+**Boundary guard scope note:** The seven `product_runtime_boundary_guards.rs` tests guard
+runtime architecture constraints (provider registration, low-level agent construction, event
+service access, capability snapshots, plugin command execution, channel bounds, and lag
+recovery). They do **not** reject replaced broad workflow calls or local `#[allow(deprecated)]`
+attributes in production adapter files. The Stage 9 adapter-call and deprecation-suppression
+guards described by the old implementation plan are **not present** in the current tree. This
+absence is routed to Phase 5 hardening as finding F-GUARD-01 (populated in Task 3).
 
 ---
 
@@ -247,26 +312,34 @@ Test caller inventory is populated by Plan 01-02 from live source scans. The exp
 Per D-03, broad live-session compatibility methods are tracked separately from the operation matrix.
 Per DELETE-04, construction/open/resume, snapshots, queries, subscriptions/control, and static
 repository helpers are NOT operation-facade replacements and are excluded unless a finding explains
-why. The compatibility methods listed below were identified by research and will be verified and
-populated with caller evidence by Plan 01-02.
+why. The compatibility methods listed below were verified from current source by Plan 01-02.
+
+**Excluded non-replacements (DELETE-04):** `create`, `open`, `open_or_create`, `non_persistent`,
+`list`, `hydrate`, `tree_view`, `clone_session`, `fork_session` (static), `export_session_html`
+(static helper using SessionService directly), `snapshot`, `connect`, `subscribe`,
+`subscribe_product_events_public`, `product_event_replay_handle`, `hydrate_current`,
+`fork_current_session` (static), and all `pub(crate)` query/view helpers are NOT operation-facade
+replacements and remain available. The deprecated `subscribe` method is a compatibility event
+subscription whose deletion is Stage 10 scope (deferred_stage_10).
 
 | Method | Visibility | Deprecation | Matching Operation | Prod Callers | Test Callers | Retention Reason | Deletion Req | Target Phase |
 |--------|------------|-------------|--------------------|--------------|--------------|------------------|-------------|--------------|
-| export_current_html | pub (deprecated) | #[deprecated] | ExportCurrentHtml | | | | DELETE-01 | Phase 4 |
-| export_current | pub (deprecated) | #[deprecated] | ExportCurrent | | | | DELETE-01 | Phase 4 |
-| set_default_agent_profile_id | pub (deprecated) | #[deprecated] | SetDefaultAgentProfile | | | | DELETE-01 | Phase 4 |
-| approve_delegation_confirmation | pub (deprecated) | #[deprecated] | ApproveDelegation | | | | DELETE-01 | Phase 4 |
-| reject_delegation_confirmation | pub (deprecated) | #[deprecated] | RejectDelegation | | | | DELETE-01 | Phase 4 |
-| prompt | pub (deprecated) | #[deprecated] | Prompt | | | | DELETE-01 | Phase 4 |
-| compact | pub (deprecated) | #[deprecated] | Compact | | | | DELETE-01 | Phase 4 |
-| self_healing_edit_with_options | pub (deprecated) | #[deprecated] | SelfHealingEdit | | | | DELETE-01 | Phase 4 |
-| invoke_agent | pub (deprecated) | #[deprecated] | InvokeAgent | | | | DELETE-01 | Phase 4 |
-| invoke_team | pub (deprecated) | #[deprecated] | InvokeTeam | | | | DELETE-01 | Phase 4 |
-| summarize_branch | pub (deprecated) | #[deprecated] | BranchSummary | | | | DELETE-01 | Phase 4 |
-| fork_current_session | crate-private | none | ForkSession | | | | DELETE-01 | Phase 4 |
-| reload_plugins | crate-private | none | PluginLoad | | | | DELETE-01 | Phase 4 |
-| run_plugin_command | crate-private | none | PluginCommand | | | | DELETE-01 | Phase 4 |
-| load_plugins | crate-private | none | PluginLoad | | | | DELETE-01 | Phase 4 |
+| export_current_html | pub | #[deprecated] | ExportCurrentHtml | none (production uses static export_session_html instead) | none | No production or test callers; retained for API compatibility | DELETE-01 | Phase 4 |
+| export_current | pub | #[deprecated] | ExportCurrent | none | agent_invocation.rs:147, agent_team_flow.rs:94, delegation_execution.rs:321 | Test callers use .export_current() for export assertions | DELETE-01 | Phase 4 |
+| set_default_agent_profile_id | pub | none (NOT deprecated) | SetDefaultAgentProfile | interactive/loop.rs:805,1998-2047,2390; interactive/root.rs:1298; rpc/commands.rs:845 | agent_profile_session.rs:46 | Not yet deprecated; all prod and test callers bypass run() | DELETE-01 | Phase 4 |
+| approve_delegation_confirmation | pub | none (NOT deprecated) | ApproveDelegation | interactive/prompt_task.rs:823; rpc/prompt.rs:769 | delegation_execution.rs:749,1244,1474 | Not yet deprecated; all prod and test callers bypass run() | DELETE-01 | Phase 4 |
+| reject_delegation_confirmation | pub | none (NOT deprecated) | RejectDelegation | interactive/loop.rs:1331; rpc/commands.rs:1041 | delegation_execution.rs:1332,1563 | Not yet deprecated; all prod and test callers bypass run() | DELETE-01 | Phase 4 |
+| prompt | pub | #[deprecated] | Prompt | print_mode.rs:128,144; json_mode.rs:99; rpc/prompt.rs:893; interactive/prompt_task.rs:634 | public_api.rs:540; agent_profile_runtime.rs:63,141; delegation_execution.rs (17+ calls) | All prod and test callers bypass run(); #[allow(deprecated)] in all prod files | DELETE-01 | Phase 4 |
+| compact | pub | #[deprecated] | Compact | interactive/prompt_task.rs:874 | mod.rs:4325,4415 | Prod and test callers bypass run(); #[allow(deprecated)] in prompt_task.rs | DELETE-01 | Phase 4 |
+| self_healing_edit | pub | none (NOT deprecated, delegates through deprecated self_healing_edit_with_options with #[allow(deprecated)]) | SelfHealingEdit | none | public_api.rs:600,1058,1091 | Delegates to deprecated options method; test callers use both forms | DELETE-01 | Phase 4 |
+| self_healing_edit_with_options | pub | #[deprecated] | SelfHealingEdit | rpc/commands.rs:614; interactive/prompt_task.rs:930 | public_api.rs:667,720,798,943,1015 (5 tests) | Prod and test callers bypass run(); #[allow(deprecated)] in prod files | DELETE-01 | Phase 4 |
+| invoke_agent | pub | #[deprecated] | InvokeAgent | interactive/prompt_task.rs:712; rpc/prompt.rs:376 | agent_invocation.rs (5 tests) | Prod and test callers bypass run(); #[allow(deprecated)] in prod files | DELETE-01 | Phase 4 |
+| invoke_team | pub | #[deprecated] | InvokeTeam | interactive/prompt_task.rs:784; rpc/prompt.rs:593 | agent_team_flow.rs (5 tests) | Prod and test callers bypass run(); #[allow(deprecated)] in prod files | DELETE-01 | Phase 4 |
+| summarize_branch | pub | #[deprecated] | BranchSummary | interactive/prompt_task.rs:1186 | public_api.rs:545; mod.rs:4115,4241 | Prod and test callers bypass run(); #[allow(deprecated)] in prompt_task.rs | DELETE-01 | Phase 4 |
+| fork_current_session | pub(crate) | none | ForkSession | interactive/prompt_task.rs:1276 | none | Crate-private; production caller bypasses run() | DELETE-01 | Phase 4 |
+| reload_plugins | pub(crate) | none | PluginLoad | interactive/prompt_task.rs:979,1042; rpc/commands.rs:1125,1191 | none | Crate-private; production callers bypass run() | DELETE-01 | Phase 4 |
+| run_plugin_command | pub(crate) | none | PluginCommand | interactive/prompt_task.rs:1068; rpc/commands.rs:1135 | none | Crate-private; production callers bypass run() | DELETE-01 | Phase 4 |
+| load_plugins | pub(crate) | none | PluginLoad | none (internal only, called by reload_plugins) | none | Crate-private; no direct production or test callers | DELETE-01 | Phase 4 |
 
 ---
 
