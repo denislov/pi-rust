@@ -73,12 +73,11 @@ pub mod api {
         CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionSummary,
         CodingAgentSessionView, CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic,
         CodingDiagnosticSeverity, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
-        PendingDelegationConfirmation, ProfileDiagnostic, ProfileId, ProfileKind, ProfileRegistry,
-        ProfileRegistryOptions, ProfileSource, PromptTurnMode, PromptTurnOptions,
-        PromptTurnOutcome, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
-        SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
-        SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
-        TeamStrategy, TeamSupervisor,
+        PendingDelegationConfirmation, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource,
+        PromptTurnMode, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditCheckOutput,
+        SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
+        SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
+        SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
     };
     pub use crate::error::CliError;
     pub use crate::models::{ModelRotation, ModelRotationEntry, parse_model_rotation};

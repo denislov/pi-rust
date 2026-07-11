@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -171,4 +172,63 @@ fn stable_api_does_not_export_compatibility_event_receiver() {
         !api_module.contains(&compatibility_receiver),
         "stable api should export the product-event receiver instead of the compatibility receiver"
     );
+}
+
+#[test]
+fn stable_api_excludes_internal_runtime_contracts() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let lib_source = fs::read_to_string(crate_root.join("src/lib.rs"))
+        .expect("pi-coding-agent lib.rs should be readable");
+    let api_module = module_body(&lib_source, "pub mod api")
+        .expect("stable api module should have a balanced body");
+    let exported_identifiers = api_module
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|identifier| !identifier.is_empty())
+        .collect::<BTreeSet<_>>();
+
+    for forbidden in [
+        "Operation",
+        "OperationMetadata",
+        "OperationDispatchMode",
+        "PluginLoadOptions",
+        "RuntimeService",
+        "SessionService",
+        "EventService",
+        "PluginService",
+        "PluginLoadService",
+        "CapabilityService",
+        "FlowService",
+        "ProfileRegistry",
+        "ProfileRegistryOptions",
+        "PluginRegistry",
+        "Flow",
+        "FlowNode",
+        "FlowOutcome",
+    ] {
+        assert!(
+            !exported_identifiers.contains(forbidden),
+            "stable api must not re-export internal runtime contract {forbidden}"
+        );
+    }
+}
+
+fn module_body<'a>(source: &'a str, declaration: &str) -> Option<&'a str> {
+    let declaration_start = source.find(declaration)?;
+    let body_start = declaration_start + source[declaration_start..].find('{')?;
+    let mut depth = 0usize;
+
+    for (offset, character) in source[body_start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(&source[body_start + 1..body_start + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
