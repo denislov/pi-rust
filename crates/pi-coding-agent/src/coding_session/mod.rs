@@ -2290,6 +2290,32 @@ mod tests {
         }
     }
 
+    fn queue_persistent_delegation_confirmation(
+        session: &mut CodingAgentSession,
+        operation_id: &str,
+        tool_call_id: &str,
+        target_kind: ProfileKind,
+    ) {
+        let mut pending = pending_delegation_confirmation_state(target_kind);
+        pending.request.operation_id = operation_id.into();
+        pending.request.tool_call_id = tool_call_id.into();
+        pending.request.target_id = ProfileId::from("default");
+        pending.prompt_options = prompt_options(
+            "coding-session-canonical-delegation-decision",
+            "delegated task",
+        );
+        session
+            .delegation_confirmation_service
+            .queue_pending(
+                &mut session.persistence,
+                &mut session.pending_delegation_confirmations,
+                &session.event_service,
+                pending,
+                true,
+            )
+            .unwrap();
+    }
+
     fn prompt_options_with_tools(
         api: &str,
         prompt: &str,
@@ -4656,12 +4682,263 @@ runtime = "lua"
 
     #[tokio::test]
     async fn canonical_run_preserves_plugin_profile_and_delegation_contracts() {
-        todo!("exercise canonical plugin, profile, approval, and rejection contracts")
+        let api = "coding-session-canonical-delegation-decision";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("delegated result", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_canonical_plugin_profile_delegation")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
+        session.default_plugin_load_options =
+            PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
+                PluginLoadManifest::new(
+                    "canonical-command",
+                    "Canonical Command",
+                    "1.0.0",
+                    PluginSource::FirstParty,
+                ),
+                registry,
+            ));
+        let mut events = session.subscribe_product_events();
+
+        let loaded = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
+        assert!(matches!(
+            loaded,
+            CodingAgentOperationOutcome::PluginLoad(CodingAgentPluginLoadOutcome {
+                loaded_plugin_ids,
+                diagnostics,
+                capability_changed: true,
+            }) if loaded_plugin_ids == vec!["canonical-command"] && diagnostics.is_empty()
+        ));
+        let command = session
+            .run(CodingAgentOperation::PluginCommand {
+                command_id: "plugin.say_hello".into(),
+                args: serde_json::Value::Null,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            command,
+            CodingAgentOperationOutcome::PluginCommand(output) if output == "hello"
+        ));
+        let error = session
+            .run(CodingAgentOperation::PluginCommand {
+                command_id: "missing.command".into(),
+                args: serde_json::Value::Null,
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "plugin");
+        assert_eq!(
+            error.to_string(),
+            "plugin error: plugin command not found: missing.command"
+        );
+        assert_eq!(session.operation_control.active(), None);
+
+        let profile = session
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: ProfileId::from("reviewer"),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            profile,
+            CodingAgentOperationOutcome::DefaultAgentProfileChanged
+        ));
+        assert_eq!(session.view().default_agent_profile_id.as_str(), "reviewer");
+        let reopened = CodingAgentSession::open(options.clone()).await.unwrap();
+        assert_eq!(
+            reopened.view().default_agent_profile_id.as_str(),
+            "reviewer"
+        );
+
+        queue_persistent_delegation_confirmation(
+            &mut session,
+            "op_reject_contract",
+            "tool_reject_contract",
+            ProfileKind::Agent,
+        );
+        let rejected = session
+            .run(CodingAgentOperation::RejectDelegation {
+                operation_id: "op_reject_contract".into(),
+                tool_call_id: "tool_reject_contract".into(),
+                reason: "not now".into(),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            rejected,
+            CodingAgentOperationOutcome::DelegationRejected
+        ));
+        assert!(session.pending_delegation_confirmations().is_empty());
+
+        queue_persistent_delegation_confirmation(
+            &mut session,
+            "op_approve_contract",
+            "tool_approve_contract",
+            ProfileKind::Agent,
+        );
+        let approved = session
+            .run(CodingAgentOperation::ApproveDelegation {
+                operation_id: "op_approve_contract".into(),
+                tool_call_id: "tool_approve_contract".into(),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            approved,
+            CodingAgentOperationOutcome::DelegationApproved
+        ));
+        assert!(session.pending_delegation_confirmations().is_empty());
+        let emitted = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert!(emitted.iter().any(|event| matches!(
+            event.compatibility_event(),
+            CodingAgentEvent::DelegationRejected { reason, .. } if reason == "not now"
+        )));
+        assert!(emitted.iter().any(|event| matches!(
+            event.compatibility_event(),
+            CodingAgentEvent::DelegationApproved { .. }
+        )));
+        assert!(
+            emitted
+                .windows(2)
+                .all(|pair| pair[0].sequence() < pair[1].sequence())
+        );
     }
 
     #[tokio::test]
     async fn canonical_delegation_decisions_distinguish_no_commit_partial_commit_and_replay() {
-        todo!("exercise delegation decision failure timing and replay authority")
+        async fn session_with_pending(
+            root: &Path,
+            session_id: &str,
+            operation_id: &str,
+            tool_call_id: &str,
+        ) -> (CodingAgentSession, CodingAgentSessionOptions) {
+            let options = CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_session_log_root(root);
+            let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
+            queue_persistent_delegation_confirmation(
+                &mut session,
+                operation_id,
+                tool_call_id,
+                ProfileKind::Agent,
+            );
+            (session, options)
+        }
+
+        for (decision, failure_point) in [
+            ("reject_pre_append", StoreFailurePoint::AppendEvents),
+            ("approve_pre_append", StoreFailurePoint::AppendEvents),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let operation_id = format!("op_{decision}");
+            let tool_call_id = format!("tool_{decision}");
+            let (mut session, options) = session_with_pending(
+                temp.path(),
+                &format!("sess_{decision}"),
+                &operation_id,
+                &tool_call_id,
+            )
+            .await;
+            let event_log_path = temp.path().join(format!("sess_{decision}/events.jsonl"));
+            let manifest_path = temp.path().join(format!("sess_{decision}/session.json"));
+            let events_before = std::fs::read(&event_log_path).unwrap();
+            let manifest_before = std::fs::read(&manifest_path).unwrap();
+            session
+                .persistent_session_service()
+                .fail_store_after_for_tests(failure_point, 0);
+            let error = if decision.starts_with("reject") {
+                session
+                    .run(CodingAgentOperation::RejectDelegation {
+                        operation_id: operation_id.clone(),
+                        tool_call_id: tool_call_id.clone(),
+                        reason: "declined".into(),
+                    })
+                    .await
+                    .unwrap_err()
+            } else {
+                session
+                    .run(CodingAgentOperation::ApproveDelegation {
+                        operation_id: operation_id.clone(),
+                        tool_call_id: tool_call_id.clone(),
+                    })
+                    .await
+                    .unwrap_err()
+            };
+            assert_eq!(error.code(), "session");
+            assert_eq!(session.pending_delegation_confirmations().len(), 1);
+            assert_eq!(std::fs::read(&event_log_path).unwrap(), events_before);
+            assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest_before);
+            assert_eq!(
+                CodingAgentSession::open(options)
+                    .await
+                    .unwrap()
+                    .pending_delegation_confirmations()
+                    .len(),
+                1
+            );
+        }
+
+        for decision in ["reject_partial_commit", "approve_partial_commit"] {
+            let temp = tempfile::tempdir().unwrap();
+            let operation_id = format!("op_{decision}");
+            let tool_call_id = format!("tool_{decision}");
+            let (mut session, options) = session_with_pending(
+                temp.path(),
+                &format!("sess_{decision}"),
+                &operation_id,
+                &tool_call_id,
+            )
+            .await;
+            session
+                .persistent_session_service()
+                .fail_store_after_for_tests(StoreFailurePoint::UpdateManifest, 0);
+            let error = if decision.starts_with("reject") {
+                session
+                    .run(CodingAgentOperation::RejectDelegation {
+                        operation_id: operation_id.clone(),
+                        tool_call_id: tool_call_id.clone(),
+                        reason: "declined".into(),
+                    })
+                    .await
+                    .unwrap_err()
+            } else {
+                session
+                    .run(CodingAgentOperation::ApproveDelegation {
+                        operation_id: operation_id.clone(),
+                        tool_call_id: tool_call_id.clone(),
+                    })
+                    .await
+                    .unwrap_err()
+            };
+            assert!(matches!(
+                &error,
+                CodingSessionError::PartialCommit {
+                    operation_id: durable_operation_id,
+                    ..
+                } if durable_operation_id == &operation_id
+            ));
+            assert_eq!(error.code(), "partial_commit");
+            assert_eq!(session.pending_delegation_confirmations().len(), 1);
+            let reopened = CodingAgentSession::open(options).await.unwrap();
+            assert!(reopened.pending_delegation_confirmations().is_empty());
+            assert!(
+                reopened
+                    .persistent_session_service()
+                    .replay()
+                    .unwrap()
+                    .pending_delegation_confirmations
+                    .is_empty()
+            );
+        }
     }
 
     #[tokio::test]

@@ -1085,11 +1085,21 @@ impl SessionService {
             updated_at.clone(),
             data,
         );
-        event.operation_id = operation_id;
+        event.operation_id = operation_id.clone();
         event.turn_id = turn_id;
         self.store.append_events(&self.handle, &[event])?;
-        self.store
-            .update_manifest(&self.handle, ManifestPatch::new().updated_at(updated_at))?;
+        if let Err(error) = self
+            .store
+            .update_manifest(&self.handle, ManifestPatch::new().updated_at(updated_at))
+        {
+            return Err(match operation_id {
+                Some(operation_id) => CodingSessionError::PartialCommit {
+                    operation_id,
+                    message: error.to_string(),
+                },
+                None => error,
+            });
+        }
         self.handle = self.store.open_session_id(&session_id)?;
         Ok(())
     }
