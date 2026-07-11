@@ -38,15 +38,17 @@ created: 2026-07-11
 
 ## Per-Task Verification Map
 
-Task IDs are provisional until PLAN.md files are generated. The planner must replace or confirm them while preserving every requirement row.
+Task IDs are confirmed against `02-01-PLAN.md` through `02-03-PLAN.md`. Execution must preserve every requirement row and record actual runtimes/statuses before sign-off.
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 02-01-01 | 01 | 1 | FACADE-01 | T-02-01 | Stable callers import the complete operation/session contract closure only from `pi_coding_agent::api` | integration/API compile | `cargo test -p pi-coding-agent --test public_api` | ✅ extend | ⬜ pending |
-| 02-01-02 | 01 | 1 | FACADE-04 | T-02-02 | Internal operation, metadata, raw plugin options, services, and Flow nodes remain inaccessible | compile/API plus narrow source guard | `cargo test -p pi-coding-agent --test api_boundary_guards` | ✅ extend | ⬜ pending |
-| 02-02-01 | 02 | 2 | FACADE-02 | T-02-03 | All 15 public variants map to the expected private operation and metadata-selected dispatcher | owner unit plus dispatcher behavior | `cargo test -p pi-coding-agent coding_session::tests::operation_contract` | ❌ W0 | ⬜ pending |
-| 02-02-02 | 02 | 2 | FACADE-03 | T-02-04 | Every internal outcome projects exhaustively, including `Export` and `ExportHtml` | owner unit | `cargo test -p pi-coding-agent coding_session::tests::operation_outcome_projection` | ❌ W0 | ⬜ pending |
-| 02-03-01 | 03 | 3 | FACADE-05 | T-02-05 | Fork, switch, branch-summary reuse, plugin, profile, and delegation preserve state, errors, events, replay, and applicable `PartialCommit` | owner integration-style unit tests | `cargo test -p pi-coding-agent canonical_` | ⚠️ partial | ⬜ pending |
+| 02-01-01 | 01 | 1 | FACADE-01 | T-02-01 | Stable callers import the complete operation/session contract closure only from `pi_coding_agent::api` | integration/API compile | `cargo test -p pi-coding-agent --test public_api stable_api_signature_closure_is_importable -- --nocapture` | ✅ extend | ⬜ pending |
+| 02-01-02 | 01 | 1 | FACADE-04 | T-02-02 | Internal operation, metadata, raw plugin options, services, and Flow nodes remain inaccessible | compile/API plus narrow source guard | `cargo test -p pi-coding-agent --test api_boundary_guards stable_api_excludes_internal_runtime_contracts -- --nocapture` | ✅ extend | ⬜ pending |
+| 02-02-01 | 02 | 1 | FACADE-02 | T-02-03 | All 15 public variants map to the expected private operation and metadata-selected dispatcher | owner unit plus dispatcher behavior | `cargo test -p pi-coding-agent coding_session::public_operation::tests::operation_contract_covers_all_public_variants -- --exact --nocapture` | ❌ W0 | ⬜ pending |
+| 02-02-02 | 02 | 1 | FACADE-03 | T-02-04 | Every internal outcome projects exhaustively, including `Export` and `ExportHtml`, and run behavior covers all three dispatch families | owner unit plus dispatcher behavior | `cargo test -p pi-coding-agent coding_session::public_operation::tests::operation_outcome_projection_covers_all_families -- --exact --nocapture && cargo test -p pi-coding-agent coding_session::tests::canonical_run_uses_each_metadata_dispatch_family -- --exact --nocapture` | ❌ W0 | ⬜ pending |
+| 02-03-01 | 03 | 2 | FACADE-05 | T-02-05, T-02-08 | Fork, switch, and branch-summary reuse preserve state, errors, events, replay, and applicable `PartialCommit` | owner integration-style unit tests | `cargo test -p pi-coding-agent coding_session::tests::canonical_run_preserves_navigation_and_branch_summary_durability -- --exact --nocapture` | ⚠️ partial | ⬜ pending |
+| 02-03-02 | 03 | 2 | FACADE-05 | T-02-06, T-02-07 | Plugin load/command, profile mutation, and delegation decisions preserve canonical outcomes and applicable state/error/event/reopen semantics | owner integration-style unit tests | `cargo test -p pi-coding-agent coding_session::tests::canonical_run_preserves_plugin_profile_and_delegation_contracts -- --exact --nocapture` | ⚠️ partial | ⬜ pending |
+| 02-03-03 | 03 | 2 | FACADE-01, FACADE-02, FACADE-03, FACADE-04, FACADE-05 | T-02-01 through T-02-08 | Final tree passes focused, crate, workspace, source-audit, formatting, and diff gates with no scope-fence violations | phase closure | `cargo fmt --check && cargo test -p pi-coding-agent && cargo check -p pi-coding-agent && cargo test --workspace && cargo check --workspace && cargo test -p pi-coding-agent --test public_api --test api_boundary_guards -- --nocapture && test "$(sed -n '/pub enum CodingAgentOperation {/,/^}/p' crates/pi-coding-agent/src/coding_session/public_operation.rs | rg -c '^    [A-Z]')" -eq 15 && ! rg -n 'CodingAgentOperation::' crates/pi-coding-agent/src/protocol crates/pi-coding-agent/src/print_mode.rs crates/pi-coding-agent/src/json_mode.rs crates/pi-coding-agent/src/interactive && git diff --check` | ✅ existing commands | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -77,7 +79,7 @@ All Phase 2 facade and durability requirements must have automated verification.
 - [ ] Wave 0 covers every missing test reference in the map.
 - [ ] No watch-mode flags are used.
 - [ ] Focused feedback latency is measured and acceptable for per-task execution.
-- [ ] All FACADE-01 through FACADE-05 rows map to final PLAN.md task IDs.
+- [x] All FACADE-01 through FACADE-05 rows map to final PLAN.md task IDs.
 - [ ] `nyquist_compliant: true` and `wave_0_complete: true` are set in frontmatter.
 
 **Approval:** pending
