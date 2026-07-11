@@ -1,9 +1,9 @@
 ---
 phase: 1
 slug: evidence-based-baseline
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: complete
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-11
 ---
 
@@ -12,7 +12,7 @@ created: 2026-07-11
 > Per-phase validation contract for feedback sampling during execution.
 >
 > **Wave 0 owner:** Task `01-01-01` creates the audit validator and command-ledger contract.
-> **Nyquist status:** Not compliant until Plan `01-03` Task `01-03-02` runs the final gate.
+> **Nyquist status:** Compliant after Plan `01-03` Task `01-03-02` ran the final gate.
 
 ---
 
@@ -54,13 +54,13 @@ is not a positive integer.
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 01-01-01 | 01-01 | 0 | AUDIT-01, AUDIT-02, AUDIT-03 | T-01-01, T-01-02, T-01-05 | Validator does not read secrets, mutate production/runtime state, or execute ledger content; no external package dependency | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --schema-only` | Yes | pending |
-| 01-01-02 | 01-01 | 1 | AUDIT-01, AUDIT-02, AUDIT-03 | N/A | Validation map names concrete plan/wave/task identifiers without premature compliance claims | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --schema-only` | Yes | pending |
-| 01-02-01 | 01-02 | 2 | AUDIT-01, AUDIT-02 | T-01-02, T-01-04 | Evidence collection remains read-only; command ledger records exact command, date, exit status, and executed-test count | artifact/schema + focused tests | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only && cargo test -p pi-coding-agent --test public_api canonical_operation_runtime_variants_are_public -- --nocapture && cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_the_canonical_operation_dispatcher -- --nocapture` | No - Wave 2 | pending |
-| 01-02-02 | 01-02 | 2 | AUDIT-02 | T-01-02 | Caller inventory records file/symbol paths without executing external services or printing secrets | artifact/schema + live source comparison | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only` | No - Wave 2 | pending |
-| 01-02-03 | 01-02 | 2 | AUDIT-01 | T-01-04 | History reconciliation uses focused Stage 9 Git analysis only; records provenance for every cited commit | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only` | No - Wave 2 | pending |
-| 01-03-01 | 01-03 | 3 | AUDIT-03 | T-01-03 | Findings use locked taxonomy; Stage 10 scope excluded from Phase 2-5 routing; no implementation task prose | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only` | No - Wave 3 | pending |
-| 01-03-02 | 01-03 | 3 | AUDIT-01, AUDIT-02, AUDIT-03 | T-01-03 | Final gate enforces Audit Status: final, zero blockers, complete traceability, and all finding categories | artifact/schema + focused tests | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh && cargo test -p pi-coding-agent --test public_api canonical_operation_runtime_variants_are_public -- --nocapture && cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_the_canonical_operation_dispatcher -- --nocapture && cargo test -p pi-coding-agent --test product_runtime_boundary_guards -- --nocapture && git diff --check` | No - Wave 3 | pending |
+| 01-01-01 | 01-01 | 0 | AUDIT-01, AUDIT-02, AUDIT-03 | T-01-01, T-01-02, T-01-05 | Validator does not read secrets, mutate production/runtime state, or execute ledger content; no external package dependency | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --schema-only` | Yes | green |
+| 01-01-02 | 01-01 | 1 | AUDIT-01, AUDIT-02, AUDIT-03 | N/A | Validation map names concrete plan/wave/task identifiers without premature compliance claims | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --schema-only` | Yes | green |
+| 01-02-01 | 01-02 | 2 | AUDIT-01, AUDIT-02 | T-01-02, T-01-04 | Evidence collection remains read-only; command ledger records exact command, date, exit status, and executed-test count | artifact/schema + focused tests | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only && cargo test -p pi-coding-agent --test public_api canonical_operation_runtime_variants_are_public -- --nocapture && cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_the_canonical_operation_dispatcher -- --nocapture` | Yes | green |
+| 01-02-02 | 01-02 | 2 | AUDIT-02 | T-01-02 | Caller inventory records file/symbol paths without executing external services or printing secrets | artifact/schema + live source comparison | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only` | Yes | green |
+| 01-02-03 | 01-02 | 2 | AUDIT-01 | T-01-04 | History reconciliation uses focused Stage 9 Git analysis only; records provenance for every cited commit | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only` | Yes | green |
+| 01-03-01 | 01-03 | 3 | AUDIT-03 | T-01-03 | Findings use locked taxonomy; Stage 10 scope excluded from Phase 2-5 routing; no implementation task prose | artifact/schema | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh --evidence-only` | Yes | green |
+| 01-03-02 | 01-03 | 3 | AUDIT-01, AUDIT-02, AUDIT-03 | T-01-03 | Final gate enforces Audit Status: final, zero blockers, complete traceability, and all finding categories | artifact/schema + focused tests | `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh && cargo test -p pi-coding-agent --test public_api canonical_operation_runtime_variants_are_public -- --nocapture && cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_the_canonical_operation_dispatcher -- --nocapture && cargo test -p pi-coding-agent --test product_runtime_boundary_guards -- --nocapture && git diff --check` | Yes | green |
 
 *Status values: pending, green, red, flaky.*
 
@@ -71,9 +71,9 @@ is not a positive integer.
 Wave 0 is owned by task `01-01-01` (Plan 01-01, Task 1). It creates both the validator and the
 command-ledger contract before any evidence collection begins.
 
-- [ ] `.planning/phases/01-evidence-based-baseline/validate-audit.sh` - validate all 15 exact public variants appear once, required matrix fields and sections exist, taxonomy values are allowed, evidence/finding IDs are unique, AUDIT requirement IDs are present, findings route only to Phase 2-5, and gaps/blockers use explicit `none` when empty
-- [ ] `01-AUDIT.md` command-ledger template - record evidence ID, exact command, date, exit status, executed-test count, and result for every focused test or source scan
-- [ ] Ensure every Cargo test filter used by the audit executes at least one test; zero-test output is a validation failure
+- [x] `.planning/phases/01-evidence-based-baseline/validate-audit.sh` - validate all 15 exact public variants appear once, required matrix fields and sections exist, taxonomy values are allowed, evidence/finding IDs are unique, AUDIT requirement IDs are present, findings route only to Phase 2-5, and gaps/blockers use explicit `none` when empty
+- [x] `01-AUDIT.md` command-ledger template - record evidence ID, exact command, date, exit status, executed-test count, and result for every focused test or source scan
+- [x] Ensure every Cargo test filter used by the audit executes at least one test; zero-test output is a validation failure
 
 No framework installation or production test fixture is required.
 
@@ -89,12 +89,12 @@ No framework installation or production test fixture is required.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have automated verification or explicit Wave 0 dependencies
-- [ ] Sampling continuity: no three consecutive tasks without automated verification
-- [ ] Wave 0 creates the audit validator and command-ledger contract
-- [ ] No watch-mode flags are used
-- [ ] Feedback latency remains below 90 seconds
-- [ ] Every Cargo filter records a non-zero executed-test count
-- [ ] `nyquist_compliant: true` is set in frontmatter after the final plan map is populated
+- [x] All tasks have automated verification or explicit Wave 0 dependencies
+- [x] Sampling continuity: no three consecutive tasks without automated verification
+- [x] Wave 0 creates the audit validator and command-ledger contract
+- [x] No watch-mode flags are used
+- [x] Feedback latency remains below 90 seconds
+- [x] Every Cargo filter records a non-zero executed-test count
+- [x] `nyquist_compliant: true` is set in frontmatter after the final plan map is populated
 
-**Approval:** pending
+**Approval:** approved

@@ -644,7 +644,9 @@ validate_final() {
     fi
   done
 
-  # 3. All four finding categories represented (where live evidence supports them)
+  # 3. Finding categories represented (where live evidence supports them)
+  # Per D-15/D-16, 'blocking' findings only exist when actual blockers are present.
+  # If all blockers are 'none', a blocking finding is neither required nor correct.
   local findings_data
   findings_data=$(extract_table_data_rows "$AUDIT_FILE" "Findings")
   local found_blocking=0 found_required=0 found_hardening=0 found_informational=0
@@ -664,7 +666,35 @@ validate_final() {
     esac
   done <<< "$findings_data"
 
-  [[ $found_blocking -eq 0 ]]      && add_error "Findings: no 'blocking' finding represented"
+  # Scan for actual blockers across Operation Matrix and Findings
+  local has_blockers=0
+  while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    local bval
+    bval=$(get_cell "$row" 17)
+    if [[ "$bval" != "none" ]] && [[ -n "$bval" ]]; then
+      has_blockers=1
+      break
+    fi
+  done <<< "$(extract_table_data_rows "$AUDIT_FILE" "Operation Matrix")"
+  if [[ $has_blockers -eq 0 ]]; then
+    while IFS= read -r row; do
+      [[ -z "$row" ]] && continue
+      local fc bval
+      fc=$(get_cell "$row" 2)
+      is_placeholder "$fc" && continue
+      bval=$(get_cell "$row" 12)
+      if [[ "$bval" != "none" ]] && [[ -n "$bval" ]]; then
+        has_blockers=1
+        break
+      fi
+    done <<< "$findings_data"
+  fi
+
+  # 'blocking' finding required only when actual blockers exist (D-15/D-16)
+  if [[ $has_blockers -eq 1 ]] && [[ $found_blocking -eq 0 ]]; then
+    add_error "Findings: no 'blocking' finding represented despite existing blockers"
+  fi
   [[ $found_required -eq 0 ]]      && add_error "Findings: no 'required' finding represented"
   [[ $found_hardening -eq 0 ]]     && add_error "Findings: no 'hardening' finding represented"
   [[ $found_informational -eq 0 ]] && add_error "Findings: no 'informational' finding represented"

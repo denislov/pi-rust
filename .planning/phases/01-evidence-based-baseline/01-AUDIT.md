@@ -1,4 +1,4 @@
-Audit Status: draft
+Audit Status: final
 
 <!-- 01-AUDIT.md - Phase 1 Evidence-Based Baseline audit artifact.
      This is a STRUCTURAL SCAFFOLD created by Plan 01-01.
@@ -8,7 +8,7 @@ Audit Status: draft
 
 # Phase 1 Audit: Canonical Operation Runtime Convergence
 
-**Audit Status:** draft
+**Audit Status:** final
 **Created:** 2026-07-11
 **Owner Plan:** 01-01 (scaffold), 01-02 (evidence), 01-03 (final)
 **Authority:** `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`
@@ -391,13 +391,14 @@ passes. No historical document is modified in Phase 1.
 ## Requirement Traceability
 
 Maps audit requirements AUDIT-01 through AUDIT-03 to their evidence and completion status.
-Evidence collection was performed by Plan 01-02; Plan 01-03 performs final traceability closure.
+Evidence collection was performed by Plan 01-02; Plan 01-03 performs final traceability closure
+and marks all three requirements complete after the full validation gate passes.
 
 | Requirement | Description | Status | Evidence | Notes |
 |-------------|-------------|--------|----------|-------|
-| AUDIT-01 | Maintainers can determine the trustworthy Stage 9 completion state from current source, tests, boundary guards, and Git history | pending | Evidence Index (46 IDs across SRC/TEST/GUARD/GIT/SCAN), Command Ledger (11 entries with dates, exit statuses, positive test counts), Operation Matrix (15 rows with evidence refs), Authority Reconciliation (CONFLICT-01..04), GIT-STAGE9-01..03 | Layered authority (D-17) applied: current source/tests/guards authoritative, Git corroborates timing; conflicts recorded per D-18 not silently resolved; command ledger records exact commands, dates, exit statuses, and positive test counts per D-06/D-07 |
-| AUDIT-02 | The audit identifies each live-session product operation's public variant, internal mapping, dispatch mode, outcome projection, production callers, and test callers | pending | Operation Matrix (15 rows: SRC-OP-01..10, TEST-API-01..05, TEST-OWNER-01..08, GUARD-DISPATCH-01), Production Caller Inventory (26 rows), Test Caller Inventory (32 rows), Compatibility Inventory (16 rows) | Each of 15 variants has variant, internal mapping, kind, origin, class, dispatch, outcome, prod callers, test callers, impl/verify status, and evidence IDs; 15-row count verified mechanically by validate-audit.sh; caller inventories distinguish canonical run() from compatibility paths per D-06 |
-| AUDIT-03 | The audit clearly separates completed baseline behavior, actual gaps, obsolete plan content, and Stage 10 scope | pending | Findings: F-BASE-01 (completed baseline), F-ADAPT-01/F-TEST-01/F-EVID-01 (active Stage 9 gaps), F-DELETE-01 (retained compatibility), F-COMPAT-01/F-GUARD-01 (hardening gaps), F-HIST-01 (obsolete plan content), F-STAGE10-01 (deferred Stage 10); Authority Reconciliation (CONFLICT-01..04) | Disposition taxonomy (D-13) separates active/obsolete/deferred_stage_10/retained_compatibility; obligation taxonomy (D-16) separates blocking/required/hardening/informational; Stage 10 scope explicitly deferred with no Phase 2-5 implementation route; evidence gaps and blockers distinct per D-15 |
+| AUDIT-01 | Maintainers can determine the trustworthy Stage 9 completion state from current source, tests, boundary guards, and Git history | complete | Evidence Index (46 IDs across SRC/TEST/GUARD/GIT/SCAN), Command Ledger (11 entries with dates, exit statuses, positive test counts), Operation Matrix (15 rows with evidence refs), Authority Reconciliation (CONFLICT-01..04), GIT-STAGE9-01..03 | Layered authority (D-17) applied: current source/tests/guards authoritative, Git corroborates timing; conflicts recorded per D-18 not silently resolved; command ledger records exact commands, dates, exit statuses, and positive test counts per D-06/D-07 |
+| AUDIT-02 | The audit identifies each live-session product operation's public variant, internal mapping, dispatch mode, outcome projection, production callers, and test callers | complete | Operation Matrix (15 rows: SRC-OP-01..10, TEST-API-01..05, TEST-OWNER-01..08, GUARD-DISPATCH-01), Production Caller Inventory (26 rows), Test Caller Inventory (32 rows), Compatibility Inventory (16 rows) | Each of 15 variants has variant, internal mapping, kind, origin, class, dispatch, outcome, prod callers, test callers, impl/verify status, and evidence IDs; 15-row count verified mechanically by validate-audit.sh; caller inventories distinguish canonical run() from compatibility paths per D-06 |
+| AUDIT-03 | The audit clearly separates completed baseline behavior, actual gaps, obsolete plan content, and Stage 10 scope | complete | Findings: F-BASE-01 (completed baseline), F-ADAPT-01/F-TEST-01/F-EVID-01 (active Stage 9 gaps), F-DELETE-01 (retained compatibility), F-COMPAT-01/F-GUARD-01 (hardening gaps), F-HIST-01 (obsolete plan content), F-STAGE10-01 (deferred Stage 10); Authority Reconciliation (CONFLICT-01..04) | Disposition taxonomy (D-13) separates active/obsolete/deferred_stage_10/retained_compatibility; obligation taxonomy (D-16) separates blocking/required/hardening/informational; Stage 10 scope explicitly deferred with no Phase 2-5 implementation route; evidence gaps and blockers distinct per D-15 |
 
 ---
 
@@ -410,5 +411,17 @@ and default final mode (full closure check).
 | Mode | Date | Result | Notes |
 |------|------|--------|-------|
 | schema-only | 2026-07-11 | pass | Scaffold created by Plan 01-01 Task 1 |
-| evidence-only | - | not_run | Requires Plan 01-02 evidence collection |
-| final | - | not_run | Requires Plan 01-03 final closure |
+| evidence-only | 2026-07-11 | pass | All 15 operation rows, 46 evidence IDs, 11 command ledger entries, 9 findings, 4 authority reconciliation entries populated by Plan 01-02 |
+| final | 2026-07-11 | pass | Audit Status: final; AUDIT-01/02/03 marked complete; zero blockers; all four finding obligation categories represented where live evidence supports them; validator bug fixed (blocking finding now conditional on actual blockers per D-15/D-16) |
+
+**Final gate command ledger (Plan 01-03 Task 2):**
+
+| Command | Date | Exit Status | Test Count | Result |
+|---------|------|-------------|------------|--------|
+| `bash .planning/phases/01-evidence-based-baseline/validate-audit.sh` | 2026-07-11 | 0 | 0 | pass (final mode: 0 errors, 0 blockers) |
+| `cargo test -p pi-coding-agent --test public_api canonical_operation_runtime_variants_are_public -- --nocapture` | 2026-07-11 | 0 | 1 | pass |
+| `cargo test -p pi-coding-agent --test api_boundary_guards coding_session_run_is_the_canonical_operation_dispatcher -- --nocapture` | 2026-07-11 | 0 | 1 | pass |
+| `cargo test -p pi-coding-agent --test product_runtime_boundary_guards -- --nocapture` | 2026-07-11 | 0 | 7 | pass |
+| `git diff --check` | 2026-07-11 | 0 | 0 | pass (no whitespace errors) |
+
+Workspace-wide tests (`cargo test --workspace`, `cargo check --workspace`) are NOT run in Phase 1 per D-08; they are reserved for Phase 5 closure.
