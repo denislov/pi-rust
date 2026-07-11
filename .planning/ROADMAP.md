@@ -67,7 +67,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. Interactive fork and navigation retain subscriber continuity, product-event sequencing, and refreshed snapshots and projections after transitions.
   5. JSON, print, RPC, and interactive production sources contain neither replaced broad workflow calls nor local deprecation suppressions for those calls.
 
-**Plans**: 2/6 plans executed
+**Plans**: 3/6 plans executed
 
 **Wave 1**
 
@@ -79,7 +79,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-03-PLAN.md — Migrate RPC mutation and plugin commands and close the RPC source gate.
+- [x] 03-03-PLAN.md — Migrate RPC mutation and plugin commands and close the RPC source gate.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -132,6 +132,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Evidence-Based Baseline | 3/3 | Complete    | 2026-07-11 |
 | 2. Canonical Facade Correctness | 3/3 | Complete    | 2026-07-11 |
-| 3. Production Adapter Convergence | 2/6 | In Progress|  |
+| 3. Production Adapter Convergence | 3/6 | In Progress|  |
 | 4. Test Convergence and Compatibility Deletion | 0/TBD | Not started | - |
 | 5. Boundary Enforcement and Stage 9 Closure | 0/TBD | Not started | - |
