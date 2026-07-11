@@ -234,6 +234,28 @@ mod tests {
     }
 
     #[test]
+    fn operation_contract_covers_all_public_variants() {
+        let cases = operation_contract_cases();
+
+        assert_eq!(cases.len(), 15);
+        for case in cases {
+            let operation = (case.build_operation)().into_internal(PluginLoadOptions::new());
+            assert_eq!(
+                internal_operation_variant(&operation),
+                case.expected_internal,
+                "{} internal variant",
+                case.public_variant
+            );
+            assert_eq!(
+                operation.metadata().dispatch_mode,
+                case.expected_dispatch,
+                "{} dispatch mode",
+                case.public_variant
+            );
+        }
+    }
+
+    #[test]
     fn html_export_outcome_projects_to_public_path() {
         let path = PathBuf::from("session.html");
         let export = CodingAgentSessionExport {
