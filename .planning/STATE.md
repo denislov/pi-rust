@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
-current_phase_name: Canonical Facade Correctness
+current_phase: 02
+current_phase_name: canonical-facade-correctness
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-07-11T04:08:20.881Z"
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-07-11T05:57:17.025Z"
 last_activity: 2026-07-11
-last_activity_desc: Phase 01 complete, transitioned to Phase 2
+last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 20
+  total_plans: 6
+  completed_plans: 4
+  percent: 67
 ---
 
 # Project State
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-10)
 
 **Core value:** Every first-party live-session product operation follows one typed, admitted, behavior-preserving runtime path through `CodingAgentSession::run`.
-**Current focus:** Phase 01 — evidence-based-baseline
+**Current focus:** Phase 02 — canonical-facade-correctness
 
 ## Current Position
 
-Phase: 2 — Canonical Facade Correctness
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-11 — Phase 01 complete, transitioned to Phase 2
+Phase: 02 (canonical-facade-correctness) — EXECUTING
+Plan: 2 of 3
+Status: Executing Phase 02
+Last activity: 2026-07-11 — Phase 02 execution started
 
-Progress: [..........] 0%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [..........] 0%
 *Updated after each plan completion*
 | Phase 01 P01 | 7min | 2 tasks | 3 files |
 | Phase 01 P02 | 38min | 3 tasks | 2 files |
+| Phase 02 P01 | 8 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,8 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-02: Populated 15-row Operation Matrix from live source with 46 evidence IDs, 26 production callers, 32 test callers, 16 compatibility methods, 4 authority conflicts, and 8 findings; corrected 3 non-deprecated methods and fixed validator SIGPIPE/taxonomy bugs
 - [Phase 01]: 01-02: Corrected compatibility inventory - set_default_agent_profile_id, approve_delegation_confirmation, reject_delegation_confirmation are NOT deprecated; routed missing Stage 9 guards to Phase 5 hardening
 - [Phase ?]: 01-03: Added F-BASE-01 informational finding for completed baseline; fixed validator blocking-finding bug per D-15/D-16; Phase 1 audit final with Nyquist validation approved
+- [Phase 02]: 02-01: Existing stable facade already closed positive caller signature graph; evidence added without widening exports — The facade-only closure test compiled without production additions
+- [Phase 02]: 02-01: ProfileRegistry and ProfileRegistryOptions remain implementation-private — Callers consume projected profile query results rather than registry ownership
 
 ### Pending Todos
 
@@ -92,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-11T02:31:59.028Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-canonical-facade-correctness/02-CONTEXT.md
+Last session: 2026-07-11T05:57:17.020Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: None

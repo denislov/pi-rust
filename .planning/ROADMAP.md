@@ -44,10 +44,10 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. Fork, active-leaf switch, branch-summary reuse, plugin, profile, and delegation operations retain their durable state, event continuity, and explicit error or partial-commit semantics.
   5. Stable API checks demonstrate that internal operations, dispatch metadata, plugin load options, services, and Flow nodes remain inaccessible to callers.
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Close the stable facade signature graph and enforce privacy.
+- [x] 02-01-PLAN.md — Close the stable facade signature graph and enforce privacy.
 - [ ] 02-02-PLAN.md — Prove the independent 15-variant dispatch and outcome contract.
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -107,7 +107,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Evidence-Based Baseline | 3/3 | Complete    | 2026-07-11 |
-| 2. Canonical Facade Correctness | 0/TBD | Not started | - |
+| 2. Canonical Facade Correctness | 1/3 | In Progress | - |
 | 3. Production Adapter Convergence | 0/TBD | Not started | - |
 | 4. Test Convergence and Compatibility Deletion | 0/TBD | Not started | - |
 | 5. Boundary Enforcement and Stage 9 Closure | 0/TBD | Not started | - |
