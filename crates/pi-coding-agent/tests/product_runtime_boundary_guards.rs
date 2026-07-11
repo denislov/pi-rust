@@ -1,6 +1,275 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionMethod {
+    name: String,
+    visibility: &'static str,
+    test_only: bool,
+    attributes: Vec<String>,
+    body: String,
+    file: String,
+    line: usize,
+    end_line: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MethodExpectation {
+    name: &'static str,
+    group: &'static str,
+    visibility: &'static str,
+    test_only: bool,
+}
+
+#[test]
+fn session_store_failure_controls_remain_test_only() {
+    let scan = SourceScan::new();
+    let store_path = scan
+        .crate_root
+        .join("src/coding_session/session_log/store.rs");
+    let source = fs::read_to_string(&store_path).expect("read session store source");
+    let sanitized = sanitize_rust_source(&source);
+
+    for signature in [
+        "failures: Arc<Mutex<StoreFailureState>>",
+        "pub(crate) enum StoreFailurePoint",
+        "struct StoreFailureState",
+        "pub(crate) fn fail_after(",
+        "fn fail_if_injected(",
+    ] {
+        assert_eq!(
+            sanitized.matches(signature).count(),
+            1,
+            "session store test control must exist exactly once: {signature}"
+        );
+        assert_direct_cfg_test(&sanitized, signature);
+    }
+
+    for point in [
+        "CreateBlobs",
+        "CreateIndex",
+        "WriteManifest",
+        "CreateEventLog",
+        "AppendEvents",
+        "UpdateManifest",
+        "RemoveSession",
+    ] {
+        let call = format!("self.fail_if_injected(StoreFailurePoint::{point})?");
+        assert_eq!(
+            sanitized.matches(&call).count(),
+            1,
+            "expected exactly one directly gated failure call for {point}"
+        );
+        assert_direct_cfg_test(&sanitized, &call);
+    }
+
+    let mut violations = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src/coding_session")) {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source = fs::read_to_string(&path).expect("read coding-session source");
+        let sanitized = sanitize_rust_source(&source);
+        for (index, line) in sanitized.lines().enumerate() {
+            let trimmed = line.trim();
+            let fault_name = trimmed.contains("fail_after")
+                || trimmed.contains("StoreFailurePoint")
+                || trimmed.contains("StoreFailureState")
+                || ((trimmed.contains("inject") || trimmed.contains("Injection"))
+                    && (trimmed.contains("fail")
+                        || trimmed.contains("failure")
+                        || trimmed.contains("fault")))
+                || trimmed.contains("FailureHook")
+                || trimmed.contains("FaultPoint");
+            if !fault_name || path == store_path {
+                continue;
+            }
+            if !line_is_cfg_test_gated(&sanitized, index) {
+                violations.push(format!("{}:{}: {}", relative, index + 1, trimmed));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "session-store failure controls must remain inside #[cfg(test)] items/modules:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn canonical_operation_facade_has_no_new_workflow_wrappers() {
+    let scan = SourceScan::new();
+    let mut methods = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src/coding_session")) {
+        collect_coding_agent_session_methods(&scan.repo_root, &path, &mut methods);
+    }
+
+    let mut expected = Vec::new();
+    add_expectations(
+        &mut expected,
+        "canonical dispatcher",
+        "pub",
+        false,
+        &["run"],
+    );
+    add_expectations(
+        &mut expected,
+        "Phase 1 compatibility wrapper",
+        "pub",
+        false,
+        &[
+            "export_current_html",
+            "export_current",
+            "set_default_agent_profile_id",
+            "approve_delegation_confirmation",
+            "reject_delegation_confirmation",
+            "prompt",
+            "compact",
+            "self_healing_edit",
+            "self_healing_edit_with_options",
+            "invoke_agent",
+            "invoke_team",
+            "summarize_branch",
+        ],
+    );
+    add_expectations(
+        &mut expected,
+        "Phase 1 compatibility wrapper",
+        "pub(crate)",
+        false,
+        &[
+            "fork_current_session",
+            "reload_plugins",
+            "run_plugin_command",
+            "load_plugins",
+        ],
+    );
+    add_expectations(
+        &mut expected,
+        "retained lifecycle/query/event/control helper",
+        "pub",
+        false,
+        &[
+            "create",
+            "open",
+            "open_or_create",
+            "non_persistent",
+            "list",
+            "export_session_html",
+            "subscribe",
+            "subscribe_product_events_public",
+            "snapshot",
+            "connect",
+            "capabilities",
+            "view",
+            "agent_profiles",
+            "team_profiles",
+            "profile_diagnostics",
+            "pending_delegation_confirmations",
+        ],
+    );
+    add_expectations(
+        &mut expected,
+        "retained lifecycle/query/event/control helper",
+        "pub(crate)",
+        false,
+        &[
+            "hydrate",
+            "tree_view",
+            "clone_session",
+            "fork_session",
+            "hydrate_current",
+            "subscribe_product_events",
+            "product_event_replay_handle",
+            "ui_snapshot",
+            "connect_client",
+            "product_events_after",
+            "prompt_control_handle",
+            "plugin_commands",
+            "plugin_ui_actions",
+            "plugin_ui_dialogs",
+            "plugin_keybindings",
+            "summarize_branch_for_navigation",
+        ],
+    );
+    add_expectations(
+        &mut expected,
+        "test-only helper",
+        "pub(crate)",
+        true,
+        &[
+            "non_persistent_with_event_capacity_for_tests",
+            "emit_product_event_for_tests",
+        ],
+    );
+
+    let mut violations = Vec::new();
+    for expectation in &expected {
+        let definitions = methods
+            .iter()
+            .filter(|method| method.name == expectation.name)
+            .collect::<Vec<_>>();
+        if definitions.len() != 1 {
+            violations.push(format!(
+                "{} `{}` expected exactly once, found {}: {}",
+                expectation.group,
+                expectation.name,
+                definitions.len(),
+                format_method_locations(&definitions)
+            ));
+            continue;
+        }
+        let method = definitions[0];
+        if method.visibility != expectation.visibility || method.test_only != expectation.test_only
+        {
+            violations.push(format!(
+                "{} `{}` has visibility/test gate {}/{}, expected {}/{} at {}:{}",
+                expectation.group,
+                expectation.name,
+                method.visibility,
+                method.test_only,
+                expectation.visibility,
+                expectation.test_only,
+                method.file,
+                method.line
+            ));
+        }
+    }
+    for method in &methods {
+        let groups = expected
+            .iter()
+            .filter(|expectation| expectation.name == method.name)
+            .map(|expectation| expectation.group)
+            .collect::<Vec<_>>();
+        if groups.len() != 1 {
+            let diagnostic_context = unexpected_method_context(method);
+            violations.push(format!(
+                "method `{}` belongs to {} allowed groups ({:?}) at {}:{}-{}{}",
+                method.name,
+                groups.len(),
+                groups,
+                method.file,
+                method.line,
+                method.end_line,
+                diagnostic_context,
+            ));
+        }
+    }
+    violations.extend(alternate_facade_violations(&scan));
+
+    let lib = sanitize_rust_source(
+        &fs::read_to_string(scan.crate_root.join("src/lib.rs")).expect("read crate lib source"),
+    );
+    assert_eq!(
+        lib.matches("pub mod api").count(),
+        1,
+        "lib.rs::api must remain the sole stable facade"
+    );
+    assert!(
+        violations.is_empty(),
+        "CodingAgentSession public/pub(crate) method ledger changed:\n{}",
+        violations.join("\n")
+    );
+}
+
 #[test]
 fn product_sources_do_not_register_global_provider_runtime_outside_compat_boundary() {
     let scan = SourceScan::new();
@@ -233,6 +502,429 @@ fn collect_source_violations(
             violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
         }
     }
+}
+
+fn add_expectations(
+    target: &mut Vec<MethodExpectation>,
+    group: &'static str,
+    visibility: &'static str,
+    test_only: bool,
+    names: &[&'static str],
+) {
+    target.extend(names.iter().map(|name| MethodExpectation {
+        name,
+        group,
+        visibility,
+        test_only,
+    }));
+}
+
+fn format_method_locations(methods: &[&SessionMethod]) -> String {
+    methods
+        .iter()
+        .map(|method| format!("{}:{}-{}", method.file, method.line, method.end_line))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn rust_files_under(root: &Path) -> Vec<PathBuf> {
+    let Ok(metadata) = fs::metadata(root) else {
+        return Vec::new();
+    };
+    if metadata.is_file() {
+        return (root.extension().and_then(|extension| extension.to_str()) == Some("rs"))
+            .then(|| root.to_path_buf())
+            .into_iter()
+            .collect();
+    }
+    let mut files = fs::read_dir(root)
+        .expect("read Rust source directory")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read Rust source entries")
+        .into_iter()
+        .flat_map(|entry| rust_files_under(&entry.path()))
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+fn relative_path(repo_root: &Path, path: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .expect("source should be below repository root")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn collect_coding_agent_session_methods(
+    repo_root: &Path,
+    path: &Path,
+    methods: &mut Vec<SessionMethod>,
+) {
+    let source = fs::read_to_string(path).expect("read CodingAgentSession source");
+    let sanitized = sanitize_rust_source(&source);
+    let relative = relative_path(repo_root, path);
+    let lines = sanitized.lines().collect::<Vec<_>>();
+    let mut in_impl = false;
+    let mut depth = 0isize;
+    let mut attributes = Vec::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if !in_impl {
+            if trimmed
+                .strip_prefix("impl CodingAgentSession")
+                .is_some_and(|suffix| suffix.trim_start().starts_with('{'))
+            {
+                in_impl = true;
+                depth = brace_delta(line);
+            }
+            continue;
+        }
+
+        if depth == 1 {
+            if trimmed.starts_with("#[") {
+                attributes.push(trimmed.to_owned());
+            } else if let Some((visibility, name)) = parse_visible_method(trimmed) {
+                let end_index = visible_method_end(&lines, index);
+                methods.push(SessionMethod {
+                    name,
+                    visibility,
+                    test_only: attributes
+                        .iter()
+                        .any(|attribute| attribute == "#[cfg(test)]"),
+                    attributes: attributes.clone(),
+                    body: lines[index..=end_index].join("\n"),
+                    file: relative.clone(),
+                    line: index + 1,
+                    end_line: end_index + 1,
+                });
+                attributes.clear();
+            } else if !trimmed.is_empty() {
+                attributes.clear();
+            }
+        }
+        depth += brace_delta(line);
+        if depth == 0 {
+            in_impl = false;
+            attributes.clear();
+        }
+    }
+}
+
+fn visible_method_end(lines: &[&str], start: usize) -> usize {
+    let mut saw_body = false;
+    let mut depth = 0isize;
+    for (index, line) in lines.iter().enumerate().skip(start) {
+        let delta = brace_delta(line);
+        if line.contains('{') {
+            saw_body = true;
+        }
+        depth += delta;
+        if saw_body && depth == 0 {
+            return index;
+        }
+    }
+    panic!(
+        "visible method starting at line {} has no complete body",
+        start + 1
+    );
+}
+
+fn unexpected_method_context(method: &SessionMethod) -> String {
+    let operation_vocabulary = [
+        "CodingAgentOperation",
+        "Operation::",
+        "PromptTurnOptions",
+        "AgentInvocationOptions",
+        "AgentTeamOptions",
+        "SelfHealingEditRequest",
+    ]
+    .iter()
+    .filter(|token| method.body.contains(*token))
+    .copied()
+    .collect::<Vec<_>>();
+    let forwards_to_run = method.body.contains(".run(") || method.body.contains("Self::run(");
+    format!(
+        "; targeted context: attributes={:?}, operation_vocabulary={operation_vocabulary:?}, forwards_to_run={forwards_to_run}",
+        method.attributes
+    )
+}
+
+fn alternate_facade_violations(scan: &SourceScan) -> Vec<String> {
+    let mut paths = rust_files_under(&scan.crate_root.join("src/coding_session"));
+    paths.push(scan.crate_root.join("src/lib.rs"));
+    let mut violations = Vec::new();
+    for path in paths {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source = sanitize_rust_source(&fs::read_to_string(&path).expect("read facade source"));
+        for (index, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+            let public_trait =
+                trimmed.starts_with("pub trait ") || trimmed.starts_with("pub(crate) trait ");
+            if public_trait
+                && (source.contains("CodingAgentSession")
+                    || source.contains("CodingAgentOperation"))
+                && trimmed.contains("run")
+            {
+                violations.push(format!(
+                    "alternate public trait operation facade at {relative}:{}: {trimmed}",
+                    index + 1
+                ));
+            }
+            if trimmed.starts_with("pub use ")
+                && trimmed.contains(" as ")
+                && [
+                    "CodingAgentSession",
+                    "CodingAgentOperation",
+                    "CodingAgentOperationOutcome",
+                    "run",
+                ]
+                .iter()
+                .any(|token| trimmed.contains(token))
+            {
+                violations.push(format!(
+                    "alternate public operation alias at {relative}:{}: {trimmed}",
+                    index + 1
+                ));
+            }
+            if let Some(module_name) = public_module_name(trimmed)
+                && ["facade", "compat", "workflow"]
+                    .iter()
+                    .any(|token| module_name.contains(token))
+            {
+                violations.push(format!(
+                    "alternate public operation module `{module_name}` at {relative}:{}",
+                    index + 1
+                ));
+            }
+        }
+    }
+    violations
+}
+
+fn public_module_name(line: &str) -> Option<&str> {
+    let suffix = line
+        .strip_prefix("pub mod ")
+        .or_else(|| line.strip_prefix("pub(crate) mod "))?;
+    let name = suffix
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .count();
+    (name > 0).then_some(&suffix[..name])
+}
+
+fn parse_visible_method(line: &str) -> Option<(&'static str, String)> {
+    let visibility = if line.starts_with("pub(crate) ") {
+        "pub(crate)"
+    } else if line.starts_with("pub ") {
+        "pub"
+    } else {
+        return None;
+    };
+    let fn_index = line.find("fn ")? + 3;
+    let name = line[fn_index..]
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .collect::<String>();
+    (!name.is_empty()).then_some((visibility, name))
+}
+
+fn brace_delta(line: &str) -> isize {
+    line.chars().fold(0, |depth, character| match character {
+        '{' => depth + 1,
+        '}' => depth - 1,
+        _ => depth,
+    })
+}
+
+fn assert_direct_cfg_test(source: &str, signature: &str) {
+    let lines = source.lines().collect::<Vec<_>>();
+    let index = lines
+        .iter()
+        .position(|line| line.contains(signature))
+        .unwrap_or_else(|| panic!("signature not found: {signature}"));
+    let mut cursor = index;
+    let mut attributes = Vec::new();
+    while cursor > 0 {
+        cursor -= 1;
+        let trimmed = lines[cursor].trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("#[") {
+            attributes.push(trimmed);
+            continue;
+        }
+        break;
+    }
+    assert!(
+        attributes.contains(&"#[cfg(test)]"),
+        "`{signature}` must be directly gated by #[cfg(test)]; attributes: {attributes:?}"
+    );
+}
+
+fn line_is_cfg_test_gated(source: &str, line_index: usize) -> bool {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut previous = line_index;
+    while previous > 0 {
+        previous -= 1;
+        let trimmed = lines[previous].trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "#[cfg(test)]" {
+            return true;
+        }
+        if !trimmed.starts_with("#[") && !trimmed.starts_with("use ") {
+            break;
+        }
+    }
+
+    let mut depth = 0isize;
+    let mut test_item_depths = Vec::new();
+    let mut pending_test_cfg = false;
+    for (index, line) in lines.iter().enumerate().take(line_index + 1) {
+        let trimmed = line.trim();
+        if trimmed == "#[cfg(test)]" {
+            pending_test_cfg = true;
+        } else if pending_test_cfg && trimmed.contains('{') {
+            test_item_depths.push(depth + 1);
+            pending_test_cfg = false;
+        } else if pending_test_cfg && trimmed.ends_with(';') {
+            if index == line_index {
+                return true;
+            }
+            pending_test_cfg = false;
+        }
+        depth += brace_delta(line);
+        test_item_depths.retain(|item_depth| depth >= *item_depth);
+        if index == line_index && (!test_item_depths.is_empty() || pending_test_cfg) {
+            return true;
+        }
+    }
+    false
+}
+
+fn sanitize_rust_source(source: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Code,
+        LineComment,
+        BlockComment(usize),
+        String,
+        Char,
+        RawString(usize),
+    }
+
+    let bytes = source.as_bytes();
+    let mut output = String::with_capacity(source.len());
+    let mut state = State::Code;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let next = bytes.get(index + 1).copied();
+        match state {
+            State::Code if byte == b'/' && next == Some(b'/') => {
+                output.push_str("  ");
+                index += 2;
+                state = State::LineComment;
+            }
+            State::Code if byte == b'/' && next == Some(b'*') => {
+                output.push_str("  ");
+                index += 2;
+                state = State::BlockComment(1);
+            }
+            State::Code if byte == b'"' => {
+                output.push(' ');
+                index += 1;
+                state = State::String;
+            }
+            State::Code if byte == b'\'' => {
+                output.push(' ');
+                index += 1;
+                state = State::Char;
+            }
+            State::Code if byte == b'r' => {
+                let mut cursor = index + 1;
+                while bytes.get(cursor) == Some(&b'#') {
+                    cursor += 1;
+                }
+                if bytes.get(cursor) == Some(&b'"') {
+                    let hashes = cursor - index - 1;
+                    output.extend(std::iter::repeat_n(' ', cursor - index + 1));
+                    index = cursor + 1;
+                    state = State::RawString(hashes);
+                } else {
+                    output.push(byte as char);
+                    index += 1;
+                }
+            }
+            State::Code => {
+                output.push(byte as char);
+                index += 1;
+            }
+            State::LineComment => {
+                if byte == b'\n' {
+                    output.push('\n');
+                    state = State::Code;
+                } else {
+                    output.push(' ');
+                }
+                index += 1;
+            }
+            State::BlockComment(depth) if byte == b'/' && next == Some(b'*') => {
+                output.push_str("  ");
+                index += 2;
+                state = State::BlockComment(depth + 1);
+            }
+            State::BlockComment(depth) if byte == b'*' && next == Some(b'/') => {
+                output.push_str("  ");
+                index += 2;
+                state = if depth == 1 {
+                    State::Code
+                } else {
+                    State::BlockComment(depth - 1)
+                };
+            }
+            State::BlockComment(depth) => {
+                output.push(if byte == b'\n' { '\n' } else { ' ' });
+                index += 1;
+                state = State::BlockComment(depth);
+            }
+            State::String | State::Char => {
+                let quote = matches!(state, State::String)
+                    .then_some(b'"')
+                    .unwrap_or(b'\'');
+                if byte == b'\\' {
+                    output.push(' ');
+                    if index + 1 < bytes.len() {
+                        output.push(if bytes[index + 1] == b'\n' { '\n' } else { ' ' });
+                    }
+                    index += 2;
+                } else {
+                    output.push(if byte == b'\n' { '\n' } else { ' ' });
+                    index += 1;
+                    if byte == quote {
+                        state = State::Code;
+                    }
+                }
+            }
+            State::RawString(hashes) => {
+                if byte == b'"'
+                    && bytes.get(index + 1..index + 1 + hashes)
+                        == Some(vec![b'#'; hashes].as_slice())
+                {
+                    output.extend(std::iter::repeat_n(' ', hashes + 1));
+                    index += hashes + 1;
+                    state = State::Code;
+                } else {
+                    output.push(if byte == b'\n' { '\n' } else { ' ' });
+                    index += 1;
+                }
+            }
+        }
+    }
+    output
 }
 
 fn workspace_path(relative: &str) -> PathBuf {
