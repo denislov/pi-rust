@@ -1,4 +1,5 @@
 use crate::CliError;
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     AgentProfile, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
     DelegationConfirmationMode, DelegationPolicy, OperationKind, PendingDelegationConfirmation,
@@ -498,7 +499,6 @@ impl RpcState {
             .with_max_attempts(policy.max_attempts.unwrap_or(1))
     }
 
-    #[allow(deprecated)]
     async fn handle_self_healing_edit<W>(
         &mut self,
         id: Option<String>,
@@ -611,8 +611,17 @@ impl RpcState {
             OperationKind::SelfHealingEdit,
         );
 
-        match session.self_healing_edit_with_options(request).await {
-            Ok(outcome) => {
+        match session
+            .run(CodingAgentOperation::SelfHealingEdit(request))
+            .await
+        {
+            Ok(operation_outcome) => {
+                let outcome = match operation_outcome {
+                    CodingAgentOperationOutcome::SelfHealingEdit(outcome) => outcome,
+                    _ => unreachable!(
+                        "self-healing edit operation returned a different public outcome"
+                    ),
+                };
                 let data = rpc_self_healing_edit_data(&outcome);
                 let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
                 self.coding_session = Some(session);
@@ -798,33 +807,37 @@ impl RpcState {
             }
         };
 
-        match self.ensure_mutable_coding_session().await {
-            Ok(session) => {
-                if !session
-                    .agent_profiles()
-                    .iter()
-                    .any(|profile| profile.id.as_str() == profile_id.as_str())
-                {
+        let mut session = match self.coding_session.take() {
+            Some(session) => session,
+            None => match self.open_reload_session().await {
+                Ok(session) => session,
+                Err(error) => {
                     write_rpc_response(
                         writer,
-                        RpcResponse::error(
-                            id,
-                            "set_default_agent_profile",
-                            format!("Unknown agent profile: {profile_id}"),
-                        ),
+                        RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
                     )
                     .await?;
                     return Ok(());
                 }
-            }
-            Err(error) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
-                )
-                .await?;
-                return Ok(());
-            }
+            },
+        };
+
+        if !session
+            .agent_profiles()
+            .iter()
+            .any(|profile| profile.id.as_str() == profile_id.as_str())
+        {
+            self.coding_session = Some(session);
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "set_default_agent_profile",
+                    format!("Unknown agent profile: {profile_id}"),
+                ),
+            )
+            .await?;
+            return Ok(());
         }
 
         let complete_key = idempotency_key.clone();
@@ -834,49 +847,51 @@ impl RpcState {
             OperationKind::SetDefaultAgentProfile,
         );
 
+        let mut receiver = session.subscribe_product_events();
         let mut adapter = RpcCodingEventAdapter::new_with_provider(
             self.model.api.clone(),
             self.model.provider.clone(),
             self.model.id.clone(),
         );
-        let data = match self.ensure_mutable_coding_session().await {
-            Ok(session) => {
-                let mut receiver = session.subscribe_product_events();
-                if let Err(error) = session.set_default_agent_profile_id(profile_id.clone()) {
+
+        match session
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: profile_id.clone(),
+            })
+            .await
+        {
+            Ok(operation_outcome) => match operation_outcome {
+                CodingAgentOperationOutcome::DefaultAgentProfileChanged => {
+                    let data = serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() });
+                    let drained =
+                        drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
+                    self.coding_session = Some(session);
                     write_rpc_response(
                         writer,
-                        RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
+                        RpcResponse::success(id, "set_default_agent_profile", Some(data)),
                     )
                     .await?;
+                    write_drained_protocol_events(writer, drained).await?;
                     self.mark_idempotency_complete(complete_key.as_ref());
-                    return Ok(());
+                    Ok(())
                 }
-                let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
-                (
-                    serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() }),
-                    drained,
-                )
-            }
+                _ => unreachable!(
+                    "set default agent profile operation returned a different public outcome"
+                ),
+            },
             Err(error) => {
+                let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
+                self.coding_session = Some(session);
                 write_rpc_response(
                     writer,
                     RpcResponse::error(id, "set_default_agent_profile", error.to_string()),
                 )
                 .await?;
+                write_drained_protocol_events(writer, drained).await?;
                 self.mark_idempotency_complete(complete_key.as_ref());
-                return Ok(());
+                Ok(())
             }
-        };
-        let (data, drained) = data;
-
-        write_rpc_response(
-            writer,
-            RpcResponse::success(id, "set_default_agent_profile", Some(data)),
-        )
-        .await?;
-        self.mark_idempotency_complete(complete_key.as_ref());
-        write_drained_protocol_events(writer, drained).await?;
-        Ok(())
+        }
     }
 
     async fn handle_list_delegation_confirmations<W>(
@@ -975,24 +990,24 @@ impl RpcState {
             return Ok(());
         }
 
-        let pending = {
-            let Some(session) = self.coding_session.as_mut() else {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(id, "reject_delegation", "no active coding session"),
-                )
-                .await?;
-                return Ok(());
-            };
+        let Some(mut session) = self.coding_session.take() else {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(id, "reject_delegation", "no active coding session"),
+            )
+            .await?;
+            return Ok(());
+        };
 
-            let Some(pending) =
-                session
-                    .pending_delegation_confirmations()
-                    .into_iter()
-                    .find(|pending| {
-                        pending.operation_id == operation_id && pending.tool_call_id == tool_call_id
-                    })
-            else {
+        let pending = match session
+            .pending_delegation_confirmations()
+            .into_iter()
+            .find(|pending| {
+                pending.operation_id == operation_id && pending.tool_call_id == tool_call_id
+            }) {
+            Some(pending) => pending,
+            None => {
+                self.coding_session = Some(session);
                 write_rpc_response(
                     writer,
                     RpcResponse::error(
@@ -1005,8 +1020,7 @@ impl RpcState {
                 )
                 .await?;
                 return Ok(());
-            };
-            pending
+            }
         };
 
         let complete_key = idempotency_key.clone();
@@ -1022,49 +1036,59 @@ impl RpcState {
         } else {
             reason
         };
-        let Some(session) = self.coding_session.as_mut() else {
-            write_rpc_response(
-                writer,
-                RpcResponse::error(id, "reject_delegation", "no active coding session"),
-            )
-            .await?;
-            self.mark_idempotency_complete(complete_key.as_ref());
-            return Ok(());
-        };
         let mut receiver = session.subscribe_product_events();
         let mut adapter = RpcCodingEventAdapter::new_with_provider(
             self.model.api.clone(),
             self.model.provider.clone(),
             self.model.id.clone(),
         );
-        if let Err(error) =
-            session.reject_delegation_confirmation(&operation_id, &tool_call_id, reason.clone())
-        {
-            write_rpc_response(
-                writer,
-                RpcResponse::error(id, "reject_delegation", error.to_string()),
-            )
-            .await?;
-            self.mark_idempotency_complete(complete_key.as_ref());
-            return Ok(());
-        }
 
-        let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
-        write_rpc_response(
-            writer,
-            RpcResponse::success(
-                id,
-                "reject_delegation",
-                Some(serde_json::json!({
-                    "delegation": rpc_pending_delegation_confirmation(&pending),
-                    "reason": reason,
-                })),
-            ),
-        )
-        .await?;
-        self.mark_idempotency_complete(complete_key.as_ref());
-        write_drained_protocol_events(writer, drained).await?;
-        Ok(())
+        match session
+            .run(CodingAgentOperation::RejectDelegation {
+                operation_id,
+                tool_call_id,
+                reason: reason.clone(),
+            })
+            .await
+        {
+            Ok(operation_outcome) => match operation_outcome {
+                CodingAgentOperationOutcome::DelegationRejected => {
+                    let drained =
+                        drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
+                    self.coding_session = Some(session);
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::success(
+                            id,
+                            "reject_delegation",
+                            Some(serde_json::json!({
+                                "delegation": rpc_pending_delegation_confirmation(&pending),
+                                "reason": reason,
+                            })),
+                        ),
+                    )
+                    .await?;
+                    write_drained_protocol_events(writer, drained).await?;
+                    self.mark_idempotency_complete(complete_key.as_ref());
+                    Ok(())
+                }
+                _ => unreachable!(
+                    "delegation rejection operation returned a different public outcome"
+                ),
+            },
+            Err(error) => {
+                let drained = drain_product_events_to_protocol_events(&mut receiver, &mut adapter);
+                self.coding_session = Some(session);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "reject_delegation", error.to_string()),
+                )
+                .await?;
+                write_drained_protocol_events(writer, drained).await?;
+                self.mark_idempotency_complete(complete_key.as_ref());
+                Ok(())
+            }
+        }
     }
 
     async fn open_profile_listing_session(&self) -> Result<CodingAgentSession, CliError> {
@@ -1072,16 +1096,6 @@ impl RpcState {
             CodingAgentSessionOptions::new().with_cwd(self.options.session.cwd.clone()),
         )
         .await?)
-    }
-
-    async fn ensure_mutable_coding_session(&mut self) -> Result<&mut CodingAgentSession, CliError> {
-        if self.coding_session.is_none() {
-            self.coding_session = Some(self.open_reload_session().await?);
-        }
-        Ok(self
-            .coding_session
-            .as_mut()
-            .expect("coding session is initialized"))
     }
 
     async fn handle_plugin_command<W>(
