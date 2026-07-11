@@ -209,6 +209,7 @@ mod tests {
     use crate::coding_session::plugin_service::PluginDiagnostic;
     use crate::plugins::PluginCapabilities;
     use crate::runtime::PromptInvocation;
+    use pi_ai::types::AssistantMessage;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ExpectedInternalOperationVariant {
@@ -253,6 +254,12 @@ mod tests {
         build_operation: fn() -> CodingAgentOperation,
         expected_internal: ExpectedInternalOperationVariant,
         expected_dispatch: OperationDispatchMode,
+        expected_outcome: ExpectedPublicOutcomeFamily,
+    }
+
+    struct OutcomeProjectionCase {
+        internal_outcome: &'static str,
+        build_outcome: fn() -> OperationOutcome,
         expected_outcome: ExpectedPublicOutcomeFamily,
     }
 
@@ -411,6 +418,168 @@ mod tests {
         ]
     }
 
+    fn prompt_outcome_fixture() -> PromptTurnOutcome {
+        PromptTurnOutcome::Aborted {
+            operation_id: "op_contract".into(),
+            turn_id: Some("turn_contract".into()),
+            reason: "fixture".into(),
+            session_id: Some("sess_contract".into()),
+        }
+    }
+
+    fn self_healing_outcome_fixture() -> SelfHealingEditOutcome {
+        SelfHealingEditOutcome {
+            path: "src/lib.rs".into(),
+            message: "updated".into(),
+            diff: "diff".into(),
+            patch: "patch".into(),
+            first_changed_line: Some(1),
+            attempts: 1,
+            diagnostics: Vec::new(),
+            check_output: None,
+            repair_attempts: Vec::new(),
+        }
+    }
+
+    fn agent_invocation_outcome_fixture() -> AgentInvocationOutcome {
+        AgentInvocationOutcome {
+            operation_id: "op_agent".into(),
+            child_operation_id: "op_child".into(),
+            turn_id: "turn_agent".into(),
+            profile_id: ProfileId::from("agent"),
+            final_text: "agent result".into(),
+            final_message: AssistantMessage::empty("test", "test-model"),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn agent_team_outcome_fixture() -> AgentTeamOutcome {
+        AgentTeamOutcome {
+            operation_id: "op_team".into(),
+            team_id: ProfileId::from("team"),
+            final_text: "team result".into(),
+            member_results: Vec::new(),
+            supervisor_result: None,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn plugin_load_outcome_fixture() -> PluginLoadOutcome {
+        PluginLoadOutcome {
+            loaded_plugin_ids: vec!["plugin.contract".into()],
+            diagnostics: Vec::new(),
+            capabilities: PluginCapabilities::new(),
+            capability_changed: true,
+        }
+    }
+
+    fn export_fixture() -> CodingAgentSessionExport {
+        CodingAgentSessionExport {
+            summary: CodingAgentSessionSummary {
+                session_id: "sess_export".into(),
+                session_dir: PathBuf::from("sessions/sess_export"),
+                created_at: "2026-07-10T00:00:00Z".into(),
+                updated_at: "2026-07-10T00:00:00Z".into(),
+                active_leaf_id: None,
+            },
+            cwd: None,
+            transcript: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn operation_outcome_projection_cases() -> [OutcomeProjectionCase; 15] {
+        [
+            OutcomeProjectionCase {
+                internal_outcome: "Prompt",
+                build_outcome: || OperationOutcome::Prompt(prompt_outcome_fixture()),
+                expected_outcome: ExpectedPublicOutcomeFamily::Prompt,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "ManualCompaction",
+                build_outcome: || OperationOutcome::ManualCompaction(prompt_outcome_fixture()),
+                expected_outcome: ExpectedPublicOutcomeFamily::Compact,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "BranchSummary",
+                build_outcome: || OperationOutcome::BranchSummary(prompt_outcome_fixture()),
+                expected_outcome: ExpectedPublicOutcomeFamily::BranchSummary,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "SelfHealingEdit",
+                build_outcome: || OperationOutcome::SelfHealingEdit(self_healing_outcome_fixture()),
+                expected_outcome: ExpectedPublicOutcomeFamily::SelfHealingEdit,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "AgentInvocation",
+                build_outcome: || {
+                    OperationOutcome::AgentInvocation(agent_invocation_outcome_fixture())
+                },
+                expected_outcome: ExpectedPublicOutcomeFamily::AgentInvocation,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "AgentTeam",
+                build_outcome: || OperationOutcome::AgentTeam(agent_team_outcome_fixture()),
+                expected_outcome: ExpectedPublicOutcomeFamily::AgentTeam,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "PluginLoad",
+                build_outcome: || OperationOutcome::PluginLoad(plugin_load_outcome_fixture()),
+                expected_outcome: ExpectedPublicOutcomeFamily::PluginLoad,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "PluginCommand",
+                build_outcome: || OperationOutcome::PluginCommand("command output".into()),
+                expected_outcome: ExpectedPublicOutcomeFamily::PluginCommand,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "SetDefaultAgentProfile",
+                build_outcome: || OperationOutcome::SetDefaultAgentProfile,
+                expected_outcome: ExpectedPublicOutcomeFamily::DefaultAgentProfileChanged,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "DelegationApproval",
+                build_outcome: || OperationOutcome::DelegationApproval,
+                expected_outcome: ExpectedPublicOutcomeFamily::DelegationApproved,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "DelegationRejection",
+                build_outcome: || OperationOutcome::DelegationRejection,
+                expected_outcome: ExpectedPublicOutcomeFamily::DelegationRejected,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "ForkSession",
+                build_outcome: || OperationOutcome::ForkSession,
+                expected_outcome: ExpectedPublicOutcomeFamily::SessionForked,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "SwitchActiveLeaf",
+                build_outcome: || OperationOutcome::SwitchActiveLeaf,
+                expected_outcome: ExpectedPublicOutcomeFamily::ActiveLeafSwitched,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "Export(view)",
+                build_outcome: || {
+                    OperationOutcome::Export(ExportOutcome {
+                        export: export_fixture(),
+                        path: None,
+                    })
+                },
+                expected_outcome: ExpectedPublicOutcomeFamily::Export,
+            },
+            OutcomeProjectionCase {
+                internal_outcome: "Export(html)",
+                build_outcome: || {
+                    OperationOutcome::Export(ExportOutcome {
+                        export: export_fixture(),
+                        path: Some(PathBuf::from("session.html")),
+                    })
+                },
+                expected_outcome: ExpectedPublicOutcomeFamily::ExportHtml,
+            },
+        ]
+    }
+
     fn internal_operation_variant(operation: &Operation) -> ExpectedInternalOperationVariant {
         match operation {
             Operation::Prompt(_) => ExpectedInternalOperationVariant::Prompt,
@@ -443,6 +612,44 @@ mod tests {
                     panic!("unexpected export options in operation contract: {options:?}")
                 }
             }
+        }
+    }
+
+    fn public_outcome_family(outcome: &CodingAgentOperationOutcome) -> ExpectedPublicOutcomeFamily {
+        match outcome {
+            CodingAgentOperationOutcome::Prompt(_) => ExpectedPublicOutcomeFamily::Prompt,
+            CodingAgentOperationOutcome::Compact(_) => ExpectedPublicOutcomeFamily::Compact,
+            CodingAgentOperationOutcome::BranchSummary(_) => {
+                ExpectedPublicOutcomeFamily::BranchSummary
+            }
+            CodingAgentOperationOutcome::SelfHealingEdit(_) => {
+                ExpectedPublicOutcomeFamily::SelfHealingEdit
+            }
+            CodingAgentOperationOutcome::AgentInvocation(_) => {
+                ExpectedPublicOutcomeFamily::AgentInvocation
+            }
+            CodingAgentOperationOutcome::AgentTeam(_) => ExpectedPublicOutcomeFamily::AgentTeam,
+            CodingAgentOperationOutcome::PluginLoad(_) => ExpectedPublicOutcomeFamily::PluginLoad,
+            CodingAgentOperationOutcome::PluginCommand(_) => {
+                ExpectedPublicOutcomeFamily::PluginCommand
+            }
+            CodingAgentOperationOutcome::DefaultAgentProfileChanged => {
+                ExpectedPublicOutcomeFamily::DefaultAgentProfileChanged
+            }
+            CodingAgentOperationOutcome::DelegationApproved => {
+                ExpectedPublicOutcomeFamily::DelegationApproved
+            }
+            CodingAgentOperationOutcome::DelegationRejected => {
+                ExpectedPublicOutcomeFamily::DelegationRejected
+            }
+            CodingAgentOperationOutcome::SessionForked => {
+                ExpectedPublicOutcomeFamily::SessionForked
+            }
+            CodingAgentOperationOutcome::ActiveLeafSwitched => {
+                ExpectedPublicOutcomeFamily::ActiveLeafSwitched
+            }
+            CodingAgentOperationOutcome::Export(_) => ExpectedPublicOutcomeFamily::Export,
+            CodingAgentOperationOutcome::ExportHtml(_) => ExpectedPublicOutcomeFamily::ExportHtml,
         }
     }
 

@@ -3216,8 +3216,6 @@ runtime = "lua"
             CodingAgentOperationOutcome::DefaultAgentProfileChanged
         ));
         assert_eq!(session.default_agent_profile_id().as_str(), "reviewer");
-
-        panic!("RED: outcome fixtures and dispatcher proof are not complete");
     }
 
     #[tokio::test]
