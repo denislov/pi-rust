@@ -1,4 +1,5 @@
 use crate::CliError;
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, ClientDraftKind, CodingAgentSession,
     CodingAgentSessionOptions, CodingSessionError, OperationIdempotencyKey, OperationKind,
@@ -822,7 +823,6 @@ impl RpcState {
         Ok(())
     }
 
-    #[allow(deprecated)]
     async fn start_coding_session_prompt<W>(
         &mut self,
         id: Option<String>,
@@ -890,7 +890,8 @@ impl RpcState {
 
         tokio::spawn(async move {
             let outcome = {
-                let mut prompt = Box::pin(session.prompt(prompt_options));
+                let mut prompt =
+                    Box::pin(session.run(CodingAgentOperation::Prompt(prompt_options)));
                 let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
@@ -911,7 +912,14 @@ impl RpcState {
                             }
                         }
                         outcome = &mut prompt => {
-                            break outcome.map_err(CliError::from);
+                            break outcome
+                                .map_err(CliError::from)
+                                .and_then(|operation_outcome| match operation_outcome {
+                                    CodingAgentOperationOutcome::Prompt(outcome) => Ok(outcome),
+                                    _ => unreachable!(
+                                        "prompt operation returned a different public outcome"
+                                    ),
+                                });
                         }
                     }
                 }
