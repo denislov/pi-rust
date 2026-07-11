@@ -1,3 +1,4 @@
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::CliError;
 use crate::coding_session::{
     CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PromptTurnOptions,
@@ -105,7 +106,6 @@ fn session_prompt_options_from_print_options(options: PrintModeOptions) -> Promp
     }
 }
 
-#[allow(deprecated)]
 async fn run_print_mode_with_coding_session(
     options: PromptRunOptions,
 ) -> Result<PromptTurnOutcome, CliError> {
@@ -125,7 +125,13 @@ async fn run_print_mode_with_coding_session(
         open_print_coding_session(session_options, options.session_target.as_ref()).await?;
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
 
-    let outcome = session.prompt(prompt_options).await?;
+    let outcome = match session
+        .run(CodingAgentOperation::Prompt(prompt_options))
+        .await?
+    {
+        CodingAgentOperationOutcome::Prompt(outcome) => outcome,
+        _ => unreachable!("prompt operation returned a different public outcome"),
+    };
     Ok(outcome)
 }
 
