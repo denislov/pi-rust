@@ -10,7 +10,7 @@
 # This script parses Markdown as untrusted text data only. It never evals, sources, or executes
 # any content from the audit file or command ledger. It uses only standard POSIX/Bash tools.
 #
-set -euo pipefail
+set -uo pipefail
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -232,7 +232,7 @@ matches_taxonomy() {
   if [[ -z "$value" ]]; then
     return 0  # Empty is allowed in schema mode (caller decides)
   fi
-  echo "$allowed" | grep -qE "^${value}$"
+  echo "$value" | grep -qE "^(${allowed})$"
 }
 
 # ---------------------------------------------------------------------------
@@ -310,16 +310,16 @@ validate_schema() {
     disp_val=$(get_cell "$row" 13)
     conf_val=$(get_cell "$row" 14)
 
-    if [[ -n "$impl_val" ]] && ! echo "$IMPL_VALUES" | grep -qE "^${impl_val}$"; then
+    if [[ -n "$impl_val" ]] && ! echo "$impl_val" | grep -qE "^($IMPL_VALUES)$"; then
       add_error "Invalid implementation value '$impl_val' in Operation Matrix row starting with: $(get_cell "$row" 2)"
     fi
-    if [[ -n "$verify_val" ]] && ! echo "$VERIFY_VALUES" | grep -qE "^${verify_val}$"; then
+    if [[ -n "$verify_val" ]] && ! echo "$verify_val" | grep -qE "^($VERIFY_VALUES)$"; then
       add_error "Invalid verification value '$verify_val' in Operation Matrix row starting with: $(get_cell "$row" 2)"
     fi
-    if [[ -n "$disp_val" ]] && ! echo "$DISP_VALUES" | grep -qE "^${disp_val}$"; then
+    if [[ -n "$disp_val" ]] && ! echo "$disp_val" | grep -qE "^($DISP_VALUES)$"; then
       add_error "Invalid disposition value '$disp_val' in Operation Matrix row starting with: $(get_cell "$row" 2)"
     fi
-    if [[ -n "$conf_val" ]] && ! echo "$CONF_VALUES" | grep -qE "^${conf_val}$"; then
+    if [[ -n "$conf_val" ]] && ! echo "$conf_val" | grep -qE "^($CONF_VALUES)$"; then
       add_error "Invalid confidence value '$conf_val' in Operation Matrix row starting with: $(get_cell "$row" 2)"
     fi
 
@@ -367,21 +367,21 @@ validate_schema() {
     # Validate obligation (field 3)
     local oblig_val
     oblig_val=$(get_cell "$row" 3)
-    if [[ -n "$oblig_val" ]] && ! echo "$OBLIG_VALUES" | grep -qE "^${oblig_val}$"; then
+    if [[ -n "$oblig_val" ]] && ! echo "$oblig_val" | grep -qE "^($OBLIG_VALUES)$"; then
       add_error "Invalid finding obligation '$oblig_val' for finding: $first_cell"
     fi
 
     # Validate disposition (field 4)
     local f_disp_val
     f_disp_val=$(get_cell "$row" 4)
-    if [[ -n "$f_disp_val" ]] && ! echo "$DISP_VALUES" | grep -qE "^${f_disp_val}$"; then
+    if [[ -n "$f_disp_val" ]] && ! echo "$f_disp_val" | grep -qE "^($DISP_VALUES)$"; then
       add_error "Invalid finding disposition '$f_disp_val' for finding: $first_cell"
     fi
 
     # Validate confidence (field 10)
     local f_conf_val
     f_conf_val=$(get_cell "$row" 10)
-    if [[ -n "$f_conf_val" ]] && ! echo "$CONF_VALUES" | grep -qE "^${f_conf_val}$"; then
+    if [[ -n "$f_conf_val" ]] && ! echo "$f_conf_val" | grep -qE "^($CONF_VALUES)$"; then
       add_error "Invalid finding confidence '$f_conf_val' for finding: $first_cell"
     fi
 
@@ -525,16 +525,16 @@ validate_evidence() {
     fi
 
     # Validate taxonomy values are from allowed set (not just non-empty)
-    if ! echo "$IMPL_VALUES" | grep -qE "^${impl_val}$"; then
+    if ! echo "$impl_val" | grep -qE "^($IMPL_VALUES)$"; then
       add_error "Operation Matrix: impl '$impl_val' not in allowed taxonomy for variant: $variant_name"
     fi
-    if ! echo "$VERIFY_VALUES" | grep -qE "^${verify_val}$"; then
+    if ! echo "$verify_val" | grep -qE "^($VERIFY_VALUES)$"; then
       add_error "Operation Matrix: verify '$verify_val' not in allowed taxonomy for variant: $variant_name"
     fi
-    if ! echo "$DISP_VALUES" | grep -qE "^${disp_val}$"; then
+    if ! echo "$disp_val" | grep -qE "^($DISP_VALUES)$"; then
       add_error "Operation Matrix: disp '$disp_val' not in allowed taxonomy for variant: $variant_name"
     fi
-    if ! echo "$CONF_VALUES" | grep -qE "^${conf_val}$"; then
+    if ! echo "$conf_val" | grep -qE "^($CONF_VALUES)$"; then
       add_error "Operation Matrix: conf '$conf_val' not in allowed taxonomy for variant: $variant_name"
     fi
   done <<< "$op_data_rows"
