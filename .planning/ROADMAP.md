@@ -67,7 +67,31 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. Interactive fork and navigation retain subscriber continuity, product-event sequencing, and refreshed snapshots and projections after transitions.
   5. JSON, print, RPC, and interactive production sources contain neither replaced broad workflow calls nor local deprecation suppressions for those calls.
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — Migrate JSON and persistent/transient print prompts with one parity gate.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — Migrate RPC background/select-driven operations without changing controls or event flow.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-03-PLAN.md — Migrate RPC mutation and plugin commands and close the RPC source gate.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 03-04-PLAN.md — Migrate ordinary interactive background workflows and direct branch summary.
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 03-05-PLAN.md — Move profile and delegation mutations into async canonical operation ownership.
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 03-06-PLAN.md — Migrate interactive navigation and run the complete Phase 3 closure gate.
 
 ### Phase 4: Test Convergence and Compatibility Deletion
 
