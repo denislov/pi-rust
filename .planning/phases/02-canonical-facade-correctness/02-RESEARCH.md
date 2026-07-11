@@ -402,21 +402,13 @@ Phase 2 changes no authentication, cryptography, provider transport, or credenti
 |---|-------|---------|---------------|
 | - | None. All implementation and planning claims in this research were verified against current repository artifacts or command output. | All | No user confirmation is required before planning. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Which named support types, if any, are currently absent from `pi_coding_agent::api`?**
-   - What we know: the facade already exports the central operation/session closure. [VERIFIED: `crates/pi-coding-agent/src/lib.rs:64`]
-   - What remains: the planner should make the signature-closure audit the first task rather than presume an omission list from Phase 1. [VERIFIED: FACADE-01]
-   - Recommendation: generate a test-owned ledger from current public signatures, then make the smallest export changes proven necessary.
+1. **Stable facade support-type closure:** resolved by Plan 02-01 Task 1. The executor must first build a test-owned signature ledger from current public signatures and add only omissions proven by downstream compilation. No presumed omission list, new facade, or compatibility wrapper is authorized. [VERIFIED: FACADE-01; `02-01-PLAN.md`]
 
-2. **Which FACADE-05 mutations genuinely support before-append and after-append failure injection at their present owner boundary?**
-   - What we know: transaction-level and switch-navigation partial-commit evidence exists. [VERIFIED: `session_log/transaction.rs:1060`; `coding_session/mod.rs:3430`]
-   - What remains: not every runtime-only operation has a durable append boundary, so the planner must apply D-15 only where persistence is applicable. [VERIFIED: `02-CONTEXT.md:32`]
-   - Recommendation: add a per-operation applicability column before assigning failure tests; do not force `PartialCommit` onto plugin command or other non-durable paths.
+2. **FACADE-05 durability applicability:** resolved by the binding per-operation ledger in Plan 02-03 Task 2. Fork, switch, default-profile mutation, approval, and rejection require durable/reopen plus pre-append no-change and post-append `PartialCommit` where their current transaction appends before manifest update. Delegation approval/rejection specifically cross `delegation_confirmation_service.rs` -> `session_service.rs` append/manifest ownership and therefore require deterministic tests for both boundaries, non-empty matching `operation_id`, and replay-authoritative decisions. Branch-summary reuse must prove no duplicate append; PluginCommand has no session durable fact; PluginLoad receives persistence assertions only if current typed storage actually records a fact. [VERIFIED: `crates/pi-coding-agent/src/coding_session/delegation_confirmation_service.rs`; `crates/pi-coding-agent/src/coding_session/session_service.rs`; `02-03-PLAN.md`]
 
-3. **What compile-negative mechanism best fits the existing stable Rust harness?**
-   - What we know: current privacy enforcement is mostly Rust visibility plus source guards; no dedicated compile-fail framework is evident. [VERIFIED: `api_boundary_guards.rs`; Cargo manifests]
-   - Recommendation: first test what can be proven by ordinary integration compilation and type naming; add no external package, and retain precise source guards for the remainder. [VERIFIED: `02-CONTEXT.md:41`]
+3. **Compile-negative mechanism:** resolved by Plan 02-01 Task 2. Ordinary downstream integration compilation and Rust visibility are primary; narrowly isolated source guards cover only negative re-export/annotation facts that cannot be expressed as a passing integration test. No compile-fail dependency or production hook is added. [VERIFIED: `api_boundary_guards.rs`; `02-01-PLAN.md`]
 
 ## Sources
 
