@@ -28,9 +28,9 @@
 
 ### RPC
 
-- [ ] **RPC-01**: RPC prompt, agent, team, and delegation-approval background tasks execute through canonical operations
+- [x] **RPC-01**: RPC prompt, agent, team, and delegation-approval background tasks execute through canonical operations
 - [ ] **RPC-02**: RPC self-healing edit, profile mutation, delegation rejection, plugin load, and plugin command work executes through canonical operations
-- [ ] **RPC-03**: The RPC migration preserves existing `tokio::select!` control handling, event forwarding, response shapes, and error protocol
+- [x] **RPC-03**: The RPC migration preserves existing `tokio::select!` control handling, event forwarding, response shapes, and error protocol
 - [ ] **RPC-04**: RPC production code contains no replaced broad workflow calls or local deprecation suppressions
 
 ### Interactive
@@ -108,9 +108,9 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | ADAPT-02 | Phase 3 | Complete |
 | ADAPT-03 | Phase 3 | Complete |
 | ADAPT-04 | Phase 3 | Complete |
-| RPC-01 | Phase 3 | Pending |
+| RPC-01 | Phase 3 | Complete |
 | RPC-02 | Phase 3 | Pending |
-| RPC-03 | Phase 3 | Pending |
+| RPC-03 | Phase 3 | Complete |
 | RPC-04 | Phase 3 | Pending |
 | INTER-01 | Phase 3 | Pending |
 | INTER-02 | Phase 3 | Pending |

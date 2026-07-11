@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 03
 current_phase_name: production-adapter-convergence
 status: executing
-stopped_at: Phase 3 context gathered
-last_updated: "2026-07-11T20:00:04.722Z"
+stopped_at: Completed 03-02-PLAN.md
+last_updated: "2026-07-11T20:10:21.616Z"
 last_activity: 2026-07-11
 last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 12
-  completed_plans: 7
-  percent: 40
+  completed_plans: 8
+  percent: 67
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 ## Current Position
 
 Phase: 03 (production-adapter-convergence) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-07-11 — Phase 03 execution started
 
-Progress: [████░░░░░░] 40%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [████░░░░░░] 40%
 | Phase 02 P02 | 25 min | 2 tasks | 4 files |
 | Phase 02 P03 | 1h 11m | 3 tasks | 4 files |
 | Phase 03 P01 | 10 min | 3 tasks | 3 files |
+| Phase 03 P02 | 6 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-03: Preserve the durable delegation transaction ID in PartialCommit errors. — Replay and the public error must identify the same appended decision transaction.
 - [Phase 02]: 02-03: Enforce a closed CodingAgentSession method ledger and test-only fault controls. — New workflow facades and production failure injection must fail structurally at the owner boundary.
 - [Phase 03]: 03-01: JSON and print adapters route Prompt through CodingAgentSession::run with exhaustive outcome extraction; narrow source guard locks canonical operations and rejects production deprecation suppression. — Lowest-risk adapter tier migrated first per D-01/D-04/D-05/D-06; guard preserves test-only allowances and compatibility definitions per D-19.
+- [Phase ?]: 03-02: All four select-driven RPC background operations (prompt, agent, team, delegation approval) route through CodingAgentSession::run(CodingAgentOperation) with exhaustive outcome extraction; #[allow(deprecated)] removed from three RPC handlers.
 
 ### Pending Todos
 
@@ -105,6 +107,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-11T19:59:48.162Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-production-adapter-convergence/03-CONTEXT.md
+Last session: 2026-07-11T20:10:00.558Z
+Stopped at: Completed 03-02-PLAN.md
+Resume file: None
