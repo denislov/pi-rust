@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 current_phase_name: canonical-facade-correctness
-status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-07-11T06:31:55.480Z"
+status: verifying
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-07-11T07:56:52.376Z"
 last_activity: 2026-07-11
-last_activity_desc: Phase 02 execution started
+last_activity_desc: Phase 02 completed and ready for verification
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 40
 ---
 
 # Project State
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 
 ## Current Position
 
-Phase: 02 (canonical-facade-correctness) — EXECUTING
+Phase: 02 (canonical-facade-correctness) — COMPLETE
 Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-07-11 — Phase 02 execution started
+Status: Phase complete — ready for verification
+Last activity: 2026-07-11 — Phase 02 completed and ready for verification
 
-Progress: [████████░░] 83%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [████████░░] 83%
 | Phase 01 P02 | 38min | 3 tasks | 2 files |
 | Phase 02 P01 | 8 min | 2 tasks | 3 files |
 | Phase 02 P02 | 25 min | 2 tasks | 4 files |
+| Phase 02 P03 | 1h 11m | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-02: Keep ExportCurrent and ExportCurrentHtml as distinct test-owned expectations even though both map to private Export options. — This detects collapse of the two public export inputs without changing the private production enum.
 - [Phase 02]: 02-02: Prove dispatcher selection with fixed metadata assertions plus public run behavior, without production instrumentation. — Owner metadata and observable outcomes provide independent evidence without changing runtime semantics for tests.
 - [Phase 02]: 02-02: Keep ProfileRegistry behavior coverage owner-scoped after registry types were removed from the stable api facade. — The tests require implementation ownership and should not force private registries back into the public API.
+- [Phase 02]: 02-03: Preserve the durable delegation transaction ID in PartialCommit errors. — Replay and the public error must identify the same appended decision transaction.
+- [Phase 02]: 02-03: Enforce a closed CodingAgentSession method ledger and test-only fault controls. — New workflow facades and production failure injection must fail structurally at the owner boundary.
 
 ### Pending Todos
 
@@ -99,6 +102,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-11T06:31:55.328Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-07-11T07:56:52.371Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None

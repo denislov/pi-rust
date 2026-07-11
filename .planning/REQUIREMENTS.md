@@ -17,7 +17,7 @@
 - [x] **FACADE-02**: `CodingAgentSession::run` converts every public operation to an internal operation and selects the async, sync-read-only, or sync-mutable dispatcher from operation metadata
 - [x] **FACADE-03**: Every internal operation outcome is projected through one exhaustive mapping into a public operation outcome
 - [x] **FACADE-04**: Internal operations, dispatch metadata, plugin load options, services, and Flow nodes are not exposed through the stable API
-- [ ] **FACADE-05**: Fork, active-leaf switch, branch-summary reuse, plugin, profile, and delegation operations preserve their persistence, event-continuity, and error semantics
+- [x] **FACADE-05**: Fork, active-leaf switch, branch-summary reuse, plugin, profile, and delegation operations preserve their persistence, event-continuity, and error semantics
 
 ### JSON And Print
 
@@ -103,7 +103,7 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | FACADE-02 | Phase 2 | Complete |
 | FACADE-03 | Phase 2 | Complete |
 | FACADE-04 | Phase 2 | Complete |
-| FACADE-05 | Phase 2 | Pending |
+| FACADE-05 | Phase 2 | Complete |
 | ADAPT-01 | Phase 3 | Pending |
 | ADAPT-02 | Phase 3 | Pending |
 | ADAPT-03 | Phase 3 | Pending |

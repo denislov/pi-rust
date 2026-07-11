@@ -7,7 +7,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 ## Phases
 
 - [x] **Phase 1: Evidence-Based Baseline** - Establish the authoritative Stage 9 completion state and exact remaining gap set from live evidence. (completed 2026-07-11)
-- [ ] **Phase 2: Canonical Facade Correctness** - Make the stable public operation contract and its internal dispatch path complete, exhaustive, and behavior-preserving.
+- [x] **Phase 2: Canonical Facade Correctness** - Make the stable public operation contract and its internal dispatch path complete, exhaustive, and behavior-preserving. (completed 2026-07-11)
 - [ ] **Phase 3: Production Adapter Convergence** - Route JSON, print, RPC, and interactive product work through canonical operations without changing adapter behavior.
 - [ ] **Phase 4: Test Convergence and Compatibility Deletion** - Move behavior coverage to `run()` and remove the replaced broad session methods after every caller has migrated.
 - [ ] **Phase 5: Boundary Enforcement and Stage 9 Closure** - Prevent regression to compatibility paths, verify the workspace, and close Stage 9 with accurate documentation.
@@ -44,7 +44,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. Fork, active-leaf switch, branch-summary reuse, plugin, profile, and delegation operations retain their durable state, event continuity, and explicit error or partial-commit semantics.
   5. Stable API checks demonstrate that internal operations, dispatch metadata, plugin load options, services, and Flow nodes remain inaccessible to callers.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 02-01-PLAN.md — Close the stable facade signature graph and enforce privacy.
@@ -52,7 +52,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-03-PLAN.md — Verify high-risk durable semantics and complete the Phase 2 gate.
+- [x] 02-03-PLAN.md — Verify high-risk durable semantics and complete the Phase 2 gate.
 
 ### Phase 3: Production Adapter Convergence
 
@@ -107,7 +107,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Evidence-Based Baseline | 3/3 | Complete    | 2026-07-11 |
-| 2. Canonical Facade Correctness | 2/3 | In Progress|  |
+| 2. Canonical Facade Correctness | 3/3 | Complete   | 2026-07-11 |
 | 3. Production Adapter Convergence | 0/TBD | Not started | - |
 | 4. Test Convergence and Compatibility Deletion | 0/TBD | Not started | - |
 | 5. Boundary Enforcement and Stage 9 Closure | 0/TBD | Not started | - |
