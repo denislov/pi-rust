@@ -3144,6 +3144,83 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn canonical_run_uses_each_metadata_dispatch_family() {
+        let api = "coding-session-canonical-dispatch-families";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::with_call_queue(vec![
+                FauxProvider::text_call("async answer", StopReason::Stop),
+            ])),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_canonical_dispatch_families")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+
+        let async_metadata = CodingAgentOperation::Prompt(prompt_options(api, "async prompt"))
+            .into_internal(PluginLoadOptions::new())
+            .metadata();
+        assert_eq!(
+            async_metadata.dispatch_mode,
+            operation::OperationDispatchMode::Async
+        );
+        let async_outcome = session
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                api,
+                "async prompt",
+            )))
+            .await
+            .unwrap();
+        assert!(matches!(
+            async_outcome,
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success { .. })
+        ));
+
+        let read_only_metadata = CodingAgentOperation::ExportCurrent
+            .into_internal(PluginLoadOptions::new())
+            .metadata();
+        assert_eq!(
+            read_only_metadata.dispatch_mode,
+            operation::OperationDispatchMode::SyncReadOnly
+        );
+        let read_only_outcome = session
+            .run(CodingAgentOperation::ExportCurrent)
+            .await
+            .unwrap();
+        assert!(matches!(
+            read_only_outcome,
+            CodingAgentOperationOutcome::Export(_)
+        ));
+
+        let sync_mut_metadata = CodingAgentOperation::SetDefaultAgentProfile {
+            profile_id: ProfileId::from("reviewer"),
+        }
+        .into_internal(PluginLoadOptions::new())
+        .metadata();
+        assert_eq!(
+            sync_mut_metadata.dispatch_mode,
+            operation::OperationDispatchMode::SyncMutable
+        );
+        let sync_mut_outcome = session
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: ProfileId::from("reviewer"),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            sync_mut_outcome,
+            CodingAgentOperationOutcome::DefaultAgentProfileChanged
+        ));
+        assert_eq!(session.default_agent_profile_id().as_str(), "reviewer");
+
+        panic!("RED: outcome fixtures and dispatcher proof are not complete");
+    }
+
+    #[tokio::test]
     async fn set_default_agent_profile_rejects_while_operation_is_busy() {
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await

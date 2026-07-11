@@ -531,6 +531,31 @@ mod tests {
     }
 
     #[test]
+    fn operation_outcome_projection_covers_all_families() {
+        let cases = operation_outcome_projection_cases();
+        let contract_outcomes = operation_contract_cases()
+            .iter()
+            .map(|case| case.expected_outcome)
+            .collect::<HashSet<_>>();
+        let projection_outcomes = cases
+            .iter()
+            .map(|case| case.expected_outcome)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(cases.len(), 15);
+        assert_eq!(projection_outcomes, contract_outcomes);
+        for case in cases {
+            let projected = CodingAgentOperationOutcome::from_internal((case.build_outcome)());
+            assert_eq!(
+                public_outcome_family(&projected),
+                case.expected_outcome,
+                "{} projection",
+                case.internal_outcome
+            );
+        }
+    }
+
+    #[test]
     fn plugin_load_outcome_projects_non_empty_public_fields() {
         let projected = CodingAgentPluginLoadOutcome::from(PluginLoadOutcome {
             loaded_plugin_ids: vec!["plugin.loaded".into()],
