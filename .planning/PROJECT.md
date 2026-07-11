@@ -20,10 +20,10 @@ Every first-party live-session product operation follows one typed, admitted, be
 - [x] Rust-native sessions use typed durable events, replay-derived state, and explicit partial-commit semantics - existing
 - [x] Boundary and integration test suites exist for public API, product adapters, session behavior, interactive behavior, RPC behavior, agents, teams, profiles, and delegation - existing
 - [x] Audit the current Stage 9 implementation against live source, tests, source guards, and Git history instead of trusting prior checklist state - Validated in Phase 1: Evidence-Based Baseline
+- [x] Establish the exact canonical public operation contract and dispatcher baseline that subsequent migration work can rely on - Validated in Phase 2: Canonical Facade Correctness
 
 ### Active
 
-- [ ] Establish the exact canonical public operation contract and dispatcher baseline that subsequent migration work can rely on
 - [ ] Route all JSON and print product work through `CodingAgentSession::run(CodingAgentOperation)` without changing observable output behavior
 - [ ] Route all RPC prompt, agent, team, delegation, profile, self-healing, plugin, and related product work through canonical operations without changing wire behavior or control/event multiplexing
 - [ ] Route all interactive background work, mutations, delegation decisions, plugin actions, branch summaries, and session navigation through canonical operations while preserving UI projection and event continuity
@@ -89,4 +89,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-11 after Phase 1 completion*
+*Last updated: 2026-07-11 after Phase 2 completion*
