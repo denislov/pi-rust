@@ -196,3 +196,15 @@ None - no external service configuration required.
 ---
 *Phase: 01-evidence-based-baseline*
 *Completed: 2026-07-11*
+
+## Self-Check: PASSED
+
+- FOUND: .planning/phases/01-evidence-based-baseline/01-02-SUMMARY.md
+- FOUND: .planning/phases/01-evidence-based-baseline/01-AUDIT.md
+- FOUND: .planning/phases/01-evidence-based-baseline/validate-audit.sh
+- FOUND: 72cfcf6 (Task 1 commit)
+- FOUND: 15e8191 (Task 2 commit)
+- FOUND: 6522783 (Task 3 commit)
+- FOUND: a0af238 (SUMMARY commit)
+- Evidence-only validator: PASS
+- No restricted files (production Rust, TODO, historical plan) changed in task commits: PASS
