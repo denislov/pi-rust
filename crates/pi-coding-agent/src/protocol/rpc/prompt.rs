@@ -208,7 +208,6 @@ impl RpcState {
         }
     }
 
-    #[allow(deprecated)]
     pub(super) async fn handle_invoke_agent<W>(
         &mut self,
         id: Option<String>,
@@ -374,7 +373,8 @@ impl RpcState {
 
         tokio::spawn(async move {
             let outcome = {
-                let mut invocation = Box::pin(session.invoke_agent(invocation_options));
+                let mut invocation =
+                    Box::pin(session.run(CodingAgentOperation::InvokeAgent(invocation_options)));
                 let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
@@ -395,7 +395,14 @@ impl RpcState {
                             }
                         }
                         outcome = &mut invocation => {
-                            break outcome.map_err(CliError::from);
+                            break outcome
+                                .map_err(CliError::from)
+                                .and_then(|operation_outcome| match operation_outcome {
+                                    CodingAgentOperationOutcome::AgentInvocation(outcome) => Ok(outcome),
+                                    _ => unreachable!(
+                                        "agent invocation operation returned a different public outcome"
+                                    ),
+                                });
                         }
                     }
                 }
@@ -430,7 +437,6 @@ impl RpcState {
         Ok(())
     }
 
-    #[allow(deprecated)]
     pub(super) async fn handle_invoke_team<W>(
         &mut self,
         id: Option<String>,
@@ -591,7 +597,8 @@ impl RpcState {
 
         tokio::spawn(async move {
             let outcome = {
-                let mut invocation = Box::pin(session.invoke_team(team_options));
+                let mut invocation =
+                    Box::pin(session.run(CodingAgentOperation::InvokeTeam(team_options)));
                 let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
@@ -612,7 +619,14 @@ impl RpcState {
                             }
                         }
                         outcome = &mut invocation => {
-                            break outcome.map_err(CliError::from);
+                            break outcome
+                                .map_err(CliError::from)
+                                .and_then(|operation_outcome| match operation_outcome {
+                                    CodingAgentOperationOutcome::AgentTeam(outcome) => Ok(outcome),
+                                    _ => unreachable!(
+                                        "agent team operation returned a different public outcome"
+                                    ),
+                                });
                         }
                     }
                 }
@@ -766,8 +780,10 @@ impl RpcState {
 
         tokio::spawn(async move {
             let outcome = {
-                let mut approval =
-                    Box::pin(session.approve_delegation_confirmation(operation_id, tool_call_id));
+                let mut approval = Box::pin(session.run(CodingAgentOperation::ApproveDelegation {
+                    operation_id,
+                    tool_call_id,
+                }));
                 let mut product_event_forwarding_open = true;
                 loop {
                     tokio::select! {
@@ -788,7 +804,14 @@ impl RpcState {
                             }
                         }
                         outcome = &mut approval => {
-                            break outcome.map_err(CliError::from);
+                            break outcome
+                                .map_err(CliError::from)
+                                .and_then(|operation_outcome| match operation_outcome {
+                                    CodingAgentOperationOutcome::DelegationApproved => Ok(()),
+                                    _ => unreachable!(
+                                        "delegation approval operation returned a different public outcome"
+                                    ),
+                                });
                         }
                     }
                 }
