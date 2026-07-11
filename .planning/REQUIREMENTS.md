@@ -21,10 +21,10 @@
 
 ### JSON And Print
 
-- [ ] **ADAPT-01**: The JSON adapter executes prompt work through `CodingAgentSession::run(CodingAgentOperation::Prompt)`
-- [ ] **ADAPT-02**: The print adapter executes persistent and non-persistent prompt paths through the canonical operation facade
-- [ ] **ADAPT-03**: JSON and print output, error, and session behavior remain unchanged by the migration
-- [ ] **ADAPT-04**: JSON and print production code contains no replaced broad workflow calls or local `#[allow(deprecated)]` attributes
+- [x] **ADAPT-01**: The JSON adapter executes prompt work through `CodingAgentSession::run(CodingAgentOperation::Prompt)`
+- [x] **ADAPT-02**: The print adapter executes persistent and non-persistent prompt paths through the canonical operation facade
+- [x] **ADAPT-03**: JSON and print output, error, and session behavior remain unchanged by the migration
+- [x] **ADAPT-04**: JSON and print production code contains no replaced broad workflow calls or local `#[allow(deprecated)]` attributes
 
 ### RPC
 
@@ -104,10 +104,10 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | FACADE-03 | Phase 2 | Complete |
 | FACADE-04 | Phase 2 | Complete |
 | FACADE-05 | Phase 2 | Complete |
-| ADAPT-01 | Phase 3 | Pending |
-| ADAPT-02 | Phase 3 | Pending |
-| ADAPT-03 | Phase 3 | Pending |
-| ADAPT-04 | Phase 3 | Pending |
+| ADAPT-01 | Phase 3 | Complete |
+| ADAPT-02 | Phase 3 | Complete |
+| ADAPT-03 | Phase 3 | Complete |
+| ADAPT-04 | Phase 3 | Complete |
 | RPC-01 | Phase 3 | Pending |
 | RPC-02 | Phase 3 | Pending |
 | RPC-03 | Phase 3 | Pending |
