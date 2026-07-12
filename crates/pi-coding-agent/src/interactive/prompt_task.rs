@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
 use crate::CliError;
-use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
+use crate::api::{
+    BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
+    CodingAgentPluginLoadOutcome,
+};
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentSession,
-    CodingAgentSessionOptions, CodingSessionError, PluginLoadOutcome, ProductEvent, ProfileId,
-    PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest,
-    UiSnapshot,
+    CodingAgentSessionOptions, CodingSessionError, ProductEvent, ProfileId, PromptTurnOptions,
+    PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
 };
 use crate::interactive::root::{
     PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
@@ -58,7 +60,7 @@ pub(super) struct SelfHealingEditTaskResult {
 
 pub(super) struct PluginReloadTaskResult {
     pub(super) session: CodingAgentSession,
-    pub(super) outcome: PluginLoadOutcome,
+    pub(super) outcome: CodingAgentPluginLoadOutcome,
     pub(super) plugin_commands: Vec<PluginSlashCommand>,
     pub(super) plugin_ui_actions: Vec<PluginUiAction>,
     pub(super) plugin_keybindings: Vec<PluginKeybinding>,
@@ -1005,7 +1007,7 @@ async fn run_coding_plugin_reload_task(
     send_ui_snapshot(&event_tx, &session);
 
     let outcome = {
-        let mut reload = Box::pin(session.reload_plugins());
+        let mut reload = Box::pin(session.run(CodingAgentOperation::PluginLoad));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -1019,7 +1021,12 @@ async fn run_coding_plugin_reload_task(
                     }
                 }
                 outcome = &mut reload => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::PluginLoad(outcome) => Ok(outcome),
+                            _ => unreachable!("plugin load operation returned a different public outcome"),
+                        });
                 }
             }
         }
@@ -1068,7 +1075,7 @@ async fn run_coding_plugin_command_task(
     send_ui_snapshot(&event_tx, &session);
 
     if should_load_plugins {
-        let mut reload = Box::pin(session.reload_plugins());
+        let mut reload = Box::pin(session.run(CodingAgentOperation::PluginLoad));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -1082,7 +1089,12 @@ async fn run_coding_plugin_command_task(
                     }
                 }
                 outcome = &mut reload => {
-                    outcome.map_err(CliError::from)?;
+                    outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::PluginLoad(_) => Ok(()),
+                            _ => unreachable!("plugin load operation returned a different public outcome"),
+                        })?;
                     break;
                 }
             }
@@ -1094,8 +1106,16 @@ async fn run_coding_plugin_command_task(
     }
 
     let output = session
-        .run_plugin_command(&command_id, args)
-        .map_err(CliError::from)?;
+        .run(CodingAgentOperation::PluginCommand {
+            command_id: command_id.clone(),
+            args,
+        })
+        .await
+        .map_err(CliError::from)
+        .and_then(|operation_outcome| match operation_outcome {
+            CodingAgentOperationOutcome::PluginCommand(output) => Ok(output),
+            _ => unreachable!("plugin command operation returned a different public outcome"),
+        })?;
 
     while let Ok(Some(event)) = receiver.try_recv() {
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
@@ -1185,7 +1205,6 @@ fn plugin_ui_dialogs(session: &CodingAgentSession) -> Vec<PluginUiDialog> {
         .collect()
 }
 
-#[allow(deprecated)]
 async fn run_coding_branch_summary_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -1212,12 +1231,13 @@ async fn run_coding_branch_summary_task(
     let branch_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
-        let mut branch_summary = Box::pin(session.summarize_branch(
-            branch_options,
+        let mut branch_summary = Box::pin(session.run(CodingAgentOperation::BranchSummary {
+            options: branch_options,
             source_leaf_id,
             target_leaf_id,
             custom_instructions,
-        ));
+            reuse: BranchSummaryReusePolicy::AlwaysCreate,
+        }));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -1231,7 +1251,12 @@ async fn run_coding_branch_summary_task(
                     }
                 }
                 outcome = &mut branch_summary => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::BranchSummary(outcome) => Ok(outcome),
+                            _ => unreachable!("branch summary operation returned a different public outcome"),
+                        });
                 }
             }
         }

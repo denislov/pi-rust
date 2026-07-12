@@ -7,9 +7,10 @@ use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };
 
+use crate::api::CodingAgentPluginLoadOutcome;
 use crate::coding_session::{
-    CodingAgentSession, PluginLoadOutcome, PromptTurnOptions, PromptTurnOutcome,
-    SelfHealingEditModelRepairOptions, SelfHealingEditRequest,
+    CodingAgentSession, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditModelRepairOptions,
+    SelfHealingEditRequest,
 };
 use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
@@ -2366,7 +2367,7 @@ mod tests {
     }
 }
 
-fn plugin_reload_notice_lines(outcome: &PluginLoadOutcome) -> Vec<String> {
+fn plugin_reload_notice_lines(outcome: &CodingAgentPluginLoadOutcome) -> Vec<String> {
     let loaded = outcome.loaded_plugin_ids.len();
     let diagnostics = outcome.diagnostics.len();
     let mut lines = vec![format!(
