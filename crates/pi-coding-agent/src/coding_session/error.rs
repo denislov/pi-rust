@@ -92,12 +92,18 @@ impl From<CodingSessionError> for CliError {
             | CodingSessionError::Input { message }
             | CodingSessionError::Resource { message }
             | CodingSessionError::Session { message }
-            | CodingSessionError::PartialCommit { message, .. }
             | CodingSessionError::SelfHealingEditFailed { message, .. }
             | CodingSessionError::Provider { message }
             | CodingSessionError::Tool { message }
             | CodingSessionError::Flow { message }
             | CodingSessionError::Plugin { message } => CliError::SessionFailure(message),
+            CodingSessionError::PartialCommit {
+                operation_id,
+                message,
+            } => CliError::PartialCommit {
+                operation_id,
+                message,
+            },
             gap @ CodingSessionError::EventStreamGap { .. } => {
                 CliError::SessionFailure(gap.to_string())
             }

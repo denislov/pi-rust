@@ -20,4 +20,9 @@ pub enum CliError {
     InvalidSessionFlags(String),
     #[error("{0}")]
     SessionFailure(String),
+    #[error("partial commit uncertainty for operation {operation_id}: {message}")]
+    PartialCommit {
+        operation_id: String,
+        message: String,
+    },
 }
