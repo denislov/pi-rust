@@ -1,30 +1,27 @@
 ---
 phase: 04-test-convergence-and-compatibility-deletion
-verified: 2026-07-12T18:06:50Z
-status: gaps_found
+verified: 2026-07-12T18:14:28Z
+status: passed
 score: 5/5 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
-gaps:
-  - truth: "STATE, ROADMAP, REQUIREMENTS, and Phase 4 validation artifacts consistently describe Phase 4 completion"
-    status: failed
-    reason: "The implementation and roadmap/requirements are complete, but STATE.md and 04-VALIDATION.md retain contradictory incomplete state, so the submitted phase is not end-to-end auditable as complete."
-    artifacts:
-      - path: ".planning/STATE.md"
-        issue: "Frontmatter says status=verifying and 80%, while the body says EXECUTING, 0%, stale activity, and only 15 completed plans despite 19/19 in frontmatter/roadmap."
-      - path: ".planning/phases/04-test-convergence-and-compatibility-deletion/04-VALIDATION.md"
-        issue: "Frontmatter says complete/nyquist_compliant but wave_0_complete=false; all Wave 0 and Validation Sign-Off checkboxes remain unchecked and Approval still says planned."
-    missing:
-      - "Reconcile STATE.md frontmatter and body with the verified Phase 4 position."
-      - "Close or accurately reclassify 04-VALIDATION.md Wave 0 and sign-off fields/checklists."
+re_verification:
+  previous_status: gaps_found
+  previous_score: 5/5
+  gaps_closed:
+    - "STATE.md frontmatter and body now consistently report Phase 04 verifying, 4/4 plans complete, 19/19 milestone plans complete, and 80% phase progress."
+    - "04-VALIDATION.md now consistently reports complete, nyquist_compliant, wave_0_complete, eight green task rows, completed Wave 0 prerequisites, and approved sign-off."
+    - "All Phase 4 PLAN, SUMMARY, CONTEXT, DISCUSSION-LOG, RESEARCH, PATTERNS, VALIDATION, and VERIFICATION artifacts are tracked by Git at closure commit e512f8d."
+  gaps_remaining: []
+  regressions: []
 ---
 
 # Phase 4: Test Convergence and Compatibility Deletion Verification Report
 
 **Phase Goal:** The test suite proves public workflows through the canonical facade, and the obsolete broad live-session facade no longer exists.
-**Verified:** 2026-07-12T18:06:50Z
-**Status:** gaps_found
-**Re-verification:** No - initial verification
+**Verified:** 2026-07-12T18:14:28Z
+**Status:** passed
+**Re-verification:** Yes - after planning artifact gap closure commit `e512f8d`
 
 ## Goal Achievement
 
@@ -32,11 +29,11 @@ gaps:
 
 | # | Truth | Status | Evidence |
 |---|---|---|---|
-| 1 | Owner, public API, and integration tests exercise public workflows through `run()` while preserving behavior assertions. | VERIFIED | `CodingAgentSession::run` dispatches from metadata at `coding_session/mod.rs:248-260`. Current agent, team, profile, delegation, export, branch-summary, and self-healing suites construct `CodingAgentOperation` values and match typed outcomes. `cargo test --workspace` passed, including 23 `public_api`, 13 product-runtime guard, 40 RPC, and the affected integration suites. |
-| 2 | Helpers extract typed outcomes only, and custom owner-private paths are genuinely narrow. | VERIFIED | File-local extractors in `agent_invocation.rs:308-324` and `agent_team_flow.rs:387-403` accept an already-produced outcome; shared `tests/support/mod.rs` owns no session or operation runner. The final guard requires one private `load_plugins` definition and exactly four cfg(test), D-03-justified calls (`product_runtime_boundary_guards.rs:129-135,351-397`). |
-| 3 | All replaced broad public and crate-private methods are absent. | VERIFIED | Executed `final_receiver_aware_compatibility_absence_and_retained_api_guard`: PASS. Its 16-name absent ledger is at `product_runtime_boundary_guards.rs:136-153`; it checks zero owner definitions, receiver calls, nearby deprecation suppressions, and alternate facades. |
-| 4 | Missed callers or synonym wrappers fail executable migration checks. | VERIFIED | The same executable guard scans `src` and `tests`, applies receiver-aware exclusions only for distinct owners, checks local suppressions, and invokes `alternate_facade_violations` (`product_runtime_boundary_guards.rs:215-292,295-349`). Full workspace execution passed. |
-| 5 | Lifecycle/open/query/snapshot/subscription/control/static APIs remain available. | VERIFIED | Positive method ledger requires public and crate-private retained contracts exactly once with expected visibility/test gating (`product_runtime_boundary_guards.rs:154-213,227-277`). Current `CodingAgentSession` exposes `create/open/open_or_create/non_persistent/list/export_session_html/subscribe/snapshot/connect` and private hydration/fork/control paths (`coding_session/mod.rs:263-467`). |
+| 1 | Owner, public API, and integration tests exercise public workflows through `run()` while preserving behavior assertions. | VERIFIED | Current `CodingAgentSession::run` converts the public operation, selects the metadata dispatch mode, and projects the typed outcome (`coding_session/mod.rs:248-260`). Current agent, team, profile, delegation, export, branch-summary, navigation, and self-healing tests use typed operations. Fresh `cargo test --workspace` passed, including 23 `public_api`, 13 product-runtime guard, 40 RPC, and all affected behavior suites. |
+| 2 | Helpers extract typed outcomes only, and custom owner-private paths are genuinely narrow. | VERIFIED | Outcome extractors accept already-produced `CodingAgentOperationOutcome` values; shared `tests/support/mod.rs` does not own sessions or run operations. The executable guard requires one private `load_plugins` definition and exactly four cfg(test), D-03-justified owner calls, rejecting integration/helper/wrapper/non-test exposure. |
+| 3 | All replaced broad public and crate-private methods are absent. | VERIFIED | Fresh exact execution of `final_receiver_aware_compatibility_absence_and_retained_api_guard` passed. Its 16-name ledger covers `invoke_agent` through `summarize_branch_for_navigation` and checks zero owner definitions, receiver calls, nearby deprecation suppressions, and alternate facades. |
+| 4 | Missed callers or synonym wrappers fail executable migration checks. | VERIFIED | The current guard scans production and test Rust sources, allows only specifically classified distinct receivers, checks local suppressions, and rejects alternate workflow facades. The exact guard and full workspace suite passed. |
+| 5 | Lifecycle/open/query/snapshot/subscription/control/static APIs remain available. | VERIFIED | The same positive ledger requires retained public and crate-private contracts exactly once with expected visibility/test gating. Current source retains construction/open/resume, list, static export/fork/clone/hydration, snapshots, queries, subscriptions, controls, and plugin UI/query helpers. |
 
 **Score:** 5/5 truths verified (0 behavior-unverified)
 
@@ -44,73 +41,77 @@ gaps:
 
 | Artifact | Expected | Status | Details |
 |---|---|---|---|
-| `crates/pi-coding-agent/src/coding_session/mod.rs` | Canonical dispatcher, retained APIs, no broad facade | VERIFIED | Substantive and wired; `run` maps public operation to internal metadata-selected dispatch and exhaustive public outcome. |
-| Affected owner/public/integration tests | Canonical calls with behavior/durability assertions | VERIFIED | Exact outcome extraction is visible; delegation retains pending/events/reopen assertions (`delegation_execution.rs:1294-1697`), self-heal retains file/event/check/repair assertions (`public_api.rs:691-949`). |
-| `tests/product_runtime_boundary_guards.rs` | Meaningful executable deletion/retention guard | VERIFIED | Named guard independently executed and passed; full workspace run executed all 13 guard tests. |
-| Phase 4 planning artifacts | Internally consistent completion record | FAILED | `STATE.md` and `04-VALIDATION.md` contain observable contradictory status/sign-off data. |
+| `crates/pi-coding-agent/src/coding_session/mod.rs` | Canonical dispatcher, retained APIs, no broad facade | VERIFIED | Substantive and wired; `run` performs metadata-selected dispatch and exhaustive public outcome projection. The private `load_plugins` path is retained only for the guarded TEST-04 owner cases. |
+| Affected owner/public/integration tests | Canonical calls with behavior and durability assertions | VERIFIED | Fresh workspace execution passed. Tests retain output, events, replay/reopen, persisted state, operation identity, structured errors, and navigation continuity assertions. |
+| `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs` | Executable deletion, helper, and retention enforcement | VERIFIED | Exact final guard passed independently; the full workspace run passed all 13 tests in the target. |
+| `.planning/STATE.md` | Consistent Phase 4 workflow position | VERIFIED | Frontmatter and body agree: Phase 04, verifying, Plan 4 of 4, 19 completed plans, 80%, and re-verification readiness. |
+| `04-VALIDATION.md` | Consistent wave and sign-off closure | VERIFIED | Frontmatter is complete/nyquist/wave-0 true; all eight rows are green; Wave 0 and sign-off checklists are complete; approval cites the passing final gates. |
+| Phase 4 planning artifact set | Complete and tracked | VERIFIED | `git ls-files` lists all four PLANs, all four SUMMARYs, CONTEXT, DISCUSSION-LOG, RESEARCH, PATTERNS, VALIDATION, and VERIFICATION. Commit `e512f8d` is current HEAD and tracks the gap-closure additions/updates. |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |---|---|---|---|---|
-| Public/integration workflow tests | `CodingAgentSession::run` | Visible typed `CodingAgentOperation` | WIRED | Agent/team/profile/delegation/public API call sites use `.run(...)`. |
-| `CodingAgentSession::run` | Internal dispatcher | `operation.metadata().dispatch_mode` | WIRED | Async, sync-read-only, and sync-mutable branches at `mod.rs:253-260`. |
-| Typed operation outcomes | Behavior/durability assertions | Exhaustive variant match | WIRED | Tests assert output, events, replay, persisted state, exact errors, and operation identity rather than compile-only success. |
-| Source guard | Deletion/retention contract | Repository source scan + exact method ledger | WIRED | Named test passes and deliberately distinguishes same-named service/UI receivers. |
-
-### Data-Flow Trace (Level 4)
-
-Not applicable to UI rendering. Runtime data flow was traced from public operations through `run`, internal dispatch, typed outcomes, product events, session log/replay, and assertions. Delegation and self-healing tests use real deterministic fixtures and persisted `events.jsonl`, not static placeholders.
+| Public/integration workflow tests | `CodingAgentSession::run` | Visible typed `CodingAgentOperation` | WIRED | Current tests compile and execute through the stable facade. |
+| `CodingAgentSession::run` | Internal dispatcher | `operation.metadata().dispatch_mode` | WIRED | Async, sync-read-only, and sync-mutable branches are explicit at `mod.rs:253-260`. |
+| Typed outcomes | Behavior/durability assertions | Exact outcome matching | WIRED | Workspace tests exercise output, event, replay, persistence, error, and operation-ID behavior. |
+| Boundary guard | Deleted and retained API contract | Receiver-aware source classification | WIRED | Exact named guard passed and distinguishes legitimate service/UI/static receiver methods. |
+| STATE/ROADMAP/REQUIREMENTS | Phase 4 completion record | Phase, plan, requirement, and progress fields | WIRED | ROADMAP has 4/4 complete; REQUIREMENTS maps TEST-01..04 and DELETE-01..04 complete; STATE consistently remains at the verification checkpoint. |
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |---|---|---|---|
-| Complete deletion/retained ledger | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards final_receiver_aware_compatibility_absence_and_retained_api_guard -- --exact` | 1 passed, 0 failed | PASS |
+| Complete deletion/retained/private-exception ledger | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards final_receiver_aware_compatibility_absence_and_retained_api_guard -- --exact` | 1 passed, 0 failed | PASS |
+| Stable API boundary | `cargo test -p pi-coding-agent --test api_boundary_guards` | 5 passed, 0 failed | PASS |
 | Formatting | `cargo fmt --check` | exit 0 | PASS |
-| Full workspace behavior | `cargo test --workspace` | exit 0; all unit/integration/doc tests passed | PASS |
+| Full workspace behavior | `cargo test --workspace` | exit 0; all unit, integration, and doc tests passed | PASS |
 | Full workspace compile | `cargo check --workspace` | exit 0; two non-fatal dead-code warnings | PASS |
 | Diff hygiene | `git diff --check` | exit 0 | PASS |
 
 ### Probe Execution
 
-No Phase 4 probe scripts were declared or implied. The phase defines Cargo tests and source guards as its executable verification mechanism.
+No Phase 4 probe scripts are declared or implied. Cargo tests and executable source/API guards are the phase's verification mechanism.
 
 ### Requirements Coverage
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| TEST-01 | SATISFIED | Owner/public/integration workflow suites execute public workflows through `run`. |
-| TEST-02 | SATISFIED | Agent/team/profile/delegation/export/summary/self-heal behavior and durability assertions are substantive and pass. |
-| TEST-03 | SATISFIED | Outcome helpers are extraction-only; guard rejects alternate operation facades. |
-| TEST-04 | SATISFIED | Private `load_plugins(PluginLoadOptions)` is definition- and call-count constrained to four justified owner tests. |
+| TEST-01 | SATISFIED | Owner, public API, and integration workflow suites execute public workflows through `run`; fresh workspace tests pass. |
+| TEST-02 | SATISFIED | Agent, team, profile, delegation, export, branch-summary/navigation, and self-healing behavior/durability assertions execute successfully. |
+| TEST-03 | SATISFIED | Helpers are outcome-only; executable guard rejects operation-running alternate facades. |
+| TEST-04 | SATISFIED | Private `load_plugins(PluginLoadOptions)` remains constrained to exactly four justified co-located owner-test calls with no broader exposure. |
 | DELETE-01 | SATISFIED | Executable 16-method zero-definition ledger passes. |
-| DELETE-02 | SATISFIED | No source/test receiver calls remain; canonical callers compile and pass. |
-| DELETE-03 | SATISFIED | Receiver-call, suppression, and alternate-facade checks pass. |
-| DELETE-04 | SATISFIED | Positive retained API ledger passes with exact visibility/test gating. |
+| DELETE-02 | SATISFIED | Production and test callers use canonical operations; no deleted receiver calls remain. |
+| DELETE-03 | SATISFIED | Receiver-call, local-suppression, and alternate-facade checks pass; no replacement wrapper exists. |
+| DELETE-04 | SATISFIED | Positive retained API ledger passes with exact visibility and test gating. |
 
-No orphaned Phase 4 requirements were found: ROADMAP and REQUIREMENTS both map exactly TEST-01..04 and DELETE-01..04.
+ROADMAP and REQUIREMENTS map exactly TEST-01..04 and DELETE-01..04 to Phase 4; no orphaned Phase 4 requirement exists.
+
+### Planning Consistency
+
+| Check | Status | Evidence |
+|---|---|---|
+| STATE frontmatter/body consistency | PASS | Both describe Phase 04 verifying after 4/4 execution, with 19/19 plans and 80% milestone phase progress. |
+| ROADMAP/REQUIREMENTS consistency | PASS | Phase 4 is 4/4 complete and all eight Phase 4 requirements are complete; Phase 5 remains pending. |
+| Validation wave/sign-off consistency | PASS | `wave_0_complete: true`, eight green task rows, all Wave 0/sign-off boxes checked, approval recorded. |
+| Artifact tracking | PASS | `git ls-files` confirms the complete Phase 4 artifact set is tracked; `e512f8d` is HEAD. |
+| Working tree/diff hygiene | PASS | `git status --short` emitted no entries before this report update; `git diff --check` passed. |
 
 ### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |---|---|---|---|---|
-| `coding_session/mod.rs` | 544 | private `load_plugins` dead-code warning in non-test build | INFO | Intentional TEST-04 owner-test exception; guard constrains exactly four test calls. |
-| `operation_control.rs` | 145 | unused `ensure_idle` warning | INFO | Pre-existing/non-blocking and not a Phase 4 must-have. |
-| `.planning/STATE.md` | 31-36 | contradictory execution/completion/progress state | BLOCKER | Phase submission is not consistently auditable as complete. |
-| `04-VALIDATION.md` | 4-6,58-65,77-86 | complete/nyquist claims conflict with false Wave 0 and unchecked sign-off | BLOCKER | Validation authority has not recorded its own closure consistently. |
+| `coding_session/mod.rs` | 544 | private `load_plugins` dead-code warning in non-test build | INFO | Intentional TEST-04 owner-test exception; executable guard constrains the definition and exactly four calls. |
+| `operation_control.rs` | 145 | unused `ensure_idle` warning | INFO | Non-failing and outside the Phase 4 must-haves. |
 
-No unreferenced `TBD`, `FIXME`, or `XXX` debt marker was found in the Phase 4 implementation surface. The `TODO(stage-5)` marker in `capability_snapshot.rs` is a formal later-phase reference and outside this phase.
-
-### Human Verification Required
-
-None. The phase behavior is deterministic/offline and covered by executable Rust tests and source guards.
+No unreferenced `TBD`, `FIXME`, or `XXX` blocker was found in the verified Phase 4 implementation surface. No human verification is required because the relevant behavior is deterministic/offline and covered by executable Rust tests and source guards.
 
 ### Gaps Summary
 
-The code goal is achieved: all five roadmap truths and all eight Phase 4 requirements are verified, and every required Cargo/diff gate passes. However, the phase cannot be reported as end-to-end complete while its authoritative state and validation artifacts contradict completion. This is a planning-integrity blocker, not an implementation rollback or behavior gap. Phase 5 does not specifically defer reconciliation of Phase 4's stale state/sign-off fields, so the issue remains actionable here.
+No gaps remain. Commit `e512f8d` resolves the prior planning-integrity blockers without changing source behavior: STATE is internally consistent, validation wave/sign-off state is closed, and the full Phase 4 artifact set is tracked. Fresh source guards, stable API tests, formatting, workspace tests/checks, and diff hygiene all pass. Phase 4's code and planning completion gates are satisfied.
 
 ---
 
-_Verified: 2026-07-12T18:06:50Z_
+_Verified: 2026-07-12T18:14:28Z_
 _Verifier: the agent (gsd-verifier)_
