@@ -31,6 +31,7 @@ pub(super) enum PromptTaskResult {
     SelfHealingEdit(SelfHealingEditTaskResult),
     PluginReload(PluginReloadTaskResult),
     PluginCommand(PluginCommandTaskResult),
+    SetDefaultAgentProfile(SetDefaultAgentProfileTaskResult),
 }
 
 pub(super) struct CodingPromptTaskResult {
@@ -50,6 +51,10 @@ pub(super) struct AgentTeamTaskResult {
 }
 
 pub(super) struct DelegationApprovalTaskResult {
+    pub(super) session: CodingAgentSession,
+}
+
+pub(super) struct SetDefaultAgentProfileTaskResult {
     pub(super) session: CodingAgentSession,
 }
 
@@ -163,6 +168,16 @@ impl PromptTask {
             existing_session,
             operation_id,
             tool_call_id,
+        ))
+    }
+
+    pub(super) fn spawn_set_default_agent_profile(
+        existing_session: CodingAgentSession,
+        profile_id: ProfileId,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_set_default_agent_profile(
+            existing_session,
+            profile_id,
         ))
     }
 
@@ -424,6 +439,34 @@ impl PromptTask {
             )
             .await;
             let _ = done_tx.send(result.map(PromptTaskResult::DelegationApproval));
+        });
+
+        Self {
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_set_default_agent_profile(
+        existing_session: CodingAgentSession,
+        profile_id: ProfileId,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_set_default_agent_profile_task(
+                existing_session,
+                profile_id,
+                event_tx,
+                abort_rx,
+            )
+            .await;
+            let _ = done_tx.send(result.map(PromptTaskResult::SetDefaultAgentProfile));
         });
 
         Self {
@@ -868,6 +911,51 @@ async fn run_coding_delegation_approval_task(
     }
 
     Ok(DelegationApprovalTaskResult { session })
+}
+
+async fn run_coding_set_default_agent_profile_task(
+    mut session: CodingAgentSession,
+    profile_id: ProfileId,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<SetDefaultAgentProfileTaskResult, CliError> {
+    let mut receiver = session.subscribe_product_events();
+    send_ui_snapshot(&event_tx, &session);
+
+    {
+        let mut mutation =
+            Box::pin(session.run(CodingAgentOperation::SetDefaultAgentProfile { profile_id }));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive default profile mutation abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut mutation => {
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::DefaultAgentProfileChanged => Ok(()),
+                            _ => unreachable!(
+                                "set default agent profile operation returned a different public outcome"
+                            ),
+                        });
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    Ok(SetDefaultAgentProfileTaskResult { session })
 }
 
 async fn run_coding_compact_task(

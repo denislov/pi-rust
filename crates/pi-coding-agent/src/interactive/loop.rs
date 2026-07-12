@@ -9,8 +9,8 @@ use pi_tui::{
 
 use crate::api::CodingAgentPluginLoadOutcome;
 use crate::coding_session::{
-    CodingAgentSession, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditModelRepairOptions,
-    SelfHealingEditRequest,
+    CodingAgentSession, ProfileId, PromptTurnOptions, PromptTurnOutcome,
+    SelfHealingEditModelRepairOptions, SelfHealingEditRequest,
 };
 use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
@@ -470,6 +470,10 @@ where
                         );
                     }
                     finish_prompt(tui, root_id, result, &mut coding_session)?;
+                    if let Some(session) = coding_session.as_ref() {
+                        prompt_context.default_agent_profile_id =
+                            session.view().default_agent_profile_id.clone();
+                    }
                     schedule_render(&mut render_scheduler, RenderRequest::FORCE);
                     flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
                     running = None;
@@ -800,11 +804,25 @@ fn handle_input_event<T: Terminal>(
         prompt_context.thinking_level = Some(thinking_level);
     }
     if let Some(profile_id) = selected_agent_profile_id {
-        prompt_context.default_agent_profile_id = profile_id.clone();
-        if let Some(session) = coding_session.as_mut() {
-            session
-                .set_default_agent_profile_id(profile_id)
-                .map_err(CliError::from)?;
+        if coding_session.is_some() {
+            if running.is_some() {
+                let root = root_mut(tui, root_id)?;
+                root.transcript.push(TranscriptItem::system(
+                    "Wait for the current run to finish before changing the default profile.",
+                ));
+                return Ok(LoopControl::Continue(RenderRequest::FORCE));
+            }
+            start_set_default_agent_profile_task(
+                tui,
+                root_id,
+                profile_id,
+                prompt_context,
+                running,
+                coding_session,
+            )?;
+            return Ok(LoopControl::Continue(RenderRequest::FORCE));
+        } else {
+            prompt_context.default_agent_profile_id = profile_id;
         }
     }
     if let Some(session) = selected_session {
@@ -1296,6 +1314,36 @@ fn start_delegation_approval_task<T: Terminal>(
         session,
         operation_id,
         tool_call_id,
+    )?);
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(())
+}
+
+fn start_set_default_agent_profile_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    profile_id: ProfileId,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<(), CliError> {
+    if coding_session.is_none() {
+        root_mut(tui, root_id)?
+            .transcript
+            .push(TranscriptItem::system("No active coding session."));
+        return Ok(());
+    }
+    let session = coding_session
+        .take()
+        .expect("coding session was checked before starting default profile mutation");
+    {
+        let root = root_mut(tui, root_id)?;
+        root.set_status(InteractiveStatus::Running);
+    }
+    *running = Some(PromptTask::spawn_set_default_agent_profile(
+        session, profile_id,
     )?);
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
@@ -2025,6 +2073,20 @@ fn finish_prompt<T: Terminal>(
             *coding_session = Some(result.session);
         }
         Ok(PromptTaskResult::DelegationApproval(result)) => {
+            root.set_default_agent_profile_id(
+                result.session.view().default_agent_profile_id.clone(),
+            );
+            if let Ok(Some(hydration)) = result.session.hydrate_current() {
+                let hydrated = hydrated_session_from_rust_native(hydration);
+                let mut choice = hydrated.choice;
+                if choice.active_leaf_id.is_none() {
+                    choice.active_leaf_id = root.active_leaf_id.clone();
+                }
+                root.set_active_session_choice(choice);
+            }
+            *coding_session = Some(result.session);
+        }
+        Ok(PromptTaskResult::SetDefaultAgentProfile(result)) => {
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );

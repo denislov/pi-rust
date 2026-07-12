@@ -1,3 +1,5 @@
+mod support;
+
 use pi_agent_core::transcript::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, create_timestamp,
 };
@@ -265,6 +267,73 @@ async fn scripted_interactive_branch_summary_preserves_visible_and_persisted_beh
     assert!(
         events.contains("branch prompt"),
         "direct branch-summary must not destroy prior durable facts: {events}"
+    );
+}
+
+#[tokio::test]
+async fn scripted_interactive_default_profile_selection_persists_and_refreshes_projection() {
+    let _env = support::EnvGuard::with_pi_rust_dir(tempfile::tempdir().unwrap().path());
+    let temp = tempfile::tempdir().unwrap();
+
+    // Set up a project-level agent profile so the profile menu has a selectable entry.
+    std::fs::create_dir_all(temp.path().join(".pi-rust/agents")).unwrap();
+    std::fs::write(
+        temp.path().join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    )
+    .unwrap();
+
+    // Step 1: Create a persistent session with an initial prompt, then select "coder".
+    //   "initial prompt\r"       - submit a prompt to open a session
+    //   "/agent\r\x1b[B\rcoder\r" - open the agent menu, down to "Use", filter and confirm
+    let provider = FauxProvider::new(vec![text_response("initial response")]);
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("initial prompt\r", "initial response"),
+            ("/agent\r\x1b[B\rcoder\r", ""),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let sessions = rust_session_dirs(temp.path());
+    assert_eq!(sessions.len(), 1, "exactly one session should exist");
+
+    let frame = result.rendered_lines.join("\n");
+    assert!(
+        frame.contains("Default agent profile: coder"),
+        "profile selection should be visibly projected: {frame}"
+    );
+
+    // The manifest must now persist the new default profile.
+    let manifest = read_session_manifest(&sessions[0]);
+    assert_eq!(
+        manifest["default_agent_profile_id"].as_str(),
+        Some("coder"),
+        "manifest should persist the canonical default profile mutation: {frame}"
+    );
+
+    // Step 2: Reopen the session and verify the default profile is preserved.
+    let args = CliArgs {
+        resume: true,
+        ..CliArgs::default()
+    };
+    let provider = FauxProvider::new(vec![text_response("verification response")]);
+    run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), "verify\r")
+        .await
+        .unwrap();
+
+    let manifest = read_session_manifest(&sessions[0]);
+    assert_eq!(
+        manifest["default_agent_profile_id"].as_str(),
+        Some("coder"),
+        "manifest should preserve the default profile after reopen"
     );
 }
 
