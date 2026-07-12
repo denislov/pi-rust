@@ -2480,6 +2480,19 @@ mod tests {
             .collect()
     }
 
+    fn rust_native_session_count(root: &Path) -> usize {
+        std::fs::read_dir(root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let path = entry.path();
+                path.is_dir()
+                    && path.join("session.json").is_file()
+                    && path.join("events.jsonl").is_file()
+            })
+            .count()
+    }
+
     fn sentinel_target() -> Option<ResolvedSessionTarget> {
         Some(ResolvedSessionTarget::OpenOrCreateId(
             "sess_before_failure".into(),
@@ -2920,8 +2933,126 @@ mod tests {
 
     #[tokio::test]
     async fn real_fork_failure_preserves_source_owner_subscriber_and_target_through_prompt_task_done()
-    {
-        panic!("RED: real fork failure has not been driven through PromptTask.done");
+     {
+        let api = "interactive-real-fork-failure";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("source answer")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let session_id = "sess_real_fork_failure";
+        let mut session = persistent_session(temp.path(), session_id).await;
+        let source_prompt = session
+            .run(CodingAgentOperation::Prompt(
+                PromptTurnOptions::from_prompt_run_options(prompt_run_options(
+                    api,
+                    "create source leaf",
+                )),
+            ))
+            .await
+            .unwrap();
+        assert!(matches!(
+            source_prompt,
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success { .. })
+        ));
+
+        let source_session_id = session.view().session_id.clone();
+        let initial_session_count = rust_native_session_count(temp.path());
+        assert_eq!(initial_session_count, 1);
+        let mut source_receiver = session.subscribe_product_events();
+        session.arm_append_events_failure_for_tests(0);
+        let task = PromptTask::spawn_fork_session(
+            prompt_run_options(api, "unused fork prompt"),
+            Some(session),
+            None,
+            None,
+            ProfileId::from("default"),
+        )
+        .unwrap();
+        let (completion, task_events) = await_prompt_task(task).await;
+        let expected_error =
+            CliError::SessionFailure("injected session store failure at AppendEvents".into());
+        match &completion {
+            PromptTaskCompletion::Failed(PromptTaskFailure { session, error }) => {
+                assert_eq!(session.view().session_id, source_session_id);
+                assert_eq!(error, &expected_error);
+            }
+            _ => panic!("fork must fail through the owned task completion"),
+        }
+        assert_eq!(
+            rust_native_session_count(temp.path()),
+            initial_session_count,
+            "the failed attempted target must be cleaned before completion"
+        );
+        assert!(!task_events.iter().any(|event| {
+            matches!(
+                event,
+                PromptTaskEvent::Coding(event)
+                    if matches!(
+                        event.compatibility_event(),
+                        CodingAgentEvent::SessionOpened { .. }
+                    )
+            )
+        }));
+        while let Some(event) = source_receiver.try_recv().unwrap() {
+            assert!(
+                !matches!(
+                    event.compatibility_event(),
+                    CodingAgentEvent::SessionOpened { .. }
+                ),
+                "failed fork must not publish a replacement SessionOpened transition"
+            );
+        }
+
+        let (mut tui, root_id) = test_tui();
+        let mut coding_session = None;
+        let mut session_target = sentinel_target();
+        finish_prompt(
+            &mut tui,
+            root_id,
+            completion,
+            &mut coding_session,
+            &mut session_target,
+        )
+        .unwrap();
+
+        assert_sentinel_target(&session_target);
+        assert_eq!(
+            rust_native_session_count(temp.path()),
+            initial_session_count
+        );
+        assert_eq!(
+            transcript_error_count(&tui, root_id, &expected_error.to_string()),
+            1
+        );
+        let restored = coding_session
+            .as_mut()
+            .expect("finish_prompt must restore the source owner");
+        assert_eq!(restored.view().session_id, source_session_id);
+        assert!(matches!(
+            restored
+                .run(CodingAgentOperation::SetDefaultAgentProfile {
+                    profile_id: ProfileId::from("reviewer"),
+                })
+                .await
+                .unwrap(),
+            CodingAgentOperationOutcome::DefaultAgentProfileChanged
+        ));
+
+        let mut observed_profile_change = false;
+        while let Some(event) = source_receiver.try_recv().unwrap() {
+            if matches!(
+                event.compatibility_event(),
+                CodingAgentEvent::DefaultAgentProfileChanged { profile_id }
+                    if profile_id.as_str() == "reviewer"
+            ) {
+                observed_profile_change = true;
+            }
+        }
+        assert!(
+            observed_profile_change,
+            "the pre-task subscriber must observe events from the restored source EventService"
+        );
     }
 
     #[tokio::test]
