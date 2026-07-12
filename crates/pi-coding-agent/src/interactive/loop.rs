@@ -30,7 +30,7 @@ use crate::interactive::session_actions::{
     SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
     hydrated_session_from_rust_native,
 };
-use crate::interactive::{CodingEventBridge, TranscriptItem, UiEvent};
+use crate::interactive::{TranscriptItem, UiEvent};
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::PromptInvocation;
 use crate::session::ResolvedSessionTarget;
@@ -1246,7 +1246,15 @@ fn handle_delegation_confirmation_command<T: Terminal>(
             )
         }
         PendingDelegationConfirmationCommand::Reject { selection, reason } => {
-            reject_pending_delegation_confirmation(tui, root_id, selection, reason, coding_session)
+            reject_pending_delegation_confirmation(
+                tui,
+                root_id,
+                selection,
+                reason,
+                prompt_context,
+                running,
+                coding_session,
+            )
         }
     }
 }
@@ -1356,9 +1364,11 @@ fn reject_pending_delegation_confirmation<T: Terminal>(
     root_id: usize,
     selection: PendingDelegationConfirmationSelection,
     reason: Option<String>,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
     coding_session: &mut Option<CodingAgentSession>,
 ) -> Result<(), CliError> {
-    let Some(session) = coding_session.as_mut() else {
+    let Some(session) = coding_session.as_ref() else {
         root_mut(tui, root_id)?
             .transcript
             .push(TranscriptItem::system("No active coding session."));
@@ -1375,26 +1385,22 @@ fn reject_pending_delegation_confirmation<T: Terminal>(
             }
         };
 
-    let mut receiver = session.subscribe_product_events();
-    session
-        .reject_delegation_confirmation(
-            &operation_id,
-            &tool_call_id,
-            reason.as_deref().unwrap_or("delegation rejected by user"),
-        )
-        .map_err(CliError::from)?;
-
-    let mut bridge = CodingEventBridge::new();
-    let mut ui_events = Vec::new();
-    while let Ok(Some(event)) = receiver.try_recv() {
-        ui_events.extend(bridge.handle_product_event(&event));
+    let session = coding_session
+        .take()
+        .expect("coding session was checked before starting delegation rejection");
+    {
+        let root = root_mut(tui, root_id)?;
+        root.set_status(InteractiveStatus::Running);
     }
-    if ui_events.is_empty() {
-        ui_events.push(UiEvent::SystemNotice {
-            text: format!("Delegation rejected: {operation_id} {tool_call_id}"),
-        });
+    *running = Some(PromptTask::spawn_delegation_rejection(
+        session,
+        operation_id,
+        tool_call_id,
+        reason.unwrap_or_else(|| "delegation rejected by user".to_string()),
+    )?);
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
     }
-    root_mut(tui, root_id)?.apply_events(ui_events);
     Ok(())
 }
 
@@ -2087,6 +2093,23 @@ fn finish_prompt<T: Terminal>(
             *coding_session = Some(result.session);
         }
         Ok(PromptTaskResult::SetDefaultAgentProfile(result)) => {
+            root.set_default_agent_profile_id(
+                result.session.view().default_agent_profile_id.clone(),
+            );
+            if let Ok(Some(hydration)) = result.session.hydrate_current() {
+                let hydrated = hydrated_session_from_rust_native(hydration);
+                let mut choice = hydrated.choice;
+                if choice.active_leaf_id.is_none() {
+                    choice.active_leaf_id = root.active_leaf_id.clone();
+                }
+                root.set_active_session_choice(choice);
+            }
+            *coding_session = Some(result.session);
+        }
+        Ok(PromptTaskResult::DelegationRejection(result)) => {
+            if let Some(notice) = result.fallback_notice {
+                root.transcript.push(TranscriptItem::system(notice));
+            }
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );

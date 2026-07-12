@@ -32,6 +32,7 @@ pub(super) enum PromptTaskResult {
     PluginReload(PluginReloadTaskResult),
     PluginCommand(PluginCommandTaskResult),
     SetDefaultAgentProfile(SetDefaultAgentProfileTaskResult),
+    DelegationRejection(DelegationRejectionTaskResult),
 }
 
 pub(super) struct CodingPromptTaskResult {
@@ -56,6 +57,11 @@ pub(super) struct DelegationApprovalTaskResult {
 
 pub(super) struct SetDefaultAgentProfileTaskResult {
     pub(super) session: CodingAgentSession,
+}
+
+pub(super) struct DelegationRejectionTaskResult {
+    pub(super) session: CodingAgentSession,
+    pub(super) fallback_notice: Option<String>,
 }
 
 pub(super) struct SelfHealingEditTaskResult {
@@ -178,6 +184,20 @@ impl PromptTask {
         Ok(Self::spawn_coding_set_default_agent_profile(
             existing_session,
             profile_id,
+        ))
+    }
+
+    pub(super) fn spawn_delegation_rejection(
+        existing_session: CodingAgentSession,
+        operation_id: String,
+        tool_call_id: String,
+        reason: String,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_delegation_rejection(
+            existing_session,
+            operation_id,
+            tool_call_id,
+            reason,
         ))
     }
 
@@ -467,6 +487,38 @@ impl PromptTask {
             )
             .await;
             let _ = done_tx.send(result.map(PromptTaskResult::SetDefaultAgentProfile));
+        });
+
+        Self {
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_delegation_rejection(
+        existing_session: CodingAgentSession,
+        operation_id: String,
+        tool_call_id: String,
+        reason: String,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_delegation_rejection_task(
+                existing_session,
+                operation_id,
+                tool_call_id,
+                reason,
+                event_tx,
+                abort_rx,
+            )
+            .await;
+            let _ = done_tx.send(result.map(PromptTaskResult::DelegationRejection));
         });
 
         Self {
@@ -956,6 +1008,69 @@ async fn run_coding_set_default_agent_profile_task(
     }
 
     Ok(SetDefaultAgentProfileTaskResult { session })
+}
+
+async fn run_coding_delegation_rejection_task(
+    mut session: CodingAgentSession,
+    operation_id: String,
+    tool_call_id: String,
+    reason: String,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> Result<DelegationRejectionTaskResult, CliError> {
+    let fallback_text = format!("Delegation rejected: {operation_id} {tool_call_id}");
+    let mut receiver = session.subscribe_product_events();
+    send_ui_snapshot(&event_tx, &session);
+
+    let mut had_events = false;
+    {
+        let mut rejection = Box::pin(session.run(CodingAgentOperation::RejectDelegation {
+            operation_id,
+            tool_call_id,
+            reason,
+        }));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive delegation rejection abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        had_events = true;
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut rejection => {
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::DelegationRejected => Ok(()),
+                            _ => unreachable!(
+                                "delegation rejection operation returned a different public outcome"
+                            ),
+                        });
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        had_events = true;
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
+    let fallback_notice = if had_events {
+        None
+    } else {
+        Some(fallback_text)
+    };
+
+    Ok(DelegationRejectionTaskResult {
+        session,
+        fallback_notice,
+    })
 }
 
 async fn run_coding_compact_task(

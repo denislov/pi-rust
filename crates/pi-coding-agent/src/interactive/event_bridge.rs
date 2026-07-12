@@ -150,6 +150,7 @@ impl CodingEventBridge {
         self.handle(event.compatibility_event())
     }
 
+    #[allow(dead_code)] // retained for bridge unit tests
     pub(crate) fn handle_product_event(&mut self, event: &ProductEvent) -> Vec<UiEvent> {
         self.push_product_event(event)
     }
