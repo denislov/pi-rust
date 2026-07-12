@@ -112,6 +112,7 @@ async fn interactive_tree_navigation_forks_to_selected_rust_native_leaf() {
     let provider = FauxProvider::with_call_queue(vec![
         FauxProvider::text_call("first answer", StopReason::Stop),
         FauxProvider::text_call("second answer", StopReason::Stop),
+        FauxProvider::text_call("fork continuation", StopReason::Stop),
     ]);
 
     let result = run_scripted_interactive_with_session_dir_and_waits(
@@ -121,6 +122,7 @@ async fn interactive_tree_navigation_forks_to_selected_rust_native_leaf() {
             ("first prompt\r", "first answer"),
             ("second prompt\r", "second answer"),
             ("/tree\r\x1b[A\r", "session.forked"),
+            ("continue selected branch\r", "fork continuation"),
         ],
     )
     .await
@@ -141,6 +143,7 @@ async fn interactive_tree_navigation_forks_to_selected_rust_native_leaf() {
         .expect("forked session should record provenance");
     assert!(forked.contains("first prompt"), "{forked}");
     assert!(!forked.contains("second prompt"), "{forked}");
+    assert!(forked.contains("continue selected branch"), "{forked}");
 }
 
 #[tokio::test]
@@ -150,6 +153,7 @@ async fn interactive_tree_navigation_summarizes_abandoned_leaf_before_forking() 
         FauxProvider::text_call("first answer", StopReason::Stop),
         FauxProvider::text_call("second answer", StopReason::Stop),
         FauxProvider::text_call("model branch summary", StopReason::Stop),
+        FauxProvider::text_call("summary fork continuation", StopReason::Stop),
     ]);
 
     let result = run_scripted_interactive_with_session_dir_and_waits(
@@ -159,6 +163,7 @@ async fn interactive_tree_navigation_summarizes_abandoned_leaf_before_forking() 
             ("first prompt\r", "first answer"),
             ("second prompt\r", "second answer"),
             ("/tree\r\x1b[A\r", "model branch summary"),
+            ("continue summarized branch\r", "summary fork continuation"),
         ],
     )
     .await
@@ -183,6 +188,7 @@ async fn interactive_tree_navigation_summarizes_abandoned_leaf_before_forking() 
         "{forked}"
     );
     assert!(forked.contains("model branch summary"), "{forked}");
+    assert!(forked.contains("continue summarized branch"), "{forked}");
 }
 
 #[tokio::test]

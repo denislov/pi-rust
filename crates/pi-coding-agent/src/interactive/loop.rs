@@ -470,7 +470,13 @@ where
                             )?,
                         );
                     }
-                    finish_prompt(tui, root_id, result, &mut coding_session)?;
+                    finish_prompt(
+                        tui,
+                        root_id,
+                        result,
+                        &mut coding_session,
+                        &mut prompt_context.session_target,
+                    )?;
                     if let Some(session) = coding_session.as_ref() {
                         prompt_context.default_agent_profile_id =
                             session.view().default_agent_profile_id.clone();
@@ -2135,6 +2141,7 @@ fn finish_prompt<T: Terminal>(
     root_id: usize,
     result: PromptTaskCompletion,
     coding_session: &mut Option<CodingAgentSession>,
+    session_target: &mut Option<ResolvedSessionTarget>,
 ) -> Result<(), CliError> {
     if root_settings_show_progress(tui, root_id)? {
         set_terminal_progress(tui, false)?;
@@ -2142,6 +2149,9 @@ fn finish_prompt<T: Terminal>(
     let root = root_mut(tui, root_id)?;
     match result {
         PromptTaskCompletion::Completed(PromptTaskResult::Coding(result)) => {
+            if let Some(target) = result.session_target.clone() {
+                *session_target = Some(target);
+            }
             let completion_notice = result.completion_notice.clone();
             if result.hydrate_transcript {
                 if let Ok(Some(hydration)) = result.session.hydrate_current() {
@@ -2283,6 +2293,7 @@ fn finish_prompt<T: Terminal>(
             *coding_session = Some(result.session);
         }
         PromptTaskCompletion::Completed(PromptTaskResult::ForkSession(result)) => {
+            *session_target = Some(result.session_target.clone());
             let completion_notice = result.completion_notice.clone();
             if result.hydrate_transcript {
                 if let Ok(Some(hydration)) = result.session.hydrate_current() {
@@ -2594,12 +2605,16 @@ mod tests {
             let session_id = session.view().session_id.clone();
             let error = CliError::SessionFailure(format!("{task_name} failed"));
             let mut coding_session = None;
+            let mut session_target = Some(ResolvedSessionTarget::OpenOrCreateId(
+                "sess_before_failure".into(),
+            ));
 
             finish_prompt(
                 &mut tui,
                 root_id,
                 PromptTaskCompletion::Failed(PromptTaskFailure { session, error }),
                 &mut coding_session,
+                &mut session_target,
             )
             .unwrap();
 
@@ -2607,6 +2622,11 @@ mod tests {
                 .as_mut()
                 .unwrap_or_else(|| panic!("{task_name} must restore the live owner"));
             assert_eq!(restored.view().session_id, session_id, "{task_name}");
+            assert!(matches!(
+                session_target,
+                Some(ResolvedSessionTarget::OpenOrCreateId(ref target))
+                    if target == "sess_before_failure"
+            ));
             assert!(matches!(
                 restored
                     .run(CodingAgentOperation::PluginLoad)

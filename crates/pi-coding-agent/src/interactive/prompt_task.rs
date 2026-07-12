@@ -10,6 +10,7 @@ use crate::coding_session::{
     CodingAgentSessionOptions, CodingSessionError, ProductEvent, ProfileId, PromptTurnOptions,
     PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
 };
+use crate::interactive::event_bridge::CodingEventBridge;
 use crate::interactive::root::{
     PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
 };
@@ -50,12 +51,14 @@ pub(super) struct PromptTaskFailure {
 pub(super) struct CodingPromptTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: PromptTurnOutcome,
+    pub(super) session_target: Option<ResolvedSessionTarget>,
     pub(super) completion_notice: Option<String>,
     pub(super) hydrate_transcript: bool,
 }
 
 pub(super) struct ForkSessionTaskResult {
     pub(super) session: CodingAgentSession,
+    pub(super) session_target: ResolvedSessionTarget,
     pub(super) completion_notice: Option<String>,
     pub(super) hydrate_transcript: bool,
 }
@@ -783,6 +786,14 @@ fn complete_owned_task<T>(
     }
 }
 
+fn product_event_has_visible_ui(bridge: &mut CodingEventBridge, event: &ProductEvent) -> bool {
+    !bridge.handle_product_event(event).is_empty()
+}
+
+fn active_session_target(session: &CodingAgentSession) -> ResolvedSessionTarget {
+    ResolvedSessionTarget::OpenOrCreateId(session.view().session_id.clone())
+}
+
 async fn run_coding_prompt_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -863,6 +874,7 @@ async fn run_coding_prompt_task(
         PromptTaskResult::Coding(CodingPromptTaskResult {
             session,
             outcome,
+            session_target: None,
             completion_notice: None,
             hydrate_transcript: false,
         })
@@ -1141,7 +1153,8 @@ async fn run_coding_delegation_rejection_task(
         let mut receiver = session.subscribe_product_events();
         send_ui_snapshot(&event_tx, &session);
 
-        let mut had_events = false;
+        let mut projection = CodingEventBridge::new();
+        let mut had_visible_events = false;
         let mut rejection = Box::pin(session.run(CodingAgentOperation::RejectDelegation {
             operation_id,
             tool_call_id,
@@ -1156,7 +1169,7 @@ async fn run_coding_delegation_rejection_task(
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
-                        had_events = true;
+                        had_visible_events |= product_event_has_visible_ui(&mut projection, &event);
                         let _ = event_tx.send(PromptTaskEvent::Coding(event));
                     }
                 }
@@ -1174,11 +1187,11 @@ async fn run_coding_delegation_rejection_task(
         }?;
 
         while let Ok(Some(event)) = receiver.try_recv() {
-            had_events = true;
+            had_visible_events |= product_event_has_visible_ui(&mut projection, &event);
             let _ = event_tx.send(PromptTaskEvent::Coding(event));
         }
 
-        Ok(if had_events {
+        Ok(if had_visible_events {
             None
         } else {
             Some(fallback_text)
@@ -1259,6 +1272,7 @@ async fn run_coding_compact_task(
         PromptTaskResult::Coding(CodingPromptTaskResult {
             session,
             outcome,
+            session_target: None,
             completion_notice: None,
             hydrate_transcript: false,
         })
@@ -1646,6 +1660,7 @@ async fn run_coding_branch_summary_task(
         PromptTaskResult::Coding(CodingPromptTaskResult {
             session,
             outcome,
+            session_target: None,
             completion_notice: None,
             hydrate_transcript: false,
         })
@@ -1754,9 +1769,11 @@ async fn run_coding_branch_summary_navigation_task(
     .await;
 
     complete_owned_task(session, result, |session, outcome| {
+        let session_target = active_session_target(&session);
         PromptTaskResult::Coding(CodingPromptTaskResult {
             session,
             outcome,
+            session_target: Some(session_target),
             completion_notice: Some("Navigated to selected point".to_string()),
             hydrate_transcript: true,
         })
@@ -1826,8 +1843,10 @@ async fn run_coding_fork_session_task(
     .await;
 
     complete_owned_task(session, result, |session, ()| {
+        let session_target = active_session_target(&session);
         PromptTaskResult::ForkSession(ForkSessionTaskResult {
             session,
+            session_target,
             completion_notice,
             hydrate_transcript: true,
         })
@@ -1934,9 +1953,7 @@ fn target_looks_like_legacy_jsonl(target: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding_session::{
-        CodingAgentEvent, ProductEventSequence,
-    };
+    use crate::coding_session::{CodingAgentEvent, ProductEventSequence};
 
     fn product_event(sequence: u64, event: CodingAgentEvent) -> ProductEvent {
         ProductEvent::from_compat_event(ProductEventSequence::new(sequence), event)

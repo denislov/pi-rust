@@ -470,6 +470,90 @@ system_prompt = "Coder child instructions."
 }
 
 #[tokio::test]
+async fn scripted_interactive_delegation_rejection_preserves_owner_and_visible_fallback_semantics()
+{
+    let _guard = ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+    std::fs::write(
+        dir.path().join("agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "always"
+allowed_agents = ["coder"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+system_prompt = "Coder child instructions."
+"#,
+    )
+    .unwrap();
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
+
+    let parent_ready = Arc::new(Notify::new());
+    let continuation_started = Arc::new(Notify::new());
+    let calls = Arc::new(Mutex::new(0));
+    let provider = Arc::new(DelegationConfirmationProvider {
+        calls: Arc::clone(&calls),
+        parent_ready: Arc::clone(&parent_ready),
+        child_started: Arc::clone(&continuation_started),
+    });
+    let output = run_observed_interactive_with_timeout(
+        provider,
+        move |mut input| async move {
+            let parent_ready = parent_ready.notified();
+            tokio::pin!(parent_ready);
+            input
+                .send("/agent\r\x1b[B\rdelegating\rplan feature\r")
+                .unwrap();
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut parent_ready => break,
+                    _ = input.wait_for_idle() => {}
+                }
+            }
+            input.wait_for_idle().await;
+            input.send("/delegations\r").unwrap();
+            input.wait_for_consumed("/delegations\r").await;
+            input.send("r").unwrap();
+            input.wait_for_idle().await;
+
+            let continuation_started = continuation_started.notified();
+            tokio::pin!(continuation_started);
+            input.send("continue after rejection\r").unwrap();
+            input.wait_for_consumed("continue after rejection\r").await;
+            continuation_started.await;
+            input.wait_for_idle().await;
+            drop(input);
+        },
+        DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT,
+        "rejecting a pending delegation and continuing with the restored owner",
+    )
+    .await;
+
+    assert_eq!(*calls.lock().unwrap(), 3, "{output:?}");
+    assert!(output.contains("rejected:"), "{output:?}");
+    assert!(output.contains("continue after rejection"), "{output:?}");
+    assert!(!output.contains("Delegation rejected: op_"), "{output:?}");
+    assert!(output.contains("status: idle"), "{output:?}");
+}
+
+#[tokio::test]
 async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
     let provider = FauxProvider::new(vec![text_response("progress done")]);
     let output = run_scripted_interactive(provider, "show progress\r")
@@ -525,7 +609,10 @@ async fn scripted_interactive_clone_after_rust_native_prompt_creates_session() {
 #[tokio::test]
 async fn scripted_interactive_fork_after_rust_native_prompt_creates_session() {
     let dir = tempfile::tempdir().unwrap();
-    let provider = FauxProvider::new(vec![text_response("assistant reply")]);
+    let provider = FauxProvider::new(vec![
+        text_response("assistant reply"),
+        text_response("fork continuation reply"),
+    ]);
 
     let output = run_scripted_interactive_with_session_dir_size_and_waits(
         provider,
@@ -533,6 +620,7 @@ async fn scripted_interactive_fork_after_rust_native_prompt_creates_session() {
         vec![
             ("hello\r", "assistant reply"),
             ("/fork\r", "session.forked"),
+            ("continue in fork\r", "fork continuation reply"),
         ],
         80,
         24,
@@ -555,6 +643,12 @@ async fn scripted_interactive_fork_after_rust_native_prompt_creates_session() {
             .contains("session.forked")),
         "{files:?}"
     );
+    let forked = files
+        .iter()
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .find(|events| events.contains("session.forked"))
+        .expect("forked session should contain the fork event");
+    assert!(forked.contains("continue in fork"), "{forked}");
 }
 
 #[tokio::test]
