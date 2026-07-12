@@ -1,10 +1,164 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 #[test]
 fn external_consumer_fixtures_enforce_the_stable_facade_boundary() {
     run_external_consumer_fixtures();
+}
+
+#[derive(Clone, Copy)]
+struct CompileFixture {
+    category: &'static str,
+    access_path: &'static str,
+    source: &'static str,
+}
+
+const FAIL_FIXTURES: [CompileFixture; 12] = [
+    CompileFixture {
+        category: "operation-dispatch",
+        access_path: "api",
+        source: "operation_dispatch_api.rs",
+    },
+    CompileFixture {
+        category: "operation-dispatch",
+        access_path: "root",
+        source: "operation_dispatch_root.rs",
+    },
+    CompileFixture {
+        category: "operation-dispatch",
+        access_path: "doc-hidden",
+        source: "operation_dispatch_hidden.rs",
+    },
+    CompileFixture {
+        category: "services",
+        access_path: "api",
+        source: "services_api.rs",
+    },
+    CompileFixture {
+        category: "services",
+        access_path: "root",
+        source: "services_root.rs",
+    },
+    CompileFixture {
+        category: "services",
+        access_path: "doc-hidden",
+        source: "services_hidden.rs",
+    },
+    CompileFixture {
+        category: "plugin-options-registries",
+        access_path: "api",
+        source: "plugins_api.rs",
+    },
+    CompileFixture {
+        category: "plugin-options-registries",
+        access_path: "root",
+        source: "plugins_root.rs",
+    },
+    CompileFixture {
+        category: "plugin-options-registries",
+        access_path: "doc-hidden",
+        source: "plugins_hidden.rs",
+    },
+    CompileFixture {
+        category: "flow-contracts",
+        access_path: "api",
+        source: "flow_api.rs",
+    },
+    CompileFixture {
+        category: "flow-contracts",
+        access_path: "root",
+        source: "flow_root.rs",
+    },
+    CompileFixture {
+        category: "flow-contracts",
+        access_path: "doc-hidden",
+        source: "flow_hidden.rs",
+    },
+];
+
+fn run_external_consumer_fixtures() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture_root = crate_root.join("tests/fixtures/api_boundary");
+    let consumer = tempfile::tempdir().expect("create external consumer directory");
+    let source_dir = consumer.path().join("src");
+    fs::create_dir(&source_dir).expect("create external consumer source directory");
+    fs::write(
+        consumer.path().join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"pi-coding-agent-api-boundary-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\npi-coding-agent = {{ path = {:?} }}\n",
+            crate_root
+        ),
+    )
+    .expect("write external consumer manifest");
+    let workspace_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("pi-coding-agent should live below the workspace root");
+    fs::copy(
+        workspace_root.join("Cargo.lock"),
+        consumer.path().join("Cargo.lock"),
+    )
+    .expect("copy the workspace lockfile for deterministic offline resolution");
+
+    let positive = compile_fixture(consumer.path(), &fixture_root.join("pass/stable_facade.rs"));
+    assert!(
+        positive.status.success(),
+        "stable facade external consumer should compile:\n{}",
+        command_diagnostics(&positive)
+    );
+
+    let expected_matrix = FAIL_FIXTURES
+        .iter()
+        .map(|fixture| (fixture.category, fixture.access_path))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        expected_matrix.len(),
+        12,
+        "negative fixture matrix must independently cover four categories through three paths"
+    );
+
+    for fixture in FAIL_FIXTURES {
+        let output = compile_fixture(
+            consumer.path(),
+            &fixture_root.join("fail").join(fixture.source),
+        );
+        let diagnostics = command_diagnostics(&output);
+        assert!(
+            !output.status.success(),
+            "{} must remain inaccessible through the {} path",
+            fixture.category,
+            fixture.access_path
+        );
+        assert!(
+            diagnostics.contains("error[E0432]") || diagnostics.contains("error[E0603]"),
+            "{} through {} should fail because an import is unresolved or private, not for an unrelated compiler reason:\n{}",
+            fixture.category,
+            fixture.access_path,
+            diagnostics
+        );
+    }
+}
+
+fn compile_fixture(consumer_root: &Path, fixture: &Path) -> Output {
+    fs::copy(fixture, consumer_root.join("src/main.rs")).unwrap_or_else(|error| {
+        panic!("copy fixture {}: {error}", fixture.display());
+    });
+    Command::new(env!("CARGO"))
+        .args(["check", "--offline", "--quiet"])
+        .current_dir(consumer_root)
+        .env("CARGO_TARGET_DIR", consumer_root.join("target"))
+        .output()
+        .unwrap_or_else(|error| panic!("run Cargo for fixture {}: {error}", fixture.display()))
+}
+
+fn command_diagnostics(output: &Output) -> String {
+    format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 #[test]
