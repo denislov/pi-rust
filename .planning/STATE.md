@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 03
 current_phase_name: production-adapter-convergence
 status: executing
-stopped_at: Completed 03-04-PLAN.md
-last_updated: "2026-07-12T00:26:59.762Z"
+stopped_at: Completed 03-06-PLAN.md - Phase 03 complete
+last_updated: "2026-07-12T03:49:18.221Z"
 last_activity: 2026-07-12
 last_activity_desc: Completed 03-04 interactive background operation convergence
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 12
-  completed_plans: 10
-  percent: 40
+  completed_plans: 12
+  percent: 60
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 ## Current Position
 
 Phase: 03 (production-adapter-convergence) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-07-12 — Completed 03-04 interactive background operation convergence
 
@@ -65,6 +65,7 @@ Progress: [████████░░] 83%
 | Phase 03 P02 | 6 min | 2 tasks | 1 files |
 | Phase 03 P03 | 9 min | 2 tasks | 2 files |
 | Phase 03 P04 | 13 min | 3 tasks | 3 files |
+| Phase 03 P06 | 28 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 03-02: All four select-driven RPC background operations (prompt, agent, team, delegation approval) route through CodingAgentSession::run(CodingAgentOperation) with exhaustive outcome extraction; #[allow(deprecated)] removed from three RPC handlers.
 - [Phase 03]: 03-03: All five short-lived RPC mutation commands (self-healing edit, default-profile mutation, delegation rejection, plugin load, plugin command) route through CodingAgentSession::run(CodingAgentOperation) with exhaustive outcome extraction; narrow source guard locks canonical operations across src/protocol/rpc/. - Switched profile/rejection handlers to take()/restore ownership pattern; drain events and restore owner on every error path; guard covers 14 replaced workflow methods.
 - [Phase ?]: 03-04: All nine ordinary interactive background workflows (prompt, agent, team, approval, compact, self-heal, plugin reload/command, direct branch summary) route through CodingAgentSession::run(CodingAgentOperation) with exhaustive outcome extraction; six #[allow(deprecated)] removed; PluginReloadTaskResult.outcome changed to public CodingAgentPluginLoadOutcome; direct branch summary uses AlwaysCreate with hydrate_transcript: false; navigation variant reserved for Plan 06.
+- [Phase 03]: 03-06: Direct /fork and summary-before-fork tree navigation route through CodingAgentSession::run(CodingAgentOperation::ForkSession/BranchSummary) with one receiver spanning both operations; no-owner tree fallback uses the same canonical fork task; fork_rust_native_choice removed; narrow interactive source guard and SwitchActiveLeaf audit close Phase 3.
 
 ### Pending Todos
 
@@ -111,6 +113,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-12T00:25:16.605Z
-Stopped at: Completed 03-04-PLAN.md
+Last session: 2026-07-12T03:49:18.213Z
+Stopped at: Completed 03-06-PLAN.md - Phase 03 complete
 Resume file: None

@@ -37,9 +37,9 @@
 
 - [x] **INTER-01**: Interactive prompt, agent, team, compaction, self-healing, plugin, and branch-summary background work executes through canonical operations
 - [ ] **INTER-02**: Interactive profile mutation and delegation rejection execute through canonical operations
-- [ ] **INTER-03**: Session fork and navigation use canonical operations and refresh snapshots and projections after transitions
+- [x] **INTER-03**: Session fork and navigation use canonical operations and refresh snapshots and projections after transitions
 - [x] **INTER-04**: The interactive migration preserves event/control multiplexing, subscriber continuity, product-event sequencing, and UI behavior
-- [ ] **INTER-05**: Interactive production code contains no replaced broad workflow calls or local deprecation suppressions
+- [x] **INTER-05**: Interactive production code contains no replaced broad workflow calls or local deprecation suppressions
 
 ### Test Migration
 
@@ -114,9 +114,9 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | RPC-04 | Phase 3 | Complete |
 | INTER-01 | Phase 3 | Complete |
 | INTER-02 | Phase 3 | Pending |
-| INTER-03 | Phase 3 | Pending |
+| INTER-03 | Phase 3 | Complete |
 | INTER-04 | Phase 3 | Complete |
-| INTER-05 | Phase 3 | Pending |
+| INTER-05 | Phase 3 | Complete |
 | TEST-01 | Phase 4 | Pending |
 | TEST-02 | Phase 4 | Pending |
 | TEST-03 | Phase 4 | Pending |
