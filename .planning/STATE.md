@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 03
 current_phase_name: production-adapter-convergence
-status: needs_review
-stopped_at: Human verification required for Phase 03
-last_updated: "2026-07-12T10:23:26.138Z"
+status: executing
+stopped_at: Completed 03-08-PLAN.md
+last_updated: "2026-07-12T14:02:18.853Z"
 last_activity: 2026-07-12
-last_activity_desc: Verification requires 2 human checks
+last_activity_desc: Completed Phase 03 Plan 08
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 13
-  completed_plans: 13
-  percent: 60
+  completed_phases: 2
+  total_plans: 15
+  completed_plans: 14
+  percent: 93
 ---
 
 # Project State
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 
 ## Current Position
 
-Phase: 03 (production-adapter-convergence) — NEEDS REVIEW
-Plan: 7 of 7
-Status: Human verification required
-Last activity: 2026-07-12 — Verification requires 2 human checks
+Phase: 03 (production-adapter-convergence) — EXECUTING
+Plan: 9 of 9
+Status: Ready to execute
+Last activity: 2026-07-12 — Completed Phase 03 Plan 08
 
-Progress: [██████████] 100%
+Progress: [█████████░] 93%
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [██████████] 100%
 | Phase 03 P04 | 13 min | 3 tasks | 3 files |
 | Phase 03 P06 | 28 min | 3 tasks | 7 files |
 | Phase 03 P07 | 1h 14m | 3 tasks | 5 files |
+| Phase 03 P08 | 17min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 03-04: All nine ordinary interactive background workflows (prompt, agent, team, approval, compact, self-heal, plugin reload/command, direct branch summary) route through CodingAgentSession::run(CodingAgentOperation) with exhaustive outcome extraction; six #[allow(deprecated)] removed; PluginReloadTaskResult.outcome changed to public CodingAgentPluginLoadOutcome; direct branch summary uses AlwaysCreate with hydrate_transcript: false; navigation variant reserved for Plan 06.
 - [Phase 03]: 03-06: Direct /fork and summary-before-fork tree navigation route through CodingAgentSession::run(CodingAgentOperation::ForkSession/BranchSummary) with one receiver spanning both operations; no-owner tree fallback uses the same canonical fork task; fork_rust_native_choice removed; narrow interactive source guard and SwitchActiveLeaf audit close Phase 3.
 - [Phase 03]: 03-07: Interactive PromptTask failures return the live owner through one completion envelope; successful forks synchronize the next session target; delegation fallback follows visible UiEvent projection; named per-runner guards replace magic subscription counts.
+- [Phase 03]: 03-08: Preserve PartialCommit as a structured CliError carrying exact operation ID and message. — Durable uncertainty must remain attributable across adapter task channels.
+- [Phase 03]: 03-08: Keep persistence fault injection behind exactly two specialized cfg(test) owner methods and one durable pending-delegation fixture method. — Interactive tests need real fixtures without exposing selectors, services, queues, or production hooks.
 
 ### Pending Todos
 
@@ -115,6 +118,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-12T10:23:26.138Z
-Stopped at: Human verification required for Phase 03
+Last session: 2026-07-12T13:59:59.797Z
+Stopped at: Completed 03-08-PLAN.md
 Resume file: None
