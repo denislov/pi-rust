@@ -2313,6 +2313,7 @@ fn finish_prompt<T: Terminal>(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+    use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
     use crate::coding_session::{
         CapabilityStatus, CodingAgentCapabilities, CodingAgentEvent, CodingAgentSession,
         CodingAgentSessionOptions, CodingAgentSessionView, ProductEvent, ProductEventSequence,
@@ -2568,6 +2569,47 @@ mod tests {
                 .iter()
                 .any(|item| matches!(item, TranscriptItem::System { text } if text.contains("Restored session")))
         );
+    }
+
+    #[tokio::test]
+    async fn prompt_task_failures_restore_the_live_owner_before_projecting_errors() {
+        for task_name in [
+            "set default agent profile",
+            "delegation rejection",
+            "fork session",
+            "pre-existing prompt",
+        ] {
+            let (mut tui, root_id) = test_tui();
+            let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+                .await
+                .unwrap();
+            let session_id = session.view().session_id.clone();
+            let error = CliError::SessionFailure(format!("{task_name} failed"));
+            let mut coding_session = None;
+
+            finish_prompt(
+                &mut tui,
+                root_id,
+                PromptTaskCompletion::Failed(PromptTaskFailure { session, error }),
+                &mut coding_session,
+            )
+            .unwrap();
+
+            let restored = coding_session
+                .as_mut()
+                .unwrap_or_else(|| panic!("{task_name} must restore the live owner"));
+            assert_eq!(restored.view().session_id, session_id, "{task_name}");
+            assert!(matches!(
+                restored.run(CodingAgentOperation::PluginLoad).await.unwrap(),
+                CodingAgentOperationOutcome::PluginLoad(_)
+            ));
+
+            let root = root_ref(&tui, root_id).unwrap();
+            assert_eq!(root.status, InteractiveStatus::Idle, "{task_name}");
+            assert!(root.transcript.items().iter().any(|item| {
+                matches!(item, TranscriptItem::Error { text } if text == &format!("{task_name} failed"))
+            }));
+        }
     }
 
     #[test]
