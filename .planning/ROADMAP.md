@@ -67,7 +67,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. Interactive fork and navigation retain subscriber continuity, product-event sequencing, and refreshed snapshots and projections after transitions.
   5. JSON, print, RPC, and interactive production sources contain neither replaced broad workflow calls nor local deprecation suppressions for those calls.
 
-**Plans**: 6/6 plans complete
+**Plans**: 6/7 plans complete
 
 **Wave 1**
 
@@ -92,6 +92,10 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 **Wave 6** *(blocked on Wave 5 completion)*
 
 - [x] 03-06-PLAN.md — Migrate interactive navigation and run the complete Phase 3 closure gate.
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 03-07-PLAN.md — Close interactive owner-continuity, fork-target, fallback-visibility, and boundary-test gaps.
 
 ### Phase 4: Test Convergence and Compatibility Deletion
 
