@@ -546,17 +546,6 @@ impl CodingAgentSession {
         self.profile_registry.diagnostics().to_vec()
     }
 
-    pub fn set_default_agent_profile_id(
-        &mut self,
-        profile_id: impl Into<ProfileId>,
-    ) -> Result<(), CodingSessionError> {
-        let profile_id = profile_id.into();
-        match self.run_sync_mut_operation(Operation::SetDefaultAgentProfile { profile_id })? {
-            OperationOutcome::SetDefaultAgentProfile => Ok(()),
-            _ => unreachable!("set default agent profile operation returned wrong outcome"),
-        }
-    }
-
     pub fn pending_delegation_confirmations(&self) -> Vec<PendingDelegationConfirmation> {
         IntentRouter::admit_query(
             &self.operation_control,
@@ -674,167 +663,6 @@ impl CodingAgentSession {
         }
     }
 
-    #[deprecated(note = "use CodingAgentSession::run instead")]
-    pub async fn prompt(
-        &mut self,
-        options: PromptTurnOptions,
-    ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        match self.run_operation(Operation::Prompt(options)).await? {
-            OperationOutcome::Prompt(outcome) => Ok(outcome),
-            OperationOutcome::ManualCompaction(_) => {
-                unreachable!("prompt operation returned manual compaction outcome")
-            }
-            OperationOutcome::PluginLoad(_) => {
-                unreachable!("prompt operation returned plugin load outcome")
-            }
-            OperationOutcome::PluginCommand(_) => {
-                unreachable!("prompt operation returned plugin command outcome")
-            }
-            OperationOutcome::DelegationApproval => {
-                unreachable!("prompt operation returned delegation approval outcome")
-            }
-            OperationOutcome::DelegationRejection => {
-                unreachable!("prompt operation returned delegation rejection outcome")
-            }
-            OperationOutcome::BranchSummary(_) => {
-                unreachable!("prompt operation returned branch summary outcome")
-            }
-            OperationOutcome::SelfHealingEdit(_) => {
-                unreachable!("prompt operation returned self-healing edit outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("prompt operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("prompt operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => unreachable!("prompt operation returned export outcome"),
-            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
-                unreachable!("prompt operation returned navigation outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!("prompt operation returned set default agent profile outcome")
-            }
-        }
-    }
-
-    #[deprecated(note = "use CodingAgentSession::run instead")]
-    pub async fn compact(
-        &mut self,
-        options: PromptTurnOptions,
-    ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        match self
-            .run_operation(Operation::ManualCompaction(options))
-            .await?
-        {
-            OperationOutcome::ManualCompaction(outcome) => Ok(outcome),
-            OperationOutcome::Prompt(_) => {
-                unreachable!("manual compaction operation returned prompt outcome")
-            }
-            OperationOutcome::PluginLoad(_) => {
-                unreachable!("manual compaction operation returned plugin load outcome")
-            }
-            OperationOutcome::PluginCommand(_) => {
-                unreachable!("manual compaction operation returned plugin command outcome")
-            }
-            OperationOutcome::DelegationApproval => {
-                unreachable!("manual compaction operation returned delegation approval outcome")
-            }
-            OperationOutcome::DelegationRejection => {
-                unreachable!("manual compaction operation returned delegation rejection outcome")
-            }
-            OperationOutcome::BranchSummary(_) => {
-                unreachable!("manual compaction operation returned branch summary outcome")
-            }
-            OperationOutcome::SelfHealingEdit(_) => {
-                unreachable!("manual compaction operation returned self-healing edit outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("manual compaction operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("manual compaction operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => {
-                unreachable!("manual compaction operation returned export outcome")
-            }
-            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
-                unreachable!("manual compaction operation returned navigation outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!(
-                    "manual compaction operation returned set default agent profile outcome"
-                )
-            }
-        }
-    }
-
-    #[allow(deprecated)]
-    pub async fn self_healing_edit(
-        &mut self,
-        path: impl Into<String>,
-        replacements: Vec<SelfHealingEditReplacement>,
-    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
-        self.self_healing_edit_with_options(SelfHealingEditRequest::new(path, replacements))
-            .await
-    }
-
-    #[deprecated(note = "use CodingAgentSession::run instead")]
-    pub async fn self_healing_edit_with_options(
-        &mut self,
-        request: SelfHealingEditRequest,
-    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
-        match self
-            .run_operation(Operation::SelfHealingEdit(request))
-            .await?
-        {
-            OperationOutcome::SelfHealingEdit(outcome) => Ok(outcome),
-            OperationOutcome::Prompt(_) => {
-                unreachable!("self-healing edit operation returned prompt outcome")
-            }
-            OperationOutcome::ManualCompaction(_) => {
-                unreachable!("self-healing edit operation returned manual compaction outcome")
-            }
-            OperationOutcome::PluginLoad(_) => {
-                unreachable!("self-healing edit operation returned plugin load outcome")
-            }
-            OperationOutcome::PluginCommand(_) => {
-                unreachable!("self-healing edit operation returned plugin command outcome")
-            }
-            OperationOutcome::DelegationApproval => {
-                unreachable!("self-healing edit operation returned delegation approval outcome")
-            }
-            OperationOutcome::DelegationRejection => {
-                unreachable!("self-healing edit operation returned delegation rejection outcome")
-            }
-            OperationOutcome::BranchSummary(_) => {
-                unreachable!("self-healing edit operation returned branch summary outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("self-healing edit operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("self-healing edit operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => {
-                unreachable!("self-healing edit operation returned export outcome")
-            }
-            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
-                unreachable!("self-healing edit operation returned navigation outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!(
-                    "self-healing edit operation returned set default agent profile outcome"
-                )
-            }
-        }
-    }
-
-    pub(crate) async fn reload_plugins(&mut self) -> Result<PluginLoadOutcome, CodingSessionError> {
-        self.load_plugins(self.default_plugin_load_options.clone())
-            .await
-    }
-
     pub(crate) fn plugin_commands(&self) -> Vec<CommandDefinition> {
         self.plugin_service.collect_commands()
     }
@@ -849,55 +677,6 @@ impl CodingAgentSession {
 
     pub(crate) fn plugin_keybindings(&self) -> Vec<KeybindDefinition> {
         self.plugin_service.collect_keybindings()
-    }
-
-    pub(crate) fn run_plugin_command(
-        &mut self,
-        command_id: &str,
-        args: serde_json::Value,
-    ) -> Result<String, CodingSessionError> {
-        match self.run_sync_operation(Operation::PluginCommand {
-            command_id: command_id.to_owned(),
-            args,
-        })? {
-            OperationOutcome::PluginCommand(output) => Ok(output),
-            OperationOutcome::DelegationApproval => {
-                unreachable!("plugin command operation returned delegation approval outcome")
-            }
-            OperationOutcome::DelegationRejection => {
-                unreachable!("plugin command operation returned delegation rejection outcome")
-            }
-            OperationOutcome::Prompt(_) => {
-                unreachable!("plugin command operation returned prompt outcome")
-            }
-            OperationOutcome::ManualCompaction(_) => {
-                unreachable!("plugin command operation returned manual compaction outcome")
-            }
-            OperationOutcome::PluginLoad(_) => {
-                unreachable!("plugin command operation returned plugin load outcome")
-            }
-            OperationOutcome::BranchSummary(_) => {
-                unreachable!("plugin command operation returned branch summary outcome")
-            }
-            OperationOutcome::SelfHealingEdit(_) => {
-                unreachable!("plugin command operation returned self-healing edit outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("plugin command operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("plugin command operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => {
-                unreachable!("plugin command operation returned export outcome")
-            }
-            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
-                unreachable!("plugin command operation returned navigation outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!("plugin command operation returned set default agent profile outcome")
-            }
-        }
     }
 
     pub(crate) async fn load_plugins(
@@ -2548,6 +2327,20 @@ mod tests {
         })
     }
 
+    fn prompt_outcome(outcome: CodingAgentOperationOutcome) -> PromptTurnOutcome {
+        match outcome {
+            CodingAgentOperationOutcome::Prompt(outcome) => outcome,
+            other => panic!("expected prompt outcome, got {other:?}"),
+        }
+    }
+
+    fn compact_outcome(outcome: CodingAgentOperationOutcome) -> PromptTurnOutcome {
+        match outcome {
+            CodingAgentOperationOutcome::Compact(outcome) => outcome,
+            other => panic!("expected compaction outcome, got {other:?}"),
+        }
+    }
+
     fn echo_tool() -> AgentTool {
         AgentTool {
             name: "echo".into(),
@@ -2781,6 +2574,7 @@ mod tests {
             ));
         let mut events = session.subscribe();
 
+        // D-03: public PluginLoad cannot inject explicit candidates or registries.
         let outcome = session.load_plugins(options).await.unwrap();
 
         assert_eq!(outcome.loaded_plugin_ids, vec!["session-plugin"]);
@@ -2800,10 +2594,16 @@ mod tests {
                 .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged { .. }))
         );
 
-        session
-            .prompt(prompt_options(api, "use plugin"))
-            .await
-            .unwrap();
+        assert!(matches!(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "use plugin"
+                )))
+                .await
+                .unwrap(),
+            CodingAgentOperationOutcome::Prompt(_)
+        ));
 
         let contexts = contexts.lock().unwrap();
         let tools = contexts[0].tools.as_ref().unwrap();
@@ -2837,6 +2637,7 @@ mod tests {
                 PluginRegistry::new(),
             ));
 
+        // D-03: public PluginLoad cannot inject explicit candidates or registries.
         session.load_plugins(options).await.unwrap();
 
         let event_log = std::fs::read_to_string(
@@ -2913,7 +2714,10 @@ runtime = "lua"
         .unwrap();
         let mut events = session.subscribe();
 
-        let outcome = session.reload_plugins().await.unwrap();
+        let outcome = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
+        let CodingAgentOperationOutcome::PluginLoad(outcome) = outcome else {
+            panic!("plugin-load operation returned another outcome")
+        };
 
         assert!(outcome.loaded_plugin_ids.is_empty());
         assert_eq!(outcome.diagnostics.len(), 2);
@@ -2956,7 +2760,15 @@ runtime = "lua"
         .unwrap();
         let first = session.current_capability_generation_for_tests();
 
-        session.set_default_agent_profile_id("reviewer").unwrap();
+        assert!(matches!(
+            session
+                .run(CodingAgentOperation::SetDefaultAgentProfile {
+                    profile_id: ProfileId::from("reviewer"),
+                })
+                .await
+                .unwrap(),
+            CodingAgentOperationOutcome::DefaultAgentProfileChanged
+        ));
         let second = session.current_capability_generation_for_tests();
 
         assert_eq!(first.get() + 1, second.get());
@@ -2980,7 +2792,8 @@ runtime = "lua"
         .unwrap();
         let handle = session.prompt_control_handle().unwrap();
 
-        let mut prompt = Box::pin(session.prompt(prompt_options(api, "hello")));
+        let mut prompt =
+            Box::pin(session.run(CodingAgentOperation::Prompt(prompt_options(api, "hello"))));
         tokio::select! {
             started = started_rx => started.unwrap(),
             result = &mut prompt => panic!("prompt finished before provider blocked: {result:?}"),
@@ -2988,6 +2801,9 @@ runtime = "lua"
         handle.abort("user cancelled").unwrap();
 
         let outcome = prompt.await.unwrap();
+        let CodingAgentOperationOutcome::Prompt(outcome) = outcome else {
+            panic!("prompt operation returned another outcome")
+        };
 
         assert!(
             matches!(
@@ -3029,7 +2845,8 @@ runtime = "lua"
             .unwrap();
         let handle = session.prompt_control_handle().unwrap();
 
-        let mut prompt = Box::pin(session.prompt(prompt_options(api, "hello")));
+        let mut prompt =
+            Box::pin(session.run(CodingAgentOperation::Prompt(prompt_options(api, "hello"))));
         tokio::select! {
             started = started_rx => started.unwrap(),
             result = &mut prompt => panic!("prompt finished before provider blocked: {result:?}"),
@@ -3038,6 +2855,9 @@ runtime = "lua"
         release_tx.send(()).unwrap();
 
         let outcome = prompt.await.unwrap();
+        let CodingAgentOperationOutcome::Prompt(outcome) = outcome else {
+            panic!("prompt operation returned another outcome")
+        };
 
         assert!(matches!(
             outcome,
@@ -3210,7 +3030,10 @@ runtime = "lua"
             .unwrap();
 
         let error = session
-            .set_default_agent_profile_id("agent-main")
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: ProfileId::from("agent-main"),
+            })
+            .await
             .unwrap_err();
 
         assert_eq!(error.code(), "busy");
@@ -3257,21 +3080,30 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let target_leaf_id = match session
-            .prompt(prompt_options(api, "root question"))
-            .await
-            .unwrap()
-        {
+        let target_leaf_id = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "root question",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
             } => leaf_id,
             other => panic!("expected root prompt success, got {other:?}"),
         };
-        session
-            .prompt(prompt_options(api, "branch question"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "branch question",
+                )))
+                .await
+                .unwrap(),
+        );
 
         let outcome = session
             .run(CodingAgentOperation::SwitchActiveLeaf {
@@ -3318,21 +3150,30 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let target_leaf_id = match session
-            .prompt(prompt_options(api, "keep prompt"))
-            .await
-            .unwrap()
-        {
+        let target_leaf_id = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "keep prompt",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
             } => leaf_id,
             other => panic!("expected selected prompt success, got {other:?}"),
         };
-        session
-            .prompt(prompt_options(api, "drop prompt"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "drop prompt",
+                )))
+                .await
+                .unwrap(),
+        );
         let original_session_id = session.persistent_session_service().session_id().to_owned();
 
         let outcome = session
@@ -3392,11 +3233,15 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let target_leaf_id = match session
-            .prompt(prompt_options(api, "keep prompt"))
-            .await
-            .unwrap()
-        {
+        let target_leaf_id = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "keep prompt",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
@@ -3405,6 +3250,8 @@ runtime = "lua"
         };
         let mut registry = PluginRegistry::new();
         registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
+        // D-03: public PluginLoad cannot inject the command registry used to
+        // verify plugin capability continuity across a fork.
         session
             .load_plugins(
                 PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
@@ -3500,21 +3347,30 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let target_leaf_id = match session
-            .prompt(prompt_options(api, "root question"))
-            .await
-            .unwrap()
-        {
+        let target_leaf_id = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "root question",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
             } => leaf_id,
             other => panic!("expected root prompt success, got {other:?}"),
         };
-        session
-            .prompt(prompt_options(api, "branch question"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "branch question",
+                )))
+                .await
+                .unwrap(),
+        );
         let manifest_path = session
             .persistent_session_service()
             .session_dir()
@@ -3882,7 +3738,12 @@ runtime = "lua"
         let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
         let mut events = session.subscribe();
 
-        let outcome = session.prompt(prompt_options(api, "hello")).await.unwrap();
+        let outcome = prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(api, "hello")))
+                .await
+                .unwrap(),
+        );
 
         let leaf_id = match &outcome {
             PromptTurnOutcome::Success {
@@ -3981,8 +3842,8 @@ runtime = "lua"
         .unwrap();
 
         let error = session
-            .prompt(PromptTurnOptions::new(PromptInvocation::Text(
-                "hello".into(),
+            .run(CodingAgentOperation::Prompt(PromptTurnOptions::new(
+                PromptInvocation::Text("hello".into()),
             )))
             .await
             .unwrap_err();
@@ -4033,7 +3894,12 @@ runtime = "lua"
             .unwrap();
         let mut events = session.subscribe();
 
-        let outcome = session.prompt(prompt_options(api, "hello")).await.unwrap();
+        let outcome = prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(api, "hello")))
+                .await
+                .unwrap(),
+        );
 
         assert!(matches!(
             &outcome,
@@ -4078,15 +3944,25 @@ runtime = "lua"
             .await
             .unwrap();
 
-        session
-            .prompt(prompt_options(first_api, "first question"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    first_api,
+                    "first question",
+                )))
+                .await
+                .unwrap(),
+        );
 
-        session
-            .prompt(prompt_options(second_api, "second question"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    second_api,
+                    "second question",
+                )))
+                .await
+                .unwrap(),
+        );
 
         let contexts = contexts.lock().unwrap();
         assert_eq!(contexts.len(), 1);
@@ -4136,7 +4012,12 @@ runtime = "lua"
         .unwrap();
         let mut events = session.subscribe();
 
-        let outcome = session.prompt(prompt_options(api, "hello")).await.unwrap();
+        let outcome = prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(api, "hello")))
+                .await
+                .unwrap(),
+        );
 
         assert!(matches!(outcome, PromptTurnOutcome::Failed { .. }));
         let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
@@ -4186,22 +4067,30 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let root_leaf = match session
-            .prompt(prompt_options(api, "root question"))
-            .await
-            .unwrap()
-        {
+        let root_leaf = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "root question",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
             } => leaf_id,
             other => panic!("expected root prompt success, got {other:?}"),
         };
-        let branch_leaf = match session
-            .prompt(prompt_options(api, "branch question"))
-            .await
-            .unwrap()
-        {
+        let branch_leaf = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "branch question",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
@@ -4271,22 +4160,30 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let root_leaf = match session
-            .prompt(prompt_options(api, "root question"))
-            .await
-            .unwrap()
-        {
+        let root_leaf = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "root question",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
             } => leaf_id,
             other => panic!("expected root prompt success, got {other:?}"),
         };
-        let branch_leaf = match session
-            .prompt(prompt_options(api, "branch question"))
-            .await
-            .unwrap()
-        {
+        let branch_leaf = match prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "branch question",
+                )))
+                .await
+                .unwrap(),
+        ) {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
                 ..
@@ -4913,16 +4810,26 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        session
-            .prompt(prompt_options(api, "first question"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "first question",
+                )))
+                .await
+                .unwrap(),
+        );
         let mut events = session.subscribe();
 
-        let outcome = session
-            .compact(compact_options(api, Some("keep decisions")))
-            .await
-            .unwrap();
+        let outcome = compact_outcome(
+            session
+                .run(CodingAgentOperation::Compact(compact_options(
+                    api,
+                    Some("keep decisions"),
+                )))
+                .await
+                .unwrap(),
+        );
 
         assert!(matches!(
             &outcome,
@@ -4997,10 +4904,15 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let prompt_outcome = session
-            .prompt(prompt_options(api, "first question"))
-            .await
-            .unwrap();
+        let prompt_outcome = prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    api,
+                    "first question",
+                )))
+                .await
+                .unwrap(),
+        );
         let active_leaf_before = match prompt_outcome {
             PromptTurnOutcome::Success {
                 leaf_id: Some(leaf_id),
@@ -5010,7 +4922,12 @@ runtime = "lua"
         };
         let mut events = session.subscribe();
 
-        let outcome = session.compact(compact_options(api, None)).await.unwrap();
+        let outcome = compact_outcome(
+            session
+                .run(CodingAgentOperation::Compact(compact_options(api, None)))
+                .await
+                .unwrap(),
+        );
 
         assert!(matches!(
             &outcome,
@@ -5079,16 +4996,26 @@ runtime = "lua"
             .with_session_id("sess_hydrate")
             .with_session_log_root(temp.path());
         let mut created = CodingAgentSession::create(options.clone()).await.unwrap();
-        created
-            .prompt(prompt_options(first_api, "first question"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            created
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    first_api,
+                    "first question",
+                )))
+                .await
+                .unwrap(),
+        );
         let mut opened = CodingAgentSession::open(options).await.unwrap();
 
-        let outcome = opened
-            .prompt(prompt_options(second_api, "second question"))
-            .await
-            .unwrap();
+        let outcome = prompt_outcome(
+            opened
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    second_api,
+                    "second question",
+                )))
+                .await
+                .unwrap(),
+        );
 
         assert!(matches!(
             outcome,
@@ -5161,20 +5088,26 @@ runtime = "lua"
             .with_session_id("sess_tool_hydrate")
             .with_session_log_root(temp.path());
         let mut created = CodingAgentSession::create(options.clone()).await.unwrap();
-        created
-            .prompt(prompt_options_with_tools(
-                first_api,
-                "use the tool",
-                vec![echo_tool()],
-            ))
-            .await
-            .unwrap();
+        prompt_outcome(
+            created
+                .run(CodingAgentOperation::Prompt(prompt_options_with_tools(
+                    first_api,
+                    "use the tool",
+                    vec![echo_tool()],
+                )))
+                .await
+                .unwrap(),
+        );
         let mut opened = CodingAgentSession::open(options).await.unwrap();
 
-        opened
-            .prompt(prompt_options(second_api, "continue"))
-            .await
-            .unwrap();
+        prompt_outcome(
+            opened
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    second_api, "continue",
+                )))
+                .await
+                .unwrap(),
+        );
 
         let contexts = contexts.lock().unwrap();
         assert_eq!(contexts.len(), 1);
@@ -5266,14 +5199,16 @@ runtime = "lua"
             .with_session_id("sess_export_html")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(options).await.unwrap();
-        session
-            .prompt(prompt_options_with_tools(
-                api,
-                "use <tool>",
-                vec![echo_tool()],
-            ))
-            .await
-            .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options_with_tools(
+                    api,
+                    "use <tool>",
+                    vec![echo_tool()],
+                )))
+                .await
+                .unwrap(),
+        );
         let output = temp.path().join("exports/session.html");
 
         let exported = match session
@@ -5300,7 +5235,7 @@ runtime = "lua"
     #[tokio::test]
     async fn export_current_html_rejects_jsonl_target() {
         let temp = tempfile::tempdir().unwrap();
-        let session = CodingAgentSession::create(
+        let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
                 .with_session_id("sess_export_jsonl")
                 .with_session_log_root(temp.path()),
@@ -5325,7 +5260,7 @@ runtime = "lua"
     #[tokio::test]
     async fn export_current_html_uses_read_only_operation_admission_while_root_busy() {
         let temp = tempfile::tempdir().unwrap();
-        let session = CodingAgentSession::create(
+        let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
                 .with_session_id("sess_export_busy")
                 .with_session_log_root(temp.path()),

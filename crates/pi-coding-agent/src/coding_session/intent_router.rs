@@ -507,8 +507,10 @@ mod tests {
         let operation_source = include_str!("operation.rs");
 
         assert!(
-            session_source.contains("run_sync_mut_operation(Operation::SetDefaultAgentProfile"),
-            "set_default_agent_profile_id should route through run_sync_mut_operation"
+            !session_source.contains("fn set_default_agent_profile_id(")
+                && session_source
+                    .contains("SyncMutable => self.run_sync_mut_operation(operation)?"),
+            "default-profile mutation should be owned by the canonical run dispatcher"
         );
         assert!(
             session_source.contains(

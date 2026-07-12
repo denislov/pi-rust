@@ -1,4 +1,7 @@
-use pi_coding_agent::api::{CodingAgentSession, CodingAgentSessionOptions, ProfileId};
+use pi_coding_agent::api::{
+    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentSession,
+    CodingAgentSessionOptions, ProfileId,
+};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -43,7 +46,16 @@ async fn set_default_agent_profile_updates_manifest_and_emits_event() {
         ProfileId::from("default")
     );
 
-    session.set_default_agent_profile_id("reviewer").unwrap();
+    let outcome = session
+        .run(CodingAgentOperation::SetDefaultAgentProfile {
+            profile_id: ProfileId::from("reviewer"),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        CodingAgentOperationOutcome::DefaultAgentProfileChanged
+    ));
 
     assert_eq!(session.view().default_agent_profile_id.as_str(), "reviewer");
     let manifest = read_manifest(temp.path(), "sess_profile_switch");

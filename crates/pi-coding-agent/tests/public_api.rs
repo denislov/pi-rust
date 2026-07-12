@@ -35,14 +35,6 @@ use pi_coding_agent::api::{
 };
 use support::{EnvGuard, ProviderGuard};
 
-async fn approve_delegation_contract(
-    session: &mut CodingAgentSession,
-) -> Result<(), CodingSessionError> {
-    session
-        .approve_delegation_confirmation(String::new(), String::new())
-        .await
-}
-
 #[test]
 fn stable_api_signature_closure_is_importable() {
     fn name<T>() -> &'static str {
@@ -143,12 +135,7 @@ fn stable_api_signature_closure_is_importable() {
     let _teams = CodingAgentSession::team_profiles;
     let _diagnostics = CodingAgentSession::profile_diagnostics;
     let _pending = CodingAgentSession::pending_delegation_confirmations;
-    let _set_default =
-        |session: &mut CodingAgentSession| session.set_default_agent_profile_id(String::new());
-    let _approve = approve_delegation_contract;
-    let _reject = |session: &mut CodingAgentSession| {
-        session.reject_delegation_confirmation(String::new(), String::new(), String::new())
-    };
+    let _canonical_dispatch = CodingAgentSession::run;
 }
 
 fn model(api: &str) -> Model {
@@ -553,7 +540,6 @@ fn protocol_wire_types_are_importable_from_api_facade() {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn coding_session_public_api_symbols_are_importable() {
     let temp = tempfile::tempdir().unwrap();
     let options = CodingAgentSessionOptions::new()
@@ -655,7 +641,10 @@ async fn coding_session_public_api_symbols_are_importable() {
     ));
     assert_eq!(prompt_options.mode(), PromptTurnMode::Print);
 
-    let prompt_error = session.prompt(prompt_options).await.unwrap_err();
+    let prompt_error = session
+        .run(CodingAgentOperation::Prompt(prompt_options))
+        .await
+        .unwrap_err();
     assert_eq!(prompt_error.code(), "config");
     assert!(prompt_error.to_string().contains("runtime snapshot"));
 
@@ -715,12 +704,17 @@ async fn coding_session_self_healing_edit_persists_typed_events() {
     .unwrap();
 
     let outcome = session
-        .self_healing_edit(
-            "src/app.txt",
-            vec![SelfHealingEditReplacement::new("two", "deux")],
-        )
+        .run(CodingAgentOperation::SelfHealingEdit(
+            SelfHealingEditRequest::new(
+                "src/app.txt",
+                vec![SelfHealingEditReplacement::new("two", "deux")],
+            ),
+        ))
         .await
         .unwrap();
+    let CodingAgentOperationOutcome::SelfHealingEdit(outcome) = outcome else {
+        panic!("self-healing operation returned another outcome")
+    };
 
     assert_eq!(outcome.path, "src/app.txt");
     assert_eq!(outcome.attempts, 1);
@@ -765,7 +759,6 @@ async fn coding_session_self_healing_edit_persists_typed_events() {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn coding_session_self_healing_edit_with_check_command_records_output() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -782,15 +775,18 @@ async fn coding_session_self_healing_edit_with_check_command_records_output() {
     .unwrap();
 
     let outcome = session
-        .self_healing_edit_with_options(
+        .run(CodingAgentOperation::SelfHealingEdit(
             SelfHealingEditRequest::new(
                 "src/app.txt",
                 vec![SelfHealingEditReplacement::new("two", "deux")],
             )
             .with_check_command("printf check-ok"),
-        )
+        ))
         .await
         .unwrap();
+    let CodingAgentOperationOutcome::SelfHealingEdit(outcome) = outcome else {
+        panic!("self-healing operation returned another outcome")
+    };
 
     assert_eq!(
         std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
@@ -818,7 +814,6 @@ async fn coding_session_self_healing_edit_with_check_command_records_output() {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn coding_session_self_healing_edit_uses_planned_repair_attempts() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -835,16 +830,19 @@ async fn coding_session_self_healing_edit_uses_planned_repair_attempts() {
     .unwrap();
 
     let outcome = session
-        .self_healing_edit_with_options(
+        .run(CodingAgentOperation::SelfHealingEdit(
             SelfHealingEditRequest::new(
                 "src/app.txt",
                 vec![SelfHealingEditReplacement::new("two", "deux")],
             )
             .with_check_command("grep -q dos src/app.txt")
             .with_repair_attempts(vec![vec![SelfHealingEditReplacement::new("deux", "dos")]]),
-        )
+        ))
         .await
         .unwrap();
+    let CodingAgentOperationOutcome::SelfHealingEdit(outcome) = outcome else {
+        panic!("self-healing operation returned another outcome")
+    };
 
     assert_eq!(
         std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
@@ -868,7 +866,6 @@ async fn coding_session_self_healing_edit_uses_planned_repair_attempts() {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -913,16 +910,19 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
     let mut events = session.subscribe();
 
     let outcome = session
-        .self_healing_edit_with_options(
+        .run(CodingAgentOperation::SelfHealingEdit(
             SelfHealingEditRequest::new(
                 "src/app.txt",
                 vec![SelfHealingEditReplacement::new("two", "deux")],
             )
             .with_check_command("grep -q dos src/app.txt")
             .with_model_repair(SelfHealingEditModelRepairOptions::new(repair_options)),
-        )
+        ))
         .await
         .unwrap();
+    let CodingAgentOperationOutcome::SelfHealingEdit(outcome) = outcome else {
+        panic!("self-healing operation returned another outcome")
+    };
 
     assert_eq!(
         std::fs::read_to_string(workspace.join("src/app.txt")).unwrap(),
@@ -1016,7 +1016,6 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn coding_session_self_healing_edit_model_repair_invalid_json_preserves_check_output() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -1058,14 +1057,14 @@ async fn coding_session_self_healing_edit_model_repair_invalid_json_preserves_ch
     .unwrap();
 
     let error = session
-        .self_healing_edit_with_options(
+        .run(CodingAgentOperation::SelfHealingEdit(
             SelfHealingEditRequest::new(
                 "src/app.txt",
                 vec![SelfHealingEditReplacement::new("two", "deux")],
             )
             .with_check_command("grep -q dos src/app.txt")
             .with_model_repair(SelfHealingEditModelRepairOptions::new(repair_options)),
-        )
+        ))
         .await
         .unwrap_err();
 
@@ -1113,7 +1112,6 @@ async fn coding_session_self_healing_edit_model_repair_invalid_json_preserves_ch
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn coding_session_self_healing_edit_failed_check_exposes_output() {
     let temp = tempfile::tempdir().unwrap();
     let workspace = temp.path().join("workspace");
@@ -1130,13 +1128,13 @@ async fn coding_session_self_healing_edit_failed_check_exposes_output() {
     .unwrap();
 
     let error = session
-        .self_healing_edit_with_options(
+        .run(CodingAgentOperation::SelfHealingEdit(
             SelfHealingEditRequest::new(
                 "src/app.txt",
                 vec![SelfHealingEditReplacement::new("two", "deux")],
             )
             .with_check_command("printf check-failed >&2; exit 7"),
-        )
+        ))
         .await
         .unwrap_err();
 
@@ -1173,10 +1171,12 @@ async fn coding_session_self_healing_edit_requires_persistent_session() {
             .unwrap();
 
     let error = session
-        .self_healing_edit(
-            "src/app.txt",
-            vec![SelfHealingEditReplacement::new("two", "deux")],
-        )
+        .run(CodingAgentOperation::SelfHealingEdit(
+            SelfHealingEditRequest::new(
+                "src/app.txt",
+                vec![SelfHealingEditReplacement::new("two", "deux")],
+            ),
+        ))
         .await
         .unwrap_err();
 
@@ -1206,10 +1206,12 @@ async fn coding_session_self_healing_edit_failure_records_failed_operation() {
     .unwrap();
 
     let error = session
-        .self_healing_edit(
-            "src/app.txt",
-            vec![SelfHealingEditReplacement::new("", "deux")],
-        )
+        .run(CodingAgentOperation::SelfHealingEdit(
+            SelfHealingEditRequest::new(
+                "src/app.txt",
+                vec![SelfHealingEditReplacement::new("", "deux")],
+            ),
+        ))
         .await
         .unwrap_err();
 

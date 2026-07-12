@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 mod support;
 
 use std::fs;
@@ -15,8 +13,9 @@ use pi_ai::types::{
     StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    CodingAgentSession, CodingAgentSessionOptions, CodingDiagnosticSeverity, PromptInvocation,
-    PromptRunOptions, PromptTurnOptions, PromptTurnOutcome, SessionRunOptions,
+    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentSession,
+    CodingAgentSessionOptions, CodingDiagnosticSeverity, PromptInvocation, PromptRunOptions,
+    PromptTurnOptions, PromptTurnOutcome, SessionRunOptions,
 };
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
@@ -60,9 +59,16 @@ skills = ["missing_skill"]
     .unwrap();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, fallback_api, "use profile"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            fallback_api,
+            "use profile",
+        )))
         .await
         .unwrap();
+    let CodingAgentOperationOutcome::Prompt(outcome) = outcome else {
+        panic!("prompt operation returned another outcome")
+    };
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
@@ -138,9 +144,16 @@ allowed_teams = ["implementation"]
     .unwrap();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "delegate work"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "delegate work",
+        )))
         .await
         .unwrap();
+    let CodingAgentOperationOutcome::Prompt(outcome) = outcome else {
+        panic!("prompt operation returned another outcome")
+    };
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
