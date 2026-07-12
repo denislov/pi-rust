@@ -59,8 +59,8 @@
 
 - [ ] **GUARD-01**: Boundary tests recursively scan first-party adapters and reject replaced broad workflow calls
 - [ ] **GUARD-02**: Boundary tests reject local deprecation suppressions in JSON, print, RPC, and interactive production files
-- [ ] **GUARD-03**: Stable API completeness tests require canonical facade types while rejecting internal runtime types
-- [ ] **GUARD-04**: Rust visibility, sealed contracts, and compile/API tests are preferred when they can express a boundary; source scanning remains only where necessary
+- [x] **GUARD-03**: Stable API completeness tests require canonical facade types while rejecting internal runtime types
+- [x] **GUARD-04**: Rust visibility, sealed contracts, and compile/API tests are preferred when they can express a boundary; source scanning remains only where necessary
 
 ### Closure
 
@@ -127,8 +127,8 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | DELETE-04 | Phase 4 | Complete |
 | GUARD-01 | Phase 5 | Pending |
 | GUARD-02 | Phase 5 | Pending |
-| GUARD-03 | Phase 5 | Pending |
-| GUARD-04 | Phase 5 | Pending |
+| GUARD-03 | Phase 5 | Complete |
+| GUARD-04 | Phase 5 | Complete |
 | CLOSE-01 | Phase 5 | Pending |
 | CLOSE-02 | Phase 5 | Pending |
 | CLOSE-03 | Phase 5 | Pending |

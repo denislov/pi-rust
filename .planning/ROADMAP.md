@@ -144,7 +144,11 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. Source audits, formatting, focused `pi-coding-agent` tests and checks, diff checks, and full workspace tests and checks all pass from the final tree.
   5. Stage 9 documentation matches the verified implementation and names typed `ProductEvent` payload convergence and compatibility subscription deletion as Stage 10 work.
 
-**Plans**: TBD
+**Plans**: 2/3 plans executed
+
+- [x] 05-01-PLAN.md
+- [x] 05-02-PLAN.md
+- [ ] 05-03-PLAN.md
 
 ## Progress
 
@@ -157,4 +161,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Canonical Facade Correctness | 3/3 | Complete    | 2026-07-11 |
 | 3. Production Adapter Convergence | 9/9 | Complete    | 2026-07-12 |
 | 4. Test Convergence and Compatibility Deletion | 4/4 | Complete    | 2026-07-12 |
-| 5. Boundary Enforcement and Stage 9 Closure | 0/TBD | Not started | - |
+| 5. Boundary Enforcement and Stage 9 Closure | 2/3 | In Progress|  |
