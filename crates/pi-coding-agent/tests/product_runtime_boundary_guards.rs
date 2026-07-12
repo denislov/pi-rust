@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -1382,4 +1383,128 @@ fn event_receiver_lag_maps_to_snapshot_recovery_error() {
         !event_service_rs.contains("event receiver lagged by {skipped} events"),
         "lag should not remain a generic resource error"
     );
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AdapterRoot {
+    Recursive(&'static str),
+    File(&'static str),
+}
+
+const FIRST_PARTY_ADAPTERS: &[AdapterRoot] = &[
+    AdapterRoot::Recursive("crates/pi-coding-agent/src/interactive"),
+    AdapterRoot::Recursive("crates/pi-coding-agent/src/protocol"),
+    AdapterRoot::File("crates/pi-coding-agent/src/print_mode.rs"),
+];
+
+const PROHIBITED_SESSION_METHODS: &[&str] = &[
+    "invoke_agent",
+    "invoke_team",
+    "export_current",
+    "export_current_html",
+    "prompt",
+    "compact",
+    "self_healing_edit",
+    "reload_plugins",
+    "run_plugin_command",
+    "approve_delegation_confirmation",
+    "reject_delegation_confirmation",
+    "fork_current_session",
+    "summarize_branch",
+    "summarize_branch_for_navigation",
+];
+
+#[test]
+fn adapter_inventory_is_recursive_and_receiver_aware() {
+    let scan = SourceScan::new();
+    let mut discovered = HashSet::new();
+    for root in FIRST_PARTY_ADAPTERS {
+        let path = match root {
+            AdapterRoot::Recursive(relative) | AdapterRoot::File(relative) => {
+                scan.repo_root.join(relative)
+            }
+        };
+        assert!(
+            path.exists(),
+            "adapter inventory path is missing: {}",
+            path.display()
+        );
+        let files = match root {
+            AdapterRoot::Recursive(_) => rust_files_under(&path),
+            AdapterRoot::File(_) => vec![path.clone()],
+        };
+        assert!(
+            !files.is_empty(),
+            "adapter inventory path is empty: {}",
+            path.display()
+        );
+        for file in files {
+            assert!(
+                file.is_file(),
+                "adapter inventory entry is unreadable: {}",
+                file.display()
+            );
+            let relative = relative_path(&scan.repo_root, &file);
+            assert!(
+                discovered.insert(relative.clone()),
+                "adapter file has duplicate ownership: {relative}"
+            );
+        }
+    }
+    assert!(
+        discovered.contains("crates/pi-coding-agent/src/interactive/loop.rs"),
+        "known interactive adapter is not owned by inventory"
+    );
+    assert!(
+        discovered.contains("crates/pi-coding-agent/src/protocol/rpc/commands.rs"),
+        "known RPC adapter is not owned by inventory"
+    );
+
+    for relative in discovered {
+        let path = scan.repo_root.join(&relative);
+        let raw = fs::read_to_string(&path).expect("read adapter source");
+        let sanitized = sanitize_rust_source(&raw);
+        for (line_no, line) in production_lines(&sanitized).enumerate() {
+            for method in PROHIBITED_SESSION_METHODS {
+                let needle = format!(".{method}(");
+                if line.contains(&needle) {
+                    panic!(
+                        "prohibited workflow call `{method}` in adapter at {relative}:{}: {}",
+                        line_no + 1,
+                        line.trim()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn adapter_scanner_fixture_matrix_is_sanitized_and_structural() {
+    let fixture = r#"
+        // session.prompt("comment")
+        let text = ".prompt(";
+        let ch = '.';
+        #[cfg(test)]
+        mod tests { fn hidden(session: &Session) { session.prompt("test"); } }
+        session
+            .prompt("multiline")
+            ;
+        (session).prompt("parenthesized");
+        other.prompt("legitimate");
+    "#;
+    let sanitized = sanitize_rust_source(fixture);
+    let production = production_lines(&sanitized).collect::<Vec<_>>().join("\n");
+    assert_eq!(production.matches(".prompt(").count(), 3);
+    assert!(production.contains("session\n            .prompt("));
+    assert!(production.contains("(session).prompt("));
+    assert!(!production.contains("comment"));
+    assert!(production.contains("other.prompt("));
+}
+
+fn production_lines(source: &str) -> impl Iterator<Item = &str> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| (!line_is_cfg_test_gated(source, index)).then_some(line))
 }
