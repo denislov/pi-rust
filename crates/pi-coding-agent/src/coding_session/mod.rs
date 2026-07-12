@@ -556,113 +556,6 @@ impl CodingAgentSession {
             .active_views(&self.pending_delegation_confirmations, &now)
     }
 
-    pub async fn approve_delegation_confirmation(
-        &mut self,
-        operation_id: impl AsRef<str>,
-        tool_call_id: impl AsRef<str>,
-    ) -> Result<(), CodingSessionError> {
-        match self
-            .run_operation(Operation::ApproveDelegationConfirmation {
-                operation_id: operation_id.as_ref().to_owned(),
-                tool_call_id: tool_call_id.as_ref().to_owned(),
-            })
-            .await?
-        {
-            OperationOutcome::DelegationApproval => Ok(()),
-            OperationOutcome::DelegationRejection => {
-                unreachable!("delegation approval operation returned delegation rejection outcome")
-            }
-            OperationOutcome::Prompt(_) => {
-                unreachable!("delegation approval operation returned prompt outcome")
-            }
-            OperationOutcome::ManualCompaction(_) => {
-                unreachable!("delegation approval operation returned manual compaction outcome")
-            }
-            OperationOutcome::PluginLoad(_) => {
-                unreachable!("delegation approval operation returned plugin load outcome")
-            }
-            OperationOutcome::PluginCommand(_) => {
-                unreachable!("delegation approval operation returned plugin command outcome")
-            }
-            OperationOutcome::BranchSummary(_) => {
-                unreachable!("delegation approval operation returned branch summary outcome")
-            }
-            OperationOutcome::SelfHealingEdit(_) => {
-                unreachable!("delegation approval operation returned self-healing edit outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("delegation approval operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("delegation approval operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => {
-                unreachable!("delegation approval operation returned export outcome")
-            }
-            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
-                unreachable!("delegation approval operation returned navigation outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!(
-                    "delegation approval operation returned set default agent profile outcome"
-                )
-            }
-        }
-    }
-
-    pub fn reject_delegation_confirmation(
-        &mut self,
-        operation_id: impl AsRef<str>,
-        tool_call_id: impl AsRef<str>,
-        reason: impl Into<String>,
-    ) -> Result<(), CodingSessionError> {
-        match self.run_sync_mut_operation(Operation::RejectDelegationConfirmation {
-            operation_id: operation_id.as_ref().to_owned(),
-            tool_call_id: tool_call_id.as_ref().to_owned(),
-            reason: reason.into(),
-        })? {
-            OperationOutcome::DelegationRejection => Ok(()),
-            OperationOutcome::DelegationApproval => {
-                unreachable!("delegation rejection operation returned delegation approval outcome")
-            }
-            OperationOutcome::Prompt(_) => {
-                unreachable!("delegation rejection operation returned prompt outcome")
-            }
-            OperationOutcome::ManualCompaction(_) => {
-                unreachable!("delegation rejection operation returned manual compaction outcome")
-            }
-            OperationOutcome::PluginLoad(_) => {
-                unreachable!("delegation rejection operation returned plugin load outcome")
-            }
-            OperationOutcome::PluginCommand(_) => {
-                unreachable!("delegation rejection operation returned plugin command outcome")
-            }
-            OperationOutcome::BranchSummary(_) => {
-                unreachable!("delegation rejection operation returned branch summary outcome")
-            }
-            OperationOutcome::SelfHealingEdit(_) => {
-                unreachable!("delegation rejection operation returned self-healing edit outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("delegation rejection operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("delegation rejection operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => {
-                unreachable!("delegation rejection operation returned export outcome")
-            }
-            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
-                unreachable!("delegation rejection operation returned navigation outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!(
-                    "delegation rejection operation returned set default agent profile outcome"
-                )
-            }
-        }
-    }
-
     pub(crate) fn plugin_commands(&self) -> Vec<CommandDefinition> {
         self.plugin_service.collect_commands()
     }
@@ -3584,7 +3477,12 @@ runtime = "lua"
             .unwrap();
 
         let error = session
-            .reject_delegation_confirmation("op_parent", "tool_delegate", "not now")
+            .run(CodingAgentOperation::RejectDelegation {
+                operation_id: "op_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                reason: "not now".into(),
+            })
+            .await
             .unwrap_err();
 
         assert_eq!(

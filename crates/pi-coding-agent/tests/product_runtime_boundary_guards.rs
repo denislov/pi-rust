@@ -131,11 +131,7 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         "Phase 1 compatibility wrapper",
         "pub",
         false,
-        &[
-            "approve_delegation_confirmation",
-            "reject_delegation_confirmation",
-            "summarize_branch",
-        ],
+        &["summarize_branch"],
     );
     add_expectations(
         &mut expected,
@@ -163,6 +159,8 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         "self_healing_edit_with_options",
         "reload_plugins",
         "run_plugin_command",
+        "approve_delegation_confirmation",
+        "reject_delegation_confirmation",
     ];
     add_expectations(
         &mut expected,
