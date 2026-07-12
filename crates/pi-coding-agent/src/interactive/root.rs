@@ -84,6 +84,7 @@ pub(super) enum InteractiveAction {
     AbortRunning,
     NewSession,
     ReloadResources,
+    Fork,
     Exit,
 }
 
@@ -120,6 +121,11 @@ pub(super) struct PendingBranchSummaryRequest {
     pub(super) source_leaf_id: String,
     pub(super) target_leaf_id: String,
     pub(super) custom_instructions: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingForkRequest {
+    pub(super) target_leaf_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -568,6 +574,7 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_submit: Option<String>,
     pub(super) pending_compact_instructions: Option<String>,
     pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
+    pub(super) pending_fork_request: Option<PendingForkRequest>,
     pub(super) pending_agent_invocation_request: Option<PendingAgentInvocationRequest>,
     pub(super) pending_agent_team_request: Option<PendingAgentTeamRequest>,
     pub(super) pending_self_healing_edit_request: Option<PendingSelfHealingEditRequest>,
@@ -748,6 +755,7 @@ impl InteractiveRoot {
             pending_submit: None,
             pending_compact_instructions: None,
             pending_branch_summary_request: None,
+            pending_fork_request: None,
             pending_agent_invocation_request: None,
             pending_agent_team_request: None,
             pending_self_healing_edit_request: None,
@@ -895,6 +903,10 @@ impl InteractiveRoot {
         &mut self,
     ) -> Option<PendingBranchSummaryRequest> {
         self.pending_branch_summary_request.take()
+    }
+
+    pub(super) fn take_pending_fork_request(&mut self) -> Option<PendingForkRequest> {
+        self.pending_fork_request.take()
     }
 
     pub(super) fn take_pending_agent_invocation_request(

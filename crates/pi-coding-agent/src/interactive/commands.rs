@@ -13,13 +13,13 @@ use crate::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
     PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
-    PendingDelegationConfirmationSelection, PendingPluginCommandRequest, PendingPluginUiDialog,
-    PendingSelfHealingEditModelRepair, PendingSelfHealingEditRequest, PluginUiDialogField,
+    PendingDelegationConfirmationSelection, PendingForkRequest, PendingPluginCommandRequest,
+    PendingPluginUiDialog, PendingSelfHealingEditModelRepair, PendingSelfHealingEditRequest,
+    PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
-    export_transcript as export_session_transcript, fork_rust_native_choice,
-    rust_native_tree_for_choice,
+    export_transcript as export_session_transcript, rust_native_tree_for_choice,
 };
 use crate::interactive::slash::{ParsedSlashCommand, help_text, parse_model_selector_arg};
 use crate::interactive::{Transcript, TranscriptItem};
@@ -810,36 +810,35 @@ fn handle_clone_command(root: &mut InteractiveRoot) {
 }
 
 fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
-    if let Some(choice) = root
-        .active_session
-        .as_ref()
-        .filter(|choice| choice.kind == SessionChoiceKind::RustNative)
-    {
-        let target_leaf_id = if args.is_empty() {
-            None
-        } else {
-            let mut parts = args.split_whitespace();
-            let leaf_id = parts.next().unwrap_or_default();
-            if parts.next().is_some() {
-                root.transcript
-                    .push(TranscriptItem::system("Usage: /fork [leaf-id]"));
-                return;
-            }
-            Some(leaf_id)
-        };
-        match fork_rust_native_choice(choice, target_leaf_id) {
-            Ok(hydrated) => {
-                root.apply_hydrated_session(hydrated, Some("Forked to new session".into()));
-            }
-            Err(error) => root.transcript.push(TranscriptItem::system(format!(
-                "Failed to fork session: {error}"
-            ))),
-        }
+    if root.status == InteractiveStatus::Running {
+        root.transcript.push(TranscriptItem::system(
+            "Wait for the current run to finish before forking.",
+        ));
+        return;
+    }
+    if !matches!(
+        root.active_session.as_ref().map(|choice| choice.kind),
+        Some(SessionChoiceKind::RustNative)
+    ) {
+        root.transcript
+            .push(TranscriptItem::system("Nothing to fork yet"));
         return;
     }
 
-    root.transcript
-        .push(TranscriptItem::system("Nothing to fork yet"));
+    let target_leaf_id = if args.is_empty() {
+        None
+    } else {
+        let mut parts = args.split_whitespace();
+        let leaf_id = parts.next().unwrap_or_default();
+        if parts.next().is_some() {
+            root.transcript
+                .push(TranscriptItem::system("Usage: /fork [leaf-id]"));
+            return;
+        }
+        Some(leaf_id.to_owned())
+    };
+    root.pending_fork_request = Some(PendingForkRequest { target_leaf_id });
+    root.action = InteractiveAction::Fork;
 }
 
 fn handle_reload_command(root: &mut InteractiveRoot) {

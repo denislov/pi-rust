@@ -23,7 +23,7 @@ use crate::interactive::root::{
     ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
     PendingAgentInvocationRequest, PendingAgentTeamRequest, PendingBranchSummaryRequest,
     PendingDelegationConfirmationCommand, PendingDelegationConfirmationSelection,
-    PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog,
+    PendingForkRequest, PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog,
     PendingSelfHealingEditRequest, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
@@ -695,6 +695,7 @@ fn handle_input_event<T: Terminal>(
         plugin_command_request,
         plugin_ui_action,
         plugin_ui_dialog,
+        fork_request,
         render_request,
     ) = {
         let root = root_mut(tui, root_id)?;
@@ -762,6 +763,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let fork_request = if action == InteractiveAction::Fork {
+            root.take_pending_fork_request()
+        } else {
+            None
+        };
         let after = root.render_state();
         (
             action,
@@ -782,6 +788,7 @@ fn handle_input_event<T: Terminal>(
             plugin_command_request,
             plugin_ui_action,
             plugin_ui_dialog,
+            fork_request,
             RenderRequest::changed(before != after),
         )
     };
@@ -1178,6 +1185,23 @@ fn handle_input_event<T: Terminal>(
                 return Ok(LoopControl::Continue(render_request));
             };
             dispatch_plugin_ui_dialog(tui, root_id, dialog)?;
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
+        InteractiveAction::Fork => {
+            if running.is_some() {
+                return Ok(LoopControl::Continue(render_request));
+            }
+            let Some(request) = fork_request else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            start_fork_task(
+                tui,
+                root_id,
+                request,
+                prompt_context,
+                running,
+                coding_session,
+            )?;
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
     }
@@ -1864,6 +1888,54 @@ fn start_compact_task<T: Terminal>(
     Ok(task)
 }
 
+fn start_fork_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    request: PendingForkRequest,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<(), CliError> {
+    if coding_session.is_none() {
+        root_mut(tui, root_id)?
+            .transcript
+            .push(TranscriptItem::system("No active coding session."));
+        return Ok(());
+    }
+    {
+        let root = root_mut(tui, root_id)?;
+        root.set_status(InteractiveStatus::Running);
+    }
+    let options = PromptRunOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(String::new()),
+    };
+    *running = Some(PromptTask::spawn_fork_session(
+        options,
+        coding_session.take(),
+        request.target_leaf_id,
+        prompt_context.default_agent_profile_id.clone(),
+    )?);
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(())
+}
+
 fn start_branch_summary_navigation_task<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
@@ -2165,6 +2237,25 @@ fn finish_prompt<T: Terminal>(
                 result.plugin_ui_actions.clone(),
                 result.plugin_keybindings.clone(),
                 result.plugin_ui_dialogs.clone(),
+            );
+            *coding_session = Some(result.session);
+        }
+        Ok(PromptTaskResult::ForkSession(result)) => {
+            let completion_notice = result.completion_notice.clone();
+            if result.hydrate_transcript {
+                if let Ok(Some(hydration)) = result.session.hydrate_current() {
+                    root.apply_hydrated_session(
+                        hydrated_session_from_rust_native(hydration),
+                        completion_notice,
+                    );
+                } else if let Some(notice) = completion_notice {
+                    root.transcript.push(TranscriptItem::system(notice));
+                }
+            } else if let Some(notice) = completion_notice {
+                root.transcript.push(TranscriptItem::system(notice));
+            }
+            root.set_default_agent_profile_id(
+                result.session.view().default_agent_profile_id.clone(),
             );
             *coding_session = Some(result.session);
         }
