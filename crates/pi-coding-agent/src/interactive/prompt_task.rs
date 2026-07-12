@@ -1959,6 +1959,33 @@ mod tests {
         ProductEvent::from_compat_event(ProductEventSequence::new(sequence), event)
     }
 
+    fn function_body<'a>(source: &'a str, function_name: &str) -> &'a str {
+        let signature = format!("async fn {function_name}(");
+        let start = source
+            .find(&signature)
+            .unwrap_or_else(|| panic!("missing interactive task runner `{function_name}`"));
+        let body_start = source[start..]
+            .find('{')
+            .map(|offset| start + offset)
+            .unwrap_or_else(|| {
+                panic!("missing body for interactive task runner `{function_name}`")
+            });
+        let mut depth = 0usize;
+        for (offset, byte) in source.as_bytes()[body_start..].iter().enumerate() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &source[body_start..=body_start + offset];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unterminated body for interactive task runner `{function_name}`");
+    }
+
     #[test]
     fn delegation_fallback_visibility_follows_ui_event_projection() {
         let invisible = product_event(
@@ -1990,9 +2017,31 @@ mod tests {
         let product_subscription = [".", "subscribe_product_events()"].concat();
         let compatibility_subscription = [".", "subscribe()"].concat();
 
-        // Each interactive task subscribes through the product event boundary.
-        // Update this count when adding or removing owner-returning tasks.
-        assert_eq!(source.matches(&product_subscription).count(), 13);
+        for function_name in [
+            "run_coding_prompt_task",
+            "run_coding_agent_invocation_task",
+            "run_coding_agent_team_task",
+            "run_coding_delegation_approval_task",
+            "run_coding_set_default_agent_profile_task",
+            "run_coding_delegation_rejection_task",
+            "run_coding_compact_task",
+            "run_coding_self_healing_edit_task",
+            "run_coding_plugin_reload_task",
+            "run_coding_plugin_command_task",
+            "run_coding_branch_summary_task",
+            "run_coding_branch_summary_navigation_task",
+            "run_coding_fork_session_task",
+        ] {
+            let body = function_body(source, function_name);
+            assert!(
+                body.contains(&product_subscription),
+                "interactive task runner `{function_name}` must subscribe through the product event boundary"
+            );
+            assert!(
+                body.contains("complete_owned_task("),
+                "interactive task runner `{function_name}` must return its live owner on completion"
+            );
+        }
         assert!(!source.contains(&compatibility_subscription));
         assert!(source.contains("Coding(ProductEvent)"));
     }
