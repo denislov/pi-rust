@@ -2623,6 +2623,47 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn fork_completion_replaces_the_prompt_session_target() {
+        let (mut tui, root_id) = test_tui();
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let forked_session_id = session.view().session_id.clone();
+        let mut coding_session = None;
+        let mut session_target = Some(ResolvedSessionTarget::OpenOrCreateId(
+            "sess_before_fork".into(),
+        ));
+
+        finish_prompt(
+            &mut tui,
+            root_id,
+            PromptTaskCompletion::Completed(PromptTaskResult::ForkSession(
+                crate::interactive::prompt_task::ForkSessionTaskResult {
+                    session,
+                    session_target: ResolvedSessionTarget::OpenOrCreateId(
+                        forked_session_id.clone(),
+                    ),
+                    completion_notice: None,
+                    hydrate_transcript: false,
+                },
+            )),
+            &mut coding_session,
+            &mut session_target,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            session_target,
+            Some(ResolvedSessionTarget::OpenOrCreateId(ref session_id))
+                if session_id == &forked_session_id
+        ));
+        assert_eq!(
+            coding_session.as_ref().unwrap().view().session_id,
+            forked_session_id
+        );
+    }
+
     #[test]
     fn interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary() {
         let source = include_str!("loop.rs");

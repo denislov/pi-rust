@@ -1933,6 +1933,40 @@ fn target_looks_like_legacy_jsonl(target: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::coding_session::{
+        CodingAgentEvent, ProductEventSequence,
+    };
+
+    fn product_event(sequence: u64, event: CodingAgentEvent) -> ProductEvent {
+        ProductEvent::from_compat_event(ProductEventSequence::new(sequence), event)
+    }
+
+    #[test]
+    fn delegation_fallback_visibility_follows_ui_event_projection() {
+        let invisible = product_event(
+            1,
+            CodingAgentEvent::AssistantMessageStarted {
+                operation_id: "op_reject".into(),
+                turn_id: "turn_reject".into(),
+                message_id: Some("msg_reject".into()),
+            },
+        );
+        let visible = product_event(
+            2,
+            CodingAgentEvent::AssistantMessageDelta {
+                operation_id: "op_reject".into(),
+                turn_id: "turn_reject".into(),
+                message_id: Some("msg_reject".into()),
+                text: "visible rejection event".into(),
+            },
+        );
+
+        let mut bridge = CodingEventBridge::new();
+        assert!(!product_event_has_visible_ui(&mut bridge, &invisible));
+        assert!(product_event_has_visible_ui(&mut bridge, &visible));
+    }
+
     #[test]
     fn interactive_prompt_tasks_use_product_event_stream_boundary() {
         let source = include_str!("prompt_task.rs");
