@@ -111,7 +111,7 @@ fn session_store_failure_controls_remain_test_only() {
 }
 
 #[test]
-fn canonical_operation_facade_has_no_new_workflow_wrappers() {
+fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
     let scan = SourceScan::new();
     let mut methods = Vec::new();
     for path in rust_files_under(&scan.crate_root.join("src/coding_session")) {
@@ -128,24 +128,10 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
     );
     add_expectations(
         &mut expected,
-        "Phase 1 compatibility wrapper",
-        "pub",
-        false,
-        &["summarize_branch"],
-    );
-    add_expectations(
-        &mut expected,
         "retained owner-private custom-option path",
         "pub(crate)",
         false,
         &["load_plugins"],
-    );
-    add_expectations(
-        &mut expected,
-        "retained lifecycle/query/event/control helper",
-        "pub(crate)",
-        false,
-        &["fork_current_session"],
     );
     let absent = [
         "invoke_agent",
@@ -161,6 +147,9 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         "run_plugin_command",
         "approve_delegation_confirmation",
         "reject_delegation_confirmation",
+        "fork_current_session",
+        "summarize_branch",
+        "summarize_branch_for_navigation",
     ];
     add_expectations(
         &mut expected,
@@ -207,7 +196,6 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
             "plugin_ui_actions",
             "plugin_ui_dialogs",
             "plugin_keybindings",
-            "summarize_branch_for_navigation",
         ],
     );
     add_expectations(
@@ -234,6 +222,7 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         }
     }
     violations.extend(absent_receiver_calls(&scan, &absent));
+    violations.extend(local_deprecation_suppression_violations(&scan, &absent));
     violations.extend(load_plugins_owner_call_violations(&scan));
     for expectation in &expected {
         let definitions = methods
@@ -329,6 +318,30 @@ fn absent_receiver_calls(scan: &SourceScan, names: &[&str]) -> Vec<String> {
                         line.trim()
                     ));
                 }
+            }
+        }
+    }
+    violations
+}
+
+fn local_deprecation_suppression_violations(scan: &SourceScan, names: &[&str]) -> Vec<String> {
+    let mut paths = rust_files_under(&scan.crate_root.join("src"));
+    paths.extend(rust_files_under(&scan.crate_root.join("tests")));
+    let mut violations = Vec::new();
+    for path in paths {
+        let source = sanitize_rust_source(&fs::read_to_string(&path).expect("read Rust source"));
+        let lines = source.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            if !line.contains("#[allow(deprecated)]") {
+                continue;
+            }
+            let window = lines[index..usize::min(index + 12, lines.len())].join("\n");
+            if names.iter().any(|name| window.contains(name)) {
+                violations.push(format!(
+                    "local deprecated suppression remains near deleted compatibility method at {}:{}",
+                    relative_path(&scan.repo_root, &path),
+                    index + 1
+                ));
             }
         }
     }

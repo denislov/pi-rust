@@ -9,7 +9,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 - [x] **Phase 1: Evidence-Based Baseline** - Establish the authoritative Stage 9 completion state and exact remaining gap set from live evidence. (completed 2026-07-11)
 - [x] **Phase 2: Canonical Facade Correctness** - Make the stable public operation contract and its internal dispatch path complete, exhaustive, and behavior-preserving. (completed 2026-07-11)
 - [x] **Phase 3: Production Adapter Convergence** - Route JSON, print, RPC, and interactive product work through canonical operations without changing adapter behavior. (completed 2026-07-12)
-- [ ] **Phase 4: Test Convergence and Compatibility Deletion** - Move behavior coverage to `run()` and remove the replaced broad session methods after every caller has migrated.
+- [x] **Phase 4: Test Convergence and Compatibility Deletion** - Move behavior coverage to `run()` and remove the replaced broad session methods after every caller has migrated.
 - [ ] **Phase 5: Boundary Enforcement and Stage 9 Closure** - Prevent regression to compatibility paths, verify the workspace, and close Stage 9 with accurate documentation.
 
 ## Phase Details
@@ -129,7 +129,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 04-04-PLAN.md — Finish navigation/summary deletion and run the Phase 4 closure gate.
+- [x] 04-04-PLAN.md — Finish navigation/summary deletion and run the Phase 4 closure gate.
 
 ### Phase 5: Boundary Enforcement and Stage 9 Closure
 
