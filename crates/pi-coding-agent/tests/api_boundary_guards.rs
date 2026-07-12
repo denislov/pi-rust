@@ -3,6 +3,11 @@ use std::fs;
 use std::path::PathBuf;
 
 #[test]
+fn external_consumer_fixtures_enforce_the_stable_facade_boundary() {
+    run_external_consumer_fixtures();
+}
+
+#[test]
 fn root_public_modules_are_marked_migration_private() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lib_source = fs::read_to_string(crate_root.join("src/lib.rs"))
