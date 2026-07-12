@@ -649,13 +649,14 @@ async fn coding_session_public_api_symbols_are_importable() {
     assert!(prompt_error.to_string().contains("runtime snapshot"));
 
     let branch_summary_error = session
-        .summarize_branch(
-            PromptTurnOptions::new(PromptInvocation::Text(String::new()))
+        .run(CodingAgentOperation::BranchSummary {
+            options: PromptTurnOptions::new(PromptInvocation::Text(String::new()))
                 .with_mode(PromptTurnMode::Print),
-            "leaf_abandoned",
-            "leaf_target",
-            None,
-        )
+            source_leaf_id: "leaf_abandoned".into(),
+            target_leaf_id: "leaf_target".into(),
+            custom_instructions: None,
+            reuse: BranchSummaryReusePolicy::AlwaysCreate,
+        })
         .await
         .unwrap_err();
     assert_eq!(branch_summary_error.code(), "config");

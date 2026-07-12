@@ -2941,7 +2941,7 @@ runtime = "lua"
 
     #[tokio::test]
     async fn fork_current_session_rejects_while_operation_is_busy() {
-        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
             .unwrap();
         let _guard = session
@@ -2949,7 +2949,12 @@ runtime = "lua"
             .begin(OperationKind::Prompt)
             .unwrap();
 
-        let error = session.fork_current_session(None).unwrap_err();
+        let error = session
+            .run(CodingAgentOperation::ForkSession {
+                target_leaf_id: None,
+            })
+            .await
+            .unwrap_err();
 
         assert_eq!(error.code(), "busy");
         assert_eq!(
@@ -4003,14 +4008,19 @@ runtime = "lua"
         let mut events = session.subscribe();
 
         let outcome = session
-            .summarize_branch(
-                prompt_options(api, ""),
-                branch_leaf.clone(),
-                root_leaf.clone(),
-                Some("keep branch decisions".into()),
-            )
+            .run(CodingAgentOperation::BranchSummary {
+                options: prompt_options(api, ""),
+                source_leaf_id: branch_leaf.clone(),
+                target_leaf_id: root_leaf.clone(),
+                custom_instructions: Some("keep branch decisions".into()),
+                reuse: BranchSummaryReusePolicy::AlwaysCreate,
+            })
             .await
             .unwrap();
+        let outcome = match outcome {
+            CodingAgentOperationOutcome::BranchSummary(outcome) => outcome,
+            other => panic!("expected branch summary outcome, got {other:?}"),
+        };
 
         assert!(matches!(
             &outcome,
@@ -4094,12 +4104,13 @@ runtime = "lua"
             other => panic!("expected branch prompt success, got {other:?}"),
         };
         session
-            .summarize_branch(
-                prompt_options(api, ""),
-                branch_leaf.clone(),
-                root_leaf.clone(),
-                None,
-            )
+            .run(CodingAgentOperation::BranchSummary {
+                options: prompt_options(api, ""),
+                source_leaf_id: branch_leaf.clone(),
+                target_leaf_id: root_leaf.clone(),
+                custom_instructions: None,
+                reuse: BranchSummaryReusePolicy::AlwaysCreate,
+            })
             .await
             .unwrap();
         let event_log_path = temp
