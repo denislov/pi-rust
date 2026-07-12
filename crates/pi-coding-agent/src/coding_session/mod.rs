@@ -5462,7 +5462,14 @@ runtime = "lua"
             .unwrap();
         let output = temp.path().join("exports/session.html");
 
-        let exported = session.export_current_html(&output).unwrap();
+        let exported = match session
+            .run(CodingAgentOperation::ExportCurrentHtml(output.clone()))
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::ExportHtml(path) => path,
+            other => panic!("expected html export outcome, got {other:?}"),
+        };
 
         assert_eq!(exported, output);
         let html = std::fs::read_to_string(&exported).unwrap();
@@ -5488,7 +5495,10 @@ runtime = "lua"
         .unwrap();
         let output = temp.path().join("session.jsonl");
 
-        let error = session.export_current_html(&output).unwrap_err();
+        let error = session
+            .run(CodingAgentOperation::ExportCurrentHtml(output.clone()))
+            .await
+            .unwrap_err();
 
         assert_eq!(error.code(), "input");
         assert_eq!(
@@ -5514,7 +5524,14 @@ runtime = "lua"
             .unwrap();
         let output = temp.path().join("session.html");
 
-        let exported = session.export_current_html(&output).unwrap();
+        let exported = match session
+            .run(CodingAgentOperation::ExportCurrentHtml(output.clone()))
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::ExportHtml(path) => path,
+            other => panic!("expected html export outcome, got {other:?}"),
+        };
 
         assert_eq!(exported, output);
         assert!(output.exists());

@@ -15,9 +15,10 @@ use pi_ai::types::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    CodingAgentProductEvent, CodingAgentProductEventReceiver, CodingAgentSession,
-    CodingAgentSessionExportItem, CodingAgentSessionOptions, PromptInvocation, PromptRunOptions,
-    PromptTurnOptions, SessionRunOptions,
+    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentProductEvent,
+    CodingAgentProductEventReceiver, CodingAgentSession, CodingAgentSessionExportItem,
+    CodingAgentSessionOptions, PromptInvocation, PromptRunOptions, PromptTurnOptions,
+    SessionRunOptions,
 };
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
@@ -318,7 +319,14 @@ async fn persistent_default_helper_delegation_exports_folded_block() {
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
 
-    let export = session.export_current().unwrap();
+    let export = match session
+        .run(CodingAgentOperation::ExportCurrent)
+        .await
+        .unwrap()
+    {
+        CodingAgentOperationOutcome::Export(value) => value,
+        other => panic!("expected export outcome, got {other:?}"),
+    };
     assert!(
         export.transcript.iter().any(|item| matches!(
             item,

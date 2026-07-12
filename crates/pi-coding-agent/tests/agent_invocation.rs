@@ -15,9 +15,10 @@ use pi_ai::types::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    AgentInvocationOptions, CodingAgentProductEvent, CodingAgentProductEventReceiver,
-    CodingAgentSession, CodingAgentSessionOptions, PromptInvocation, PromptRunOptions,
-    PromptTurnOptions, SessionRunOptions,
+    AgentInvocationOptions, CodingAgentOperation, CodingAgentOperationOutcome,
+    CodingAgentProductEvent, CodingAgentProductEventReceiver, CodingAgentSession,
+    CodingAgentSessionOptions, PromptInvocation, PromptRunOptions, PromptTurnOptions,
+    SessionRunOptions,
 };
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
@@ -60,13 +61,16 @@ tools = ["echo"]
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .invoke_agent(AgentInvocationOptions::new(
-            "runtime-coder",
-            "implement the task",
-            prompt_options(&cwd, fallback_api, "implement the task"),
+        .run(CodingAgentOperation::InvokeAgent(
+            AgentInvocationOptions::new(
+                "runtime-coder",
+                "implement the task",
+                prompt_options(&cwd, fallback_api, "implement the task"),
+            ),
         ))
         .await
         .unwrap();
+    let outcome = extract_agent_invocation(outcome);
 
     assert_eq!(outcome.profile_id.as_str(), "runtime-coder");
     assert_eq!(outcome.final_text, "profile applied");
@@ -107,10 +111,12 @@ async fn one_off_agent_invocation_uses_task_over_prompt_options_invocation() {
             .unwrap();
 
     session
-        .invoke_agent(AgentInvocationOptions::new(
-            "default",
-            "delegated task",
-            prompt_options(temp.path(), api, "parent prompt"),
+        .run(CodingAgentOperation::InvokeAgent(
+            AgentInvocationOptions::new(
+                "default",
+                "delegated task",
+                prompt_options(temp.path(), api, "parent prompt"),
+            ),
         ))
         .await
         .unwrap();
@@ -135,16 +141,24 @@ async fn one_off_agent_invocation_does_not_commit_parent_session_transcript() {
     .unwrap();
 
     let outcome = session
-        .invoke_agent(AgentInvocationOptions::new(
-            "default",
-            "do not persist",
-            prompt_options(temp.path(), api, "do not persist"),
+        .run(CodingAgentOperation::InvokeAgent(
+            AgentInvocationOptions::new(
+                "default",
+                "do not persist",
+                prompt_options(temp.path(), api, "do not persist"),
+            ),
         ))
         .await
         .unwrap();
+    let outcome = extract_agent_invocation(outcome);
 
     assert_eq!(outcome.final_text, "profile applied");
-    let export = session.export_current().unwrap();
+    let export = extract_export(
+        session
+            .run(CodingAgentOperation::ExportCurrent)
+            .await
+            .unwrap(),
+    );
     assert!(
         export.transcript.is_empty(),
         "one-off agent invocation must not write parent transcript: {export:#?}"
@@ -163,10 +177,12 @@ async fn one_off_agent_invocation_emits_single_failed_event_for_child_failure() 
     let mut events = session.subscribe_product_events_public();
 
     let error = session
-        .invoke_agent(AgentInvocationOptions::new(
-            "default",
-            "fail child",
-            prompt_options(temp.path(), api, "fail child"),
+        .run(CodingAgentOperation::InvokeAgent(
+            AgentInvocationOptions::new(
+                "default",
+                "fail child",
+                prompt_options(temp.path(), api, "fail child"),
+            ),
         ))
         .await
         .unwrap_err();
@@ -196,10 +212,12 @@ async fn one_off_agent_invocation_rejects_unknown_profile_with_product_event() {
     let mut events = session.subscribe_product_events_public();
 
     let error = session
-        .invoke_agent(AgentInvocationOptions::new(
-            "missing",
-            "task",
-            prompt_options(temp.path(), api, "task"),
+        .run(CodingAgentOperation::InvokeAgent(
+            AgentInvocationOptions::new(
+                "missing",
+                "task",
+                prompt_options(temp.path(), api, "task"),
+            ),
         ))
         .await
         .unwrap_err();
@@ -285,6 +303,24 @@ fn drain_events(receiver: &mut CodingAgentProductEventReceiver) -> Vec<CodingAge
 
 fn has_event(events: &[CodingAgentProductEvent], kind: &str) -> bool {
     events.iter().any(|event| event.kind == kind)
+}
+
+fn extract_agent_invocation(
+    outcome: CodingAgentOperationOutcome,
+) -> pi_coding_agent::api::AgentInvocationOutcome {
+    match outcome {
+        CodingAgentOperationOutcome::AgentInvocation(value) => value,
+        other => panic!("expected agent invocation outcome, got {other:?}"),
+    }
+}
+
+fn extract_export(
+    outcome: CodingAgentOperationOutcome,
+) -> pi_coding_agent::api::CodingAgentSessionExport {
+    match outcome {
+        CodingAgentOperationOutcome::Export(value) => value,
+        other => panic!("expected export outcome, got {other:?}"),
+    }
 }
 
 fn user_texts(context: &Context) -> Vec<String> {

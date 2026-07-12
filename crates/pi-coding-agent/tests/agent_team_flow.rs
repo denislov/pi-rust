@@ -16,9 +16,9 @@ use pi_ai::types::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    AgentTeamOptions, CodingAgentProductEvent, CodingAgentProductEventReceiver, CodingAgentSession,
-    CodingAgentSessionOptions, PromptInvocation, PromptRunOptions, PromptTurnOptions,
-    SessionRunOptions,
+    AgentTeamOptions, CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentProductEvent,
+    CodingAgentProductEventReceiver, CodingAgentSession, CodingAgentSessionOptions,
+    PromptInvocation, PromptRunOptions, PromptTurnOptions, SessionRunOptions,
 };
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
@@ -59,13 +59,14 @@ members = ["coder", "reviewer"]
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .invoke_team(AgentTeamOptions::new(
+        .run(CodingAgentOperation::InvokeTeam(AgentTeamOptions::new(
             "implementation",
             "ship the feature",
             prompt_options(&cwd, api, "ship the feature"),
-        ))
+        )))
         .await
         .unwrap();
+    let outcome = extract_agent_team(outcome);
 
     assert_eq!(outcome.team_id.as_str(), "implementation");
     assert_eq!(outcome.member_results.len(), 2);
@@ -91,7 +92,12 @@ members = ["coder", "reviewer"]
         Some("Reviewer instructions.")
     );
 
-    let export = session.export_current().unwrap();
+    let export = extract_export(
+        session
+            .run(CodingAgentOperation::ExportCurrent)
+            .await
+            .unwrap(),
+    );
     assert!(
         export.transcript.is_empty(),
         "team child work must not write parent transcript: {export:#?}"
@@ -141,13 +147,14 @@ members = ["coder"]
             .unwrap();
 
     let outcome = session
-        .invoke_team(AgentTeamOptions::new(
+        .run(CodingAgentOperation::InvokeTeam(AgentTeamOptions::new(
             "supervised",
             "finish the plan",
             prompt_options(&cwd, api, "finish the plan"),
-        ))
+        )))
         .await
         .unwrap();
+    let outcome = extract_agent_team(outcome);
 
     assert_eq!(outcome.final_text, "lead final");
     let supervisor = outcome
@@ -199,11 +206,11 @@ members = ["missing"]
     let mut events = session.subscribe_product_events_public();
 
     let error = session
-        .invoke_team(AgentTeamOptions::new(
+        .run(CodingAgentOperation::InvokeTeam(AgentTeamOptions::new(
             "broken",
             "task",
             prompt_options(&cwd, api, "task"),
-        ))
+        )))
         .await
         .unwrap_err();
 
@@ -246,11 +253,11 @@ members = ["coder"]
     let mut events = session.subscribe_product_events_public();
 
     let error = session
-        .invoke_team(AgentTeamOptions::new(
+        .run(CodingAgentOperation::InvokeTeam(AgentTeamOptions::new(
             "broken-supervisor",
             "task",
             prompt_options(&cwd, api, "task"),
-        ))
+        )))
         .await
         .unwrap_err();
 
@@ -293,11 +300,11 @@ members = ["coder"]
     let mut events = session.subscribe_product_events_public();
 
     let error = session
-        .invoke_team(AgentTeamOptions::new(
+        .run(CodingAgentOperation::InvokeTeam(AgentTeamOptions::new(
             "failing-member",
             "task",
             prompt_options(&cwd, api, "task"),
-        ))
+        )))
         .await
         .unwrap_err();
 
@@ -375,6 +382,24 @@ fn drain_events(receiver: &mut CodingAgentProductEventReceiver) -> Vec<CodingAge
 
 fn has_event(events: &[CodingAgentProductEvent], kind: &str) -> bool {
     events.iter().any(|event| event.kind == kind)
+}
+
+fn extract_agent_team(
+    outcome: CodingAgentOperationOutcome,
+) -> pi_coding_agent::api::AgentTeamOutcome {
+    match outcome {
+        CodingAgentOperationOutcome::AgentTeam(value) => value,
+        other => panic!("expected agent team outcome, got {other:?}"),
+    }
+}
+
+fn extract_export(
+    outcome: CodingAgentOperationOutcome,
+) -> pi_coding_agent::api::CodingAgentSessionExport {
+    match outcome {
+        CodingAgentOperationOutcome::Export(value) => value,
+        other => panic!("expected export outcome, got {other:?}"),
+    }
 }
 
 #[derive(Debug, Clone)]
