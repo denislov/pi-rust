@@ -218,10 +218,14 @@ async fn scripted_interactive_branch_summary_preserves_visible_and_persisted_beh
     };
     let provider = FauxProvider::new(Vec::new());
     let branch_summary_command = format!("/branch-summary {leaf_id} {leaf_id}\r\x03");
-    let result =
-        run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), &branch_summary_command)
-            .await
-            .unwrap();
+    let result = run_scripted_interactive_with_args_and_session_dir(
+        provider,
+        args,
+        temp.path(),
+        &branch_summary_command,
+    )
+    .await
+    .unwrap();
 
     let frame = result.rendered_lines.join("\n");
 

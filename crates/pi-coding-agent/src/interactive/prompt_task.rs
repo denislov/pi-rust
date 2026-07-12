@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::CliError;
+use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentSession,
     CodingAgentSessionOptions, CodingSessionError, PluginLoadOutcome, ProductEvent, ProfileId,
@@ -606,7 +607,6 @@ fn send_ui_snapshot(
     let _ = event_tx.send(PromptTaskEvent::Snapshot(session.ui_snapshot(Vec::new())));
 }
 
-#[allow(deprecated)]
 async fn run_coding_prompt_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -631,7 +631,7 @@ async fn run_coding_prompt_task(
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
-        let mut prompt = Box::pin(session.prompt(prompt_options));
+        let mut prompt = Box::pin(session.run(CodingAgentOperation::Prompt(prompt_options)));
         let mut abort_requested = false;
         let mut controls_open = true;
         loop {
@@ -660,7 +660,12 @@ async fn run_coding_prompt_task(
                     }
                 }
                 outcome = &mut prompt => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::Prompt(outcome) => Ok(outcome),
+                            _ => unreachable!("prompt operation returned a different public outcome"),
+                        });
                 }
             }
         }
@@ -678,7 +683,6 @@ async fn run_coding_prompt_task(
     })
 }
 
-#[allow(deprecated)]
 async fn run_coding_agent_invocation_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -709,7 +713,8 @@ async fn run_coding_agent_invocation_task(
     );
 
     {
-        let mut invocation = Box::pin(session.invoke_agent(invocation_options));
+        let mut invocation =
+            Box::pin(session.run(CodingAgentOperation::InvokeAgent(invocation_options)));
         let mut abort_requested = false;
         let mut controls_open = true;
         loop {
@@ -738,7 +743,12 @@ async fn run_coding_agent_invocation_task(
                     }
                 }
                 outcome = &mut invocation => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::AgentInvocation(_) => Ok(()),
+                            _ => unreachable!("agent invocation operation returned a different public outcome"),
+                        });
                 }
             }
         }
@@ -751,7 +761,6 @@ async fn run_coding_agent_invocation_task(
     Ok(AgentInvocationTaskResult { session })
 }
 
-#[allow(deprecated)]
 async fn run_coding_agent_team_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -781,7 +790,7 @@ async fn run_coding_agent_team_task(
     );
 
     let outcome = {
-        let mut invocation = Box::pin(session.invoke_team(team_options));
+        let mut invocation = Box::pin(session.run(CodingAgentOperation::InvokeTeam(team_options)));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -795,7 +804,12 @@ async fn run_coding_agent_team_task(
                     }
                 }
                 outcome = &mut invocation => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::AgentTeam(outcome) => Ok(outcome),
+                            _ => unreachable!("agent team operation returned a different public outcome"),
+                        });
                 }
             }
         }
@@ -819,8 +833,10 @@ async fn run_coding_delegation_approval_task(
     send_ui_snapshot(&event_tx, &session);
 
     {
-        let mut approval =
-            Box::pin(session.approve_delegation_confirmation(&operation_id, &tool_call_id));
+        let mut approval = Box::pin(session.run(CodingAgentOperation::ApproveDelegation {
+            operation_id,
+            tool_call_id,
+        }));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -834,7 +850,12 @@ async fn run_coding_delegation_approval_task(
                     }
                 }
                 outcome = &mut approval => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::DelegationApproved => Ok(()),
+                            _ => unreachable!("delegation approval operation returned a different public outcome"),
+                        });
                 }
             }
         }
@@ -847,7 +868,6 @@ async fn run_coding_delegation_approval_task(
     Ok(DelegationApprovalTaskResult { session })
 }
 
-#[allow(deprecated)]
 async fn run_coding_compact_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -871,7 +891,7 @@ async fn run_coding_compact_task(
     let compact_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
-        let mut compact = Box::pin(session.compact(compact_options));
+        let mut compact = Box::pin(session.run(CodingAgentOperation::Compact(compact_options)));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -885,7 +905,12 @@ async fn run_coding_compact_task(
                     }
                 }
                 outcome = &mut compact => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::Compact(outcome) => Ok(outcome),
+                            _ => unreachable!("manual compaction operation returned a different public outcome"),
+                        });
                 }
             }
         }
@@ -903,7 +928,6 @@ async fn run_coding_compact_task(
     })
 }
 
-#[allow(deprecated)]
 async fn run_coding_self_healing_edit_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -927,7 +951,7 @@ async fn run_coding_self_healing_edit_task(
     send_ui_snapshot(&event_tx, &session);
 
     let outcome = {
-        let mut edit = Box::pin(session.self_healing_edit_with_options(request));
+        let mut edit = Box::pin(session.run(CodingAgentOperation::SelfHealingEdit(request)));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -941,7 +965,12 @@ async fn run_coding_self_healing_edit_task(
                     }
                 }
                 outcome = &mut edit => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::SelfHealingEdit(outcome) => Ok(outcome),
+                            _ => unreachable!("self-healing edit operation returned a different public outcome"),
+                        });
                 }
             }
         }
