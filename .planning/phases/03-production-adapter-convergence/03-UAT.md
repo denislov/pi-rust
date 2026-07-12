@@ -1,9 +1,9 @@
 ---
-status: diagnosed
+status: resolved
 phase: 03-production-adapter-convergence
 source: [03-VERIFICATION.md]
 started: 2026-07-12T10:19:57Z
-updated: 2026-07-12T12:32:25Z
+updated: 2026-07-12T16:16:09Z
 ---
 
 ## Current Test
@@ -14,21 +14,25 @@ updated: 2026-07-12T12:32:25Z
 
 ### 1. Real interactive operation-failure owner continuity
 expected: A real post-acquisition profile, rejection, or prompt failure carries the same owner and exact error through the task channel; finish_prompt restores it before error projection; a subsequent canonical operation succeeds; one case covers PartialCommit.
-result: issue
+result: pass
+source: automated
 reported: "好，采用第二种"
 severity: major
+resolved_by: "Plans 03-08 and 03-09; canonical verification passed with real PromptTask.done failure coverage."
 
 ### 2. Real ForkSession failure continuity
 expected: A deterministic real ForkSession failure preserves the pre-fork owner, subscriber continuity, and old session target; finish_prompt projects the exact error and the restored session remains usable without opening a replacement owner.
-result: issue
+result: pass
+source: automated
 reported: "同样采用严格验证：缺少真实 ForkSession failure、PromptTask.done、subscriber 和旧 session target 连续性的自动测试，当前无法手工验证。"
 severity: major
+resolved_by: "Plan 03-09; canonical verification passed with real ForkSession failure and subscriber-continuity coverage."
 
 ## Summary
 
 total: 2
-passed: 0
-issues: 2
+passed: 2
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
@@ -36,7 +40,8 @@ blocked: 0
 ## Gaps
 
 - truth: "A real post-acquisition profile, rejection, or prompt failure carries the same owner and exact error through the task channel; finish_prompt restores it before error projection; a subsequent canonical operation succeeds; one case covers PartialCommit."
-  status: failed
+  status: resolved
+  resolution: "Plans 03-08 and 03-09 added lossless PartialCommit transport and real profile/rejection/prompt runner tests through PromptTask.done and finish_prompt."
   reason: "User reported: 好，采用第二种（采用严格验证：当前缺少通过真实 PromptTask.done、真实 operation failure 和 PartialCommit fault injection 的自动测试，无法手工验证。）"
   severity: major
   test: 1
@@ -54,9 +59,10 @@ blocked: 0
     - "Add a narrow cfg(test), crate-visible CodingAgentSession fault-arm bridge without adding a production failure hook."
     - "Exercise real profile, rejection, and prompt runners through PromptTask.done, finish_prompt, and a subsequent canonical operation."
     - "Preserve PartialCommit classification and operation_id through the interactive error/task boundary and assert the exact durable error contract."
-  debug_session: ".planning/debug/phase-03-real-interactive-operation-failure-owner-continuity.md"
+  debug_session: ".planning/debug/resolved/phase-03-real-interactive-operation-failure-owner-continuity.md"
 - truth: "A deterministic real ForkSession failure preserves the pre-fork owner, subscriber continuity, and old session target; finish_prompt projects the exact error and the restored session remains usable without opening a replacement owner."
-  status: failed
+  status: resolved
+  resolution: "Plan 03-09 added a real ForkSession AppendEvents failure test proving source-owner, old-target, cleanup, subscriber, and post-restoration event continuity."
   reason: "User reported: 同样采用严格验证：缺少真实 ForkSession failure、PromptTask.done、subscriber 和旧 session target 连续性的自动测试，当前无法手工验证。"
   severity: major
   test: 2
@@ -74,4 +80,4 @@ blocked: 0
     - "Expose a narrow cfg(test), crate-visible helper that arms the existing AppendEvents failure on a persistent CodingAgentSession."
     - "Add a real ForkSession PromptTask.done failure test that preserves source owner, old target, source session count, exact error, and the pre-task subscriber."
     - "Run a post-restoration canonical mutation and assert the original receiver still observes its product event."
-  debug_session: ".planning/debug/phase-03-real-fork-session-failure-continuity.md"
+  debug_session: ".planning/debug/resolved/phase-03-real-fork-session-failure-continuity.md"
