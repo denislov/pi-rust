@@ -43,17 +43,17 @@
 
 ### Test Migration
 
-- [ ] **TEST-01**: Owner unit tests, public API tests, and integration tests use `run()` to verify public workflows
-- [ ] **TEST-02**: Existing behavior assertions for agents, teams, profiles, delegation, export, branch summaries, and self-healing edits are preserved
+- [x] **TEST-01**: Owner unit tests, public API tests, and integration tests use `run()` to verify public workflows
+- [x] **TEST-02**: Existing behavior assertions for agents, teams, profiles, delegation, export, branch summaries, and self-healing edits are preserved
 - [ ] **TEST-03**: Test helpers only extract typed outcomes and do not create a new production compatibility facade
 - [ ] **TEST-04**: Owner tests that genuinely require custom internal options may use crate-private operation paths without expanding the public API
 
 ### Compatibility Deletion
 
-- [ ] **DELETE-01**: Every public or crate-private broad live-session workflow method replaced by canonical operations is deleted
-- [ ] **DELETE-02**: Broad workflow deletion occurs only after all production and test callers have migrated
-- [ ] **DELETE-03**: Missed callers are migrated instead of restoring deleted methods or recreating compatibility entry points under new names
-- [ ] **DELETE-04**: Construction, open/resume, snapshot, query, event subscription, control, and static repository helpers that are not operation-facade replacements remain available
+- [x] **DELETE-01**: Every public or crate-private broad live-session workflow method replaced by canonical operations is deleted
+- [x] **DELETE-02**: Broad workflow deletion occurs only after all production and test callers have migrated
+- [x] **DELETE-03**: Missed callers are migrated instead of restoring deleted methods or recreating compatibility entry points under new names
+- [x] **DELETE-04**: Construction, open/resume, snapshot, query, event subscription, control, and static repository helpers that are not operation-facade replacements remain available
 
 ### Boundary Enforcement
 
@@ -117,14 +117,14 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | INTER-03 | Phase 3 | Complete |
 | INTER-04 | Phase 3 | Complete |
 | INTER-05 | Phase 3 | Complete |
-| TEST-01 | Phase 4 | Pending |
-| TEST-02 | Phase 4 | Pending |
+| TEST-01 | Phase 4 | Complete |
+| TEST-02 | Phase 4 | Complete |
 | TEST-03 | Phase 4 | Pending |
 | TEST-04 | Phase 4 | Pending |
-| DELETE-01 | Phase 4 | Pending |
-| DELETE-02 | Phase 4 | Pending |
-| DELETE-03 | Phase 4 | Pending |
-| DELETE-04 | Phase 4 | Pending |
+| DELETE-01 | Phase 4 | Complete |
+| DELETE-02 | Phase 4 | Complete |
+| DELETE-03 | Phase 4 | Complete |
+| DELETE-04 | Phase 4 | Complete |
 | GUARD-01 | Phase 5 | Pending |
 | GUARD-02 | Phase 5 | Pending |
 | GUARD-03 | Phase 5 | Pending |
