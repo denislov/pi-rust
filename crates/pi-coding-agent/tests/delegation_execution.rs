@@ -81,7 +81,11 @@ system_prompt = "Coder child instructions."
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
 
@@ -137,12 +141,12 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options_with_tools(
+        .run(CodingAgentOperation::Prompt(prompt_options_with_tools(
             &cwd,
             api,
             "plan feature",
             vec![parent_only_tool()],
-        ))
+        )))
         .await
         .unwrap();
 
@@ -225,13 +229,21 @@ async fn delegated_helper_receives_minimal_context_without_parent_transcript() {
     .unwrap();
 
     let first = session
-        .prompt(prompt_options(&cwd, api, "parent secret context"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "parent secret context",
+        )))
         .await
         .unwrap();
     assert_eq!(first.final_text(), Some("parent history answer"));
 
     let second = session
-        .prompt(prompt_options(&cwd, api, "plan with prior history"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan with prior history",
+        )))
         .await
         .unwrap();
     assert_eq!(second.final_text(), Some("parent ready"));
@@ -314,7 +326,11 @@ async fn persistent_default_helper_delegation_exports_folded_block() {
     .unwrap();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
@@ -419,12 +435,12 @@ system_prompt = "Coder child instructions."
     .unwrap();
 
     let outcome = session
-        .prompt(prompt_options_with_tools(
+        .run(CodingAgentOperation::Prompt(prompt_options_with_tools(
             &cwd,
             api,
             "plan feature",
             vec![parent_only_tool()],
-        ))
+        )))
         .await
         .unwrap();
 
@@ -526,7 +542,11 @@ system_prompt = "Reviewer child instructions."
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
 
@@ -626,7 +646,11 @@ system_prompt = "Reviewer child instructions."
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
 
@@ -729,7 +753,11 @@ system_prompt = "Reviewer child instructions."
     .await
     .unwrap();
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
@@ -891,7 +919,11 @@ system_prompt = "QA child instructions."
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
 
@@ -985,7 +1017,11 @@ allowed_agents = ["delegating-planner"]
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
 
@@ -1076,7 +1112,11 @@ members = ["coder"]
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan team work"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan team work",
+        )))
         .await
         .unwrap();
 
@@ -1156,7 +1196,11 @@ system_prompt = "Coder child instructions."
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
 
@@ -1241,7 +1285,11 @@ system_prompt = "Coder child instructions."
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
@@ -1329,7 +1377,11 @@ system_prompt = "Coder child instructions."
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
@@ -1393,7 +1445,11 @@ async fn persistent_session_reopens_pending_delegation_confirmation() {
     .unwrap();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
@@ -1458,7 +1514,11 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     .await
     .unwrap();
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
@@ -1547,7 +1607,11 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
     .await
     .unwrap();
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
@@ -1646,7 +1710,11 @@ allowed_agents = ["missing-coder"]
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
-        .prompt(prompt_options(&cwd, api, "plan feature"))
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "plan feature",
+        )))
         .await
         .unwrap();
 
@@ -1748,6 +1816,15 @@ impl PromptOutcomeExt for pi_coding_agent::api::PromptTurnOutcome {
                 Some(final_text.as_str())
             }
             _ => None,
+        }
+    }
+}
+
+impl PromptOutcomeExt for CodingAgentOperationOutcome {
+    fn final_text(&self) -> Option<&str> {
+        match self {
+            CodingAgentOperationOutcome::Prompt(outcome) => outcome.final_text(),
+            other => panic!("expected prompt outcome, got {other:?}"),
         }
     }
 }

@@ -132,34 +132,38 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         "pub",
         false,
         &[
-            "set_default_agent_profile_id",
             "approve_delegation_confirmation",
             "reject_delegation_confirmation",
-            "prompt",
-            "compact",
-            "self_healing_edit",
-            "self_healing_edit_with_options",
             "summarize_branch",
         ],
+    );
+    add_expectations(
+        &mut expected,
+        "retained owner-private custom-option path",
+        "pub(crate)",
+        false,
+        &["load_plugins"],
+    );
+    add_expectations(
+        &mut expected,
+        "retained lifecycle/query/event/control helper",
+        "pub(crate)",
+        false,
+        &["fork_current_session"],
     );
     let absent = [
         "invoke_agent",
         "invoke_team",
         "export_current",
         "export_current_html",
+        "set_default_agent_profile_id",
+        "prompt",
+        "compact",
+        "self_healing_edit",
+        "self_healing_edit_with_options",
+        "reload_plugins",
+        "run_plugin_command",
     ];
-    add_expectations(
-        &mut expected,
-        "Phase 1 compatibility wrapper",
-        "pub(crate)",
-        false,
-        &[
-            "fork_current_session",
-            "reload_plugins",
-            "run_plugin_command",
-            "load_plugins",
-        ],
-    );
     add_expectations(
         &mut expected,
         "retained lifecycle/query/event/control helper",
@@ -227,11 +231,12 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         let definitions = methods.iter().filter(|method| method.name == name).count();
         if definitions != 0 {
             violations.push(format!(
-                "deleted G1 method `{name}` must have no CodingAgentSession definition, found {definitions}"
+                "deleted compatibility method `{name}` must have no CodingAgentSession definition, found {definitions}"
             ));
         }
     }
     violations.extend(absent_receiver_calls(&scan, &absent));
+    violations.extend(load_plugins_owner_call_violations(&scan));
     for expectation in &expected {
         let definitions = methods
             .iter()
@@ -307,10 +312,19 @@ fn absent_receiver_calls(scan: &SourceScan, names: &[&str]) -> Vec<String> {
     for path in paths {
         let relative = relative_path(&scan.repo_root, &path);
         let source = sanitize_rust_source(&fs::read_to_string(&path).expect("read Rust source"));
-        for (index, line) in source.lines().enumerate() {
+        let lines = source.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
             for name in names {
                 let pattern = format!(".{name}(");
                 if line.contains(&pattern) {
+                    if (*name == "prompt" && line.contains("agent.prompt("))
+                        || (*name == "set_default_agent_profile_id"
+                            && (line.contains("session_service.set_default_agent_profile_id(")
+                                || line.contains("root.set_default_agent_profile_id(")
+                                || line.contains("self.set_default_agent_profile_id(")))
+                    {
+                        continue;
+                    }
                     violations.push(format!(
                         "deleted G1 receiver call `{name}` remains at {relative}:{}: {}",
                         index + 1,
@@ -319,6 +333,55 @@ fn absent_receiver_calls(scan: &SourceScan, names: &[&str]) -> Vec<String> {
                 }
             }
         }
+    }
+    violations
+}
+
+fn load_plugins_owner_call_violations(scan: &SourceScan) -> Vec<String> {
+    let owner_path = scan.crate_root.join("src/coding_session/mod.rs");
+    let mut paths = rust_files_under(&scan.crate_root.join("src"));
+    paths.extend(rust_files_under(&scan.crate_root.join("tests")));
+    let mut violations = Vec::new();
+    let mut calls = 0;
+
+    for path in paths {
+        let relative = relative_path(&scan.repo_root, &path);
+        let raw_source = fs::read_to_string(&path).expect("read Rust source");
+        let source = sanitize_rust_source(&raw_source);
+        let raw_lines = raw_source.lines().collect::<Vec<_>>();
+        let lines = source.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            if !line.contains(".load_plugins(") {
+                continue;
+            }
+            calls += 1;
+            if path != owner_path {
+                violations.push(format!(
+                    "load_plugins custom-option call escaped coding_session owner tests at {relative}:{}",
+                    index + 1
+                ));
+                continue;
+            }
+            if !line_is_cfg_test_gated(&source, index) {
+                violations.push(format!(
+                    "load_plugins custom-option call is not test-gated at {relative}:{}",
+                    index + 1
+                ));
+            }
+            let prior = raw_lines[..index].iter().rev().take(4).collect::<Vec<_>>();
+            if !prior.iter().any(|candidate| candidate.contains("D-03")) {
+                violations.push(format!(
+                    "load_plugins owner exception lacks D-03 insufficiency justification at {relative}:{}",
+                    index + 1
+                ));
+            }
+        }
+    }
+
+    if calls != 4 {
+        violations.push(format!(
+            "load_plugins must have exactly four owner-test calls, found {calls}"
+        ));
     }
     violations
 }

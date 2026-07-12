@@ -3413,6 +3413,8 @@ runtime = "lua"
             .unwrap();
         let mut registry = PluginRegistry::new();
         registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
+        // D-03: public PluginLoad cannot inject the command registry required
+        // to exercise the private plugin-command error boundary.
         session
             .load_plugins(
                 PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
