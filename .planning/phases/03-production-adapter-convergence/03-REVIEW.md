@@ -1,9 +1,12 @@
 ---
 phase: 03-production-adapter-convergence
-reviewed: 2026-07-12T09:46:31Z
+reviewed: 2026-07-12T15:38:52Z
 depth: standard
-files_reviewed: 14
+files_reviewed: 17
 files_reviewed_list:
+  - crates/pi-coding-agent/src/coding_session/error.rs
+  - crates/pi-coding-agent/src/coding_session/mod.rs
+  - crates/pi-coding-agent/src/error.rs
   - crates/pi-coding-agent/src/interactive/app.rs
   - crates/pi-coding-agent/src/interactive/commands.rs
   - crates/pi-coding-agent/src/interactive/event_bridge.rs
@@ -20,56 +23,77 @@ files_reviewed_list:
   - crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs
 findings:
   critical: 0
-  warning: 2
+  warning: 4
   info: 0
-  total: 2
+  total: 4
 status: issues_found
 ---
 
 # Phase 03: Code Review Report
 
-**Reviewed:** 2026-07-12T09:46:31Z
+**Reviewed:** 2026-07-12T15:38:52Z
 **Depth:** standard
-**Files Reviewed:** 14
+**Files Reviewed:** 17
 **Status:** issues_found
+**Dispatch:** generic-agent workaround for unavailable typed `gsd-code-reviewer`
 
 ## Summary
 
-The Phase 03 gap-closure implementation now returns an acquired `CodingAgentSession` through `PromptTaskCompletion::Failed`, restores it before projecting the error, updates the prompt session target only after successful forks, and forwards each delegation `ProductEvent` once. The reviewed production paths do not reveal a remaining owner-loss, owner-duplication, `PartialCommit` rewrite, event double-forward, stale successful-fork target, private-runtime import, or JSON/print/RPC contract regression.
+The two UAT gaps now traverse real `PromptTask::spawn_*` runners, the actual oneshot completion channel, canonical persistence failures, and `finish_prompt`. The previous review's fabricated-completion warning is resolved. `CodingSessionError::PartialCommit` is converted losslessly into `CliError::PartialCommit`, its `Display` text remains identical, and the reviewed print, JSON, RPC, and interactive adapters consume errors through existing display/conversion paths without a variant-specific compatibility regression.
 
-The phase should not yet be treated as fully regression-locked, however. The main failure-continuity test fabricates the post-task envelope instead of causing any task runner or canonical operation to fail, and the replacement source guard still relies on a manually maintained runner list. Both tests pass even when important parts of the claimed Phase 03 closure are absent.
+The test-only owner bridge is directly `#[cfg(test)]`, `pub(crate)`, action-specific, and absent from `pi_coding_agent::api`; no generic `StoreFailurePoint` selector or production fault hook escaped `coding_session`. The only production behavior change in the gap commits is the planned lossless error conversion.
+
+Four regression-lock weaknesses remain. One is the previous manual runner-list warning; the other three are in the new real-runner tests. They do not demonstrate a current production failure, but each permits an important claimed contract to regress while tests remain green or hang indefinitely.
 
 Focused checks run during review passed:
 
-- `cargo test -p pi-coding-agent --lib prompt_task_failures_restore_the_live_owner_before_projecting_errors -- --nocapture`
-- `cargo test -p pi-coding-agent --lib interactive_prompt_tasks_use_product_event_stream_boundary -- --nocapture`
-- `cargo test -p pi-coding-agent --test product_runtime_boundary_guards production_interactive_uses_canonical_operations -- --nocapture`
-- `git diff --check`
+- `cargo test -p pi-coding-agent --lib 'interactive::r#loop::tests::real_' -- --nocapture` (4 passed)
+- `cargo test -p pi-coding-agent --test product_runtime_boundary_guards session_store_failure_controls_remain_test_only -- --exact --nocapture` (1 passed)
 
-## Warnings
+## Narrative Findings (AI reviewer)
 
-### WR-01: The claimed operation-failure coverage never executes a failing task or operation
+### WR-01: The runner boundary guard still cannot discover newly added owner-returning runners
 
-**File:** `crates/pi-coding-agent/src/interactive/loop.rs:2593`; `crates/pi-coding-agent/tests/interactive_mode.rs:473`; `crates/pi-coding-agent/tests/interactive_mode.rs:610`; `crates/pi-coding-agent/tests/interactive_sessions.rs:110`
+**Classification:** WARNING
 
-**Issue:** The test named `prompt_task_failures_restore_the_live_owner_before_projecting_errors` loops over four task labels, but each iteration directly constructs `PromptTaskCompletion::Failed(PromptTaskFailure { session, error })` and calls `finish_prompt`. It proves only that the final match arm restores an owner that has already been packaged correctly. It does not call `run_coding_set_default_agent_profile_task`, `run_coding_delegation_rejection_task`, `run_coding_fork_session_task`, or `run_coding_prompt_task`; therefore it cannot detect a runner that drops the owner, returns `SetupFailed`, changes the error (including `PartialCommit`), or fails to send completion.
+**File:** `crates/pi-coding-agent/src/interactive/prompt_task.rs:1962`; `crates/pi-coding-agent/src/interactive/prompt_task.rs:2020`
 
-The new integration tests do not close that gap. Delegation rejection at line 473 succeeds and then submits another prompt; direct fork at line 610 succeeds; the navigation tests at lines 110 and 150 also exercise only successful forks. Consequently, the report and summary claim four deterministic error-path continuity checks that do not exist. A future regression at the task/operation boundary can leave all of these tests green.
+**Evidence:** `interactive_prompt_tasks_use_product_event_stream_boundary` still iterates a manually maintained array of thirteen function names. A new `async fn run_coding_* -> PromptTaskCompletion` is invisible unless a developer also edits this array, so the guard can stay green while the new runner omits `subscribe_product_events()` or `complete_owned_task()`. Its `function_body` helper also counts braces in raw source, so braces in a string or comment can truncate or extend the inspected body. The four new behavioral tests close the named profile/rejection/prompt/fork paths, but they do not repair this open-world source guard for the remaining and future runners.
 
-**Fix:** Add behavioral tests at the `PromptTask` boundary that induce a real canonical failure after the owner is acquired. For profile mutation, delegation rejection, fork, and one pre-existing async prompt path, await `task.done`, assert `PromptTaskCompletion::Failed` carries the same session identity and exact `CliError`, pass that completion through `finish_prompt`, then run another canonical operation on the restored owner. Use existing test-only session-store failure controls or deterministic invalid/admission fixtures; include at least one `PartialCommit` case so the durable ambiguity contract is verified rather than inferred. Rename the current unit test to describe its narrower `finish_prompt` responsibility.
+**Fix:** Parse sanitized Rust source, preferably with `syn`, enumerate every `async fn run_coding_*` whose return type is `PromptTaskCompletion`, and compare that discovered set against the verified set. At minimum, apply the repository's source sanitizer before brace matching and fail with the exact newly discovered runner name. Keep behavioral tests authoritative for owner return; use this guard only to enforce complete structural coverage.
 
-### WR-02: The named-runner source guard does not detect newly added owner-returning runners
+### WR-02: Real task-channel tests can hang forever instead of failing the completion contract
 
-**File:** `crates/pi-coding-agent/src/interactive/prompt_task.rs:2020`
+**Classification:** WARNING
 
-**Issue:** `interactive_prompt_tasks_use_product_event_stream_boundary` replaces the old magic count with a hard-coded array of thirteen function names. Removing or renaming one listed function fails, but adding a fourteenth `run_coding_*` owner-returning runner outside the array passes without any subscription or owner-completion assertion. This contradicts the plan acceptance criterion that adding an interactive owner-returning task must fail with the missing task name.
+**File:** `crates/pi-coding-agent/src/interactive/loop.rs:2449`
 
-The guard also treats textual presence of `subscribe_product_events()` and `complete_owned_task(` anywhere in a naively brace-counted function body as proof of behavior. It does not establish that all post-acquisition exits flow through `complete_owned_task`, and braces inside future comments or string literals can corrupt `function_body` extraction. Thus the guard can both miss a real boundary omission and fail for unrelated source text.
+**Evidence:** All four strict UAT tests call `await_prompt_task`, which performs `task.done.await` with no deadline. A panic drops the sender and fails quickly, but a regression that deadlocks a runner, leaves an operation pending, or never sends completion hangs the Rust test process because the standard test harness has no per-test timeout. Failure to deliver `PromptTask.done` is one of the exact contracts these tests are intended to detect, so an unbounded wait turns the regression into an indefinitely stalled phase/workspace gate rather than a deterministic assertion failure.
 
-**Fix:** Discover the runner set from sanitized Rust source by enumerating every `async fn run_coding_*` whose return type is `PromptTaskCompletion`, then compare the discovered names with the checked names and report any unchecked runner. Prefer a parser such as `syn` if already acceptable for test tooling; otherwise reuse the repository's established Rust-source sanitizer before brace matching. Behavioral completion tests from WR-01 should remain authoritative for exactly-one-owner semantics, while this structural guard should enforce complete runner coverage and prohibited compatibility subscriptions.
+**Fix:** Wrap the oneshot receive in `tokio::time::timeout` with a short deterministic test deadline and include the runner/completion context in the panic message. For example, return an error from the helper when the deadline expires before draining events, then have each test identify its runner in the expectation.
+
+### WR-03: Durable-log and failed-fork cleanup assertions silently discard evidence of corruption
+
+**Classification:** WARNING
+
+**File:** `crates/pi-coding-agent/src/interactive/loop.rs:2468`; `crates/pi-coding-agent/src/interactive/loop.rs:2483`; `crates/pi-coding-agent/src/interactive/loop.rs:2807`; `crates/pi-coding-agent/src/interactive/loop.rs:2886`; `crates/pi-coding-agent/src/interactive/loop.rs:2982`
+
+**Evidence:** `appended_operation_ids` uses `filter_map(... .ok())`, so malformed appended JSONL records are silently ignored, and the tests only require that any surviving record carries the operation ID. They do not require a complete committed transaction or fail on corrupt durable output. Separately, `rust_native_session_count` ignores unreadable directory entries and counts only directories that already contain both `session.json` and `events.jsonl`. A failed fork that leaves a partial target directory, or cleanup that removes only one required file, therefore produces the same count and satisfies the claimed "no replacement session survives" assertion.
+
+**Fix:** Parse every appended line with `expect`, assert the expected transaction markers and exact operation ID rather than an `any` match, and fail on any malformed envelope. Snapshot the exact set of root directory entries before the fork and compare it after failure, including partial directories and unexpected files; additionally assert that only the known source session directory remains.
+
+### WR-04: Restore-before-error-projection ordering is still asserted only as two final postconditions
+
+**Classification:** WARNING
+
+**File:** `crates/pi-coding-agent/src/interactive/loop.rs:2315`; `crates/pi-coding-agent/src/interactive/loop.rs:2757`; `crates/pi-coding-agent/src/interactive/loop.rs:2821`; `crates/pi-coding-agent/src/interactive/loop.rs:3100`
+
+**Evidence:** Production currently performs `*coding_session = Some(session)` before `root.apply_events(AgentError)`, which is the required ordering. The profile and rejection tests call `finish_prompt` and then independently assert that an owner exists and an error exists. Reversing those two production statements would leave every new test green. The structural test `interactive_loop_restores_owner_and_projects_completion_without_compat_subscription` only checks that both source fragments occur somewhere in the file; it does not compare their order or scope. Thus the summaries' restore-before-projection claim is correct today but not regression-locked.
+
+**Fix:** Extract the failed-completion arm into a small helper that restores the owner and invokes an injected/projector closure afterward; in the unit test, make the closure assert that `coding_session` already contains the expected owner. If refactoring is undesirable, add a sanitized/AST-based structural assertion scoped to the `PromptTaskCompletion::Failed` match arm that verifies the assignment precedes the `AgentError` projection.
 
 ---
 
-_Reviewed: 2026-07-12T09:46:31Z_
+_Reviewed: 2026-07-12T15:38:52Z_
 _Reviewer: the agent (gsd-code-reviewer, generic-agent workaround)_
 _Depth: standard_
