@@ -132,8 +132,6 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         "pub",
         false,
         &[
-            "export_current_html",
-            "export_current",
             "set_default_agent_profile_id",
             "approve_delegation_confirmation",
             "reject_delegation_confirmation",
@@ -141,11 +139,15 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
             "compact",
             "self_healing_edit",
             "self_healing_edit_with_options",
-            "invoke_agent",
-            "invoke_team",
             "summarize_branch",
         ],
     );
+    let absent = [
+        "invoke_agent",
+        "invoke_team",
+        "export_current",
+        "export_current_html",
+    ];
     add_expectations(
         &mut expected,
         "Phase 1 compatibility wrapper",
@@ -221,6 +223,15 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
     );
 
     let mut violations = Vec::new();
+    for name in absent {
+        let definitions = methods.iter().filter(|method| method.name == name).count();
+        if definitions != 0 {
+            violations.push(format!(
+                "deleted G1 method `{name}` must have no CodingAgentSession definition, found {definitions}"
+            ));
+        }
+    }
+    violations.extend(absent_receiver_calls(&scan, &absent));
     for expectation in &expected {
         let definitions = methods
             .iter()
@@ -287,6 +298,29 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         "CodingAgentSession public/pub(crate) method ledger changed:\n{}",
         violations.join("\n")
     );
+}
+
+fn absent_receiver_calls(scan: &SourceScan, names: &[&str]) -> Vec<String> {
+    let mut paths = rust_files_under(&scan.crate_root.join("src"));
+    paths.extend(rust_files_under(&scan.crate_root.join("tests")));
+    let mut violations = Vec::new();
+    for path in paths {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source = sanitize_rust_source(&fs::read_to_string(&path).expect("read Rust source"));
+        for (index, line) in source.lines().enumerate() {
+            for name in names {
+                let pattern = format!(".{name}(");
+                if line.contains(&pattern) {
+                    violations.push(format!(
+                        "deleted G1 receiver call `{name}` remains at {relative}:{}: {}",
+                        index + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+    violations
 }
 
 #[test]
