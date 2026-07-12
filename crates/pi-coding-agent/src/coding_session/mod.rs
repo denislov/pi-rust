@@ -2261,7 +2261,10 @@ mod tests {
 
         assert!(session.pending_delegation_confirmations().is_empty());
         let error = session
-            .approve_delegation_confirmation("op_parent", "tool_delegate_agent")
+            .run(CodingAgentOperation::ApproveDelegation {
+                operation_id: "op_parent".into(),
+                tool_call_id: "tool_delegate_agent".into(),
+            })
             .await
             .unwrap_err();
         assert!(

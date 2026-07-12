@@ -781,10 +781,17 @@ system_prompt = "Reviewer child instructions."
     assert_eq!(pending, original_pending);
     let mut events = reopened.subscribe_product_events_public();
 
-    reopened
-        .approve_delegation_confirmation(&operation_id, &tool_call_id)
+    let outcome = reopened
+        .run(CodingAgentOperation::ApproveDelegation {
+            operation_id: operation_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+        })
         .await
         .unwrap();
+    assert!(matches!(
+        outcome,
+        CodingAgentOperationOutcome::DelegationApproved
+    ));
     assert!(reopened.pending_delegation_confirmations().is_empty());
     drop(reopened);
 
@@ -1228,7 +1235,7 @@ system_prompt = "Coder child instructions."
 }
 
 #[tokio::test]
-async fn approves_pending_delegation_confirmation_through_session_owner() {
+async fn approves_pending_delegation_confirmation_through_canonical_operation() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
@@ -1296,10 +1303,17 @@ system_prompt = "Coder child instructions."
 
     let pending = session.pending_delegation_confirmations();
     assert_eq!(pending.len(), 1);
-    session
-        .approve_delegation_confirmation(&pending[0].operation_id, &pending[0].tool_call_id)
+    let outcome = session
+        .run(CodingAgentOperation::ApproveDelegation {
+            operation_id: pending[0].operation_id.clone(),
+            tool_call_id: pending[0].tool_call_id.clone(),
+        })
         .await
         .unwrap();
+    assert!(matches!(
+        outcome,
+        CodingAgentOperationOutcome::DelegationApproved
+    ));
     assert!(session.pending_delegation_confirmations().is_empty());
 
     let calls = calls.lock().unwrap();
@@ -1321,7 +1335,7 @@ system_prompt = "Coder child instructions."
 }
 
 #[tokio::test]
-async fn rejects_pending_delegation_confirmation_through_session_owner() {
+async fn rejects_pending_delegation_confirmation_through_canonical_operation() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
@@ -1388,13 +1402,18 @@ system_prompt = "Coder child instructions."
 
     let pending = session.pending_delegation_confirmations();
     assert_eq!(pending.len(), 1);
-    session
-        .reject_delegation_confirmation(
-            &pending[0].operation_id,
-            &pending[0].tool_call_id,
-            "not now",
-        )
+    let outcome = session
+        .run(CodingAgentOperation::RejectDelegation {
+            operation_id: pending[0].operation_id.clone(),
+            tool_call_id: pending[0].tool_call_id.clone(),
+            reason: "not now".into(),
+        })
+        .await
         .unwrap();
+    assert!(matches!(
+        outcome,
+        CodingAgentOperationOutcome::DelegationRejected
+    ));
     assert!(session.pending_delegation_confirmations().is_empty());
 
     let calls = calls.lock().unwrap();
@@ -1538,10 +1557,17 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     let mut events = reopened.subscribe_product_events_public();
     assert_eq!(reopened.pending_delegation_confirmations().len(), 1);
 
-    reopened
-        .approve_delegation_confirmation(&operation_id, &tool_call_id)
+    let outcome = reopened
+        .run(CodingAgentOperation::ApproveDelegation {
+            operation_id: operation_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+        })
         .await
         .unwrap();
+    assert!(matches!(
+        outcome,
+        CodingAgentOperationOutcome::DelegationApproved
+    ));
     assert!(reopened.pending_delegation_confirmations().is_empty());
     drop(reopened);
 
@@ -1631,9 +1657,18 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
     let mut events = reopened.subscribe_product_events_public();
     assert_eq!(reopened.pending_delegation_confirmations().len(), 1);
 
-    reopened
-        .reject_delegation_confirmation(&operation_id, &tool_call_id, "not now")
+    let outcome = reopened
+        .run(CodingAgentOperation::RejectDelegation {
+            operation_id: operation_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+            reason: "not now".into(),
+        })
+        .await
         .unwrap();
+    assert!(matches!(
+        outcome,
+        CodingAgentOperationOutcome::DelegationRejected
+    ));
     assert!(reopened.pending_delegation_confirmations().is_empty());
     drop(reopened);
 
