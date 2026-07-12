@@ -184,6 +184,87 @@ async fn interactive_tree_navigation_summarizes_abandoned_leaf_before_forking() 
 }
 
 #[tokio::test]
+async fn scripted_interactive_branch_summary_preserves_visible_and_persisted_behavior() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response("branch prompt answer")]);
+
+    // Step 1: Create a session with a prompt to establish an active Rust-native leaf.
+    run_scripted_interactive_with_session_dir(provider, temp.path(), "branch prompt\r")
+        .await
+        .unwrap();
+
+    let sessions = rust_session_dirs(temp.path());
+    assert_eq!(
+        sessions.len(),
+        1,
+        "exactly one session should exist after the initial prompt"
+    );
+    let manifest = read_session_manifest(&sessions[0]);
+    let session_id = manifest["session_id"]
+        .as_str()
+        .expect("session id should be present in manifest")
+        .to_owned();
+    let leaf_id = manifest["active_leaf_id"]
+        .as_str()
+        .expect("active leaf should be present after prompt")
+        .to_owned();
+
+    // Step 2: Resume the session and run a direct /branch-summary command.
+    // The direct command uses AlwaysCreate semantics (reuse_existing: false)
+    // and must NOT trigger navigation hydration or session replacement.
+    let args = CliArgs {
+        resume: true,
+        ..CliArgs::default()
+    };
+    let provider = FauxProvider::new(Vec::new());
+    let branch_summary_command = format!("/branch-summary {leaf_id} {leaf_id}\r\x03");
+    let result =
+        run_scripted_interactive_with_args_and_session_dir(provider, args, temp.path(), &branch_summary_command)
+            .await
+            .unwrap();
+
+    let frame = result.rendered_lines.join("\n");
+
+    // Visible: the branch-summary command ran and its projection was emitted.
+    assert!(
+        frame.contains("Summarizing branch..."),
+        "direct branch-summary should be visibly projected: {frame}"
+    );
+
+    // Direct-command semantics: no navigation hydration notice.
+    assert!(
+        !frame.contains("Navigated to selected point"),
+        "direct branch-summary must not adopt navigation hydration semantics: {frame}"
+    );
+
+    // No session replacement: the same single session persists.
+    let sessions_after = rust_session_dirs(temp.path());
+    assert_eq!(
+        sessions_after.len(),
+        1,
+        "direct branch-summary must not create a new session: {frame}"
+    );
+    let manifest_after = read_session_manifest(&sessions_after[0]);
+    assert_eq!(
+        manifest_after["session_id"].as_str(),
+        Some(session_id.as_str()),
+        "direct branch-summary must not replace the session identity: {frame}"
+    );
+
+    // Durable: the branch-summary operation appended session events without a fork.
+    let events = std::fs::read_to_string(sessions_after[0].join("events.jsonl")).unwrap();
+    assert!(
+        !events.contains(r#""kind":"session.forked""#),
+        "direct branch-summary must not record a session fork: {events}"
+    );
+    // The original prompt content must still be durable.
+    assert!(
+        events.contains("branch prompt"),
+        "direct branch-summary must not destroy prior durable facts: {events}"
+    );
+}
+
+#[tokio::test]
 async fn interactive_mode_continues_same_session_across_prompts() {
     let temp = tempfile::tempdir().unwrap();
     let provider = FauxProvider::with_call_queue(vec![
