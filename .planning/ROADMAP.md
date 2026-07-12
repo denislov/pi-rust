@@ -113,7 +113,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. A missed caller fails the migration checks and must move to canonical operations; no deleted workflow is restored or recreated under another name.
   5. Construction, open/resume, snapshots, queries, event subscriptions, control paths, and static repository helpers remain available because they are not operation-facade replacements.
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 
 **Wave 1**
 
@@ -121,7 +121,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — Migrate prompt/profile/self-heal/plugin tests and delete G2 methods.
+- [x] 04-02-PLAN.md — Migrate prompt/profile/self-heal/plugin tests and delete G2 methods.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -156,5 +156,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Evidence-Based Baseline | 3/3 | Complete    | 2026-07-11 |
 | 2. Canonical Facade Correctness | 3/3 | Complete    | 2026-07-11 |
 | 3. Production Adapter Convergence | 9/9 | Complete    | 2026-07-12 |
-| 4. Test Convergence and Compatibility Deletion | 1/4 | In Progress|  |
+| 4. Test Convergence and Compatibility Deletion | 2/4 | In Progress|  |
 | 5. Boundary Enforcement and Stage 9 Closure | 0/TBD | Not started | - |

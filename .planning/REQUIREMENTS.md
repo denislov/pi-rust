@@ -45,8 +45,8 @@
 
 - [x] **TEST-01**: Owner unit tests, public API tests, and integration tests use `run()` to verify public workflows
 - [x] **TEST-02**: Existing behavior assertions for agents, teams, profiles, delegation, export, branch summaries, and self-healing edits are preserved
-- [ ] **TEST-03**: Test helpers only extract typed outcomes and do not create a new production compatibility facade
-- [ ] **TEST-04**: Owner tests that genuinely require custom internal options may use crate-private operation paths without expanding the public API
+- [x] **TEST-03**: Test helpers only extract typed outcomes and do not create a new production compatibility facade
+- [x] **TEST-04**: Owner tests that genuinely require custom internal options may use crate-private operation paths without expanding the public API
 
 ### Compatibility Deletion
 
@@ -119,8 +119,8 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | INTER-05 | Phase 3 | Complete |
 | TEST-01 | Phase 4 | Complete |
 | TEST-02 | Phase 4 | Complete |
-| TEST-03 | Phase 4 | Pending |
-| TEST-04 | Phase 4 | Pending |
+| TEST-03 | Phase 4 | Complete |
+| TEST-04 | Phase 4 | Complete |
 | DELETE-01 | Phase 4 | Complete |
 | DELETE-02 | Phase 4 | Complete |
 | DELETE-03 | Phase 4 | Complete |
