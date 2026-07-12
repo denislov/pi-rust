@@ -1,155 +1,168 @@
 ---
 phase: 03-production-adapter-convergence
-verified: 2026-07-12T04:06:44Z
-status: gaps_found
+verified: 2026-07-12T10:14:50Z
+status: human_needed
 score: 3/5 must-haves verified
-behavior_unverified: 1 # Pre-existing async task error-path session restoration (present + wired, no test exercises the invariant)
+behavior_unverified: 2
 overrides_applied: 0
-gaps:
-  - truth: "Interactive prompt and background workflows, mutations, delegation decisions, plugin actions, compaction, and branch summaries use canonical operations without changing visible behavior (SC3)"
-    status: failed
-    reason: "CR-01 (code review): Session data loss on task failure for three newly-async operations (set_default_agent_profile, reject_delegation_confirmation, fork). The old synchronous code operated on &mut session (session survived failure); the new async code take()s the session and drops it on error via ? propagation. finish_prompt's error handler (loop.rs:2302-2306) does NOT restore coding_session, unlike the RPC adapter which restores self.coding_session = Some(session) on every error path. No test exercises the error path."
-    artifacts:
-      - path: "crates/pi-coding-agent/src/interactive/loop.rs"
-        issue: "finish_prompt error handler (lines 2302-2306) does not restore coding_session - session permanently lost on any task failure"
-      - path: "crates/pi-coding-agent/src/interactive/prompt_task.rs"
-        issue: "run_coding_set_default_agent_profile_task (line 1061 ?), run_coding_delegation_rejection_task (line 1114 ?), run_coding_fork_session_task (line 1686 ?) drop session on error via ? propagation before constructing the result struct"
-    missing:
-      - "Restore coding_session in finish_prompt's Err(error) branch, or change task error result types to carry the session back on failure (matching the RPC adapter pattern)"
-      - "Add a test that exercises the error path for profile mutation, delegation rejection, and fork, verifying the session survives"
-  - truth: "Interactive fork and navigation retain subscriber continuity, product-event sequencing, and refreshed snapshots and projections after transitions (SC4)"
-    status: failed
-    reason: "CR-01 (code review): On fork failure, the session is permanently lost - no subscriber continuity, no snapshot refresh, no projection. Additionally, WR-01: prompt_context.session_target is not updated after tree navigation fork (loop.rs ForkSession branch lines 2283-2301), meaning subsequent session reopening would use the stale pre-navigation target."
-    artifacts:
-      - path: "crates/pi-coding-agent/src/interactive/loop.rs"
-        issue: "ForkSession success branch (lines 2283-2301) does not update prompt_context.session_target after fork; error branch (lines 2302-2306) does not restore coding_session"
-      - path: "crates/pi-coding-agent/src/interactive/prompt_task.rs"
-        issue: "run_coding_fork_session_task (line 1686) drops session on error via ? propagation"
-    missing:
-      - "Restore coding_session on fork failure (same fix as SC3 CR-01)"
-      - "Sync prompt_context.session_target from the forked session's active session choice after successful fork"
-      - "Add a test that verifies session survival and session_target correctness after fork/navigation failure"
+re_verification:
+  previous_status: gaps_found
+  previous_score: 3/5
+  gaps_closed:
+    - "CR-01 implementation gap: every owner-bearing interactive task now returns CodingAgentSession on operation failure, and finish_prompt restores it before error projection."
+    - "WR-01 implementation gap: successful direct and navigation forks now update prompt_context.session_target from the mutated owner."
+    - "WR-02 implementation gap: delegation fallback now depends on visible UiEvent projection and forwards each ProductEvent once."
+    - "WR-03/WR-04 implementation gaps: the stale loop test was renamed and the magic subscription count was replaced by per-runner checks."
+    - "INTER-02 documentation mismatch: checklist and traceability now record the implemented requirement as complete."
+  gaps_remaining: []
+  regressions: []
+deferred:
+  - truth: "Interactive structural guards automatically discover every future owner-returning runner and parse Rust bodies without comment/string brace ambiguity."
+    addressed_in: "Phase 5"
+    evidence: "Phase 5 goal and success criteria own regression-resistant boundary enforcement and parser/source-scan hardening; the current 13 production runners are all explicitly covered."
 behavior_unverified_items:
-  - truth: "Pre-existing async interactive tasks (prompt, agent, team, approval, compact, self-heal, plugin) preserve the session on error"
-    test: "Trigger an operation failure (e.g., provider error, admission failure) during a pre-existing async interactive task and verify coding_session is restored afterward"
-    expected: "coding_session should be Some(session) after the error is projected to the transcript; the user should be able to continue working"
-    why_human: "The finish_prompt error handler (loop.rs:2302-2306) does not restore coding_session for ANY task type. For pre-existing async tasks this was the behavior before Phase 03 (not a regression), but no test exercises the error path, so the invariant is present-but-unverified. Grep cannot confirm the session is or is not lost at runtime without a behavioral test."
+  - truth: "Interactive prompt/background/profile/delegation task runners return the acquired live owner and exact CliError when a real canonical operation fails."
+    test: "Induce real failures after owner acquisition in run_coding_set_default_agent_profile_task, run_coding_delegation_rejection_task, and one pre-existing prompt runner; await PromptTask.done, pass the returned completion through finish_prompt, and execute another canonical operation on the restored owner. Include a durable PartialCommit case."
+    expected: "PromptTaskCompletion::Failed carries the same owner and unchanged error, finish_prompt restores it before AgentError projection, and the next operation remains usable."
+    why_human: "The current test directly fabricates PromptTaskCompletion::Failed and therefore exercises only finish_prompt, not runner-to-channel owner transport, canonical error preservation, or PartialCommit behavior."
+  - truth: "A real ForkSession task failure preserves the pre-fork owner, subscriber boundary, and session target."
+    test: "Use deterministic session-store failure controls to make run_coding_fork_session_task fail after acquiring the owner; await task.done, finish the completion, then continue with the restored pre-fork session."
+    expected: "The exact fork error is projected, coding_session remains the original usable owner, prompt_context.session_target remains unchanged, and no replacement owner is opened."
+    why_human: "Successful direct/navigation forks are behavior-tested, but no test makes the fork runner or canonical ForkSession operation fail; the existing failure test constructs the completion envelope manually."
+human_verification:
+  - test: "Exercise real profile/rejection/prompt runner failures, including one PartialCommit, through PromptTask.done and finish_prompt."
+    expected: "The same owner and exact error cross the task boundary, error projection occurs after restoration, and a subsequent canonical operation succeeds."
+    why_human: "No current automated test triggers these runner/operation failure transitions."
+  - test: "Exercise a real ForkSession runner failure with deterministic storage fault injection."
+    expected: "The pre-fork owner, subscription continuity, and old session target survive and remain usable."
+    why_human: "Current fork tests cover successful target continuation only."
 ---
 
 # Phase 3: Production Adapter Convergence Verification Report
 
 **Phase Goal:** Every first-party product adapter executes live-session product work through `CodingAgentSession::run` while preserving its existing external contract.
-**Verified:** 2026-07-12T04:06:44Z
-**Status:** gaps_found
-**Re-verification:** No - initial verification
+**Verified:** 2026-07-12T10:14:50Z
+**Status:** human_needed
+**Re-verification:** Yes - after Plan 03-07 gap closure
 
 ## Goal Achievement
 
 ### Observable Truths
 
 | # | Truth | Status | Evidence |
-|---|-------|--------|----------|
-| 1 | JSON and both persistent and transient print flows produce the same outputs, errors, and session effects while executing prompts through `CodingAgentOperation::Prompt` (SC1) | ✓ VERIFIED | `json_mode.rs:100` uses `.run(CodingAgentOperation::Prompt(...))` with exhaustive `CodingAgentOperationOutcome::Prompt` extraction; `print_mode.rs:129,150` use the same pattern for persistent and transient branches. No replaced broad workflow calls or `#[allow(deprecated)]` in production source. `production_json_and_print_use_canonical_operations` guard passes (13/13 boundary tests green). |
-| 2 | RPC prompt, agent, team, delegation, self-healing, profile, and plugin commands preserve response shapes, errors, event forwarding, and `tokio::select!` control handling while using canonical operations (SC2) | ✓ VERIFIED | `rpc/prompt.rs:377,601,783,917` use `session.run(CodingAgentOperation::...)` for agent/team/approval/prompt inside existing `tokio::select!` shells. `rpc/commands.rs:1223` uses `session.run(CodingAgentOperation::PluginLoad)` plus 4 more canonical calls for self-healing/profile/rejection/plugin-command. RPC error handlers restore `self.coding_session = Some(session)` on every error path (~12 occurrences). `production_rpc_uses_canonical_operations` guard passes. |
-| 3 | Interactive prompt and background workflows, mutations, delegation decisions, plugin actions, compaction, and branch summaries use canonical operations without changing visible behavior (SC3) | ✗ FAILED | Canonical operations ARE used (`prompt_task.rs` has 15 `session.run(CodingAgentOperation::...)` calls across all task types). However, CR-01 causes a **session data loss regression** for three newly-async operations (profile mutation, delegation rejection, fork). `finish_prompt` error handler (`loop.rs:2302-2306`) does NOT restore `coding_session`; task functions drop the session on error via `?` propagation. Old synchronous code operated on `&mut session` (session survived failure). No test exercises the error path. RPC adapter correctly restores session on every error path, proving the interactive omission is a defect. |
-| 4 | Interactive fork and navigation retain subscriber continuity, product-event sequencing, and refreshed snapshots and projections after transitions (SC4) | ✗ FAILED | Fork/navigation use canonical operations (`prompt_task.rs:1494,1562,1598,1661` - BranchSummary + ForkSession). Success-path tests pass (`interactive_tree_navigation_*`, `scripted_interactive_fork_*`). However, CR-01 causes session loss on fork failure (no subscriber continuity after transition failure). WR-01: `prompt_context.session_target` not updated after tree navigation fork (`loop.rs:2283-2301`), compounding CR-01. |
-| 5 | JSON, print, RPC, and interactive production sources contain neither replaced broad workflow calls nor local deprecation suppressions for those calls (SC5) | ✓ VERIFIED | Grep across all production adapter files (`json_mode.rs`, `print_mode.rs`, `rpc/prompt.rs`, `rpc/commands.rs`, `interactive/prompt_task.rs`, `interactive/loop.rs`, `interactive/commands.rs`, `interactive/session_actions.rs`) found ZERO replaced broad workflow calls (`.prompt(`, `.invoke_agent(`, `.invoke_team(`, `.compact(`, `.summarize_branch(`, `.fork_current_session(`, etc.) and ZERO `#[allow(deprecated)]` attributes. The `root.set_default_agent_profile_id()` calls in `loop.rs` are the legitimate local UI projection setter, explicitly allowed. All 4 boundary guard tests pass: `production_json_and_print_use_canonical_operations`, `production_rpc_uses_canonical_operations`, `production_interactive_uses_canonical_operations`, `production_adapters_do_not_introduce_switch_active_leaf`. |
+|---|---|---|---|
+| 1 | JSON and persistent/transient print flows preserve output, errors, and session effects while using `CodingAgentOperation::Prompt`. | VERIFIED | Current source uses `run(Prompt)` at `json_mode.rs:100` and `print_mode.rs:129,150` with exact Prompt outcome extraction. The JSON/print production guard passes. Previously passing adapter behavior suites were included in the successful final workspace gate. |
+| 2 | RPC prompt, agent, team, delegation, self-healing, profile, and plugin commands preserve responses, errors, events, and control handling while using canonical operations. | VERIFIED | `rpc/prompt.rs:377,601,783,917` and `rpc/commands.rs:615,858,1047,1141,1159,1223` call `run(...)`; current mutation error branches restore `self.coding_session`. The named response-before-events test and RPC production guard pass. |
+| 3 | Interactive background workflows and mutations use canonical operations without changing visible behavior. | PRESENT_BEHAVIOR_UNVERIFIED | All 13 owner runners subscribe before `run(...)`, return through `complete_owned_task`, and `finish_prompt` restores `PromptTaskFailure.session` before `AgentError`. Delegation success/continuation and visible fallback behavior pass. However, the claimed four-path failure test fabricates `PromptTaskCompletion::Failed`; no runner or canonical operation actually fails, and no `PartialCommit` crosses the task boundary in a test. |
+| 4 | Interactive fork/navigation retain owner/subscriber continuity, event sequencing, snapshots, projections, and session targets. | PRESENT_BEHAVIOR_UNVERIFIED | Direct fork and both tree-navigation tests perform a subsequent prompt and prove it is persisted in the forked session; `finish_prompt` updates `session_target` only on successful fork results. The real fork failure transition remains untested because the unit test constructs the failure envelope manually. |
+| 5 | Production adapters contain neither replaced broad workflow calls nor local deprecation suppressions. | VERIFIED | Precise current-source audit found canonical calls only; remaining `set_default_agent_profile_id` calls are `InteractiveRoot` projection methods. Five production guard tests passed, including JSON/print, RPC, interactive, and no-SwitchActiveLeaf checks. |
 
-**Score:** 3/5 truths verified (1 present, behavior-unverified)
+**Score:** 3/5 truths verified (2 present, behavior-unverified)
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
-|----------|----------|--------|---------|
-| `crates/pi-coding-agent/src/protocol/json_mode.rs` | Canonical Prompt submission inside existing JSON event select/drain shell | ✓ VERIFIED | Lines 99-107: `session.run(CodingAgentOperation::Prompt(...))` with exhaustive outcome extraction inside spawned task; receiver-before-run ordering preserved; imports via `crate::api` |
-| `crates/pi-coding-agent/src/print_mode.rs` | Canonical Prompt submission in both persistent and transient print branches | ✓ VERIFIED | Lines 128-134 (persistent), 149-155 (transient): both use `.run(CodingAgentOperation::Prompt(...))` with exhaustive extraction; imports via `crate::api` |
-| `crates/pi-coding-agent/src/protocol/rpc/prompt.rs` | Canonical background operations inside existing RPC concurrency topology | ✓ VERIFIED | Lines 377, 601, 783, 917: agent/team/approval/prompt use `session.run(CodingAgentOperation::...)` inside `Box::pin` + `tokio::select!` shells; all `#[allow(deprecated)]` removed |
-| `crates/pi-coding-agent/src/protocol/rpc/commands.rs` | Canonical mutation operations with unchanged RPC wire projection | ✓ VERIFIED | Lines 1223+: self-healing/profile/rejection/plugin-load/plugin-command use `session.run(CodingAgentOperation::...)`; session restored on every error path; `#[allow(deprecated)]` removed; `ensure_mutable_coding_session` helper removed |
-| `crates/pi-coding-agent/src/interactive/prompt_task.rs` | Canonical background operation futures within existing TUI task ownership | ⚠️ WIRED-WITH-DEFECT | 15 `session.run(CodingAgentOperation::...)` calls across all task types; all `#[allow(deprecated)]` removed. But three newly-async task functions (`run_coding_set_default_agent_profile_task`, `run_coding_delegation_rejection_task`, `run_coding_fork_session_task`) drop the session on error via `?` propagation - CR-01 defect. |
-| `crates/pi-coding-agent/src/interactive/loop.rs` | Async scheduling and owner restoration for formerly synchronous mutations | ⚠️ WIRED-WITH-DEFECT | `finish_prompt` success branches restore `*coding_session = Some(result.session)` (10 variants), but the error branch (lines 2302-2306) does NOT restore `coding_session` - CR-01 defect. |
-| `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs` | Narrow complete production-adapter canonical-call/deprecation guards | ✓ VERIFIED | 4 guard tests exist and pass: `production_json_and_print_use_canonical_operations`, `production_rpc_uses_canonical_operations`, `production_interactive_uses_canonical_operations`, `production_adapters_do_not_introduce_switch_active_leaf` (13/13 total boundary tests green) |
+|---|---|---|---|
+| `crates/pi-coding-agent/src/protocol/json_mode.rs` | Canonical JSON prompt adapter | VERIFIED | Exists, substantive, wired to `run(Prompt)`, and guarded. |
+| `crates/pi-coding-agent/src/print_mode.rs` | Canonical persistent/transient print adapter | VERIFIED | Both branches use `run(Prompt)` and retain existing projections. |
+| `crates/pi-coding-agent/src/protocol/rpc/prompt.rs` | Select-driven canonical RPC operations | VERIFIED | Canonical futures remain inside existing `tokio::select!` and event/control topology. |
+| `crates/pi-coding-agent/src/protocol/rpc/commands.rs` | Canonical RPC mutation/plugin operations | VERIFIED | Exact outcome extraction and owner restoration remain wired. |
+| `crates/pi-coding-agent/src/interactive/prompt_task.rs` | Owner-preserving canonical interactive runners | VERIFIED IN CODE | `PromptTaskCompletion::{Completed,Failed,SetupFailed}`, `complete_owned_task`, fork target derivation, and visibility-aware fallback are substantive and wired across all current runners. Real failure behavior is not directly tested. |
+| `crates/pi-coding-agent/src/interactive/loop.rs` | Restore-before-error and success-only fork-target projection | VERIFIED IN CODE | `finish_prompt` restores failed owners at lines 2315-2320 and updates fork targets at lines 2151-2154/2295-2313. |
+| `crates/pi-coding-agent/tests/interactive_mode.rs` and `interactive_sessions.rs` | Visible behavior and continuation evidence | PARTIAL | Strong success-path delegation/fork/navigation continuation tests exist; no real runner failure or PartialCommit case exists. |
+| `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs` | Current-tree adapter convergence enforcement | VERIFIED WITH DEFERRED HARDENING | All current adapters are covered; automatic future-runner discovery/parser completeness remains Phase 5 work. |
+
+GSD artifact queries reported all 23 plan-declared artifacts present and substantive. Automatic key-link queries could not resolve conceptual `from` labels, so links were verified manually against current code and focused tests.
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
-|------|----|----|--------|---------|
-| JSON/print prompt options | `CodingAgentSession::run` | `CodingAgentOperation::Prompt` followed by exact Prompt outcome extraction | ✓ WIRED | `json_mode.rs:100`, `print_mode.rs:129,150` |
-| RPC command acknowledgement | background operation and ProductEvent forwarding | unchanged response-first setup and bounded RpcProductEventQueue | ✓ WIRED | `rpc/prompt.rs` select-driven shell preserved; `rpc/commands.rs` take/restore pattern |
-| Interactive pending request | background task owning CodingAgentSession | existing spawn/result channel and finish_prompt owner restoration | ⚠️ PARTIAL | Success path wired (10 finish_prompt variants restore session). Error path NOT wired (CR-01: `finish_prompt` Err branch does not restore session). |
-| Pre-navigation ProductEvent receiver | summary and fork operations | one receiver and one mutable owner across both operations | ✓ WIRED | `prompt_task.rs:1494-1634`: BranchSummary(ReuseExisting) then ForkSession with one receiver spanning both |
-| `PromptControlHandle` | pinned session.run future | existing tokio::select! control branches outside CodingAgentOperation | ✓ WIRED | `rpc/prompt.rs` and `interactive/prompt_task.rs` select! branches preserve abort/steer/follow-up routing |
+|---|---|---|---|---|
+| JSON/print options | Canonical runtime | `run(Prompt)` plus exact outcome match | WIRED | Three production call sites confirmed. |
+| RPC command acknowledgement | Background operation/events | Existing pinned future, bounded queue, replay/final drain | WIRED | Response-before-events focused test passed. |
+| Interactive spawned owner | Main-loop completion | `complete_owned_task` -> `PromptTaskCompletion` -> `finish_prompt` | WIRED, BEHAVIOR UNVERIFIED ON REAL FAILURE | Source is ownership-correct; current test bypasses the runner/channel boundary. |
+| Successful fork result | Next request target | `active_session_target` -> result payload -> `finish_prompt` | WIRED | Direct and navigation continuation tests prove subsequent prompts reach the forked log. |
+| Delegation ProductEvent | Visible feedback/fallback | `CodingEventBridge` visibility classifier plus single original-event forward | WIRED | Unit projection classification and integration visible-feedback test pass. |
 
-### Data-Flow Trace (Level 4)
+### Data-Flow Trace
 
-Not applicable - this phase migrates adapter call sites; the data sources (CodingAgentSession::run dispatch) were verified in Phase 2. No new data sources or rendering paths were introduced.
+The relevant typed flows are:
+
+`adapter input -> CodingAgentOperation -> CodingAgentSession::run -> exact CodingAgentOperationOutcome -> existing adapter projection`
+
+and for interactive ownership:
+
+`CodingAgentSession -> runner-local mutable owner -> complete_owned_task -> PromptTaskCompletion -> finish_prompt -> restored owner / refreshed target`.
+
+No adapter-local replacement facade, private operation/service import, new event cache, or replacement persistence path was found.
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
-|----------|---------|--------|--------|
-| Boundary guards (SC5 enforcement) | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards -- --nocapture` | 13 passed; 0 failed | ✓ PASS |
-| Tree navigation fork (SC4 success path) | `cargo test -p pi-coding-agent --test interactive_sessions interactive_tree_navigation -- --nocapture` | 2 passed; 0 failed | ✓ PASS |
-| Direct fork (SC4 success path) | `cargo test -p pi-coding-agent --test interactive_mode scripted_interactive_fork_after_rust_native_prompt_creates_session -- --nocapture` | 1 passed; 0 failed | ✓ PASS |
-| Session restoration on task error (SC3/SC4 error path) | No test exists | N/A | ✗ FAIL (no coverage) |
-| `cargo fmt --check` | `cargo fmt --check` | Clean (no output) | ✓ PASS |
-| `git diff --check` | `git diff --check` | Clean (no output) | ✓ PASS |
+|---|---|---|---|
+| Failure-envelope finish behavior | `cargo test -p pi-coding-agent --lib interactive::r#loop::tests::prompt_task_failures_restore_the_live_owner_before_projecting_errors -- --exact --nocapture` | 1 passed | PASS, but narrow: fabricated envelope only |
+| Tree navigation continuation | `cargo test -p pi-coding-agent --test interactive_sessions interactive_tree_navigation -- --nocapture` | 2 passed | PASS |
+| Direct fork continuation | `cargo test -p pi-coding-agent --test interactive_mode scripted_interactive_fork_after_rust_native_prompt_creates_session -- --exact --nocapture` | 1 passed | PASS |
+| Delegation rejection continuation/visible feedback | `cargo test -p pi-coding-agent --test interactive_mode scripted_interactive_delegation_rejection_preserves_owner_and_visible_fallback_semantics -- --exact --nocapture` | 1 passed | PASS |
+| RPC response-before-events | `cargo test -p pi-coding-agent --test rpc_mode rpc_prompt_returns_response_then_agent_events -- --exact --nocapture` | 1 passed | PASS |
+| Current production adapter guards | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards production_ -- --nocapture` | 5 passed | PASS |
+
+The orchestrator's final-tree evidence also records successful `cargo fmt --check`, focused crate suites, `cargo build --workspace`, `cargo test --workspace`, `cargo check --workspace`, precise source audit, and `git diff --check`.
 
 ### Probe Execution
 
-Not applicable - this phase does not declare or imply probe-based verification. No `scripts/*/tests/probe-*.sh` probes were found.
+No Phase 3 plan or summary declares a probe, and no `scripts/**/probe-*.sh` file exists. Probe execution is not applicable.
 
 ### Requirements Coverage
 
-| Requirement | Source Plan | Description | Status | Evidence |
-|-------------|-------------|-------------|--------|----------|
-| ADAPT-01 | 03-01 | JSON adapter executes prompt through `run(Prompt)` | ✓ SATISFIED | `json_mode.rs:100` confirmed |
-| ADAPT-02 | 03-01 | Print adapter executes persistent and non-persistent prompt through canonical facade | ✓ SATISFIED | `print_mode.rs:129,150` confirmed |
-| ADAPT-03 | 03-01 | JSON and print output, error, and session behavior remain unchanged | ✓ SATISFIED | No broad calls/deprecation; behavior tests pass; no regression identified |
-| ADAPT-04 | 03-01 | JSON and print production code contains no replaced broad calls or `#[allow(deprecated)]` | ✓ SATISFIED | Grep + `production_json_and_print_use_canonical_operations` guard pass |
-| RPC-01 | 03-02 | RPC prompt, agent, team, delegation-approval background tasks execute through canonical operations | ✓ SATISFIED | `rpc/prompt.rs:377,601,783,917` confirmed |
-| RPC-02 | 03-03 | RPC self-healing, profile, rejection, plugin load, plugin command execute through canonical operations | ✓ SATISFIED | `rpc/commands.rs` confirmed; session restored on every error path |
-| RPC-03 | 03-02, 03-03 | RPC migration preserves select! control handling, event forwarding, response shapes, error protocol | ✓ SATISFIED | Select! branches preserved; tests pass; RPC error handlers restore session |
-| RPC-04 | 03-03 | RPC production code contains no replaced broad calls or deprecation suppressions | ✓ SATISFIED | `production_rpc_uses_canonical_operations` guard pass |
-| INTER-01 | 03-04 | Interactive prompt, agent, team, compaction, self-healing, plugin, branch-summary background work executes through canonical operations | ✓ SATISFIED | `prompt_task.rs` has 15 `session.run()` calls; all migrated |
-| INTER-02 | 03-05 | Interactive profile mutation and delegation rejection execute through canonical operations | ✓ SATISFIED (code) / ⚠️ DOC MISMATCH | Code implements it (`prompt_task.rs:1036,1084`). REQUIREMENTS.md marks INTER-02 as `[ ]` unchecked and "Pending" in traceability - documentation was not updated. |
-| INTER-03 | 03-06 | Session fork and navigation use canonical operations and refresh snapshots and projections after transitions | ⚠️ PARTIALLY SATISFIED | Canonical operations used (success path works). But CR-01: session lost on fork failure; WR-01: session_target not updated after navigation fork. |
-| INTER-04 | 03-04, 03-05, 03-06 | Interactive migration preserves event/control multiplexing, subscriber continuity, product-event sequencing, and UI behavior | ⚠️ PARTIALLY SATISFIED | Success paths preserve behavior. Error paths do NOT preserve session continuity (CR-01). |
-| INTER-05 | 03-06 | Interactive production code contains no replaced broad calls or deprecation suppressions | ✓ SATISFIED | `production_interactive_uses_canonical_operations` guard pass |
+| Requirement | Status | Evidence |
+|---|---|---|
+| ADAPT-01..04 | SATISFIED | JSON/print canonical calls, exact outcomes, behavior suites, and source guard. |
+| RPC-01..04 | SATISFIED | All background/mutation/plugin calls are canonical; focused protocol behavior and guards pass. |
+| INTER-01 | CODE SATISFIED / FAILURE BEHAVIOR UNVERIFIED | All background runners use `run`; no real pre-existing prompt runner failure crosses the completion channel in a test. |
+| INTER-02 | CODE SATISFIED / FAILURE BEHAVIOR UNVERIFIED | Profile/rejection operations and fallback behavior are wired; real operation-failure owner continuity is not tested. |
+| INTER-03 | SUCCESS BEHAVIOR VERIFIED / FAILURE BEHAVIOR UNVERIFIED | Direct/navigation continuation proves target refresh; fork failure survival lacks a real failing runner test. |
+| INTER-04 | HUMAN DECISION REQUIRED | Current event/control/success continuity is tested; operation-error owner continuity is present in code but not behaviorally exercised. |
+| INTER-05 | SATISFIED | Current production source and guards contain no compatibility calls/suppressions. |
 
-### Anti-Patterns Found
+No Phase 3 requirement is orphaned. All 13 IDs appear in plan frontmatter, `REQUIREMENTS.md`, and roadmap traceability.
 
-| File | Line | Pattern | Severity | Impact |
-|------|------|---------|----------|--------|
-| `interactive/loop.rs` | 2302-2306 | Error handler does not restore `coding_session` | 🛑 Blocker (CR-01) | Session permanently lost on any interactive task failure; regression for newly-async operations |
-| `interactive/loop.rs` | 2283-2301 | `prompt_context.session_target` not updated after ForkSession | ⚠️ Warning (WR-01) | Stale session target after navigation; compounds CR-01 |
-| `interactive/prompt_task.rs` | 1082,1098 | Delegation rejection fallback uses ProductEvent receipt check instead of UiEvent emptiness check | ⚠️ Warning (WR-02) | Possible missing fallback notice when ProductEvent produces no visible UiEvent |
-| `interactive/loop.rs` | 2576-2585 | Test `interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary` weakened; name misleading | ⚠️ Warning (WR-03) | Test no longer checks for `.subscribe_product_events()` in loop.rs but name implies it does |
-| `interactive/prompt_task.rs` | 1804 | Magic number subscription count assertion (13) | ⚠️ Warning (WR-04) | Fragile; already broken once during 03-05 (count was 10, should have been 12) |
-| `interactive/event_bridge.rs` | 92, 153 | `#[allow(dead_code)]` on `handle_product_event` | ℹ️ Info | Expected - retained for bridge unit tests; cleanup in Phase 4 |
-| `coding_session/operation_control.rs` | 145 | `ensure_idle` dead code warning | ℹ️ Info | Expected - all callers migrated; deletion in Phase 4 per D-19 |
+### Review Findings And Anti-Patterns
+
+| Finding | Classification | Disposition |
+|---|---|---|
+| 03-REVIEW WR-01: failure test fabricates completion instead of failing a runner/operation | Non-blocking implementation-wise; blocking a fully automated `passed` verdict | Routes SC3/SC4 to `PRESENT_BEHAVIOR_UNVERIFIED` and overall status `human_needed`. Do not claim real task-runner failure coverage exists. |
+| 03-REVIEW WR-02: hard-coded 13-runner list and naive brace scan | Non-blocking current-tree verification debt | All 13 current runners are covered and source is clean. Automatic discovery and parser completeness are deferred to Phase 5 regression-hardening. |
+| `interactive/loop.rs:93` pre-existing extension placeholder comment | INFO, out of Phase 3 scope | Introduced by commit `4133e055` before this phase; unrelated to operation adapter convergence. |
+| Expected dead-code warnings for broad compatibility methods and `ensure_idle` | INFO | Phase 4 owns caller migration and compatibility deletion. |
+
+No Phase 3-modified file contains an unreferenced `TBD`, `FIXME`, or `XXX` debt marker. No production failure hook or placeholder implementation was introduced by Plan 03-07.
 
 ### Human Verification Required
 
-No additional human verification items beyond the behavior_unverified_items in frontmatter. The gaps (CR-01, WR-01) are code-level defects identified by source analysis, not UI/UX behaviors requiring human testing.
+#### 1. Real Interactive Operation-Failure Owner Continuity
+
+**Test:** At the `PromptTask` boundary, induce deterministic profile mutation, delegation rejection, and pre-existing prompt failures after owner acquisition; include one `PartialCommit`; await `task.done`, call `finish_prompt`, then run another canonical operation.
+
+**Expected:** The same owner and exact error cross the channel, restoration precedes error projection, durable ambiguity is not rewritten, and the next operation succeeds.
+
+**Why human:** Existing tests do not trigger these runner/operation failure paths.
+
+#### 2. Real Fork Failure Continuity
+
+**Test:** Induce a deterministic `ForkSession` failure after owner acquisition and complete it through the real task channel and `finish_prompt`.
+
+**Expected:** The old owner, target, subscriber continuity, and usable session state remain intact; no replacement owner is opened.
+
+**Why human:** Current tests prove successful fork continuation only; the failure unit test manually constructs the envelope.
 
 ### Gaps Summary
 
-**The phase goal is partially achieved but not fully achieved.**
+No observable implementation blocker remains in the current source. The previous CR-01 and WR-01..04 code gaps are closed, every production adapter uses the canonical operation path, and all current source audits and focused success-path behavior checks pass.
 
-**Achieved (3/5 success criteria):**
-- SC1 (JSON/print): All three prompt paths use `run(Prompt)` with exhaustive outcome extraction. No broad calls or deprecation suppression.
-- SC2 (RPC): All RPC operations use canonical operations. `tokio::select!` control handling preserved. RPC adapter correctly restores session on every error path.
-- SC5 (Source guards): No replaced broad workflow calls or `#[allow(deprecated)]` in any production adapter. All 4 boundary guard tests pass.
-
-**Not achieved (2/5 success criteria):**
-- SC3 (Interactive behavior): CR-01 causes **session data loss on task failure** for three newly-async operations (profile mutation, delegation rejection, fork). The `finish_prompt` error handler (`loop.rs:2302-2306`) does NOT restore `coding_session`, while every success branch does. The task functions drop the session on error via `?` propagation. This is a regression: the old synchronous code operated on `&mut session` (session survived failure). The RPC adapter demonstrates the correct pattern (`self.coding_session = Some(session)` on every error path). No test exercises the error path.
-- SC4 (Fork/navigation continuity): CR-01 causes session loss on fork failure. WR-01: `prompt_context.session_target` not updated after tree navigation fork, meaning subsequent session reopening would use the stale pre-navigation target.
-
-**Root cause:** The interactive `finish_prompt` function's error handler was written for pre-existing async tasks (prompt, agent, team, etc.) that already used `take()`. Phase 03 migrated three synchronous operations to the same async `take()` pattern, but the error handler was not updated to restore the session on failure. The result is that any failure (operation error, abort, admission failure) during profile mutation, delegation rejection, or fork permanently drops the session - including conversation history, compaction state, and durable facts.
-
-**Documentation discrepancy:** INTER-02 is marked as `[ ]` (unchecked) and "Pending" in REQUIREMENTS.md, but the code implements it. The requirements file was not updated after 03-05 completed.
+The phase cannot receive an automated `passed` verdict because two behavior-dependent truths rely on a runner/channel ownership transition that no real failure test exercises. This is verification debt, not an observed runtime failure. A developer may either add the deterministic runner-level failure tests described above or explicitly accept the current source-level evidence before Phase 3 is treated as fully verified.
 
 ---
 
-_Verified: 2026-07-12T04:06:44Z_
-_Verifier: the agent (gsd-verifier)_
+_Verified: 2026-07-12T10:14:50Z_
+_Verifier: the agent (gsd-verifier, generic-agent workaround)_
