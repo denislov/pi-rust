@@ -2919,6 +2919,12 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn real_fork_failure_preserves_source_owner_subscriber_and_target_through_prompt_task_done()
+    {
+        panic!("RED: real fork failure has not been driven through PromptTask.done");
+    }
+
+    #[tokio::test]
     async fn fork_completion_replaces_the_prompt_session_target() {
         let (mut tui, root_id) = test_tui();
         let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
