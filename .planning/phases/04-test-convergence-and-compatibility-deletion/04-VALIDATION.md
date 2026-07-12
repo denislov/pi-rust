@@ -3,7 +3,7 @@ phase: 4
 slug: test-convergence-and-compatibility-deletion
 status: complete
 nyquist_compliant: true
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-07-13
 ---
 
@@ -57,12 +57,12 @@ This phase enforces OWASP ASVS Level 1 with a high-severity threshold. All appli
 
 ## Wave 0 Requirements
 
-- [ ] Wave 0 prerequisite checks are pending; no separate Wave 0 implementation plan exists.
-- [ ] Plan 04-01 updates `canonical_operation_facade_has_no_new_workflow_wrappers` to assert deleted names are absent.
-- [ ] Plan 04-02 updates `public_api.rs` compile contracts to require canonical operations and stop compiling removed methods.
-- [ ] Plan 04-02 permits only narrowly reusable typed outcome extractors where repeated matches justify them.
-- [ ] Plan 04-02 deletes reload_plugins and adds a positive guard requiring private load_plugins to have exactly four justified co-located owner-test callers and no broader exposure.
-- [ ] Plan 04-04 adds summarize_branch_for_navigation to the absent-definition, receiver-call, and synonym ledgers for the complete 16-method deletion set.
+- [x] Wave 0 prerequisite checks are complete; no separate Wave 0 implementation plan was required.
+- [x] Plan 04-01 updated the workflow-wrapper guard to assert deleted names are absent.
+- [x] Plan 04-02 updated `public_api.rs` compile contracts to require canonical operations and stop compiling removed methods.
+- [x] Plan 04-02 retained only outcome-extraction helpers where repeated typed matches justified them.
+- [x] Plan 04-02 deleted `reload_plugins` and added a positive guard requiring private `load_plugins` to have exactly four justified co-located owner-test callers and no broader exposure.
+- [x] Plan 04-04 added `summarize_branch_for_navigation` to the absent-definition, receiver-call, and synonym ledgers for the complete 16-method deletion set.
 
 No framework installation is required.
 
@@ -76,11 +76,11 @@ All phase behaviors have automated verification.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 is complete and covers all missing references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 is complete and covers all missing references
+- [x] No watch-mode flags
+- [x] Feedback latency < 120s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** planned; execution must turn all task statuses green.
+**Approval:** 2026-07-13 — approved from eight green task rows, completed Wave 0 prerequisites, and the passing final gates recorded in the Phase 4 summaries and verifier report.
