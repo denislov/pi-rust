@@ -18,7 +18,9 @@ use crate::interactive::app::{
 };
 use crate::interactive::event_bridge::UiProjection;
 use crate::interactive::input::InputPump;
-use crate::interactive::prompt_task::{PromptTask, PromptTaskEvent, PromptTaskResult};
+use crate::interactive::prompt_task::{
+    PromptTask, PromptTaskCompletion, PromptTaskEvent, PromptTaskFailure, PromptTaskResult,
+};
 use crate::interactive::root::{
     ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
     PendingAgentInvocationRequest, PendingAgentTeamRequest, PendingBranchSummaryRequest,
@@ -453,7 +455,7 @@ where
                 }
                 done = &mut task.done => {
                     let result = done.unwrap_or_else(|_| {
-                        Err(CliError::AgentFailure(
+                        PromptTaskCompletion::SetupFailed(CliError::AgentFailure(
                             "prompt task dropped before completion".to_string(),
                         ))
                     });
@@ -2131,7 +2133,7 @@ fn ui_event_updates_visible_block(event: &UiEvent) -> bool {
 fn finish_prompt<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
-    result: Result<PromptTaskResult, CliError>,
+    result: PromptTaskCompletion,
     coding_session: &mut Option<CodingAgentSession>,
 ) -> Result<(), CliError> {
     if root_settings_show_progress(tui, root_id)? {
@@ -2139,7 +2141,7 @@ fn finish_prompt<T: Terminal>(
     }
     let root = root_mut(tui, root_id)?;
     match result {
-        Ok(PromptTaskResult::Coding(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::Coding(result)) => {
             let completion_notice = result.completion_notice.clone();
             if result.hydrate_transcript {
                 if let Ok(Some(hydration)) = result.session.hydrate_current() {
@@ -2161,7 +2163,7 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::AgentInvocation(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::AgentInvocation(result)) => {
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );
@@ -2175,7 +2177,7 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::AgentTeam(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::AgentTeam(result)) => {
             let _final_text = &result.outcome.final_text;
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
@@ -2190,7 +2192,7 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::DelegationApproval(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::DelegationApproval(result)) => {
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );
@@ -2204,7 +2206,7 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::SetDefaultAgentProfile(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::SetDefaultAgentProfile(result)) => {
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );
@@ -2218,7 +2220,7 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::DelegationRejection(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::DelegationRejection(result)) => {
             if let Some(notice) = result.fallback_notice {
                 root.transcript.push(TranscriptItem::system(notice));
             }
@@ -2235,7 +2237,7 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::SelfHealingEdit(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::SelfHealingEdit(result)) => {
             root.transcript
                 .push(TranscriptItem::system(result.outcome.message.clone()));
             for diagnostic in &result.outcome.diagnostics {
@@ -2255,7 +2257,7 @@ fn finish_prompt<T: Terminal>(
             }
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::PluginReload(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::PluginReload(result)) => {
             for notice in plugin_reload_notice_lines(&result.outcome) {
                 root.transcript.push(TranscriptItem::system(notice));
             }
@@ -2267,7 +2269,7 @@ fn finish_prompt<T: Terminal>(
             );
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::PluginCommand(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::PluginCommand(result)) => {
             root.transcript.push(TranscriptItem::system(format!(
                 "Plugin command {}: {}",
                 result.command_id, result.output
@@ -2280,7 +2282,7 @@ fn finish_prompt<T: Terminal>(
             );
             *coding_session = Some(result.session);
         }
-        Ok(PromptTaskResult::ForkSession(result)) => {
+        PromptTaskCompletion::Completed(PromptTaskResult::ForkSession(result)) => {
             let completion_notice = result.completion_notice.clone();
             if result.hydrate_transcript {
                 if let Ok(Some(hydration)) = result.session.hydrate_current() {
@@ -2299,7 +2301,13 @@ fn finish_prompt<T: Terminal>(
             );
             *coding_session = Some(result.session);
         }
-        Err(error) => {
+        PromptTaskCompletion::Failed(PromptTaskFailure { session, error }) => {
+            *coding_session = Some(session);
+            root.apply_events(vec![UiEvent::AgentError {
+                error: error.to_string(),
+            }]);
+        }
+        PromptTaskCompletion::SetupFailed(error) => {
             root.apply_events(vec![UiEvent::AgentError {
                 error: error.to_string(),
             }]);
@@ -2600,7 +2608,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("{task_name} must restore the live owner"));
             assert_eq!(restored.view().session_id, session_id, "{task_name}");
             assert!(matches!(
-                restored.run(CodingAgentOperation::PluginLoad).await.unwrap(),
+                restored
+                    .run(CodingAgentOperation::PluginLoad)
+                    .await
+                    .unwrap(),
                 CodingAgentOperationOutcome::PluginLoad(_)
             ));
 
