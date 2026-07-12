@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 03
 current_phase_name: production-adapter-convergence
-status: executing
-stopped_at: Completed 03-08-PLAN.md
-last_updated: "2026-07-12T14:02:18.853Z"
+status: verifying
+stopped_at: Completed 03-09-PLAN.md
+last_updated: "2026-07-12T15:17:17.200Z"
 last_activity: 2026-07-12
-last_activity_desc: Completed Phase 03 Plan 08
+last_activity_desc: Completed Phase 03 Plan 09
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 15
-  completed_plans: 14
-  percent: 93
+  completed_plans: 15
+  percent: 100
 ---
 
 # Project State
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 
 ## Current Position
 
-Phase: 03 (production-adapter-convergence) — EXECUTING
+Phase: 03 (production-adapter-convergence) — VERIFYING
 Plan: 9 of 9
-Status: Ready to execute
-Last activity: 2026-07-12 — Completed Phase 03 Plan 08
+Status: Phase complete — ready for verification
+Last activity: 2026-07-12 — Completed Phase 03 Plan 09
 
-Progress: [█████████░] 93%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Progress: [█████████░] 93%
 | Phase 03 P06 | 28 min | 3 tasks | 7 files |
 | Phase 03 P07 | 1h 14m | 3 tasks | 5 files |
 | Phase 03 P08 | 17min | 2 tasks | 4 files |
+| Phase 03 P09 | 47min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,8 @@ Recent decisions affecting current work:
 - [Phase 03]: 03-07: Interactive PromptTask failures return the live owner through one completion envelope; successful forks synchronize the next session target; delegation fallback follows visible UiEvent projection; named per-runner guards replace magic subscription counts.
 - [Phase 03]: 03-08: Preserve PartialCommit as a structured CliError carrying exact operation ID and message. — Durable uncertainty must remain attributable across adapter task channels.
 - [Phase 03]: 03-08: Keep persistence fault injection behind exactly two specialized cfg(test) owner methods and one durable pending-delegation fixture method. — Interactive tests need real fixtures without exposing selectors, services, queues, or production hooks.
+- [Phase 03]: Preserve task-level Failed for profile/rejection and Completed(Coding(PromptTurnOutcome::Failed)) for prompt finalization uncertainty. — The production runner contracts intentionally distinguish canonical operation errors from prompt outcome-level finalization errors; tests must enforce rather than flatten that distinction.
+- [Phase 03]: Verify failed fork continuity with the original pre-task ProductEvent receiver and no replacement SessionOpened transition. — Resubscribing after restoration would not prove EventService identity survived owner transfer; the original receiver is the continuity authority.
 
 ### Pending Todos
 
@@ -118,6 +121,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-12T13:59:59.797Z
-Stopped at: Completed 03-08-PLAN.md
+Last session: 2026-07-12T15:09:37.303Z
+Stopped at: Completed 03-09-PLAN.md
 Resume file: None

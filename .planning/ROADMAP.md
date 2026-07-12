@@ -8,7 +8,7 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
 
 - [x] **Phase 1: Evidence-Based Baseline** - Establish the authoritative Stage 9 completion state and exact remaining gap set from live evidence. (completed 2026-07-11)
 - [x] **Phase 2: Canonical Facade Correctness** - Make the stable public operation contract and its internal dispatch path complete, exhaustive, and behavior-preserving. (completed 2026-07-11)
-- [ ] **Phase 3: Production Adapter Convergence** - Route JSON, print, RPC, and interactive product work through canonical operations without changing adapter behavior.
+- [x] **Phase 3: Production Adapter Convergence** - Route JSON, print, RPC, and interactive product work through canonical operations without changing adapter behavior. (completed 2026-07-12)
 - [ ] **Phase 4: Test Convergence and Compatibility Deletion** - Move behavior coverage to `run()` and remove the replaced broad session methods after every caller has migrated.
 - [ ] **Phase 5: Boundary Enforcement and Stage 9 Closure** - Prevent regression to compatibility paths, verify the workspace, and close Stage 9 with accurate documentation.
 
@@ -67,10 +67,10 @@ Stage 9 proceeds in dependency order from evidence to enforcement. The first pha
   4. Interactive fork and navigation retain subscriber continuity, product-event sequencing, and refreshed snapshots and projections after transitions.
   5. JSON, print, RPC, and interactive production sources contain neither replaced broad workflow calls nor local deprecation suppressions for those calls.
 
-**Plans**: 8/9 plans executed
+**Plans**: 9/9 plans complete
 
 - [x] 03-08-PLAN.md
-- [ ] 03-09-PLAN.md
+- [x] 03-09-PLAN.md
 
 **Wave 1**
 
@@ -139,6 +139,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Evidence-Based Baseline | 3/3 | Complete    | 2026-07-11 |
 | 2. Canonical Facade Correctness | 3/3 | Complete    | 2026-07-11 |
-| 3. Production Adapter Convergence | 8/9 | In Progress|  |
+| 3. Production Adapter Convergence | 9/9 | Complete   | 2026-07-12 |
 | 4. Test Convergence and Compatibility Deletion | 0/TBD | Not started | - |
 | 5. Boundary Enforcement and Stage 9 Closure | 0/TBD | Not started | - |
