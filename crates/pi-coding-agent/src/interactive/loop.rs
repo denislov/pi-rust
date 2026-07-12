@@ -2331,14 +2331,18 @@ fn finish_prompt<T: Terminal>(
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    use std::{path::Path, sync::Arc};
+
     use super::*;
     use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
     use crate::coding_session::{
         CapabilityStatus, CodingAgentCapabilities, CodingAgentEvent, CodingAgentSession,
-        CodingAgentSessionOptions, CodingAgentSessionView, ProductEvent, ProductEventSequence,
-        ProfileId, UiSnapshot, UiSnapshotCursor,
+        CodingAgentSessionOptions, CodingAgentSessionView, CodingSessionError, ProductEvent,
+        ProductEventSequence, ProfileId, UiSnapshot, UiSnapshotCursor,
     };
-    use pi_ai::types::Usage;
+    use crate::runtime::SessionRunOptions;
+    use pi_ai::providers::faux::FauxProvider;
+    use pi_ai::types::{Model, ModelCost, ModelInput, Usage};
     use pi_tui::VirtualTerminal;
 
     fn test_tui() -> (Tui<VirtualTerminal>, usize) {
@@ -2391,6 +2395,130 @@ mod tests {
             shell: CapabilityStatus::Available,
             plugins: CapabilityStatus::Available,
         }
+    }
+
+    fn test_model(api: &str) -> Model {
+        Model {
+            id: "test-model".into(),
+            name: "Test Model".into(),
+            api: api.into(),
+            provider: "test".into(),
+            base_url: String::new(),
+            reasoning: false,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost::default(),
+            context_window: 0,
+            max_tokens: 0,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    fn prompt_run_options(api: &str, prompt: &str) -> PromptRunOptions {
+        PromptRunOptions {
+            prompt: prompt.into(),
+            model: test_model(api),
+            api_key: None,
+            auth_diagnostics: Vec::new(),
+            system_prompt: Some("system".into()),
+            max_turns: Some(2),
+            tools: Vec::new(),
+            register_builtins: false,
+            session: Some(SessionRunOptions::disabled(".".into())),
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text(prompt.into()),
+        }
+    }
+
+    async fn persistent_session(root: &Path, session_id: &str) -> CodingAgentSession {
+        CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_session_log_root(root),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn await_prompt_task(
+        mut task: PromptTask,
+    ) -> (PromptTaskCompletion, Vec<PromptTaskEvent>) {
+        let completion = task.done.await.expect("prompt task must send completion");
+        let mut events = Vec::new();
+        while let Ok(event) = task.events.try_recv() {
+            events.push(event);
+        }
+        (completion, events)
+    }
+
+    fn event_log_path(root: &Path, session_id: &str) -> PathBuf {
+        root.join(session_id).join("events.jsonl")
+    }
+
+    fn event_log_line_count(path: &Path) -> usize {
+        std::fs::read_to_string(path).unwrap().lines().count()
+    }
+
+    fn appended_operation_ids(path: &Path, previous_line_count: usize) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .skip(previous_line_count)
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|event| {
+                event
+                    .get("operation_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    fn sentinel_target() -> Option<ResolvedSessionTarget> {
+        Some(ResolvedSessionTarget::OpenOrCreateId(
+            "sess_before_failure".into(),
+        ))
+    }
+
+    fn assert_sentinel_target(target: &Option<ResolvedSessionTarget>) {
+        assert!(matches!(
+            target,
+            Some(ResolvedSessionTarget::OpenOrCreateId(session_id))
+                if session_id == "sess_before_failure"
+        ));
+    }
+
+    async fn assert_restored_owner_supports_plugin_load(
+        coding_session: &mut Option<CodingAgentSession>,
+        expected_session_id: &str,
+    ) {
+        let restored = coding_session
+            .as_mut()
+            .expect("finish_prompt must restore the live owner");
+        assert_eq!(restored.view().session_id, expected_session_id);
+        assert!(matches!(
+            restored
+                .run(CodingAgentOperation::PluginLoad)
+                .await
+                .unwrap(),
+            CodingAgentOperationOutcome::PluginLoad(_)
+        ));
+    }
+
+    fn transcript_error_count<T: Terminal>(tui: &Tui<T>, root_id: usize, error: &str) -> usize {
+        root_ref(tui, root_id)
+            .unwrap()
+            .transcript
+            .items()
+            .iter()
+            .filter(|item| matches!(item, TranscriptItem::Error { text } if text == error))
+            .count()
     }
 
     async fn snapshot(last_event_sequence: ProductEventSequence, session_id: &str) -> UiSnapshot {
@@ -2592,17 +2720,202 @@ mod tests {
 
     #[tokio::test]
     async fn real_profile_failure_restores_owner_through_prompt_task_done() {
-        panic!("RED: real profile failure has not been driven through PromptTask.done");
+        let temp = tempfile::tempdir().unwrap();
+        let session_id = "sess_real_profile_failure";
+        let session = persistent_session(temp.path(), session_id).await;
+        session.arm_update_manifest_failure_for_tests(0);
+        let task =
+            PromptTask::spawn_set_default_agent_profile(session, ProfileId::from("reviewer"))
+                .unwrap();
+        let (completion, _events) = await_prompt_task(task).await;
+        let expected_error =
+            CliError::SessionFailure("injected session store failure at UpdateManifest".into());
+        match &completion {
+            PromptTaskCompletion::Failed(PromptTaskFailure { session, error }) => {
+                assert_eq!(session.view().session_id, session_id);
+                assert_eq!(error, &expected_error);
+            }
+            _ => panic!("profile mutation must fail through the owned task completion"),
+        }
+
+        let (mut tui, root_id) = test_tui();
+        let mut coding_session = None;
+        let mut session_target = sentinel_target();
+        finish_prompt(
+            &mut tui,
+            root_id,
+            completion,
+            &mut coding_session,
+            &mut session_target,
+        )
+        .unwrap();
+
+        assert_sentinel_target(&session_target);
+        assert_eq!(
+            transcript_error_count(&tui, root_id, &expected_error.to_string()),
+            1
+        );
+        assert_restored_owner_supports_plugin_load(&mut coding_session, session_id).await;
     }
 
     #[tokio::test]
     async fn real_rejection_partial_commit_restores_owner_through_prompt_task_done() {
-        panic!("RED: real rejection failure has not been driven through PromptTask.done");
+        let temp = tempfile::tempdir().unwrap();
+        let session_id = "sess_real_rejection_partial_commit";
+        let operation_id = "op_real_rejection_partial_commit";
+        let tool_call_id = "tool_real_rejection_partial_commit";
+        let mut session = persistent_session(temp.path(), session_id).await;
+        session.queue_pending_delegation_for_tests(operation_id, tool_call_id);
+        let log_path = event_log_path(temp.path(), session_id);
+        let previous_line_count = event_log_line_count(&log_path);
+        session.arm_update_manifest_failure_for_tests(0);
+        let task = PromptTask::spawn_delegation_rejection(
+            session,
+            operation_id.into(),
+            tool_call_id.into(),
+            "declined".into(),
+        )
+        .unwrap();
+        let (completion, _events) = await_prompt_task(task).await;
+        let expected_message = "session error: injected session store failure at UpdateManifest";
+        match &completion {
+            PromptTaskCompletion::Failed(PromptTaskFailure { session, error }) => {
+                assert_eq!(session.view().session_id, session_id);
+                assert_eq!(
+                    error,
+                    &CliError::PartialCommit {
+                        operation_id: operation_id.into(),
+                        message: expected_message.into(),
+                    }
+                );
+            }
+            _ => panic!("delegation rejection must fail through the owned task completion"),
+        }
+        assert!(
+            appended_operation_ids(&log_path, previous_line_count)
+                .iter()
+                .any(|durable_id| durable_id == operation_id),
+            "the partial-commit operation must be present in the appended durable transaction"
+        );
+
+        let expected_error = CliError::PartialCommit {
+            operation_id: operation_id.into(),
+            message: expected_message.into(),
+        };
+        let (mut tui, root_id) = test_tui();
+        let mut coding_session = None;
+        let mut session_target = sentinel_target();
+        finish_prompt(
+            &mut tui,
+            root_id,
+            completion,
+            &mut coding_session,
+            &mut session_target,
+        )
+        .unwrap();
+
+        assert_sentinel_target(&session_target);
+        assert_eq!(
+            transcript_error_count(&tui, root_id, &expected_error.to_string()),
+            1
+        );
+        assert_restored_owner_supports_plugin_load(&mut coding_session, session_id).await;
     }
 
     #[tokio::test]
-    async fn real_prompt_partial_commit_returns_completed_failed_outcome_through_prompt_task_done() {
-        panic!("RED: real prompt failure has not been driven through PromptTask.done");
+    async fn real_prompt_partial_commit_returns_completed_failed_outcome_through_prompt_task_done()
+    {
+        let api = "interactive-real-prompt-partial-commit";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("prompt answer")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let session_id = "sess_real_prompt_partial_commit";
+        let session = persistent_session(temp.path(), session_id).await;
+        let log_path = event_log_path(temp.path(), session_id);
+        let previous_line_count = event_log_line_count(&log_path);
+        session.arm_update_manifest_failure_for_tests(0);
+        let task = PromptTask::spawn_prompt(
+            prompt_run_options(api, "hello"),
+            Some(session),
+            ProfileId::from("default"),
+        )
+        .unwrap();
+        let (completion, events) = await_prompt_task(task).await;
+        let (outcome_operation_id, partial_commit_operation_id, expected_error) = match &completion
+        {
+            PromptTaskCompletion::Completed(PromptTaskResult::Coding(result)) => {
+                assert_eq!(result.session.view().session_id, session_id);
+                match &result.outcome {
+                    PromptTurnOutcome::Failed {
+                        operation_id,
+                        error:
+                            CodingSessionError::PartialCommit {
+                                operation_id: partial_commit_operation_id,
+                                message,
+                            },
+                        ..
+                    } => (
+                        operation_id.clone(),
+                        partial_commit_operation_id.clone(),
+                        CodingSessionError::PartialCommit {
+                            operation_id: partial_commit_operation_id.clone(),
+                            message: message.clone(),
+                        },
+                    ),
+                    other => panic!("expected a prompt failed outcome, got {other:?}"),
+                }
+            }
+            _ => panic!("prompt finalization failure must remain a completed coding result"),
+        };
+        assert_eq!(outcome_operation_id, partial_commit_operation_id);
+        assert!(
+            appended_operation_ids(&log_path, previous_line_count)
+                .iter()
+                .any(|durable_id| durable_id == &partial_commit_operation_id),
+            "the failed prompt transaction must retain its durable operation id"
+        );
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                PromptTaskEvent::Coding(event)
+                    if matches!(
+                        event.compatibility_event(),
+                        CodingAgentEvent::PromptFailed { operation_id, error }
+                            if operation_id == &partial_commit_operation_id
+                                && error == &expected_error
+                    )
+            )
+        }));
+
+        let (mut tui, root_id) = test_tui();
+        let mut projection = UiProjection::new();
+        for event in events {
+            apply_prompt_task_event(&mut tui, root_id, &mut projection, event).unwrap();
+        }
+        let expected_error_text = expected_error.to_string();
+        let projected_before_finish = transcript_error_count(&tui, root_id, &expected_error_text);
+        assert_eq!(projected_before_finish, 1);
+
+        let mut coding_session = None;
+        let mut session_target = sentinel_target();
+        finish_prompt(
+            &mut tui,
+            root_id,
+            completion,
+            &mut coding_session,
+            &mut session_target,
+        )
+        .unwrap();
+
+        assert_sentinel_target(&session_target);
+        assert_eq!(
+            transcript_error_count(&tui, root_id, &expected_error_text),
+            projected_before_finish,
+            "finish_prompt must not duplicate the prompt failure projection"
+        );
+        assert_restored_owner_supports_plugin_load(&mut coding_session, session_id).await;
     }
 
     #[tokio::test]
