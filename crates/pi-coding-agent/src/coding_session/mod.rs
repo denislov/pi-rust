@@ -2316,6 +2316,55 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn interactive_store_and_pending_delegation_bridge_arms_real_fixtures() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let append_options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_interactive_append_bridge")
+            .with_session_log_root(temp.path());
+        let mut append_session = CodingAgentSession::create(append_options).await.unwrap();
+        append_session.arm_append_events_failure_for_tests(0);
+        let append_error = append_session
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: ProfileId::from("default"),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(append_error.code(), "session");
+
+        let manifest_options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_interactive_manifest_bridge")
+            .with_session_log_root(temp.path());
+        let mut manifest_session = CodingAgentSession::create(manifest_options).await.unwrap();
+        manifest_session.arm_update_manifest_failure_for_tests(0);
+        let manifest_error = manifest_session
+            .run(CodingAgentOperation::SetDefaultAgentProfile {
+                profile_id: ProfileId::from("default"),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(manifest_error.code(), "partial_commit");
+
+        let pending_options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_interactive_pending_bridge")
+            .with_session_log_root(temp.path());
+        let mut pending_session = CodingAgentSession::create(pending_options.clone())
+            .await
+            .unwrap();
+        pending_session.queue_pending_delegation_for_tests("op_pending", "tool_pending");
+        let pending = pending_session.pending_delegation_confirmations();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].operation_id, "op_pending");
+        assert_eq!(pending[0].tool_call_id, "tool_pending");
+
+        let reopened = CodingAgentSession::open(pending_options).await.unwrap();
+        let reopened_pending = reopened.pending_delegation_confirmations();
+        assert_eq!(reopened_pending.len(), 1);
+        assert_eq!(reopened_pending[0].operation_id, "op_pending");
+        assert_eq!(reopened_pending[0].tool_call_id, "tool_pending");
+    }
+
     fn prompt_options_with_tools(
         api: &str,
         prompt: &str,

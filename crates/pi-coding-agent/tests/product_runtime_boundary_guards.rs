@@ -63,6 +63,22 @@ fn session_store_failure_controls_remain_test_only() {
         assert_direct_cfg_test(&sanitized, &call);
     }
 
+    let session_source = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
+        .expect("read coding session source");
+    let session_sanitized = sanitize_rust_source(&session_source);
+    for signature in [
+        "pub(crate) fn arm_append_events_failure_for_tests(",
+        "pub(crate) fn arm_update_manifest_failure_for_tests(",
+        "pub(crate) fn queue_pending_delegation_for_tests(",
+    ] {
+        assert_eq!(
+            session_sanitized.matches(signature).count(),
+            1,
+            "owner-local test bridge must exist exactly once: {signature}"
+        );
+        assert_direct_cfg_test(&session_sanitized, signature);
+    }
+
     let mut violations = Vec::new();
     for path in rust_files_under(&scan.crate_root.join("src/coding_session")) {
         let relative = relative_path(&scan.repo_root, &path);
@@ -198,6 +214,9 @@ fn canonical_operation_facade_has_no_new_workflow_wrappers() {
         &[
             "non_persistent_with_event_capacity_for_tests",
             "emit_product_event_for_tests",
+            "arm_append_events_failure_for_tests",
+            "arm_update_manifest_failure_for_tests",
+            "queue_pending_delegation_for_tests",
         ],
     );
 
