@@ -123,6 +123,92 @@ mod tests {
     use super::*;
 
     #[test]
+    fn partial_commit_conversion_preserves_operation_identity() {
+        let source = CodingSessionError::PartialCommit {
+            operation_id: "op_123".into(),
+            message: "manifest failed".into(),
+        };
+        let expected_display = source.to_string();
+
+        let converted = CliError::from(source);
+
+        assert_eq!(
+            converted,
+            CliError::PartialCommit {
+                operation_id: "op_123".into(),
+                message: "manifest failed".into(),
+            }
+        );
+        assert_eq!(converted.to_string(), expected_display);
+    }
+
+    #[test]
+    fn non_partial_conversion_contract_remains_unchanged() {
+        let cases = [
+            (
+                CodingSessionError::Config {
+                    message: "missing setting".into(),
+                },
+                CliError::SessionFailure("missing setting".into()),
+                "missing setting",
+            ),
+            (
+                CodingSessionError::EventStreamGap {
+                    requested_after: 1,
+                    oldest_available: 3,
+                },
+                CliError::SessionFailure(
+                    "event stream gap after sequence 1; oldest available product event is 3; client must request a fresh UI snapshot".into(),
+                ),
+                "event stream gap after sequence 1; oldest available product event is 3; client must request a fresh UI snapshot",
+            ),
+            (
+                CodingSessionError::Cancelled,
+                CliError::SessionFailure("cancelled".into()),
+                "cancelled",
+            ),
+            (
+                CodingSessionError::UnsupportedCapability {
+                    capability: "prompt".into(),
+                },
+                CliError::UnsupportedMode("prompt".into()),
+                "unsupported mode: prompt",
+            ),
+            (
+                CodingSessionError::Busy {
+                    operation: "prompt".into(),
+                },
+                CliError::SessionFailure("busy: prompt".into()),
+                "busy: prompt",
+            ),
+            (
+                CodingSessionError::EventStreamLag { skipped: 2 },
+                CliError::SessionFailure(
+                    "event stream lagged by 2 events; client must request a fresh UI snapshot".into(),
+                ),
+                "event stream lagged by 2 events; client must request a fresh UI snapshot",
+            ),
+            (
+                CodingSessionError::UnsupportedProtocolVersion {
+                    family: "rpc".into(),
+                    requested: "2.0".into(),
+                    supported: "1.0".into(),
+                },
+                CliError::SessionFailure(
+                    "unsupported protocol version for rpc: requested 2.0, supported 1.0".into(),
+                ),
+                "unsupported protocol version for rpc: requested 2.0, supported 1.0",
+            ),
+        ];
+
+        for (source, expected, expected_display) in cases {
+            let converted = CliError::from(source);
+            assert_eq!(converted, expected);
+            assert_eq!(converted.to_string(), expected_display);
+        }
+    }
+
+    #[test]
     fn coding_session_error_codes_are_stable() {
         let cases = [
             (
