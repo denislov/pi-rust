@@ -177,20 +177,6 @@ pub(super) fn clone_rust_native_choice(
         .map_err(CliError::from)
 }
 
-pub(super) fn fork_rust_native_choice(
-    choice: &SessionChoice,
-    target_leaf_id: Option<&str>,
-) -> Result<HydratedSession, CliError> {
-    if choice.kind != SessionChoiceKind::RustNative {
-        return Err(CliError::SessionFailure(
-            "session choice is not Rust-native".into(),
-        ));
-    }
-    CodingAgentSession::fork_session(rust_native_choice_options(choice), target_leaf_id)
-        .map(hydrated_session_from_rust_native)
-        .map_err(CliError::from)
-}
-
 fn rust_native_choice_options(choice: &SessionChoice) -> CodingAgentSessionOptions {
     let mut options = CodingAgentSessionOptions::new().with_session_path(&choice.path);
     if let Some(root) = choice.path.parent() {

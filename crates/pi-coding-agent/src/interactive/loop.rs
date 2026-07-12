@@ -27,8 +27,7 @@ use crate::interactive::root::{
     PendingSelfHealingEditRequest, PluginUiDialogField,
 };
 use crate::interactive::session_actions::{
-    SessionChoiceKind, fork_rust_native_choice, hydrate_existing_session_target,
-    hydrated_session_from_rust_native,
+    SessionChoiceKind, hydrate_existing_session_target, hydrated_session_from_rust_native,
 };
 use crate::interactive::{TranscriptItem, UiEvent};
 use crate::prompt_options::PromptRunOptions;
@@ -897,10 +896,7 @@ fn handle_input_event<T: Terminal>(
 
     // Process tree navigation.
     let mut tree_navigation_summary: Option<(String, String)> = None;
-    let mut tree_navigation_fork: Option<(
-        crate::interactive::session_actions::SessionChoice,
-        String,
-    )> = None;
+    let mut tree_navigation_fork: Option<String> = None;
     {
         let root = root_mut(tui, root_id)?;
         if let Some(target_id) = root.take_selected_tree_entry_id() {
@@ -920,7 +916,7 @@ fn handle_input_event<T: Terminal>(
                 } else if let Some(source_leaf_id) = current_leaf_id {
                     tree_navigation_summary = Some((source_leaf_id, target_id));
                 } else {
-                    tree_navigation_fork = Some((choice, target_id));
+                    tree_navigation_fork = Some(target_id);
                 }
             } else {
                 root.transcript.push(TranscriptItem::system(
@@ -947,23 +943,23 @@ fn handle_input_event<T: Terminal>(
         )?);
         return Ok(LoopControl::Continue(RenderRequest::FORCE));
     }
-    if let Some((choice, target_id)) = tree_navigation_fork {
-        let root = root_mut(tui, root_id)?;
-        match fork_rust_native_choice(&choice, Some(&target_id)) {
-            Ok(hydrated) => {
-                root.apply_hydrated_session(
-                    hydrated,
-                    Some("Navigated to selected point".to_string()),
-                );
-                if let Some(active) = root.active_session.as_ref() {
-                    prompt_context.session_target =
-                        Some(ResolvedSessionTarget::OpenTarget(active.id.clone()));
-                }
-            }
-            Err(error) => root.transcript.push(TranscriptItem::system(format!(
-                "Failed to navigate tree: {error}"
-            ))),
+    if let Some(target_id) = tree_navigation_fork {
+        if running.is_some() {
+            let root = root_mut(tui, root_id)?;
+            root.transcript.push(TranscriptItem::system(
+                "Wait for the current run to finish before navigating the session tree.",
+            ));
+            return Ok(LoopControl::Continue(RenderRequest::FORCE));
         }
+        start_tree_navigation_fork_task(
+            tui,
+            root_id,
+            target_id,
+            prompt_context,
+            running,
+            coding_session,
+        )?;
+        return Ok(LoopControl::Continue(RenderRequest::FORCE));
     }
 
     match action {
@@ -1928,6 +1924,50 @@ fn start_fork_task<T: Terminal>(
         options,
         coding_session.take(),
         request.target_leaf_id,
+        Some("Forked to new session".to_string()),
+        prompt_context.default_agent_profile_id.clone(),
+    )?);
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(())
+}
+
+fn start_tree_navigation_fork_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    target_leaf_id: String,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<(), CliError> {
+    {
+        let root = root_mut(tui, root_id)?;
+        root.set_status(InteractiveStatus::Running);
+    }
+    let options = PromptRunOptions {
+        prompt: String::new(),
+        model: prompt_context.model.clone(),
+        api_key: prompt_context.api_key.clone(),
+        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
+        system_prompt: prompt_context.system_prompt.clone(),
+        max_turns: prompt_context.max_turns,
+        tools: prompt_context.tools.clone(),
+        register_builtins: prompt_context.register_builtins,
+        session: prompt_context.session.clone(),
+        session_target: prompt_context.session_target.clone(),
+        session_name: prompt_context.session_name.clone(),
+        thinking_level: prompt_context.thinking_level,
+        tool_execution: prompt_context.tool_execution,
+        resources: prompt_context.resources.clone(),
+        settings: Some(prompt_context.settings.clone()),
+        invocation: PromptInvocation::Text(String::new()),
+    };
+    *running = Some(PromptTask::spawn_fork_session(
+        options,
+        coding_session.take(),
+        Some(target_leaf_id),
+        Some("Navigated to selected point".to_string()),
         prompt_context.default_agent_profile_id.clone(),
     )?);
     if prompt_context.settings.terminal.show_progress {

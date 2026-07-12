@@ -288,12 +288,14 @@ impl PromptTask {
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
         target_leaf_id: Option<String>,
+        completion_notice: Option<String>,
         default_agent_profile_id: ProfileId,
     ) -> Result<Self, CliError> {
         Ok(Self::spawn_coding_fork_session(
             options,
             existing_session,
             target_leaf_id,
+            completion_notice,
             default_agent_profile_id,
         ))
     }
@@ -721,6 +723,7 @@ impl PromptTask {
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
         target_leaf_id: Option<String>,
+        completion_notice: Option<String>,
         default_agent_profile_id: ProfileId,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -732,6 +735,7 @@ impl PromptTask {
                 options,
                 existing_session,
                 target_leaf_id,
+                completion_notice,
                 default_agent_profile_id,
                 event_tx,
                 abort_rx,
@@ -1555,11 +1559,13 @@ async fn run_coding_branch_summary_navigation_task(
     let branch_options = PromptTurnOptions::from_prompt_run_options(options);
 
     let outcome = {
-        let mut branch_summary = Box::pin(session.summarize_branch_for_navigation(
-            branch_options,
+        let mut branch_summary = Box::pin(session.run(CodingAgentOperation::BranchSummary {
+            options: branch_options,
             source_leaf_id,
-            target_leaf_id.clone(),
-        ));
+            target_leaf_id: target_leaf_id.clone(),
+            custom_instructions: None,
+            reuse: BranchSummaryReusePolicy::ReuseExisting,
+        }));
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
@@ -1573,7 +1579,12 @@ async fn run_coding_branch_summary_navigation_task(
                     }
                 }
                 outcome = &mut branch_summary => {
-                    break outcome.map_err(CliError::from);
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::BranchSummary(outcome) => Ok(outcome),
+                            _ => unreachable!("branch summary navigation operation returned a different public outcome"),
+                        });
                 }
             }
         }
@@ -1583,9 +1594,40 @@ async fn run_coding_branch_summary_navigation_task(
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
     }
 
-    let forked_session = session.fork_current_session(Some(&target_leaf_id))?;
+    {
+        let mut fork = Box::pin(session.run(CodingAgentOperation::ForkSession {
+            target_leaf_id: Some(target_leaf_id),
+        }));
+        loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::UnsupportedMode(
+                        "interactive navigation fork abort is not implemented yet".into(),
+                    ));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut fork => {
+                    break outcome
+                        .map_err(CliError::from)
+                        .and_then(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::SessionForked => Ok(()),
+                            _ => unreachable!("navigation fork operation returned a different public outcome"),
+                        });
+                }
+            }
+        }
+    }?;
+
+    while let Ok(Some(event)) = receiver.try_recv() {
+        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+    }
+
     Ok(CodingPromptTaskResult {
-        session: forked_session,
+        session,
         outcome,
         completion_notice: Some("Navigated to selected point".to_string()),
         hydrate_transcript: true,
@@ -1596,6 +1638,7 @@ async fn run_coding_fork_session_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
     target_leaf_id: Option<String>,
+    completion_notice: Option<String>,
     default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
     mut abort_rx: oneshot::Receiver<()>,
@@ -1648,7 +1691,7 @@ async fn run_coding_fork_session_task(
 
     Ok(ForkSessionTaskResult {
         session,
-        completion_notice: Some("Forked to new session".to_string()),
+        completion_notice,
         hydrate_transcript: true,
     })
 }
