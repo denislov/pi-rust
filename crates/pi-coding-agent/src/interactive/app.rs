@@ -4216,7 +4216,7 @@ display_name = "Coder"
     }
 
     #[test]
-    fn fork_command_reports_failure_for_missing_rust_native_session() {
+    fn fork_command_sets_pending_request_for_rust_native_session() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("/tmp/project"),
             "faux-model".to_string(),
@@ -4239,10 +4239,19 @@ display_name = "Coder"
             original: "/fork".to_string(),
         });
 
+        // /fork now sets a pending request consumed by the async loop instead
+        // of executing a synchronous disk-backed fork. The canonical
+        // ForkSession operation runs on the live owner inside the loop.
+        assert_eq!(
+            root.take_action(),
+            crate::interactive::root::InteractiveAction::Fork
+        );
+        let request = root
+            .take_pending_fork_request()
+            .expect("fork command sets a pending fork request");
+        assert_eq!(request.target_leaf_id, None);
         assert!(root.take_selected_session().is_none());
-        let text = last_system_text(&root);
-        assert!(text.contains("Failed to fork session:"), "{text}");
-        assert!(!text.contains("not implemented"), "{text}");
+        assert!(!last_system_text(&root).contains("not implemented"));
     }
 
     #[test]

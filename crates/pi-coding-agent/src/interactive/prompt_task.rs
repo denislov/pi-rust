@@ -1801,7 +1801,9 @@ mod tests {
         let product_subscription = [".", "subscribe_product_events()"].concat();
         let compatibility_subscription = [".", "subscribe()"].concat();
 
-        assert_eq!(source.matches(&product_subscription).count(), 10);
+        // Each interactive task subscribes through the product event boundary.
+        // Update this count when adding or removing owner-returning tasks.
+        assert_eq!(source.matches(&product_subscription).count(), 13);
         assert!(!source.contains(&compatibility_subscription));
         assert!(source.contains("Coding(ProductEvent)"));
     }

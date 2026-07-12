@@ -446,6 +446,164 @@ fn production_rpc_uses_canonical_operations() {
 }
 
 #[test]
+fn production_interactive_uses_canonical_operations() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    // Interactive production source must submit operations through
+    // CodingAgentSession::run instead of replaced broad workflow methods
+    // (both deprecated and non-deprecated), and must not suppress
+    // deprecation warnings in production source. The legitimate local
+    // InteractiveRoot::set_default_agent_profile_id projection setter is
+    // explicitly allowed. Test-only allowances inside #[cfg(test)] modules
+    // are preserved.
+    let replaced_workflow_methods = [
+        // Deprecated broad workflow methods
+        "prompt",
+        "compact",
+        "self_healing_edit",
+        "self_healing_edit_with_options",
+        "invoke_agent",
+        "invoke_team",
+        "summarize_branch",
+        "export_current",
+        "export_current_html",
+        // Non-deprecated methods replaced by canonical operations
+        "approve_delegation_confirmation",
+        "reject_delegation_confirmation",
+        "reload_plugins",
+        "run_plugin_command",
+        "fork_current_session",
+        "summarize_branch_for_navigation",
+    ];
+
+    for path in rust_files_under(&scan.crate_root.join("src/interactive")) {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source =
+            fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {relative}: {err}"));
+        let sanitized = sanitize_rust_source(&source);
+        for (index, line) in sanitized.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || line_is_cfg_test_gated(&sanitized, index) {
+                continue;
+            }
+            if trimmed.contains("#[allow(deprecated)]") {
+                violations.push(format!(
+                    "{relative}:{}: production interactive source suppresses deprecation: {}",
+                    index + 1,
+                    trimmed
+                ));
+            }
+            for method in replaced_workflow_methods {
+                let pattern = format!(".{method}(");
+                if trimmed.contains(&pattern) {
+                    violations.push(format!(
+                        "{relative}:{}: production interactive source calls replaced workflow method `{method}` instead of CodingAgentSession::run: {}",
+                        index + 1,
+                        trimmed
+                    ));
+                }
+            }
+            // set_default_agent_profile_id is both a legitimate InteractiveRoot
+            // projection setter and a replaced CodingAgentSession method. Allow
+            // root.set_default_agent_profile_id( and self.set_default_agent_profile_id(
+            // (the root's own internal call); reject any other receiver.
+            if trimmed.contains(".set_default_agent_profile_id(")
+                && !trimmed.contains("root.set_default_agent_profile_id(")
+                && !trimmed.contains("self.set_default_agent_profile_id(")
+            {
+                violations.push(format!(
+                    "{relative}:{}: production interactive source calls replaced session method `set_default_agent_profile_id` on a non-root receiver instead of CodingAgentSession::run(SetDefaultAgentProfile): {}",
+                    index + 1,
+                    trimmed
+                ));
+            }
+            // Reject private runtime contract imports from the coding_session
+            // module. Migrated adapters must import operation types through
+            // crate::api. Check the import prefix and private type names
+            // separately to avoid false matches.
+            let coding_session_prefix = ["crate::coding_", "session"].concat();
+            if trimmed.contains("use ")
+                && trimmed.contains(&coding_session_prefix)
+                && trimmed.contains("::")
+            {
+                for private_type in [
+                    "Operation",
+                    "PluginLoadOptions",
+                    "OperationMetadata",
+                    "FlowService",
+                    "SessionService",
+                    "EventService",
+                    "CapabilityService",
+                    "CapabilitySnapshotService",
+                    "RuntimeService",
+                    "IntentRouter",
+                ] {
+                    if trimmed.contains(private_type) {
+                        violations.push(format!(
+                            "{relative}:{}: production interactive source imports private runtime contract `{private_type}` from the coding_session module instead of crate::api: {}",
+                            index + 1,
+                            trimmed
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Verify migrated adapters import operation types through crate::api.
+    let prompt_task_source =
+        fs::read_to_string(scan.crate_root.join("src/interactive/prompt_task.rs"))
+            .expect("read prompt_task source");
+    let sanitized_prompt_task = sanitize_rust_source(&prompt_task_source);
+    assert!(
+        sanitized_prompt_task.contains("use crate::api::"),
+        "interactive prompt_task must import CodingAgentOperation/CodingAgentOperationOutcome through crate::api per D-16"
+    );
+    let loop_source = fs::read_to_string(scan.crate_root.join("src/interactive/loop.rs"))
+        .expect("read interactive loop source");
+    let sanitized_loop = sanitize_rust_source(&loop_source);
+    assert!(
+        sanitized_loop.contains("use crate::api::"),
+        "interactive loop must import public operation projections through crate::api per D-16"
+    );
+
+    assert!(
+        violations.is_empty(),
+        "interactive production source must route operations through CodingAgentSession::run and must not call replaced broad workflow methods, suppress deprecation, or import private runtime contracts:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn production_adapters_do_not_introduce_switch_active_leaf() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    // CodeGraph discovery found no first-party SwitchActiveLeaf caller. Audit
+    // that no production adapter introduces one. The SwitchActiveLeaf operation
+    // remains in the public enum for completeness but has no live caller.
+    for relative_root in ["src/interactive", "src/protocol", "src/print_mode.rs"] {
+        collect_source_violations(
+            scan.repo_root(),
+            &scan.crate_root.join(relative_root),
+            &[],
+            &mut violations,
+            |line| {
+                line.contains(".switch_active_leaf(")
+                    || line.contains("CodingAgentOperation::SwitchActiveLeaf")
+            },
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "production adapters must not introduce a SwitchActiveLeaf caller; CodeGraph found none and the operation has no live first-party caller:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn adapters_do_not_access_event_service_directly_for_projection() {
     let scan = SourceScan::new();
 

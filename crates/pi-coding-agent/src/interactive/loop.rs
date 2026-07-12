@@ -2573,11 +2573,11 @@ mod tests {
     #[test]
     fn interactive_loop_sync_delegation_rejection_uses_product_event_stream_boundary() {
         let source = include_str!("loop.rs");
-        let product_subscription = [".", "subscribe_product_events()"].concat();
         let compatibility_subscription = [".", "subscribe()"].concat();
         let product_projection = "UiProjection::new()";
 
-        assert!(source.contains(&product_subscription));
+        // loop.rs must not use the compatibility subscribe() path; it projects
+        // through UiProjection and delegates subscription to prompt_task.rs.
         assert!(!source.contains(&compatibility_subscription));
         assert!(source.contains(product_projection));
     }
