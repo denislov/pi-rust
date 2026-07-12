@@ -2187,6 +2187,91 @@ impl CodingAgentSession {
     }
 
     #[cfg(test)]
+    pub(crate) fn arm_append_events_failure_for_tests(&self, successful_calls: usize) {
+        self.persistent_session_service()
+            .fail_store_after_for_tests(
+                session_log::store::StoreFailurePoint::AppendEvents,
+                successful_calls,
+            );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arm_update_manifest_failure_for_tests(&self, successful_calls: usize) {
+        self.persistent_session_service()
+            .fail_store_after_for_tests(
+                session_log::store::StoreFailurePoint::UpdateManifest,
+                successful_calls,
+            );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_pending_delegation_for_tests(
+        &mut self,
+        operation_id: impl Into<String>,
+        tool_call_id: impl Into<String>,
+    ) {
+        let prompt = "delegated task";
+        let prompt_options =
+            PromptTurnOptions::from_prompt_run_options(crate::prompt_options::PromptRunOptions {
+                prompt: prompt.into(),
+                model: pi_ai::types::Model {
+                    id: "test-model".into(),
+                    name: "Test Model".into(),
+                    api: "interactive-pending-delegation-fixture".into(),
+                    provider: "test".into(),
+                    base_url: String::new(),
+                    reasoning: false,
+                    thinking_level_map: None,
+                    input: vec![pi_ai::types::ModelInput::Text],
+                    cost: pi_ai::types::ModelCost::default(),
+                    context_window: 0,
+                    max_tokens: 0,
+                    headers: None,
+                    compat: None,
+                },
+                api_key: None,
+                auth_diagnostics: Vec::new(),
+                system_prompt: Some("system".into()),
+                max_turns: Some(2),
+                tools: Vec::new(),
+                register_builtins: false,
+                session: Some(crate::runtime::SessionRunOptions::disabled(".".into())),
+                session_target: None,
+                session_name: None,
+                thinking_level: None,
+                tool_execution: None,
+                resources: pi_agent_core::AgentResources::default(),
+                settings: None,
+                invocation: crate::runtime::PromptInvocation::Text(prompt.into()),
+            });
+        let pending = PendingDelegationConfirmationState {
+            request: prompt::DelegationRequest {
+                operation_id: operation_id.into(),
+                turn_id: "turn_interactive_fixture".into(),
+                tool_call_id: tool_call_id.into(),
+                requesting_profile_id: ProfileId::from("parent"),
+                target_kind: ProfileKind::Agent,
+                target_id: ProfileId::from("default"),
+                task: "delegated task".into(),
+            },
+            prompt_options,
+            reason: "requires confirmation".into(),
+            requested_at: SystemClock.now_rfc3339(),
+            child_delegation_depth: 1,
+            delegation_lineage: Vec::new(),
+        };
+        self.delegation_confirmation_service
+            .queue_pending(
+                &mut self.persistence,
+                &mut self.pending_delegation_confirmations,
+                &self.event_service,
+                pending,
+                true,
+            )
+            .expect("pending delegation fixture requires a persistent session");
+    }
+
+    #[cfg(test)]
     fn persistent_session_service(&self) -> &SessionService {
         match &self.persistence {
             SessionPersistence::Persistent(session_service) => session_service,
@@ -2324,10 +2409,13 @@ mod tests {
             .with_session_id("sess_interactive_append_bridge")
             .with_session_log_root(temp.path());
         let mut append_session = CodingAgentSession::create(append_options).await.unwrap();
+        append_session.queue_pending_delegation_for_tests("op_append", "tool_append");
         append_session.arm_append_events_failure_for_tests(0);
         let append_error = append_session
-            .run(CodingAgentOperation::SetDefaultAgentProfile {
-                profile_id: ProfileId::from("default"),
+            .run(CodingAgentOperation::RejectDelegation {
+                operation_id: "op_append".into(),
+                tool_call_id: "tool_append".into(),
+                reason: "declined".into(),
             })
             .await
             .unwrap_err();
@@ -2337,10 +2425,13 @@ mod tests {
             .with_session_id("sess_interactive_manifest_bridge")
             .with_session_log_root(temp.path());
         let mut manifest_session = CodingAgentSession::create(manifest_options).await.unwrap();
+        manifest_session.queue_pending_delegation_for_tests("op_manifest", "tool_manifest");
         manifest_session.arm_update_manifest_failure_for_tests(0);
         let manifest_error = manifest_session
-            .run(CodingAgentOperation::SetDefaultAgentProfile {
-                profile_id: ProfileId::from("default"),
+            .run(CodingAgentOperation::RejectDelegation {
+                operation_id: "op_manifest".into(),
+                tool_call_id: "tool_manifest".into(),
+                reason: "declined".into(),
             })
             .await
             .unwrap_err();
