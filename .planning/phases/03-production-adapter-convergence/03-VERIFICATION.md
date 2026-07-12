@@ -1,49 +1,31 @@
 ---
 phase: 03-production-adapter-convergence
-verified: 2026-07-12T10:14:50Z
-status: human_needed
-score: 3/5 must-haves verified
-behavior_unverified: 2
+verified: 2026-07-12T16:02:38Z
+status: passed
+score: 5/5 must-haves verified
+behavior_unverified: 0
 overrides_applied: 0
 re_verification:
-  previous_status: gaps_found
+  previous_status: human_needed
   previous_score: 3/5
   gaps_closed:
-    - "CR-01 implementation gap: every owner-bearing interactive task now returns CodingAgentSession on operation failure, and finish_prompt restores it before error projection."
-    - "WR-01 implementation gap: successful direct and navigation forks now update prompt_context.session_target from the mutated owner."
-    - "WR-02 implementation gap: delegation fallback now depends on visible UiEvent projection and forwards each ProductEvent once."
-    - "WR-03/WR-04 implementation gaps: the stale loop test was renamed and the magic subscription count was replaced by per-runner checks."
-    - "INTER-02 documentation mismatch: checklist and traceability now record the implemented requirement as complete."
+    - "Real profile, delegation-rejection, and prompt-finalization failures now traverse production PromptTask spawning, the actual done channel, exact durable errors, finish_prompt, and a subsequent canonical operation."
+    - "Real ForkSession AppendEvents failure now proves source-owner, subscriber, old-target, cleanup, exact-error, and post-restoration event continuity."
   gaps_remaining: []
   regressions: []
 deferred:
   - truth: "Interactive structural guards automatically discover every future owner-returning runner and parse Rust bodies without comment/string brace ambiguity."
     addressed_in: "Phase 5"
-    evidence: "Phase 5 goal and success criteria own regression-resistant boundary enforcement and parser/source-scan hardening; the current 13 production runners are all explicitly covered."
-behavior_unverified_items:
-  - truth: "Interactive prompt/background/profile/delegation task runners return the acquired live owner and exact CliError when a real canonical operation fails."
-    test: "Induce real failures after owner acquisition in run_coding_set_default_agent_profile_task, run_coding_delegation_rejection_task, and one pre-existing prompt runner; await PromptTask.done, pass the returned completion through finish_prompt, and execute another canonical operation on the restored owner. Include a durable PartialCommit case."
-    expected: "PromptTaskCompletion::Failed carries the same owner and unchanged error, finish_prompt restores it before AgentError projection, and the next operation remains usable."
-    why_human: "The current test directly fabricates PromptTaskCompletion::Failed and therefore exercises only finish_prompt, not runner-to-channel owner transport, canonical error preservation, or PartialCommit behavior."
-  - truth: "A real ForkSession task failure preserves the pre-fork owner, subscriber boundary, and session target."
-    test: "Use deterministic session-store failure controls to make run_coding_fork_session_task fail after acquiring the owner; await task.done, finish the completion, then continue with the restored pre-fork session."
-    expected: "The exact fork error is projected, coding_session remains the original usable owner, prompt_context.session_target remains unchanged, and no replacement owner is opened."
-    why_human: "Successful direct/navigation forks are behavior-tested, but no test makes the fork runner or canonical ForkSession operation fail; the existing failure test constructs the completion envelope manually."
-human_verification:
-  - test: "Exercise real profile/rejection/prompt runner failures, including one PartialCommit, through PromptTask.done and finish_prompt."
-    expected: "The same owner and exact error cross the task boundary, error projection occurs after restoration, and a subsequent canonical operation succeeds."
-    why_human: "No current automated test triggers these runner/operation failure transitions."
-  - test: "Exercise a real ForkSession runner failure with deterministic storage fault injection."
-    expected: "The pre-fork owner, subscription continuity, and old session target survive and remain usable."
-    why_human: "Current fork tests cover successful target continuation only."
+    evidence: "Phase 5 owns regression-resistant boundary enforcement and source-scan hardening; all 13 current production runners are explicitly covered and production source is clean."
 ---
 
 # Phase 3: Production Adapter Convergence Verification Report
 
 **Phase Goal:** Every first-party product adapter executes live-session product work through `CodingAgentSession::run` while preserving its existing external contract.
-**Verified:** 2026-07-12T10:14:50Z
-**Status:** human_needed
-**Re-verification:** Yes - after Plan 03-07 gap closure
+**Verified:** 2026-07-12T16:02:38Z
+**Status:** passed
+**Re-verification:** Yes - after gap plans 03-08 and 03-09
+**Dispatch:** generic-agent workaround for unavailable typed `gsd-verifier` dispatch
 
 ## Goal Achievement
 
@@ -51,118 +33,107 @@ human_verification:
 
 | # | Truth | Status | Evidence |
 |---|---|---|---|
-| 1 | JSON and persistent/transient print flows preserve output, errors, and session effects while using `CodingAgentOperation::Prompt`. | VERIFIED | Current source uses `run(Prompt)` at `json_mode.rs:100` and `print_mode.rs:129,150` with exact Prompt outcome extraction. The JSON/print production guard passes. Previously passing adapter behavior suites were included in the successful final workspace gate. |
-| 2 | RPC prompt, agent, team, delegation, self-healing, profile, and plugin commands preserve responses, errors, events, and control handling while using canonical operations. | VERIFIED | `rpc/prompt.rs:377,601,783,917` and `rpc/commands.rs:615,858,1047,1141,1159,1223` call `run(...)`; current mutation error branches restore `self.coding_session`. The named response-before-events test and RPC production guard pass. |
-| 3 | Interactive background workflows and mutations use canonical operations without changing visible behavior. | PRESENT_BEHAVIOR_UNVERIFIED | All 13 owner runners subscribe before `run(...)`, return through `complete_owned_task`, and `finish_prompt` restores `PromptTaskFailure.session` before `AgentError`. Delegation success/continuation and visible fallback behavior pass. However, the claimed four-path failure test fabricates `PromptTaskCompletion::Failed`; no runner or canonical operation actually fails, and no `PartialCommit` crosses the task boundary in a test. |
-| 4 | Interactive fork/navigation retain owner/subscriber continuity, event sequencing, snapshots, projections, and session targets. | PRESENT_BEHAVIOR_UNVERIFIED | Direct fork and both tree-navigation tests perform a subsequent prompt and prove it is persisted in the forked session; `finish_prompt` updates `session_target` only on successful fork results. The real fork failure transition remains untested because the unit test constructs the failure envelope manually. |
-| 5 | Production adapters contain neither replaced broad workflow calls nor local deprecation suppressions. | VERIFIED | Precise current-source audit found canonical calls only; remaining `set_default_agent_profile_id` calls are `InteractiveRoot` projection methods. Five production guard tests passed, including JSON/print, RPC, interactive, and no-SwitchActiveLeaf checks. |
+| 1 | JSON and persistent/transient print flows preserve output, errors, and session effects while executing prompts through `CodingAgentOperation::Prompt`. | VERIFIED | Current production calls are `json_mode.rs:100` and `print_mode.rs:129,150`. Exact Prompt outcome extraction remains wired; JSON/print integration coverage and the production source guard passed in the workspace gate. |
+| 2 | RPC prompt, agent, team, delegation, self-healing, profile, and plugin commands preserve responses, errors, event forwarding, and `tokio::select!` controls while using canonical operations. | VERIFIED | Current calls are in `rpc/prompt.rs:377,601,783,917` and `rpc/commands.rs:615,858,1047,1141,1159,1223`. Existing pinned-future, response-first, bounded-event, control, drain, idempotency, and owner-restoration tests passed in `cargo test --workspace`. |
+| 3 | Interactive prompt/background workflows and mutations use canonical operations without visible behavior or owner-continuity regressions. | VERIFIED | All current runners call `session.run(...)` and complete through `complete_owned_task`. The three real failure tests spawn production tasks, await actual `task.done`, preserve exact profile/rejection/prompt contracts, run `finish_prompt`, retain the old target, and successfully execute `PluginLoad` afterward. |
+| 4 | Interactive fork/navigation retain source or forked owner identity, subscriber continuity, event sequencing, snapshots/projections, and correct session targets across success and failure. | VERIFIED | Success continuation remains covered by direct/tree-navigation integration tests. The real fork failure test uses production `spawn_fork_session`, retains the pre-task receiver, proves no replacement `SessionOpened`, preserves the source owner/old target/session count, then observes `DefaultAgentProfileChanged` on the original receiver. |
+| 5 | JSON, print, RPC, and interactive production sources contain neither replaced broad workflow calls nor local deprecation suppressions, and internal/test-only seams do not leak through the stable API. | VERIFIED | `product_runtime_boundary_guards` passed all 13 tests, including the three adapter guards, closed method ledger, test-only store controls, private-runtime boundaries, and no production `SwitchActiveLeaf` caller. |
 
-**Score:** 3/5 truths verified (2 present, behavior-unverified)
+**Score:** 5/5 truths verified (0 behavior-unverified)
 
-### Required Artifacts
+### Re-verification Delta
+
+The previous report left truths 3 and 4 at `PRESENT_BEHAVIOR_UNVERIFIED` because its only failure evidence fabricated `PromptTaskCompletion::Failed`. Plans 03-08 and 03-09 closed that evidence gap without changing the adapter orchestration:
+
+- `CodingSessionError::PartialCommit` now converts losslessly to structured `CliError::PartialCommit { operation_id, message }`, with identical canonical display text.
+- Three specialized `#[cfg(test)] pub(crate)` owner methods expose only the existing AppendEvents/UpdateManifest fault points and a real durable pending-delegation fixture; boundary guards prove they are absent from production and `pi_coding_agent::api`.
+- Four real-runner tests exercise profile, rejection, prompt, and fork failures through production spawn, event channel, oneshot completion, and `finish_prompt` paths.
+- Prompt finalization factually remains `PromptTaskCompletion::Completed(PromptTaskResult::Coding(...))` containing `PromptTurnOutcome::Failed(CodingSessionError::PartialCommit)`; it is not rewritten into task-level `CliError`.
+- Delegation rejection factually remains the task-level structured `CliError::PartialCommit` path and preserves exact operation identity.
+
+## Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |---|---|---|---|
-| `crates/pi-coding-agent/src/protocol/json_mode.rs` | Canonical JSON prompt adapter | VERIFIED | Exists, substantive, wired to `run(Prompt)`, and guarded. |
-| `crates/pi-coding-agent/src/print_mode.rs` | Canonical persistent/transient print adapter | VERIFIED | Both branches use `run(Prompt)` and retain existing projections. |
-| `crates/pi-coding-agent/src/protocol/rpc/prompt.rs` | Select-driven canonical RPC operations | VERIFIED | Canonical futures remain inside existing `tokio::select!` and event/control topology. |
-| `crates/pi-coding-agent/src/protocol/rpc/commands.rs` | Canonical RPC mutation/plugin operations | VERIFIED | Exact outcome extraction and owner restoration remain wired. |
-| `crates/pi-coding-agent/src/interactive/prompt_task.rs` | Owner-preserving canonical interactive runners | VERIFIED IN CODE | `PromptTaskCompletion::{Completed,Failed,SetupFailed}`, `complete_owned_task`, fork target derivation, and visibility-aware fallback are substantive and wired across all current runners. Real failure behavior is not directly tested. |
-| `crates/pi-coding-agent/src/interactive/loop.rs` | Restore-before-error and success-only fork-target projection | VERIFIED IN CODE | `finish_prompt` restores failed owners at lines 2315-2320 and updates fork targets at lines 2151-2154/2295-2313. |
-| `crates/pi-coding-agent/tests/interactive_mode.rs` and `interactive_sessions.rs` | Visible behavior and continuation evidence | PARTIAL | Strong success-path delegation/fork/navigation continuation tests exist; no real runner failure or PartialCommit case exists. |
-| `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs` | Current-tree adapter convergence enforcement | VERIFIED WITH DEFERRED HARDENING | All current adapters are covered; automatic future-runner discovery/parser completeness remains Phase 5 work. |
+| `crates/pi-coding-agent/src/protocol/json_mode.rs` | Canonical JSON prompt adapter | VERIFIED | Exists, substantive, wired to `run(Prompt)`, behavior-tested, and source-guarded. |
+| `crates/pi-coding-agent/src/print_mode.rs` | Canonical persistent/transient print adapter | VERIFIED | Both branches use `run(Prompt)` and preserve existing projection/session paths. |
+| `crates/pi-coding-agent/src/protocol/rpc/prompt.rs` | Canonical select-driven RPC operations | VERIFIED | Four background operation families remain inside the existing pinned/select/event/control topology. |
+| `crates/pi-coding-agent/src/protocol/rpc/commands.rs` | Canonical RPC mutation/plugin operations | VERIFIED | Six call sites use typed operations with exact outcomes and owner restoration. |
+| `crates/pi-coding-agent/src/interactive/prompt_task.rs` | Canonical owner-preserving interactive runners | VERIFIED | Fifteen canonical calls cover prompt, agent/team, delegation, compaction, self-heal, plugin, summary, and fork paths; all 13 owner runners use the shared completion boundary. |
+| `crates/pi-coding-agent/src/interactive/loop.rs` | Completion projection and real failure-path tests | VERIFIED | Failure arm restores the owner before `AgentError`; four real-runner tests exercise actual completion contracts and post-restoration use. |
+| `crates/pi-coding-agent/src/error.rs` and `coding_session/error.rs` | Lossless adapter error boundary | VERIFIED | Structured PartialCommit identity and unchanged non-partial conversion are directly tested. |
+| `crates/pi-coding-agent/src/coding_session/mod.rs` | Narrow test-only persistence fixture bridge | VERIFIED | Directly `cfg(test)`, crate-visible only, specialized, substantive, and excluded from stable API. |
+| `crates/pi-coding-agent/tests/product_runtime_boundary_guards.rs` | Current production adapter/API enforcement | VERIFIED | All 13 guards passed; all plan-declared artifacts across 03-01..03-09 passed `verify.artifacts` (28/28). |
 
-GSD artifact queries reported all 23 plan-declared artifacts present and substantive. Automatic key-link queries could not resolve conceptual `from` labels, so links were verified manually against current code and focused tests.
-
-### Key Link Verification
+## Key Link Verification
 
 | From | To | Via | Status | Details |
 |---|---|---|---|---|
-| JSON/print options | Canonical runtime | `run(Prompt)` plus exact outcome match | WIRED | Three production call sites confirmed. |
-| RPC command acknowledgement | Background operation/events | Existing pinned future, bounded queue, replay/final drain | WIRED | Response-before-events focused test passed. |
-| Interactive spawned owner | Main-loop completion | `complete_owned_task` -> `PromptTaskCompletion` -> `finish_prompt` | WIRED, BEHAVIOR UNVERIFIED ON REAL FAILURE | Source is ownership-correct; current test bypasses the runner/channel boundary. |
-| Successful fork result | Next request target | `active_session_target` -> result payload -> `finish_prompt` | WIRED | Direct and navigation continuation tests prove subsequent prompts reach the forked log. |
-| Delegation ProductEvent | Visible feedback/fallback | `CodingEventBridge` visibility classifier plus single original-event forward | WIRED | Unit projection classification and integration visible-feedback test pass. |
+| JSON/print inputs | Canonical runtime | `run(Prompt)` plus exact Prompt outcome extraction | WIRED | Three production call sites and parity suites are green. |
+| RPC acknowledgement/control state | Canonical background future and ProductEvents | Existing `Box::pin`, `tokio::select!`, bounded queue, replay cursors, and final drains | WIRED | Production source retains the adapter-owned topology; full workspace tests pass. |
+| Interactive acquired owner | Main-loop completion | `PromptTask::spawn_*` -> real `task.done` -> untouched completion -> `finish_prompt` | WIRED AND BEHAVIOR-VERIFIED | Profile/rejection/prompt/fork tests exercise the real channel rather than a fabricated envelope. |
+| Durable mutation failure | Typed adapter error/outcome | CodingSessionError conversion or PromptTurnOutcome retention plus JSONL operation ID comparison | WIRED AND BEHAVIOR-VERIFIED | Rejection uses structured `CliError::PartialCommit`; prompt remains completed/failed outcome; both match durable IDs. |
+| Failed fork source EventService | Post-restoration operation | Pre-task receiver observes later canonical profile event | WIRED AND BEHAVIOR-VERIFIED | The exact original receiver sees `DefaultAgentProfileChanged`; no replacement `SessionOpened` is emitted. |
+| Successful fork owner | Next request target/projection | SessionForked result -> resolved target -> hydration/owner restoration | WIRED AND BEHAVIOR-VERIFIED | Direct and both tree-navigation continuation tests remain green. |
 
-### Data-Flow Trace
-
-The relevant typed flows are:
-
-`adapter input -> CodingAgentOperation -> CodingAgentSession::run -> exact CodingAgentOperationOutcome -> existing adapter projection`
-
-and for interactive ownership:
-
-`CodingAgentSession -> runner-local mutable owner -> complete_owned_task -> PromptTaskCompletion -> finish_prompt -> restored owner / refreshed target`.
-
-No adapter-local replacement facade, private operation/service import, new event cache, or replacement persistence path was found.
-
-### Behavioral Spot-Checks
+## Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |---|---|---|---|
-| Failure-envelope finish behavior | `cargo test -p pi-coding-agent --lib interactive::r#loop::tests::prompt_task_failures_restore_the_live_owner_before_projecting_errors -- --exact --nocapture` | 1 passed | PASS, but narrow: fabricated envelope only |
-| Tree navigation continuation | `cargo test -p pi-coding-agent --test interactive_sessions interactive_tree_navigation -- --nocapture` | 2 passed | PASS |
-| Direct fork continuation | `cargo test -p pi-coding-agent --test interactive_mode scripted_interactive_fork_after_rust_native_prompt_creates_session -- --exact --nocapture` | 1 passed | PASS |
-| Delegation rejection continuation/visible feedback | `cargo test -p pi-coding-agent --test interactive_mode scripted_interactive_delegation_rejection_preserves_owner_and_visible_fallback_semantics -- --exact --nocapture` | 1 passed | PASS |
-| RPC response-before-events | `cargo test -p pi-coding-agent --test rpc_mode rpc_prompt_returns_response_then_agent_events -- --exact --nocapture` | 1 passed | PASS |
-| Current production adapter guards | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards production_ -- --nocapture` | 5 passed | PASS |
+| Real profile/rejection/prompt/fork failure continuity | `cargo test -p pi-coding-agent --lib 'interactive::r#loop::tests::real_' -- --nocapture` | 4 passed, 0 failed | PASS |
+| Production adapter/API/test-seam guards | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards -- --nocapture` | 13 passed, 0 failed | PASS |
+| Complete workspace behavior | `cargo test --workspace` | All unit, integration, and doc-test targets passed | PASS |
+| Workspace type/build consistency | `cargo check --workspace` | Passed; only expected Phase 4 dead-code warnings | PASS |
+| Formatting and patch hygiene | `cargo fmt --check`; `git diff --check` | Both passed | PASS |
 
-The orchestrator's final-tree evidence also records successful `cargo fmt --check`, focused crate suites, `cargo build --workspace`, `cargo test --workspace`, `cargo check --workspace`, precise source audit, and `git diff --check`.
+## Probe Execution
 
-### Probe Execution
+No Phase 3 plan or summary declares a probe, and no `scripts/**/probe-*.sh` path is part of this phase. Probe execution is not applicable.
 
-No Phase 3 plan or summary declares a probe, and no `scripts/**/probe-*.sh` file exists. Probe execution is not applicable.
-
-### Requirements Coverage
+## Requirements Coverage
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| ADAPT-01..04 | SATISFIED | JSON/print canonical calls, exact outcomes, behavior suites, and source guard. |
-| RPC-01..04 | SATISFIED | All background/mutation/plugin calls are canonical; focused protocol behavior and guards pass. |
-| INTER-01 | CODE SATISFIED / FAILURE BEHAVIOR UNVERIFIED | All background runners use `run`; no real pre-existing prompt runner failure crosses the completion channel in a test. |
-| INTER-02 | CODE SATISFIED / FAILURE BEHAVIOR UNVERIFIED | Profile/rejection operations and fallback behavior are wired; real operation-failure owner continuity is not tested. |
-| INTER-03 | SUCCESS BEHAVIOR VERIFIED / FAILURE BEHAVIOR UNVERIFIED | Direct/navigation continuation proves target refresh; fork failure survival lacks a real failing runner test. |
-| INTER-04 | HUMAN DECISION REQUIRED | Current event/control/success continuity is tested; operation-error owner continuity is present in code but not behaviorally exercised. |
-| INTER-05 | SATISFIED | Current production source and guards contain no compatibility calls/suppressions. |
+| ADAPT-01 | SATISFIED | JSON prompt calls `run(CodingAgentOperation::Prompt)`. |
+| ADAPT-02 | SATISFIED | Persistent and transient print prompt paths use the canonical facade. |
+| ADAPT-03 | SATISFIED | Existing JSON/print output, error, ordering, persistence, continue/fork, and no-session behavior tests pass. |
+| ADAPT-04 | SATISFIED | JSON/print production guard passes with no replaced calls or local deprecation suppression. |
+| RPC-01 | SATISFIED | Prompt, agent, team, and approval background tasks call canonical operations. |
+| RPC-02 | SATISFIED | Self-heal, profile, rejection, plugin load, and plugin command handlers call canonical operations. |
+| RPC-03 | SATISFIED | Existing response, error, event, select/control, drain, idempotency, and persistence suites pass. |
+| RPC-04 | SATISFIED | RPC production guard passes. |
+| INTER-01 | SATISFIED | All background workflows use canonical operations; real prompt failure retains its completed failed-outcome contract and owner usability. |
+| INTER-02 | SATISFIED | Profile and rejection use canonical operations; real task-level failure and PartialCommit owner/error continuity pass. |
+| INTER-03 | SATISFIED | Direct/navigation success and real fork failure preserve required target, owner, cleanup, and projection behavior. |
+| INTER-04 | SATISFIED | Event/control multiplexing, owner return, original-subscriber continuity, sequencing/projection, and post-failure operation behavior are exercised. |
+| INTER-05 | SATISFIED | Interactive production guard passes with no broad calls, suppressions, private imports, or invented SwitchActiveLeaf path. |
 
-No Phase 3 requirement is orphaned. All 13 IDs appear in plan frontmatter, `REQUIREMENTS.md`, and roadmap traceability.
+All 13 Phase 3 requirement IDs occur in plan frontmatter, `REQUIREMENTS.md`, and roadmap traceability. No requirement is orphaned.
 
-### Review Findings And Anti-Patterns
+## Review Findings And Deferred Items
 
-| Finding | Classification | Disposition |
+| Finding | Classification | Verification disposition |
 |---|---|---|
-| 03-REVIEW WR-01: failure test fabricates completion instead of failing a runner/operation | Non-blocking implementation-wise; blocking a fully automated `passed` verdict | Routes SC3/SC4 to `PRESENT_BEHAVIOR_UNVERIFIED` and overall status `human_needed`. Do not claim real task-runner failure coverage exists. |
-| 03-REVIEW WR-02: hard-coded 13-runner list and naive brace scan | Non-blocking current-tree verification debt | All 13 current runners are covered and source is clean. Automatic discovery and parser completeness are deferred to Phase 5 regression-hardening. |
-| `interactive/loop.rs:93` pre-existing extension placeholder comment | INFO, out of Phase 3 scope | Introduced by commit `4133e055` before this phase; unrelated to operation adapter convergence. |
-| Expected dead-code warnings for broad compatibility methods and `ensure_idle` | INFO | Phase 4 owns caller migration and compatibility deletion. |
+| Manual 13-runner discovery and raw brace parser | DEFERRED, NON-BLOCKING | Current production runners are all explicitly checked and all production guards pass. Automatic open-world discovery/parser hardening is specifically owned by Phase 5 and is not a Phase 3 goal failure. |
+| Real task tests await `task.done` without a timeout | WARNING, NON-BLOCKING ROBUSTNESS DEBT | The four real tasks completed immediately and passed. A timeout would make future deadlocks fail faster, but its absence does not make the currently exercised transition uncertain or false. |
+| JSONL and session-count helpers ignore malformed records/partial directories | WARNING, NON-BLOCKING ASSERTION HARDENING | Current tests observe typed PartialCommit IDs, unchanged source identity/count, no replacement SessionOpened, and successful post-restoration use. Stricter parsing/filesystem snapshots would improve corruption diagnostics but no current corruption or cleanup failure was observed. |
+| Restore-before-projection is not regression-locked by an observable callback | WARNING, NON-BLOCKING STRUCTURAL DEBT | Current production source performs `*coding_session = Some(session)` immediately before `root.apply_events(AgentError)`, and real tests prove the resulting owner/error state and subsequent use. Reversing those statements would weaken the intended internal ordering without changing today's external postcondition; a helper/AST guard is useful future hardening, not evidence of a current Phase 3 contract failure. |
+| Compatibility methods and `ensure_idle` emit dead-code warnings | EXPECTED DEFERRED WORK | Phase 4 explicitly owns remaining test migration and compatibility deletion. Workspace test/check still pass. |
+| `interactive/loop.rs:93` extension placeholder comment | INFO, OUT OF SCOPE | Pre-existing unrelated UI extension placeholder; not introduced or used by Phase 3 adapter convergence. |
 
-No Phase 3-modified file contains an unreferenced `TBD`, `FIXME`, or `XXX` debt marker. No production failure hook or placeholder implementation was introduced by Plan 03-07.
+## Anti-Patterns Found
 
-### Human Verification Required
+No Phase 3 gap-closure file contains an unreferenced `TBD`, `FIXME`, or `XXX` marker. No production fault hook, generic store selector, replacement operation facade, private service export, blocking bridge, detached session mutation, or Stage 10 event-contract change was introduced.
 
-#### 1. Real Interactive Operation-Failure Owner Continuity
+## Human Verification Required
 
-**Test:** At the `PromptTask` boundary, induce deterministic profile mutation, delegation rejection, and pre-existing prompt failures after owner acquisition; include one `PartialCommit`; await `task.done`, call `finish_prompt`, then run another canonical operation.
+None. The two former manual UAT items now have deterministic offline behavioral coverage through the actual private production task boundary.
 
-**Expected:** The same owner and exact error cross the channel, restoration precedes error projection, durable ambiguity is not rewritten, and the next operation succeeds.
+## Gaps Summary
 
-**Why human:** Existing tests do not trigger these runner/operation failure paths.
-
-#### 2. Real Fork Failure Continuity
-
-**Test:** Induce a deterministic `ForkSession` failure after owner acquisition and complete it through the real task channel and `finish_prompt`.
-
-**Expected:** The old owner, target, subscriber continuity, and usable session state remain intact; no replacement owner is opened.
-
-**Why human:** Current tests prove successful fork continuation only; the failure unit test manually constructs the envelope.
-
-### Gaps Summary
-
-No observable implementation blocker remains in the current source. The previous CR-01 and WR-01..04 code gaps are closed, every production adapter uses the canonical operation path, and all current source audits and focused success-path behavior checks pass.
-
-The phase cannot receive an automated `passed` verdict because two behavior-dependent truths rely on a runner/channel ownership transition that no real failure test exercises. This is verification debt, not an observed runtime failure. A developer may either add the deterministic runner-level failure tests described above or explicitly accept the current source-level evidence before Phase 3 is treated as fully verified.
+No Phase 3 goal gap remains. All five roadmap truths and all 13 requirements are verified. The remaining review findings concern future regression detection and diagnostic strictness, not an observed missing behavior or unwired artifact.
 
 ---
 
-_Verified: 2026-07-12T10:14:50Z_
+_Verified: 2026-07-12T16:02:38Z_
 _Verifier: the agent (gsd-verifier, generic-agent workaround)_
