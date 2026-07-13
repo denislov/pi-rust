@@ -78,6 +78,19 @@ impl CodingAgentProductEventReceiver {
     }
 }
 
+#[cfg(test)]
+mod product_event_projection_tests {
+    use super::CodingAgentProductEventReceiver;
+    use crate::coding_session::public_event::CodingAgentProductEvent;
+
+    #[allow(dead_code)]
+    async fn receiver_returns_authoritative_typed_event(
+        receiver: &mut CodingAgentProductEventReceiver,
+    ) -> CodingAgentProductEvent {
+        receiver.recv().await.unwrap()
+    }
+}
+
 impl From<UiSnapshot> for CodingAgentSnapshot {
     fn from(snapshot: UiSnapshot) -> Self {
         Self {
