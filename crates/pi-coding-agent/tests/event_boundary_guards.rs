@@ -469,14 +469,14 @@ fn prompt_inner_uses_outcome_helper_for_success_branching() {
 }
 
 #[test]
-fn rpc_state_consumes_ui_snapshot_boundary() {
+fn rpc_state_consumes_public_client_snapshot_boundary() {
     assert!(
-        RPC_STATS.contains(".ui_snapshot("),
-        "RPC state projection should consume the UiSnapshot boundary"
+        RPC_STATS.contains("client_connection") && RPC_STATS.contains("connection.state()"),
+        "RPC state projection should consume the public client connection snapshot boundary"
     );
     assert!(
         !RPC_STATS.contains(".persistent_session_service("),
-        "RPC state projection should not bypass UiSnapshot by reading persistent session service directly"
+        "RPC state projection should not bypass the public snapshot by reading persistent session service directly"
     );
 }
 

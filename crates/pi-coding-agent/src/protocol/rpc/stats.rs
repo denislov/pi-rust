@@ -45,10 +45,13 @@ impl RpcState {
             && let Ok(snapshot) = connection.state()
         {
             return RpcSessionProjection {
-                session_id: self
-                    .active_leaf_id
-                    .clone()
-                    .unwrap_or(snapshot.session.session_id),
+                session_id: self.active_leaf_id.clone().unwrap_or_else(|| {
+                    if self.active_session_path.is_none() {
+                        self.fallback_session_id()
+                    } else {
+                        snapshot.session.session_id
+                    }
+                }),
                 pending_message_count: snapshot.drafts.len(),
                 capabilities: if self.is_streaming() {
                     self.capabilities().into()

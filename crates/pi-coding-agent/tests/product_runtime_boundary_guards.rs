@@ -582,6 +582,38 @@ fn production_rpc_uses_canonical_operations() {
 }
 
 #[test]
+fn production_rpc_projects_the_public_client_connection_without_authority_mirrors() {
+    let scan = SourceScan::new();
+    let state_path = scan.crate_root.join("src/protocol/rpc/state.rs");
+    let prompt_path = scan.crate_root.join("src/protocol/rpc/prompt.rs");
+    let state = fs::read_to_string(&state_path).expect("read RPC state");
+    let prompt = fs::read_to_string(&prompt_path).expect("read RPC prompt");
+    let state_production = state.split("#[cfg(").next().unwrap();
+    let prompt_production = prompt.split("#[cfg(").next().unwrap();
+
+    assert!(state_production.contains("client_connection"));
+    assert!(state_production.contains("CodingAgentClientConnection"));
+    assert!(prompt_production.contains("connection.reconnect("));
+    assert!(prompt_production.contains("connection.acknowledge("));
+    assert!(prompt_production.contains("connection.prepare_submission("));
+    assert!(prompt_production.contains("session.run("));
+
+    for prohibited in [
+        "client_drafts:",
+        "submitted_operation:",
+        "ProductEventReplayHandle",
+        "PromptControlHandle",
+        "replayed_through_sequence",
+        "product_event_replay:",
+    ] {
+        assert!(
+            !state_production.contains(prohibited) && !prompt_production.contains(prohibited),
+            "RPC must not reintroduce client authority mirror `{prohibited}`"
+        );
+    }
+}
+
+#[test]
 fn production_interactive_uses_canonical_operations() {
     let scan = SourceScan::new();
     let mut violations = Vec::new();

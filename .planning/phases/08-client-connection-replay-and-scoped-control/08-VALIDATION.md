@@ -1,9 +1,9 @@
 ---
 phase: 08
 slug: client-connection-replay-and-scoped-control
-status: draft
+status: complete
 nyquist_compliant: true
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-07-13
 ---
 
@@ -25,24 +25,24 @@ Runtime status remains pending until implementation executes these commands. Thi
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 08-01-T1 | 08-01 | 1 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-01-API-LEAK | RED public contract and privacy boundary forbid a second dispatcher/private authority. | contract/source | `cargo test -p pi-coding-agent --test public_api --test api_boundary_guards client_contract --quiet` | present in plan | pending |
-| 08-01-T2 | 08-01 | 1 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-01-AMBIGUITY | Typed drafts/recovery/submitted/control and rejection ownership are exhaustive. | projection/API | `cargo test -p pi-coding-agent --lib client_projection --quiet && cargo test -p pi-coding-agent --test public_api client_contract --quiet` | present in plan | pending |
-| 08-01-T3 | 08-01 | 1 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-01-API-LEAK | Curated exports keep internals private and run canonical. | facade/source | `cargo test -p pi-coding-agent --test public_api --test api_boundary_guards --quiet` | present in plan | pending |
-| 08-02-T1 | 08-02 | 2 | CLIENT-03 | T-08-STALE-HANDLE, T-08-RESOURCE-BOUND | Generation/draft/ack/submitted/capacity invariants are RED-first. | state unit | `cargo test -p pi-coding-agent --lib client_service --quiet` | present in plan | pending |
-| 08-02-T2 | 08-02 | 2 | CLIENT-03 | T-08-RESOURCE-BOUND | SnapshotState transitions and zero-authority facade preserve accepted receipts. | state unit | `cargo test -p pi-coding-agent --lib client_service --quiet && cargo test -p pi-coding-agent --lib client_projection --quiet` | present in plan | pending |
-| 08-02-T3 | 08-02 | 2 | CLIENT-03 | T-08-02-CROSS-SESSION | Every constructor shares one coordinator state and no duplicate map. | owner/concurrency | `cargo test -p pi-coding-agent --lib client_service --quiet` | present in plan | pending |
-| 08-03-T1 | 08-03 | 3 | CLIENT-01, CLIENT-02 | T-08-REPLAY-GAP | Atomic replay/live boundary preserves sequence authority. | recovery unit | `cargo test -p pi-coding-agent --lib coding_session::event_service::tests::recovery --quiet` | present in plan | pending |
-| 08-03-T2 | 08-03 | 3 | CLIENT-01, CLIENT-02 | T-08-03-LAG-CONFLATION | Retained gap and live lag remain typed and distinct. | event unit | `cargo test -p pi-coding-agent --lib coding_session::event_service::tests --quiet` | present in plan | pending |
-| 08-04-T1 | 08-04 | 4 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-04-DUPLICATE | Sole SnapshotState and stateless ClientService topology are guarded. | topology unit/API | `cargo test -p pi-coding-agent --lib snapshot_coordinator --quiet && cargo test -p pi-coding-agent --lib client_service --quiet && cargo test -p pi-coding-agent --test public_api snapshot_topology --quiet` | present in plan | pending |
-| 08-04-T2 | 08-04 | 4 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-04-DEADLOCK, T-08-04-ORDER | Six writer algorithms have deadlock-timeout and mixed-revision assertions. | concurrency/API | `cargo test -p pi-coding-agent --test public_api snapshot_writers --quiet && cargo test -p pi-coding-agent --lib coding_session::event_service::tests --quiet && cargo test -p pi-coding-agent --lib coding_session::operation_control::tests --quiet` | present in plan | pending |
-| 08-05-T1 | 08-05 | 5 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-05-COMPAT | Public recovery plus no-lease Prompt/non-Prompt adapter compatibility is RED-first. | public/adapter | `cargo test -p pi-coding-agent --test public_api client_connection --quiet && cargo test -p pi-coding-agent --test public_api legacy_run --quiet && cargo test -p pi-coding-agent --test api_boundary_guards --quiet` | present in plan | pending |
-| 08-05-T2 | 08-05 | 5 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-05-STALE | Arc-backed connection and exceptional error codes reject stale/capacity failures. | public/error | `cargo test -p pi-coding-agent --test public_api client_connection --quiet && cargo test -p pi-coding-agent --test public_api client_errors --quiet && cargo test -p pi-coding-agent --lib coding_session::error::tests --quiet` | present in plan | pending |
-| 08-05-T3 | 08-05 | 5 | CLIENT-03 | T-08-05-PROVENANCE | Lease abandonment, cancellation, takeover, mismatch, double-consume, commit, and terminal failure are exact. | lease unit/API | `cargo test -p pi-coding-agent --test public_api submission_lease --quiet && cargo test -p pi-coding-agent --test public_api legacy_run --quiet && cargo test -p pi-coding-agent --lib coding_session::tests::submission_commit --quiet` | present in plan | pending |
-| 08-06-T1 | 08-06 | 6 | CLIENT-03, CONTROL-01 | T-08-CONTROL-AUTH, T-08-CONTROL-REPLAY | Owner/target/signature/conflict/retry/order cases are RED-first. | control API/unit | `cargo test -p pi-coding-agent --test public_api scoped_control --quiet && cargo test -p pi-coding-agent --lib operation_control --quiet` | present in plan | pending |
-| 08-06-T2 | 08-06 | 6 | CLIENT-03, CONTROL-01 | T-08-06-QUEUE, T-08-CONTROL-REPLAY | Key-first receipt admission, capacity, channel, FIFO send, and draft rules pass. | control integration | `cargo test -p pi-coding-agent --test public_api scoped_control --quiet && cargo test -p pi-coding-agent --lib operation_control --quiet && cargo test -p pi-coding-agent --lib client_service --quiet` | present in plan | pending |
-| 08-07-T1 | 08-07 | 7 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-07-RPC-SPOOF, T-08-07-MIRROR-DRIFT | RPC wire/event parity is frozen before mirror removal. | RPC integration | `cargo test -p pi-coding-agent --test rpc_mode client_connection --quiet && cargo test -p pi-coding-agent --test protocol_events --quiet` | present in plan | pending |
-| 08-07-T2 | 08-07 | 7 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-07-MIRROR-DRIFT, T-08-07-LEAK | RPC delegates to connection and retains only adapter-local projection state. | protocol integration | `cargo test -p pi-coding-agent --test rpc_mode --quiet && cargo test -p pi-coding-agent --test protocol_events --quiet && cargo test -p pi-coding-agent --lib protocol::rpc --quiet` | present in plan | pending |
-| 08-07-T3 | 08-07 | 7 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-07-LEAK, T-08-07-INPUT | Source guards and full workspace closure cover every requirement/threat. | full closure | `cargo fmt --check && cargo test -p pi-coding-agent --test public_api --test protocol_events --test rpc_mode --test api_boundary_guards --test product_runtime_boundary_guards --quiet && cargo test -p pi-coding-agent --quiet && cargo test --workspace --quiet && cargo check --workspace && git diff --check` | present in plan | pending |
+| 08-01-T1 | 08-01 | 1 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-01-API-LEAK | RED public contract and privacy boundary forbid a second dispatcher/private authority. | contract/source | `cargo test -p pi-coding-agent --test public_api --test api_boundary_guards client_contract --quiet` | present | pass |
+| 08-01-T2 | 08-01 | 1 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-01-AMBIGUITY | Typed drafts/recovery/submitted/control and rejection ownership are exhaustive. | projection/API | `cargo test -p pi-coding-agent --lib client_projection --quiet && cargo test -p pi-coding-agent --test public_api client_contract --quiet` | present | pass |
+| 08-01-T3 | 08-01 | 1 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-01-API-LEAK | Curated exports keep internals private and run canonical. | facade/source | `cargo test -p pi-coding-agent --test public_api --test api_boundary_guards --quiet` | present | pass |
+| 08-02-T1 | 08-02 | 2 | CLIENT-03 | T-08-STALE-HANDLE, T-08-RESOURCE-BOUND | Generation/draft/ack/submitted/capacity invariants are RED-first. | state unit | `cargo test -p pi-coding-agent --lib client_service --quiet` | present | pass |
+| 08-02-T2 | 08-02 | 2 | CLIENT-03 | T-08-RESOURCE-BOUND | SnapshotState transitions and zero-authority facade preserve accepted receipts. | state unit | `cargo test -p pi-coding-agent --lib client_service --quiet && cargo test -p pi-coding-agent --lib client_projection --quiet` | present | pass |
+| 08-02-T3 | 08-02 | 2 | CLIENT-03 | T-08-02-CROSS-SESSION | Every constructor shares one coordinator state and no duplicate map. | owner/concurrency | `cargo test -p pi-coding-agent --lib client_service --quiet` | present | pass |
+| 08-03-T1 | 08-03 | 3 | CLIENT-01, CLIENT-02 | T-08-REPLAY-GAP | Atomic replay/live boundary preserves sequence authority. | recovery unit | `cargo test -p pi-coding-agent --lib coding_session::event_service::tests::recovery --quiet` | present | pass |
+| 08-03-T2 | 08-03 | 3 | CLIENT-01, CLIENT-02 | T-08-03-LAG-CONFLATION | Retained gap and live lag remain typed and distinct. | event unit | `cargo test -p pi-coding-agent --lib coding_session::event_service::tests --quiet` | present | pass |
+| 08-04-T1 | 08-04 | 4 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-04-DUPLICATE | Sole SnapshotState and stateless ClientService topology are guarded. | topology unit/API | `cargo test -p pi-coding-agent --lib snapshot_coordinator --quiet && cargo test -p pi-coding-agent --lib client_service --quiet && cargo test -p pi-coding-agent --test public_api snapshot_topology --quiet` | present | pass |
+| 08-04-T2 | 08-04 | 4 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-04-DEADLOCK, T-08-04-ORDER | Six writer algorithms have deadlock-timeout and mixed-revision assertions. | concurrency/API | `cargo test -p pi-coding-agent --test public_api snapshot_writers --quiet && cargo test -p pi-coding-agent --lib coding_session::event_service::tests --quiet && cargo test -p pi-coding-agent --lib coding_session::operation_control::tests --quiet` | present | pass |
+| 08-05-T1 | 08-05 | 5 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-05-COMPAT | Public recovery plus no-lease Prompt/non-Prompt adapter compatibility is RED-first. | public/adapter | `cargo test -p pi-coding-agent --test public_api client_connection --quiet && cargo test -p pi-coding-agent --test public_api legacy_run --quiet && cargo test -p pi-coding-agent --test api_boundary_guards --quiet` | present | pass |
+| 08-05-T2 | 08-05 | 5 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-05-STALE | Arc-backed connection and exceptional error codes reject stale/capacity failures. | public/error | `cargo test -p pi-coding-agent --test public_api client_connection --quiet && cargo test -p pi-coding-agent --test public_api client_errors --quiet && cargo test -p pi-coding-agent --lib coding_session::error::tests --quiet` | present | pass |
+| 08-05-T3 | 08-05 | 5 | CLIENT-03 | T-08-05-PROVENANCE | Lease abandonment, cancellation, takeover, mismatch, double-consume, commit, and terminal failure are exact. | lease unit/API | `cargo test -p pi-coding-agent --test public_api submission_lease --quiet && cargo test -p pi-coding-agent --test public_api legacy_run --quiet && cargo test -p pi-coding-agent --lib coding_session::tests::submission_commit --quiet` | present | pass |
+| 08-06-T1 | 08-06 | 6 | CLIENT-03, CONTROL-01 | T-08-CONTROL-AUTH, T-08-CONTROL-REPLAY | Owner/target/signature/conflict/retry/order cases are RED-first. | control API/unit | `cargo test -p pi-coding-agent --test public_api scoped_control --quiet && cargo test -p pi-coding-agent --lib operation_control --quiet` | present | pass |
+| 08-06-T2 | 08-06 | 6 | CLIENT-03, CONTROL-01 | T-08-06-QUEUE, T-08-CONTROL-REPLAY | Key-first receipt admission, capacity, channel, FIFO send, and draft rules pass. | control integration | `cargo test -p pi-coding-agent --test public_api scoped_control --quiet && cargo test -p pi-coding-agent --lib operation_control --quiet && cargo test -p pi-coding-agent --lib client_service --quiet` | present | pass |
+| 08-07-T1 | 08-07 | 7 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-07-RPC-SPOOF, T-08-07-MIRROR-DRIFT | RPC wire/event parity is frozen before mirror removal. | RPC integration | `cargo test -p pi-coding-agent --test rpc_mode client_connection --quiet && cargo test -p pi-coding-agent --test protocol_events --quiet` | present | pass |
+| 08-07-T2 | 08-07 | 7 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-07-MIRROR-DRIFT, T-08-07-LEAK | RPC delegates to connection and retains only adapter-local projection state. | protocol integration | `cargo test -p pi-coding-agent --test rpc_mode --quiet && cargo test -p pi-coding-agent --test protocol_events --quiet && cargo test -p pi-coding-agent --lib protocol::rpc --quiet` | present | pass |
+| 08-07-T3 | 08-07 | 7 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-07-LEAK, T-08-07-INPUT | Source guards and full workspace closure cover every requirement/threat. | full closure | `cargo fmt --check && cargo test -p pi-coding-agent --test public_api --test protocol_events --test rpc_mode --test api_boundary_guards --test product_runtime_boundary_guards --quiet && cargo test -p pi-coding-agent --quiet && cargo test --workspace --quiet && cargo check --workspace && git diff --check` | present | pass |
 
 ## Planning-Time Mechanical Cross-Check
 
@@ -73,11 +73,11 @@ All high threats have task-bound automated rows: stale generation, control spoof
 
 ## Sign-Off
 
-- [ ] Every task command has executed and its row status is updated from pending.
-- [ ] Exact-array mechanical cross-check passes after final plan edit.
-- [ ] Receipt-language closure audit passes.
-- [ ] All D-01 through D-21 and CLIENT-01/02/03 plus CONTROL-01 remain covered.
-- [ ] Phase 9 exclusions remain absent.
-- [ ] `wave_0_complete` changes only after intended RED failures are observed.
+- [x] Every task command has executed and its row status is updated from pending.
+- [x] Exact-array mechanical cross-check passes after final plan edit.
+- [x] Receipt-language closure audit passes.
+- [x] All D-01 through D-21 and CLIENT-01/02/03 plus CONTROL-01 remain covered.
+- [x] Phase 9 exclusions remain absent.
+- [x] `wave_0_complete` changes only after intended RED failures are observed.
 
-**Approval:** pending
+**Approval:** automated closure gates passed on 2026-07-14
