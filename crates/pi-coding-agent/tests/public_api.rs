@@ -416,21 +416,29 @@ fn snapshot_topology_has_one_registry_and_zero_authority_client_facade() {
     assert!(!event_service.contains("publication_state"));
 }
 
-#[tokio::test]
-async fn snapshot_writers_finish_without_deadlock_and_publish_coherent_revisions() {
+#[test]
+fn snapshot_writers_1_startup_drain_releases_marker_lock_before_projection() {
     let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
     let owner = fs::read_to_string(source_root.join("mod.rs")).unwrap();
+    let take = owner.find("std::mem::take(&mut *markers)").unwrap();
+    let project = owner.find("mark_recovery_projected()").unwrap();
+    let emit = owner.find("emit_operation_recovered").unwrap();
+    assert!(take < project && project < emit);
+}
+
+#[test]
+fn snapshot_writers_2_operation_guard_releases_owner_lock_before_projection_clear() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
     let operation_control = fs::read_to_string(source_root.join("operation_control.rs")).unwrap();
-    let event_service = fs::read_to_string(source_root.join("event_service.rs")).unwrap();
+    let drop_lock = operation_control.rfind("drop(active);").unwrap();
+    let clear_projection = operation_control
+        .find("set_active_operation(None)")
+        .unwrap();
+    assert!(drop_lock < clear_projection);
+}
 
-    assert!(owner.contains("std::mem::take(&mut *markers)"));
-    assert!(owner.contains("self.refresh_snapshot_projection();"));
-    assert!(operation_control.contains("drop(active);"));
-    assert!(operation_control.contains("set_active_operation(None)"));
-    let drop_before_send = event_service.find("drop(state);").unwrap();
-    let broadcast_send = event_service.find("self.product_sender.send").unwrap();
-    assert!(drop_before_send < broadcast_send);
-
+#[tokio::test]
+async fn snapshot_writers_3_capability_install_is_atomic_and_bounded() {
     let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
         .await
         .unwrap();
@@ -441,7 +449,7 @@ async fn snapshot_writers_finish_without_deadlock_and_publish_coherent_revisions
         }),
     )
     .await
-    .expect("snapshot writer must not deadlock")
+    .expect("capability writer must not deadlock")
     .unwrap();
 
     let snapshot = session.snapshot();
@@ -452,6 +460,36 @@ async fn snapshot_writers_finish_without_deadlock_and_publish_coherent_revisions
     assert_eq!(snapshot.cursor.capability_generation, 2);
     assert_eq!(snapshot.active_operation, None);
     assert!(snapshot.cursor.last_event_sequence >= 2);
+}
+
+#[test]
+fn snapshot_writers_4_navigation_refreshes_projection_before_publication() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
+    let owner = fs::read_to_string(source_root.join("mod.rs")).unwrap();
+    let refresh = owner.find("self.refresh_snapshot_projection();").unwrap();
+    let publish = owner
+        .find("emit_session_opened(forked_session_id)")
+        .unwrap();
+    assert!(refresh < publish);
+}
+
+#[test]
+fn snapshot_writers_5_event_commit_releases_coordinator_before_broadcast() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
+    let event_service = fs::read_to_string(source_root.join("event_service.rs")).unwrap();
+    let drop_before_send = event_service.find("drop(state);").unwrap();
+    let broadcast_send = event_service.find("self.product_sender.send").unwrap();
+    assert!(drop_before_send < broadcast_send);
+}
+
+#[test]
+fn snapshot_writers_6_client_mutations_return_owned_snapshots_after_release() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
+    let coordinator = fs::read_to_string(source_root.join("snapshot_coordinator.rs")).unwrap();
+    let client_service = fs::read_to_string(source_root.join("client_service.rs")).unwrap();
+    assert!(coordinator.contains("pub(crate) fn client_snapshot("));
+    assert!(coordinator.contains("let projection = state"));
+    assert!(client_service.contains("self.coordinator.client_snapshot(handle)"));
 }
 
 #[test]
