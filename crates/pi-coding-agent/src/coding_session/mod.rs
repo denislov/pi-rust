@@ -189,7 +189,7 @@ pub(crate) enum SubmissionLeaseLifecycle {
 struct PendingSubmissionLease {
     handle: snapshot_coordinator::ClientHandle,
     draft_id: String,
-    kind: &'static str,
+    kind: String,
     text: String,
     lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
 }
@@ -357,11 +357,11 @@ impl CodingAgentSession {
         Ok(CodingAgentOperationOutcome::from_internal(outcome))
     }
 
-    pub(crate) fn install_submission_lease(
+    fn install_submission_lease(
         &mut self,
         handle: snapshot_coordinator::ClientHandle,
         draft_id: String,
-        kind: &'static str,
+        kind: String,
         text: String,
     ) -> Result<Arc<Mutex<SubmissionLeaseLifecycle>>, CodingSessionError> {
         if let Some(pending) = &self.pending_submission {
@@ -385,7 +385,7 @@ impl CodingAgentSession {
 
     fn consume_submission_lease(
         &mut self,
-        fingerprint: Option<&(&'static str, String)>,
+        fingerprint: Option<&(String, String)>,
     ) -> Option<SubmissionCommitGuard> {
         let pending = self.pending_submission.as_ref()?;
         if *pending.lifecycle.lock().unwrap() == SubmissionLeaseLifecycle::Abandoned {
@@ -395,7 +395,7 @@ impl CodingAgentSession {
         let Some((kind, text)) = fingerprint else {
             return None;
         };
-        if pending.kind != *kind || pending.text != *text {
+        if &pending.kind != kind || &pending.text != text {
             return None;
         }
         let pending = self.pending_submission.take().unwrap();

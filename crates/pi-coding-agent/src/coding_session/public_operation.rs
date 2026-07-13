@@ -104,10 +104,12 @@ pub enum CodingAgentOperationOutcome {
 }
 
 impl CodingAgentOperation {
-    pub(crate) fn submission_fingerprint(&self) -> Option<(&'static str, String)> {
+    pub(crate) fn submission_fingerprint(&self) -> Option<(String, String)> {
         match self {
             Self::Prompt(options) => match options.invocation() {
-                crate::runtime::PromptInvocation::Text(text) => Some(("prompt", text.clone())),
+                crate::runtime::PromptInvocation::Text(text) => {
+                    Some(("prompt".into(), text.clone()))
+                }
                 _ => None,
             },
             _ => None,
