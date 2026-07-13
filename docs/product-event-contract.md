@@ -48,6 +48,57 @@ The inventory is exactly 45 variants with the source-order family distribution
 operation identity. `Diagnostic` may or may not have one. Absence is valid and must not be replaced
 with a sentinel ID.
 
+The authoritative source-order identity table is kept in sync by boundary tests:
+
+<!-- product-event-inventory:start -->
+| Internal variant | Public family | Public kind |
+| `SessionOpened` | `session` | `opened` |
+| `SessionWritePending` | `session` | `write_pending` |
+| `SessionWriteCommitted` | `session` | `write_committed` |
+| `SessionWriteSkipped` | `session` | `write_skipped` |
+| `SessionCompactionCompleted` | `session` | `compaction_completed` |
+| `DefaultAgentProfileChanged` | `profile` | `default_changed` |
+| `AgentInvocationStarted` | `agent` | `invocation_started` |
+| `AgentInvocationCompleted` | `agent` | `invocation_completed` |
+| `AgentInvocationFailed` | `agent` | `invocation_failed` |
+| `AgentInvocationAborted` | `agent` | `invocation_aborted` |
+| `AgentTurnStarted` | `agent` | `turn_started` |
+| `ProviderRequestStarted` | `agent` | `provider_request_started` |
+| `AgentTeamStarted` | `team` | `started` |
+| `AgentTeamMemberStarted` | `team` | `member_started` |
+| `AgentTeamMemberCompleted` | `team` | `member_completed` |
+| `AgentTeamCompleted` | `team` | `completed` |
+| `AgentTeamFailed` | `team` | `failed` |
+| `AgentTeamAborted` | `team` | `aborted` |
+| `AssistantMessageStarted` | `message` | `started` |
+| `AssistantMessageDelta` | `message` | `delta` |
+| `AssistantThinkingDelta` | `message` | `thinking_delta` |
+| `AssistantMessageCompleted` | `message` | `completed` |
+| `ToolCallStarted` | `tool` | `started` |
+| `ToolCallUpdated` | `tool` | `updated` |
+| `ToolCallCompleted` | `tool` | `completed` |
+| `ToolCallFailed` | `tool` | `failed` |
+| `RuntimeCompactionCompleted` | `runtime` | `compaction_completed` |
+| `DelegationRequested` | `delegation` | `requested` |
+| `DelegationRejected` | `delegation` | `rejected` |
+| `DelegationApproved` | `delegation` | `approved` |
+| `DelegationConfirmationRequired` | `delegation` | `confirmation_required` |
+| `DelegationStarted` | `delegation` | `started` |
+| `DelegationCompleted` | `delegation` | `completed` |
+| `DelegationFailed` | `delegation` | `failed` |
+| `SelfHealingEditStarted` | `workflow` | `self_healing_edit_started` |
+| `SelfHealingEditRepairAttempted` | `workflow` | `self_healing_edit_repair_attempted` |
+| `SelfHealingEditCompleted` | `workflow` | `self_healing_edit_completed` |
+| `SelfHealingEditFailed` | `workflow` | `self_healing_edit_failed` |
+| `PromptStarted` | `workflow` | `prompt_started` |
+| `PromptCompleted` | `workflow` | `prompt_completed` |
+| `PromptFailed` | `workflow` | `prompt_failed` |
+| `PromptAborted` | `workflow` | `prompt_aborted` |
+| `OperationRecovered` | `workflow` | `operation_recovered` |
+| `Diagnostic` | `diagnostic` | `diagnostic` |
+| `CapabilityChanged` | `capability` | `changed` |
+<!-- product-event-inventory:end -->
+
 ## Root Terminal Associations
 
 The current five mappings are:

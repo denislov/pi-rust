@@ -1655,6 +1655,7 @@ mod tests {
             total_tokens: 10,
             cost: Cost::default(),
         };
+        // product-event-fixture:start
         let mut events = vec![
             CodingAgentEvent::SessionOpened {
                 session_id: "session".into(),
@@ -2003,6 +2004,7 @@ mod tests {
                 revocation: super::super::CapabilityRevocationPolicy::FutureOnly,
             },
         ]);
+        // product-event-fixture:end
         events
             .into_iter()
             .enumerate()

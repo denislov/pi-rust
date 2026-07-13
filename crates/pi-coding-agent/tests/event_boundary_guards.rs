@@ -12,6 +12,7 @@ const INTERACTIVE_EVENT_BRIDGE: &str = include_str!("../src/interactive/event_br
 const INTERACTIVE_LOOP: &str = include_str!("../src/interactive/loop.rs");
 const SESSION_SERVICE: &str = include_str!("../src/coding_session/session_service.rs");
 const PUBLIC_EVENT: &str = include_str!("../src/coding_session/public_event.rs");
+const INTERNAL_EVENT: &str = include_str!("../src/coding_session/event.rs");
 const PUBLIC_PROJECTION: &str = include_str!("../src/coding_session/public_projection.rs");
 const PUBLIC_OPERATION: &str = include_str!("../src/coding_session/public_operation.rs");
 const PRODUCT_EVENT_CONTRACT: &str = include_str!("../../../docs/product-event-contract.md");
@@ -75,6 +76,52 @@ fn typed_public_event_boundary_is_fail_closed() {
             "product-event contract omits family {family}"
         );
     }
+}
+
+#[test]
+fn full_event_inventory_is_source_fixture_and_document_complete() {
+    let source = internal_event_variants(INTERNAL_EVENT);
+    let fixture = fixture_event_variants(region(
+        PUBLIC_EVENT,
+        "// product-event-fixture:start",
+        "// product-event-fixture:end",
+    ));
+    let expected = public_inventory_rows(region(
+        PUBLIC_EVENT,
+        "// product-event-inventory:start",
+        "// product-event-inventory:end",
+    ));
+    let documented = documented_inventory_rows(region(
+        PRODUCT_EVENT_CONTRACT,
+        "<!-- product-event-inventory:start -->",
+        "<!-- product-event-inventory:end -->",
+    ));
+
+    assert_eq!(
+        source.len(),
+        45,
+        "internal event enum must contain 45 variants"
+    );
+    assert_eq!(fixture.len(), 45, "fixture must construct 45 variants");
+    assert_eq!(expected.len(), 45, "test inventory must contain 45 rows");
+    assert_eq!(
+        documented.len(),
+        45,
+        "document inventory must contain 45 rows"
+    );
+    assert_eq!(source, fixture, "fixture drifted from CodingAgentEvent");
+    assert_eq!(
+        expected, documented,
+        "documented product-event inventory drifted from the executable inventory"
+    );
+    let expected_variants: std::collections::BTreeSet<_> = expected
+        .iter()
+        .map(|(variant, _, _)| variant.clone())
+        .collect();
+    assert_eq!(
+        source, expected_variants,
+        "inventory omitted or added an internal variant"
+    );
 }
 
 #[test]
@@ -169,6 +216,82 @@ fn enum_variants(source: &str, enum_name: &str) -> std::collections::BTreeSet<St
         "{enum_name} inventory must not be empty"
     );
     variants
+}
+
+fn internal_event_variants(source: &str) -> std::collections::BTreeSet<String> {
+    enum_variants(source, "CodingAgentEvent")
+}
+
+fn fixture_event_variants(source: &str) -> std::collections::BTreeSet<String> {
+    let mut variants = std::collections::BTreeSet::new();
+    for line in source.lines() {
+        let mut rest = line;
+        while let Some(start) = rest.find("CodingAgentEvent::") {
+            rest = &rest[start + "CodingAgentEvent::".len()..];
+            let name = rest
+                .split(['{', '(', ',', ' ', '\n'])
+                .next()
+                .unwrap_or_default();
+            if !name.is_empty() && name.chars().next().is_some_and(char::is_uppercase) {
+                variants.insert(name.to_owned());
+            }
+        }
+    }
+    variants
+}
+
+fn public_inventory_rows(source: &str) -> std::collections::BTreeSet<(String, String, String)> {
+    let mut strings = Vec::new();
+    let mut families = Vec::new();
+    for line in source.lines() {
+        let quoted: Vec<_> = line.split('"').collect();
+        if quoted.len() >= 3 {
+            strings.push(quoted[1].to_owned());
+        }
+        if let Some(family) = line
+            .split("CodingAgentProductEventFamily::")
+            .nth(1)
+            .and_then(|value| value.split([',', ' ', '\n']).next())
+        {
+            families.push(family.to_ascii_lowercase());
+        }
+    }
+    assert_eq!(
+        strings.len(),
+        families.len() * 2,
+        "malformed executable inventory"
+    );
+    families
+        .into_iter()
+        .enumerate()
+        .map(|(index, family)| {
+            (
+                strings[index * 2].clone(),
+                family,
+                strings[index * 2 + 1].clone(),
+            )
+        })
+        .collect()
+}
+
+fn documented_inventory_rows(source: &str) -> std::collections::BTreeSet<(String, String, String)> {
+    source
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .map(|line| {
+            let columns: Vec<_> = line.split('|').map(str::trim).collect();
+            assert_eq!(
+                columns.len(),
+                5,
+                "malformed documented inventory row: {line}"
+            );
+            (
+                columns[1].trim_matches('`').to_owned(),
+                columns[2].trim_matches('`').to_owned(),
+                columns[3].trim_matches('`').to_owned(),
+            )
+        })
+        .collect()
 }
 
 #[test]
