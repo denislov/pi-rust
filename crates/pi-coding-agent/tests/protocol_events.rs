@@ -16,6 +16,20 @@ const FLOW_NODE_FIELD_NAMES: &[&str] = &[
     "nodeId",
 ];
 
+#[test]
+fn product_event_adapter_reads_the_owned_typed_payload() {
+    let source = include_str!("../src/protocol/events.rs");
+
+    assert!(
+        source.contains("event.event()"),
+        "product-event projection must read the owned typed payload"
+    );
+    assert!(
+        !source.contains("event.compatibility_event()"),
+        "product-event projection must not consult compatibility storage"
+    );
+}
+
 fn assert_no_flow_node_fields(value: &Value) {
     match value {
         Value::Object(map) => {
