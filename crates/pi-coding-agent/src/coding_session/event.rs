@@ -1,4 +1,5 @@
 use super::capability_snapshot::CapabilityRevocationPolicy;
+use super::public_event::CodingAgentProductEventKind;
 use super::{
     CodingSessionError, ProfileId, ProfileKind, SelfHealingEditCheckOutput,
     SelfHealingEditDiagnostic, SelfHealingEditReplacement, operation_control::OperationKind,
@@ -313,6 +314,7 @@ pub(crate) struct ProductEventTerminalOperation {
 pub(crate) struct ProductEvent {
     sequence: ProductEventSequence,
     kind: ProductEventKind,
+    event: CodingAgentProductEventKind,
     operation_id: Option<String>,
     terminal_status: Option<ProductEventTerminalStatus>,
     durability: ProductEventDurability,
@@ -326,12 +328,14 @@ impl ProductEvent {
     ) -> Self {
         let classification = compatibility_event.classification();
         let kind = ProductEventKind::from_compat_event(&compatibility_event);
+        let event = CodingAgentProductEventKind::from(&compatibility_event);
         let operation_id = classification.operation_id.map(str::to_owned);
         let terminal_status = classification.terminal_status;
         let durability = ProductEventDurability::from_compat_event(&compatibility_event);
         Self {
             sequence,
             kind,
+            event,
             operation_id,
             terminal_status,
             durability,
@@ -353,6 +357,10 @@ impl ProductEvent {
         self.kind
     }
 
+    pub(crate) fn event(&self) -> &CodingAgentProductEventKind {
+        &self.event
+    }
+
     #[allow(dead_code)]
     pub(crate) fn operation_id(&self) -> Option<&str> {
         self.operation_id.as_deref()
@@ -366,19 +374,27 @@ impl ProductEvent {
     #[allow(dead_code)]
     pub(crate) fn terminal_operation(&self) -> Option<ProductEventTerminalOperation> {
         let status = self.terminal_status?;
-        let kind = match self.compatibility_event() {
-            CodingAgentEvent::PromptCompleted { .. }
-            | CodingAgentEvent::PromptFailed { .. }
-            | CodingAgentEvent::PromptAborted { .. } => OperationKind::Prompt,
-            CodingAgentEvent::AgentInvocationCompleted { .. }
-            | CodingAgentEvent::AgentInvocationFailed { .. }
-            | CodingAgentEvent::AgentInvocationAborted { .. } => OperationKind::AgentInvocation,
-            CodingAgentEvent::AgentTeamCompleted { .. }
-            | CodingAgentEvent::AgentTeamFailed { .. }
-            | CodingAgentEvent::AgentTeamAborted { .. } => OperationKind::AgentTeam,
-            CodingAgentEvent::SelfHealingEditCompleted { .. }
-            | CodingAgentEvent::SelfHealingEditFailed { .. } => OperationKind::SelfHealingEdit,
-            CodingAgentEvent::SessionCompactionCompleted { .. } => OperationKind::Compact,
+        let kind = match self.kind {
+            ProductEventKind::Workflow(WorkflowProductEventKind::PromptCompleted)
+            | ProductEventKind::Workflow(WorkflowProductEventKind::PromptFailed)
+            | ProductEventKind::Workflow(WorkflowProductEventKind::PromptAborted) => {
+                OperationKind::Prompt
+            }
+            ProductEventKind::Agent(AgentProductEventKind::InvocationCompleted)
+            | ProductEventKind::Agent(AgentProductEventKind::InvocationFailed)
+            | ProductEventKind::Agent(AgentProductEventKind::InvocationAborted) => {
+                OperationKind::AgentInvocation
+            }
+            ProductEventKind::Team(TeamProductEventKind::Completed)
+            | ProductEventKind::Team(TeamProductEventKind::Failed)
+            | ProductEventKind::Team(TeamProductEventKind::Aborted) => OperationKind::AgentTeam,
+            ProductEventKind::Workflow(WorkflowProductEventKind::SelfHealingEditCompleted)
+            | ProductEventKind::Workflow(WorkflowProductEventKind::SelfHealingEditFailed) => {
+                OperationKind::SelfHealingEdit
+            }
+            ProductEventKind::Session(SessionProductEventKind::CompactionCompleted) => {
+                OperationKind::Compact
+            }
             _ => return None,
         };
         Some(ProductEventTerminalOperation { kind, status })

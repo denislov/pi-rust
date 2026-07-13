@@ -718,7 +718,7 @@ impl CodingAgentProductEvent {
         let terminal_status = source.terminal_status().map(Into::into);
         let terminal_operation = source.terminal_operation().map(Into::into);
         let durability = source.durability().clone().into();
-        let event = CodingAgentProductEventKind::from(source.compatibility_event());
+        let event = source.event().clone();
         Self {
             sequence,
             family: event.legacy_family_name().to_owned(),
