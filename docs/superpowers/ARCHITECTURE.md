@@ -2,6 +2,8 @@
 
 > 生成时间: 2026-07-05
 > 展示 `pi-agent-core` 与 `pi-coding-agent` 的内部结构及协作关系。
+>
+> Stage 9 已完成：外部使用 `pi_coding_agent::api`，所有 first-party live-session 操作经 `CodingAgentSession::run(CodingAgentOperation)` 进入统一 admission/dispatch 路径。验证证据见 [05-STAGE-9-CLOSURE.md](../../.planning/phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md)。Stage 10 仅处理 typed `ProductEvent` payload convergence 与 compatibility subscription deletion。
 
 ---
 
@@ -52,7 +54,7 @@ graph TB
         direction TB
 
         subgraph api["api 模块 (稳定对外接口)"]
-            CAS["CodingAgentSession<br/>• create / open / open_or_create<br/>• prompt()<br/>• compact / export / profiles<br/>• delegation / self-healing edit"]
+            CAS["CodingAgentSession<br/>• create / open / open_or_create<br/>• run(CodingAgentOperation)<br/>• snapshot / query / control<br/>• product-event subscription"]
             CAE["CodingAgentEvent<br/>• PromptStarted / AssistantDelta<br/>• ToolCallStarted / ToolCallFinished<br/>• SessionWriteCommitted<br/>• ..."]
             Opts["CodingAgentSessionOptions<br/>PromptTurnOptions<br/>PromptTurnOutcome<br/>CapabilityStatus"]
         end

@@ -2,6 +2,8 @@
 
 ## Status And Scope
 
+**Status:** Implemented and verified for Stage 9. The stable boundary is `pi_coding_agent::api` plus `CodingAgentSession::run(CodingAgentOperation)`. See the [authoritative Stage 9 closure report](../../../.planning/phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md). Stage 10 remains limited to typed `ProductEvent` payload convergence and compatibility-subscription deletion.
+
 This document defines Operation Runtime Stage 9 for `pi-rust`. Stage 8 introduced a stable public facade, but it deliberately stopped with a compatibility-shaped implementation: `CodingAgentSession::run(CodingAgentOperation)` calls deprecated workflow methods, first-party adapters still call those methods directly, and several runtime mutations are not represented in the public operation enum.
 
 Stage 9 makes the existing facade real. It does not add a second facade or a new workflow family. It makes `CodingAgentSession::run(CodingAgentOperation)` the only public dispatcher for live-session product operations, migrates every first-party adapter to it, and deletes the replaced broad workflow methods.

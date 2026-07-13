@@ -57,17 +57,17 @@
 
 ### Boundary Enforcement
 
-- [ ] **GUARD-01**: Boundary tests recursively scan first-party adapters and reject replaced broad workflow calls
-- [ ] **GUARD-02**: Boundary tests reject local deprecation suppressions in JSON, print, RPC, and interactive production files
+- [x] **GUARD-01**: Boundary tests recursively scan first-party adapters and reject replaced broad workflow calls
+- [x] **GUARD-02**: Boundary tests reject local deprecation suppressions in JSON, print, RPC, and interactive production files
 - [x] **GUARD-03**: Stable API completeness tests require canonical facade types while rejecting internal runtime types
 - [x] **GUARD-04**: Rust visibility, sealed contracts, and compile/API tests are preferred when they can express a boundary; source scanning remains only where necessary
 
 ### Closure
 
-- [ ] **CLOSE-01**: Source audits find no unexpected old methods, old calls, or production deprecation suppressions
-- [ ] **CLOSE-02**: `cargo fmt --check`, `cargo test -p pi-coding-agent`, `cargo check -p pi-coding-agent`, and `git diff --check` pass
-- [ ] **CLOSE-03**: `cargo test --workspace` and `cargo check --workspace` pass
-- [ ] **CLOSE-04**: Stage 9 documentation matches the final implementation and identifies Stage 10 typed `ProductEvent` payload convergence as the next runtime simplification stage
+- [x] **CLOSE-01**: Source audits find no unexpected old methods, old calls, or production deprecation suppressions
+- [x] **CLOSE-02**: `cargo fmt --check`, `cargo test -p pi-coding-agent`, `cargo check -p pi-coding-agent`, and `git diff --check` pass
+- [x] **CLOSE-03**: `cargo test --workspace` and `cargo check --workspace` pass
+- [x] **CLOSE-04**: Stage 9 documentation matches the final implementation and identifies Stage 10 typed `ProductEvent` payload convergence as the next runtime simplification stage
 
 ## v2 Requirements
 
@@ -125,14 +125,14 @@ Traceability will be populated during roadmap creation. Each v1 requirement must
 | DELETE-02 | Phase 4 | Complete |
 | DELETE-03 | Phase 4 | Complete |
 | DELETE-04 | Phase 4 | Complete |
-| GUARD-01 | Phase 5 | Pending |
-| GUARD-02 | Phase 5 | Pending |
+| GUARD-01 | Phase 5 | Complete |
+| GUARD-02 | Phase 5 | Complete |
 | GUARD-03 | Phase 5 | Complete |
 | GUARD-04 | Phase 5 | Complete |
-| CLOSE-01 | Phase 5 | Pending |
-| CLOSE-02 | Phase 5 | Pending |
-| CLOSE-03 | Phase 5 | Pending |
-| CLOSE-04 | Phase 5 | Pending |
+| CLOSE-01 | Phase 5 | Complete |
+| CLOSE-02 | Phase 5 | Complete |
+| CLOSE-03 | Phase 5 | Complete |
+| CLOSE-04 | Phase 5 | Complete |
 
 **Coverage:**
 

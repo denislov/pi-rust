@@ -2,7 +2,7 @@
 
 ## What This Is
 
-This project completes the Stage 9 runtime convergence for the existing `pi-rust` coding-agent workspace. It will audit the current implementation, then make `CodingAgentSession::run(CodingAgentOperation)` the single public live-session operation dispatcher used by every first-party adapter and test before deleting the replaced workflow-specific session methods.
+This project completed the Stage 9 runtime convergence for the existing `pi-rust` coding-agent workspace. `CodingAgentSession::run(CodingAgentOperation)` is the single public live-session operation dispatcher used by every first-party adapter and test, and the replaced workflow-specific session methods are deleted. The authoritative closure evidence is [05-STAGE-9-CLOSURE.md](phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md).
 
 The existing implementation plan at `docs/superpowers/plans/2026-07-10-canonical-operation-runtime-convergence-plan.md` is design input and historical evidence, not the new execution structure. Current code, tests, source guards, and repository history determine what is actually complete and how the remaining work is phased.
 
@@ -25,13 +25,13 @@ Every first-party live-session product operation follows one typed, admitted, be
 - [x] Route all RPC prompt, agent, team, delegation, profile, self-healing, plugin, and related product work through canonical operations without changing wire behavior or control/event multiplexing - Validated in Phase 3: Production Adapter Convergence
 - [x] Route all interactive background work, mutations, delegation decisions, plugin actions, branch summaries, and session navigation through canonical operations while preserving UI projection and event continuity - Validated in Phase 3: Production Adapter Convergence
 
-### Active
+### Validated In Phases 4-5
 
-- [ ] Migrate owner, public API, and integration tests from workflow-specific session methods to canonical operations without weakening assertions
-- [ ] Delete the replaced broad live-session workflow methods only after all production and test callers have migrated; do not retain equivalent compatibility methods under new names
-- [ ] Strengthen compiler-visible and source-level boundaries so first-party adapters cannot regress to broad workflow calls or local deprecation suppressions
-- [ ] Verify focused `pi-coding-agent` suites and the full workspace with formatting, tests, checks, source audits, and clean diffs
-- [ ] Update Stage 9 documentation to reflect the audited implementation and identify Stage 10 typed `ProductEvent` payload convergence as the next runtime simplification stage
+- [x] Migrate owner, public API, and integration tests from workflow-specific session methods to canonical operations without weakening assertions - Validated in Phase 4
+- [x] Delete the replaced broad live-session workflow methods only after all production and test callers have migrated; do not retain equivalent compatibility methods under new names - Validated in Phase 4
+- [x] Strengthen compiler-visible and source-level boundaries so first-party adapters cannot regress to broad workflow calls or local deprecation suppressions - Validated in Phase 5
+- [x] Verify focused `pi-coding-agent` suites and the full workspace with formatting, tests, checks, source audits, and clean diffs - Evidence in the Stage 9 closure report
+- [x] Update Stage 9 documentation and identify Stage 10 typed `ProductEvent` payload convergence and compatibility-subscription deletion as the next bounded runtime stage - Validated in Phase 5
 
 ### Out of Scope
 
@@ -46,7 +46,7 @@ Every first-party live-session product operation follows one typed, admitted, be
 
 The operational product is the Rust 2024 `pi-coding-agent` crate, not the workspace-root placeholder binary. Its architecture is layered: product adapters submit work to the product operation runtime; `CodingAgentSession` owns admission, capabilities, services, flows, events, and persistence; `pi-agent-core` owns generic agent and flow execution; `pi-ai` owns providers and transport; and `pi-tui` owns generic terminal mechanics.
 
-The repository already contains public and internal operation contracts, a canonical-looking `CodingAgentSession::run` path, service-owned product workflows, deterministic faux-provider tests, Rust-native session persistence, and extensive boundary guards. However, the codebase map and the prior Stage 9 plan both indicate that adapter migration and broad-method deletion are incomplete. The new roadmap must begin with an evidence-based audit because prior plan checkboxes are not treated as authoritative.
+The repository now has a closed public operation boundary: first-party adapters use contracts exported by `pi_coding_agent::api`, `CodingAgentSession::run` performs canonical admission and dispatch, and receiver-aware plus compiler-driven guards prevent the deleted broad facade from returning. Typed `ProductEvent` payload convergence and compatibility-subscription deletion remain explicitly deferred to Stage 10.
 
 The most sensitive areas are the large session owner and interactive modules, event/control multiplexing, durable navigation transitions, and integration suites whose assertions encode behavioral guarantees. Changes should be sliced along existing ownership boundaries and verified before compatibility methods are removed.
 
@@ -65,11 +65,11 @@ The most sensitive areas are the large session owner and interactive modules, ev
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Preserve the Stage 9 architectural goal | The typed canonical operation facade remains the desired runtime boundary | Pending |
-| Re-plan from current evidence instead of inheriting Tasks 1-10 | The previous plan's checkboxes and phase boundaries may not match the live implementation | Pending |
-| Treat the previous plan as reference material | It contains useful contracts, tests, risks, and non-goals without constraining the new roadmap structure | Pending |
-| Audit before assigning remaining implementation phases | Existing behavior must be classified from source, tests, guards, and Git history | Pending |
-| Keep Stage 10 out of this milestone | Mixing event-payload convergence into operation-dispatch convergence would expand risk and obscure completion | Pending |
+| Preserve the Stage 9 architectural goal | The typed canonical operation facade is the verified runtime boundary | Complete |
+| Re-plan from current evidence instead of inheriting Tasks 1-10 | The previous plan's checkboxes and phase boundaries did not determine live completion | Complete |
+| Treat the previous plan as reference material | It remains intact as superseded historical evidence | Complete |
+| Audit before assigning remaining implementation phases | Source, tests, guards, and Git history established the migration baseline | Complete |
+| Keep Stage 10 out of this milestone | Event payload/subscription convergence remains bounded and deferred | Complete |
 
 ## Evolution
 
@@ -89,4 +89,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-12 after Phase 3 completion*
+*Last updated: 2026-07-13 for Stage 9 closure*

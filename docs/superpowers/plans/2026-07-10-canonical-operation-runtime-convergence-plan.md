@@ -1,5 +1,7 @@
 # Canonical Operation Runtime Convergence Implementation Plan
 
+> **Status: Superseded historical plan.** Stage 9 was executed through the evidence-based phase plans under `.planning/phases/`. The verified final authority is [05-STAGE-9-CLOSURE.md](../../../.planning/phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md). The body below is preserved as historical design and migration evidence.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `CodingAgentSession::run(CodingAgentOperation)` the only public live-session operation dispatcher, migrate every first-party adapter and test to it, and delete the replaced broad workflow methods.
