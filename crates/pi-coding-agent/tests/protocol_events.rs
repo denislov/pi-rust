@@ -19,6 +19,7 @@ const FLOW_NODE_FIELD_NAMES: &[&str] = &[
 #[test]
 fn product_event_adapter_reads_the_owned_typed_payload() {
     let source = include_str!("../src/protocol/events.rs");
+    let rpc_source = include_str!("../src/protocol/rpc/events.rs");
 
     assert!(
         source.contains("event.event()"),
@@ -27,6 +28,10 @@ fn product_event_adapter_reads_the_owned_typed_payload() {
     assert!(
         !source.contains("event.compatibility_event()"),
         "product-event projection must not consult compatibility storage"
+    );
+    assert!(
+        rpc_source.contains("product_event.event()"),
+        "RPC fixtures must validate typed payloads before forwarding"
     );
 }
 
