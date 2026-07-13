@@ -405,3 +405,38 @@ pub(crate) enum ClientRegistryError {
     #[error("submitted operation transition regressed")]
     SubmittedRegression,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_coordinator_owns_client_and_event_authority() {
+        let coordinator = SnapshotCoordinator::new();
+        let handle = coordinator
+            .connect_or_takeover(ClientConnectionId::new("coordinator-client"))
+            .unwrap();
+        let state = coordinator.state.lock().unwrap();
+        assert_eq!(state.clients.len(), 1);
+        assert_eq!(state.clients[&handle.id].generation, handle.generation);
+        assert_eq!(state.next_event_sequence, 1);
+        assert!(state.retained_product_events.is_empty());
+    }
+
+    #[test]
+    fn snapshot_coordinator_capability_source_advances_monotonically() {
+        let coordinator = SnapshotCoordinator::new();
+        assert_eq!(
+            coordinator.current_capability_generation(),
+            CapabilityGeneration::new(1)
+        );
+        assert_eq!(
+            coordinator.install_next_capability_generation(),
+            CapabilityGeneration::new(2)
+        );
+        assert_eq!(
+            coordinator.current_capability_generation(),
+            CapabilityGeneration::new(2)
+        );
+    }
+}
