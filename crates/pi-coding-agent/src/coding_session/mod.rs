@@ -338,7 +338,10 @@ impl CodingAgentSession {
         event_capacity: usize,
     ) -> Result<Self, CodingSessionError> {
         let mut session = Self::non_persistent(options).await?;
-        session.event_service = EventService::with_event_capacity_for_tests(event_capacity);
+        session.event_service = EventService::with_event_capacity_and_coordinator_for_tests(
+            event_capacity,
+            session.snapshot_coordinator.clone(),
+        );
         Ok(session)
     }
 
@@ -610,9 +613,9 @@ impl CodingAgentSession {
     ) -> Result<Self, CodingSessionError> {
         let mut session_service = session_service;
         let replay_state = replay_derived_owner_state(&mut session_service)?;
-        let event_service = EventService::new();
-        event_service.emit_session_opened(session_service.session_id().to_owned());
         let snapshot_coordinator = SnapshotCoordinator::new();
+        let event_service = EventService::with_snapshot_coordinator(snapshot_coordinator.clone());
+        event_service.emit_session_opened(session_service.session_id().to_owned());
         let client_service = ClientService::new(snapshot_coordinator.clone());
 
         let session = Self {
@@ -652,7 +655,7 @@ impl CodingAgentSession {
             persistence: SessionPersistence::NonPersistent(state),
             runtime_service: RuntimeService::new(),
             flow_service: FlowService::new(),
-            event_service: EventService::new(),
+            event_service: EventService::with_snapshot_coordinator(snapshot_coordinator.clone()),
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
             plugin_load_service: PluginLoadService::new(),

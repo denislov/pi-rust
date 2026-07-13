@@ -19,6 +19,7 @@ use super::{
         SelfHealingEditObserver, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
     },
     session_service::FinalizedSessionWrite,
+    snapshot_coordinator::SnapshotCoordinator,
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 128;
@@ -28,6 +29,7 @@ const EVENT_RETAINED_CAPACITY: usize = 128;
 pub(crate) struct EventService {
     product_sender: broadcast::Sender<ProductEvent>,
     publication_state: Arc<Mutex<EventPublicationState>>,
+    snapshot_coordinator: Arc<SnapshotCoordinator>,
     channel_capacity: usize,
     retained_capacity: usize,
 }
@@ -46,6 +48,29 @@ pub(crate) struct EventBackpressureStatus {
     pub(crate) oldest_retained_sequence: Option<ProductEventSequence>,
     pub(crate) current_sequence: ProductEventSequence,
     pub(crate) dropped_before: Option<ProductEventSequence>,
+}
+
+/// The replay/live cut captured while holding the publication lock.
+///
+/// The receiver is established before the sequence and retained partition are
+/// copied, so an event published after `replayed_through` is observable only
+/// through `receiver`, never accidentally omitted between two calls.
+#[derive(Debug)]
+pub(crate) struct ProductEventRecoveryBoundary {
+    pub(crate) requested_after: ProductEventSequence,
+    pub(crate) replayed_through: ProductEventSequence,
+    pub(crate) oldest_available: Option<ProductEventSequence>,
+    pub(crate) replay: Vec<ProductEvent>,
+    pub(crate) receiver: ProductEventReceiver,
+}
+
+#[derive(Debug)]
+pub(crate) enum ProductEventRecovery {
+    Ready(ProductEventRecoveryBoundary),
+    RetainedGap {
+        requested_after: ProductEventSequence,
+        oldest_available: ProductEventSequence,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -82,10 +107,32 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
 
 impl EventService {
     pub(crate) fn new() -> Self {
-        Self::with_event_capacities(EVENT_CHANNEL_CAPACITY, EVENT_RETAINED_CAPACITY)
+        Self::with_snapshot_coordinator(SnapshotCoordinator::new())
+    }
+
+    pub(crate) fn with_snapshot_coordinator(
+        snapshot_coordinator: Arc<SnapshotCoordinator>,
+    ) -> Self {
+        Self::with_event_capacities_and_coordinator(
+            EVENT_CHANNEL_CAPACITY,
+            EVENT_RETAINED_CAPACITY,
+            snapshot_coordinator,
+        )
     }
 
     fn with_event_capacities(channel_capacity: usize, retained_capacity: usize) -> Self {
+        Self::with_event_capacities_and_coordinator(
+            channel_capacity,
+            retained_capacity,
+            SnapshotCoordinator::new(),
+        )
+    }
+
+    fn with_event_capacities_and_coordinator(
+        channel_capacity: usize,
+        retained_capacity: usize,
+        snapshot_coordinator: Arc<SnapshotCoordinator>,
+    ) -> Self {
         let channel_capacity = channel_capacity.max(1);
         let (product_sender, _) = broadcast::channel(channel_capacity);
         Self {
@@ -95,6 +142,7 @@ impl EventService {
                 retained_product_events: VecDeque::with_capacity(retained_capacity),
                 dropped_before: None,
             })),
+            snapshot_coordinator,
             channel_capacity,
             retained_capacity,
         }
@@ -103,6 +151,14 @@ impl EventService {
     #[cfg(test)]
     pub(crate) fn with_event_capacity_for_tests(capacity: usize) -> Self {
         Self::with_event_capacities(capacity, capacity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_event_capacity_and_coordinator_for_tests(
+        capacity: usize,
+        snapshot_coordinator: Arc<SnapshotCoordinator>,
+    ) -> Self {
+        Self::with_event_capacities_and_coordinator(capacity, capacity, snapshot_coordinator)
     }
 
     pub(crate) fn current_product_sequence(&self) -> ProductEventSequence {
@@ -148,6 +204,47 @@ impl EventService {
             .filter(|event| event.sequence() > cursor)
             .cloned()
             .collect())
+    }
+
+    /// Atomically establish a live receiver and copy the retained partition
+    /// after `cursor`. No acknowledgement cursor is read or mutated here.
+    pub(crate) fn recovery_boundary_after(
+        &self,
+        cursor: ProductEventSequence,
+    ) -> ProductEventRecovery {
+        // Snapshot/client writers use this same order (coordinator then
+        // publication), making the recovery cut one transaction fence.
+        let _snapshot_state = self.snapshot_coordinator.state.lock().unwrap();
+        let state = self.publication_state.lock().unwrap();
+        let receiver = ProductEventReceiver {
+            inner: self.product_sender.subscribe(),
+        };
+        let oldest_available = state
+            .retained_product_events
+            .front()
+            .map(ProductEvent::sequence);
+        if let Some(oldest) = oldest_available {
+            if cursor < oldest && cursor != ProductEventSequence::default() {
+                return ProductEventRecovery::RetainedGap {
+                    requested_after: cursor,
+                    oldest_available: oldest,
+                };
+            }
+        }
+        let replayed_through = ProductEventSequence::new(state.next_sequence.saturating_sub(1));
+        let replay = state
+            .retained_product_events
+            .iter()
+            .filter(|event| event.sequence() > cursor)
+            .cloned()
+            .collect();
+        ProductEventRecovery::Ready(ProductEventRecoveryBoundary {
+            requested_after: cursor,
+            replayed_through,
+            oldest_available,
+            replay,
+            receiver,
+        })
     }
 
     fn retain_product_event(&self, state: &mut EventPublicationState, event: ProductEvent) {
@@ -2412,6 +2509,71 @@ mod tests {
         );
         assert_eq!(status.current_sequence, ProductEventSequence::new(4));
         assert_eq!(status.dropped_before, Some(ProductEventSequence::new(3)));
+    }
+
+    #[tokio::test]
+    async fn recovery_boundary_partitions_replay_and_live_events() {
+        let service = EventService::with_event_capacity_for_tests(2);
+        service.emit(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "one".into(),
+        });
+        service.emit(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "two".into(),
+        });
+
+        let ProductEventRecovery::Ready(mut boundary) =
+            service.recovery_boundary_after(ProductEventSequence::new(1))
+        else {
+            panic!("cursor is within retained history");
+        };
+        assert_eq!(boundary.requested_after, ProductEventSequence::new(1));
+        assert_eq!(boundary.replayed_through, ProductEventSequence::new(2));
+        assert_eq!(
+            boundary.oldest_available,
+            Some(ProductEventSequence::new(1))
+        );
+        assert_eq!(
+            boundary
+                .replay
+                .iter()
+                .map(ProductEvent::sequence)
+                .collect::<Vec<_>>(),
+            vec![ProductEventSequence::new(2)]
+        );
+
+        service.emit(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "three".into(),
+        });
+        assert_eq!(
+            boundary.receiver.try_recv().unwrap().unwrap().sequence(),
+            ProductEventSequence::new(3)
+        );
+    }
+
+    #[test]
+    fn recovery_boundary_reports_retained_gap_but_accepts_initial_cursor() {
+        let service = EventService::with_event_capacity_for_tests(2);
+        for message in ["one", "two", "three"] {
+            service.emit(CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: message.into(),
+            });
+        }
+
+        assert!(matches!(
+            service.recovery_boundary_after(ProductEventSequence::new(1)),
+            ProductEventRecovery::RetainedGap {
+                requested_after: ProductEventSequence(1),
+                oldest_available: ProductEventSequence(2),
+            }
+        ));
+        assert!(matches!(
+            service.recovery_boundary_after(ProductEventSequence::default()),
+            ProductEventRecovery::Ready(_)
+        ));
     }
 
     #[tokio::test]
