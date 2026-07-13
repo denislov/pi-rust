@@ -1,6 +1,12 @@
 use crate::coding_session::{
-    CodingAgentEvent, ProductEvent, ProfileKind, SelfHealingEditCheckOutput,
-    SelfHealingEditReplacement,
+    CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
+    CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,
+    CodingAgentDiagnosticProductEvent, CodingAgentEvent, CodingAgentMessageProductEvent,
+    CodingAgentProductEventCheckOutput, CodingAgentProductEventKind,
+    CodingAgentProductEventProfileKind, CodingAgentProductEventReplacement,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
+    CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+    ProductEvent,
 };
 use crate::protocol::types::{
     CompactionProtocolResult, CompactionReason, ProtocolDelegationFoldedBlock, ProtocolEvent,
@@ -34,24 +40,35 @@ impl CodingProtocolEventAdapter {
 
     #[allow(dead_code)]
     pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<ProtocolEvent> {
-        self.push(event.compatibility_event())
+        self.push_typed(event.event())
     }
 
     pub fn push(&mut self, event: &CodingAgentEvent) -> Vec<ProtocolEvent> {
+        let event = CodingAgentProductEventKind::from(event);
+        self.push_typed(&event)
+    }
+
+    fn push_typed(&mut self, event: &CodingAgentProductEventKind) -> Vec<ProtocolEvent> {
         match event {
-            CodingAgentEvent::AgentTurnStarted { .. } => {
+            CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::TurnStarted {
+                ..
+            }) => {
                 let mut events = self.finish_current_turn();
                 events.push(ProtocolEvent::TurnStart);
                 events
             }
-            CodingAgentEvent::ProviderRequestStarted {
-                provider, model, ..
-            } => {
+            CodingAgentProductEventKind::Agent(
+                CodingAgentAgentProductEvent::ProviderRequestStarted {
+                    provider, model, ..
+                },
+            ) => {
                 self.provider = provider.clone();
                 self.model = model.clone();
                 Vec::new()
             }
-            CodingAgentEvent::AssistantMessageStarted { .. } => {
+            CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Started {
+                ..
+            }) => {
                 if self.assistant_open {
                     return Vec::new();
                 }
@@ -61,7 +78,10 @@ impl CodingProtocolEventAdapter {
                     message: stored_assistant(&message),
                 }]
             }
-            CodingAgentEvent::AssistantMessageDelta { text, .. } => {
+            CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Delta {
+                text,
+                ..
+            }) => {
                 let (content_index, message) = self.append_assistant_text(text);
                 let mut events = Vec::new();
                 if !self.assistant_open {
@@ -80,7 +100,9 @@ impl CodingProtocolEventAdapter {
                 });
                 events
             }
-            CodingAgentEvent::AssistantThinkingDelta { text, .. } => {
+            CodingAgentProductEventKind::Message(
+                CodingAgentMessageProductEvent::ThinkingDelta { text, .. },
+            ) => {
                 let (content_index, message) = self.append_assistant_thinking(text);
                 let mut events = Vec::new();
                 if !self.assistant_open {
@@ -99,7 +121,10 @@ impl CodingProtocolEventAdapter {
                 });
                 events
             }
-            CodingAgentEvent::AssistantMessageCompleted { final_text, .. } => {
+            CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Completed {
+                final_text,
+                ..
+            }) => {
                 let mut message = self.ensure_assistant();
                 if message.content.is_empty() && !final_text.is_empty() {
                     message.content = text_content(final_text);
@@ -114,22 +139,22 @@ impl CodingProtocolEventAdapter {
                 self.current_assistant = Some(message);
                 events
             }
-            CodingAgentEvent::ToolCallStarted {
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Started {
                 tool_call_id,
                 name,
                 arguments_json,
                 ..
-            } => vec![ProtocolEvent::ToolExecutionStart {
+            }) => vec![ProtocolEvent::ToolExecutionStart {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: name.clone(),
                 args: serde_json::from_str(arguments_json).unwrap_or(serde_json::Value::Null),
             }],
-            CodingAgentEvent::ToolCallUpdated {
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Updated {
                 tool_call_id,
                 name,
                 message,
                 ..
-            } => vec![ProtocolEvent::ToolExecutionUpdate {
+            }) => vec![ProtocolEvent::ToolExecutionUpdate {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: name.clone(),
                 result: ToolExecutionResult {
@@ -138,91 +163,107 @@ impl CodingProtocolEventAdapter {
                     details: None,
                 },
             }],
-            CodingAgentEvent::ToolCallCompleted {
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Completed {
                 tool_call_id,
                 name,
                 summary,
                 ..
-            } => self.push_tool_result(tool_call_id, name, summary, false),
-            CodingAgentEvent::ToolCallFailed {
+            }) => self.push_tool_result(tool_call_id, name, summary, false),
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Failed {
                 tool_call_id,
                 name,
                 message,
                 ..
-            } => self.push_tool_result(tool_call_id, name, message, true),
-            CodingAgentEvent::RuntimeCompactionCompleted {
-                summary,
-                first_kept_message_id,
-                tokens_before,
-                ..
-            } => Self::compaction_events(
+            }) => self.push_tool_result(tool_call_id, name, message, true),
+            CodingAgentProductEventKind::Runtime(
+                CodingAgentRuntimeProductEvent::CompactionCompleted {
+                    summary,
+                    first_kept_message_id,
+                    tokens_before,
+                    ..
+                },
+            ) => Self::compaction_events(
                 CompactionReason::Threshold,
                 summary,
                 first_kept_message_id,
                 *tokens_before,
             ),
-            CodingAgentEvent::SessionCompactionCompleted {
-                summary,
-                first_kept_message_id,
-                tokens_before,
-                ..
-            } => Self::compaction_events(
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::CompactionCompleted {
+                    summary,
+                    first_kept_message_id,
+                    tokens_before,
+                    ..
+                },
+            ) => Self::compaction_events(
                 CompactionReason::Manual,
                 summary,
                 first_kept_message_id,
                 *tokens_before,
             ),
-            CodingAgentEvent::PromptCompleted { .. } => {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptCompleted { .. },
+            ) => {
                 let mut events = self.finish_current_turn();
                 events.push(ProtocolEvent::AgentEnd {
                     messages: self.messages.clone(),
                 });
                 events
             }
-            CodingAgentEvent::PromptFailed { error, .. } => {
-                self.push_prompt_failed_message(&error.to_string())
-            }
-            CodingAgentEvent::PromptAborted { reason, .. } => {
-                self.push_prompt_failed_message(reason)
-            }
-            CodingAgentEvent::DefaultAgentProfileChanged { profile_id } => {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptFailed { error, .. },
+            ) => self.push_prompt_failed_message(&error.message),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptAborted { reason, .. },
+            ) => self.push_prompt_failed_message(reason),
+            CodingAgentProductEventKind::Profile(
+                CodingAgentProfileProductEvent::DefaultChanged { profile_id },
+            ) => {
                 vec![ProtocolEvent::DefaultAgentProfileChanged {
                     profile_id: profile_id.as_str().to_string(),
                 }]
             }
-            CodingAgentEvent::CapabilityChanged {
-                generation,
-                revocation,
-            } => vec![ProtocolEvent::CapabilityChanged {
+            CodingAgentProductEventKind::Capability(
+                CodingAgentCapabilityProductEvent::Changed {
+                    generation,
+                    revocation,
+                },
+            ) => vec![ProtocolEvent::CapabilityChanged {
                 generation: *generation,
-                revocation: revocation.as_str().to_owned(),
+                revocation: capability_revocation_to_protocol(*revocation).to_owned(),
             }],
-            CodingAgentEvent::OperationRecovered {
-                operation_id,
-                recovery_id,
-                reason,
-            } => vec![ProtocolEvent::OperationRecovered {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecovered {
+                    operation_id,
+                    recovery_id,
+                    reason,
+                },
+            ) => vec![ProtocolEvent::OperationRecovered {
                 operation_id: operation_id.clone(),
                 recovery_id: recovery_id.clone(),
                 reason: reason.clone(),
             }],
-            CodingAgentEvent::SelfHealingEditStarted {
-                operation_id,
-                path,
-                replacements,
-            } => vec![ProtocolEvent::SelfHealingEditStart {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
+                    operation_id,
+                    path,
+                    replacements,
+                },
+            ) => vec![ProtocolEvent::SelfHealingEditStart {
                 operation_id: operation_id.clone(),
                 path: path.clone(),
                 replacements: *replacements,
             }],
-            CodingAgentEvent::SelfHealingEditRepairAttempted {
-                operation_id,
-                path,
-                attempt,
-                replacements,
-                diagnostics,
-                check_output,
-            } => vec![ProtocolEvent::SelfHealingEditRepairAttempt {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
+                    operation_id,
+                    path,
+                    attempt,
+                    replacements,
+                    diagnostics,
+                    check_output,
+                },
+            ) => vec![ProtocolEvent::SelfHealingEditRepairAttempt {
                 operation_id: operation_id.clone(),
                 path: path.clone(),
                 attempt: *attempt,
@@ -235,13 +276,15 @@ impl CodingProtocolEventAdapter {
                     .as_ref()
                     .map(protocol_self_healing_check_output),
             }],
-            CodingAgentEvent::SelfHealingEditCompleted {
-                operation_id,
-                path,
-                attempts,
-                first_changed_line,
-                check_output,
-            } => vec![ProtocolEvent::SelfHealingEditEnd {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
+                    operation_id,
+                    path,
+                    attempts,
+                    first_changed_line,
+                    check_output,
+                },
+            ) => vec![ProtocolEvent::SelfHealingEditEnd {
                 operation_id: operation_id.clone(),
                 path: path.clone(),
                 attempts: *attempts,
@@ -250,24 +293,31 @@ impl CodingProtocolEventAdapter {
                     .as_ref()
                     .map(protocol_self_healing_check_output),
             }],
-            CodingAgentEvent::SelfHealingEditFailed {
-                operation_id,
-                path,
-                error,
-            } => vec![ProtocolEvent::SelfHealingEditError {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditFailed {
+                    operation_id,
+                    path,
+                    error,
+                },
+            ) => vec![ProtocolEvent::SelfHealingEditError {
                 operation_id: operation_id.clone(),
                 path: path.clone(),
-                error: error.to_string(),
+                error: error.message.clone(),
             }],
-            CodingAgentEvent::DelegationRequested {
-                operation_id,
-                turn_id,
-                tool_call_id,
-                requesting_profile_id,
-                target_kind,
-                target_id,
-                task,
-            } => vec![ProtocolEvent::DelegationRequested {
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Requested {
+                    context:
+                        CodingAgentDelegationEventContext {
+                            operation_id,
+                            turn_id,
+                            tool_call_id,
+                            requesting_profile_id,
+                            target_kind,
+                            target_id,
+                            task,
+                        },
+                },
+            ) => vec![ProtocolEvent::DelegationRequested {
                 operation_id: operation_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_call_id: tool_call_id.clone(),
@@ -286,16 +336,21 @@ impl CodingProtocolEventAdapter {
                     false,
                 ),
             }],
-            CodingAgentEvent::DelegationRejected {
-                operation_id,
-                turn_id,
-                tool_call_id,
-                requesting_profile_id,
-                target_kind,
-                target_id,
-                task,
-                reason,
-            } => vec![ProtocolEvent::DelegationRejected {
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Rejected {
+                    context:
+                        CodingAgentDelegationEventContext {
+                            operation_id,
+                            turn_id,
+                            tool_call_id,
+                            requesting_profile_id,
+                            target_kind,
+                            target_id,
+                            task,
+                        },
+                    reason,
+                },
+            ) => vec![ProtocolEvent::DelegationRejected {
                 operation_id: operation_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_call_id: tool_call_id.clone(),
@@ -315,15 +370,20 @@ impl CodingProtocolEventAdapter {
                     true,
                 ),
             }],
-            CodingAgentEvent::DelegationApproved {
-                operation_id,
-                turn_id,
-                tool_call_id,
-                requesting_profile_id,
-                target_kind,
-                target_id,
-                task,
-            } => vec![ProtocolEvent::DelegationApproved {
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Approved {
+                    context:
+                        CodingAgentDelegationEventContext {
+                            operation_id,
+                            turn_id,
+                            tool_call_id,
+                            requesting_profile_id,
+                            target_kind,
+                            target_id,
+                            task,
+                        },
+                },
+            ) => vec![ProtocolEvent::DelegationApproved {
                 operation_id: operation_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_call_id: tool_call_id.clone(),
@@ -342,16 +402,21 @@ impl CodingProtocolEventAdapter {
                     false,
                 ),
             }],
-            CodingAgentEvent::DelegationConfirmationRequired {
-                operation_id,
-                turn_id,
-                tool_call_id,
-                requesting_profile_id,
-                target_kind,
-                target_id,
-                task,
-                reason,
-            } => vec![ProtocolEvent::DelegationConfirmationRequired {
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::ConfirmationRequired {
+                    context:
+                        CodingAgentDelegationEventContext {
+                            operation_id,
+                            turn_id,
+                            tool_call_id,
+                            requesting_profile_id,
+                            target_kind,
+                            target_id,
+                            task,
+                        },
+                    reason,
+                },
+            ) => vec![ProtocolEvent::DelegationConfirmationRequired {
                 operation_id: operation_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_call_id: tool_call_id.clone(),
@@ -371,16 +436,21 @@ impl CodingProtocolEventAdapter {
                     false,
                 ),
             }],
-            CodingAgentEvent::DelegationStarted {
-                operation_id,
-                turn_id,
-                tool_call_id,
-                requesting_profile_id,
-                target_kind,
-                target_id,
-                task,
-                child_operation_id,
-            } => vec![ProtocolEvent::DelegationStarted {
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Started {
+                    context:
+                        CodingAgentDelegationEventContext {
+                            operation_id,
+                            turn_id,
+                            tool_call_id,
+                            requesting_profile_id,
+                            target_kind,
+                            target_id,
+                            task,
+                        },
+                    child_operation_id,
+                },
+            ) => vec![ProtocolEvent::DelegationStarted {
                 operation_id: operation_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_call_id: tool_call_id.clone(),
@@ -400,17 +470,22 @@ impl CodingProtocolEventAdapter {
                     false,
                 ),
             }],
-            CodingAgentEvent::DelegationCompleted {
-                operation_id,
-                turn_id,
-                tool_call_id,
-                requesting_profile_id,
-                target_kind,
-                target_id,
-                task,
-                child_operation_id,
-                final_text,
-            } => vec![ProtocolEvent::DelegationCompleted {
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Completed {
+                    context:
+                        CodingAgentDelegationEventContext {
+                            operation_id,
+                            turn_id,
+                            tool_call_id,
+                            requesting_profile_id,
+                            target_kind,
+                            target_id,
+                            task,
+                        },
+                    child_operation_id,
+                    final_text,
+                },
+            ) => vec![ProtocolEvent::DelegationCompleted {
                 operation_id: operation_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_call_id: tool_call_id.clone(),
@@ -431,17 +506,22 @@ impl CodingProtocolEventAdapter {
                     false,
                 ),
             }],
-            CodingAgentEvent::DelegationFailed {
-                operation_id,
-                turn_id,
-                tool_call_id,
-                requesting_profile_id,
-                target_kind,
-                target_id,
-                task,
-                child_operation_id,
-                error,
-            } => vec![ProtocolEvent::DelegationFailed {
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Failed {
+                    context:
+                        CodingAgentDelegationEventContext {
+                            operation_id,
+                            turn_id,
+                            tool_call_id,
+                            requesting_profile_id,
+                            target_kind,
+                            target_id,
+                            task,
+                        },
+                    child_operation_id,
+                    error,
+                },
+            ) => vec![ProtocolEvent::DelegationFailed {
                 operation_id: operation_id.clone(),
                 turn_id: turn_id.clone(),
                 tool_call_id: tool_call_id.clone(),
@@ -450,7 +530,7 @@ impl CodingProtocolEventAdapter {
                 target_id: target_id.as_str().to_string(),
                 task: task.clone(),
                 child_operation_id: child_operation_id.clone(),
-                error: error.to_string(),
+                error: error.message.clone(),
                 folded_block: delegation_folded_block(
                     tool_call_id,
                     *target_kind,
@@ -458,122 +538,142 @@ impl CodingProtocolEventAdapter {
                     task,
                     "failed",
                     Some(child_operation_id.clone()),
-                    Some(format!("failed: {error}")),
+                    Some(format!("failed: {}", error.message)),
                     true,
                 ),
             }],
-            CodingAgentEvent::AgentInvocationStarted {
-                operation_id,
-                child_operation_id,
-                profile_id,
-                task,
-            } => vec![ProtocolEvent::AgentInvocationStart {
+            CodingAgentProductEventKind::Agent(
+                CodingAgentAgentProductEvent::InvocationStarted {
+                    operation_id,
+                    child_operation_id,
+                    profile_id,
+                    task,
+                },
+            ) => vec![ProtocolEvent::AgentInvocationStart {
                 operation_id: operation_id.clone(),
                 child_operation_id: child_operation_id.clone(),
                 profile_id: profile_id.as_str().to_string(),
                 task: task.clone(),
             }],
-            CodingAgentEvent::AgentInvocationCompleted {
-                operation_id,
-                child_operation_id,
-                profile_id,
-                final_text,
-            } => vec![ProtocolEvent::AgentInvocationEnd {
+            CodingAgentProductEventKind::Agent(
+                CodingAgentAgentProductEvent::InvocationCompleted {
+                    operation_id,
+                    child_operation_id,
+                    profile_id,
+                    final_text,
+                },
+            ) => vec![ProtocolEvent::AgentInvocationEnd {
                 operation_id: operation_id.clone(),
                 child_operation_id: child_operation_id.clone(),
                 profile_id: profile_id.as_str().to_string(),
                 final_text: final_text.clone(),
             }],
-            CodingAgentEvent::AgentInvocationFailed {
-                operation_id,
-                child_operation_id,
-                profile_id,
-                error,
-            } => vec![ProtocolEvent::AgentInvocationError {
+            CodingAgentProductEventKind::Agent(
+                CodingAgentAgentProductEvent::InvocationFailed {
+                    operation_id,
+                    child_operation_id,
+                    profile_id,
+                    error,
+                },
+            ) => vec![ProtocolEvent::AgentInvocationError {
                 operation_id: operation_id.clone(),
                 child_operation_id: child_operation_id.clone(),
                 profile_id: profile_id.as_str().to_string(),
-                error: error.to_string(),
+                error: error.message.clone(),
             }],
-            CodingAgentEvent::AgentInvocationAborted {
-                operation_id,
-                child_operation_id,
-                profile_id,
-                reason,
-            } => vec![ProtocolEvent::AgentInvocationAbort {
+            CodingAgentProductEventKind::Agent(
+                CodingAgentAgentProductEvent::InvocationAborted {
+                    operation_id,
+                    child_operation_id,
+                    profile_id,
+                    reason,
+                },
+            ) => vec![ProtocolEvent::AgentInvocationAbort {
                 operation_id: operation_id.clone(),
                 child_operation_id: child_operation_id.clone(),
                 profile_id: profile_id.as_str().to_string(),
                 reason: reason.clone(),
             }],
-            CodingAgentEvent::AgentTeamStarted {
+            CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::Started {
                 operation_id,
                 team_id,
                 task,
-            } => vec![ProtocolEvent::AgentTeamStart {
+            }) => vec![ProtocolEvent::AgentTeamStart {
                 operation_id: operation_id.clone(),
                 team_id: team_id.as_str().to_string(),
                 task: task.clone(),
             }],
-            CodingAgentEvent::AgentTeamMemberStarted {
+            CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::MemberStarted {
                 operation_id,
                 child_operation_id,
                 team_id,
                 profile_id,
                 task,
-            } => vec![ProtocolEvent::AgentTeamMemberStart {
+            }) => vec![ProtocolEvent::AgentTeamMemberStart {
                 operation_id: operation_id.clone(),
                 child_operation_id: child_operation_id.clone(),
                 team_id: team_id.as_str().to_string(),
                 profile_id: profile_id.as_str().to_string(),
                 task: task.clone(),
             }],
-            CodingAgentEvent::AgentTeamMemberCompleted {
+            CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::MemberCompleted {
                 operation_id,
                 child_operation_id,
                 team_id,
                 profile_id,
                 final_text,
-            } => vec![ProtocolEvent::AgentTeamMemberEnd {
+            }) => vec![ProtocolEvent::AgentTeamMemberEnd {
                 operation_id: operation_id.clone(),
                 child_operation_id: child_operation_id.clone(),
                 team_id: team_id.as_str().to_string(),
                 profile_id: profile_id.as_str().to_string(),
                 final_text: final_text.clone(),
             }],
-            CodingAgentEvent::AgentTeamCompleted {
+            CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::Completed {
                 operation_id,
                 team_id,
                 final_text,
-            } => vec![ProtocolEvent::AgentTeamEnd {
+            }) => vec![ProtocolEvent::AgentTeamEnd {
                 operation_id: operation_id.clone(),
                 team_id: team_id.as_str().to_string(),
                 final_text: final_text.clone(),
             }],
-            CodingAgentEvent::AgentTeamFailed {
+            CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::Failed {
                 operation_id,
                 team_id,
                 error,
-            } => vec![ProtocolEvent::AgentTeamError {
+            }) => vec![ProtocolEvent::AgentTeamError {
                 operation_id: operation_id.clone(),
                 team_id: team_id.as_str().to_string(),
-                error: error.to_string(),
+                error: error.message.clone(),
             }],
-            CodingAgentEvent::AgentTeamAborted {
+            CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::Aborted {
                 operation_id,
                 team_id,
                 reason,
-            } => vec![ProtocolEvent::AgentTeamAbort {
+            }) => vec![ProtocolEvent::AgentTeamAbort {
                 operation_id: operation_id.clone(),
                 team_id: team_id.as_str().to_string(),
                 reason: reason.clone(),
             }],
-            CodingAgentEvent::SessionOpened { .. }
-            | CodingAgentEvent::SessionWritePending { .. }
-            | CodingAgentEvent::SessionWriteCommitted { .. }
-            | CodingAgentEvent::SessionWriteSkipped { .. }
-            | CodingAgentEvent::PromptStarted { .. }
-            | CodingAgentEvent::Diagnostic { .. } => Vec::new(),
+            CodingAgentProductEventKind::Session(CodingAgentSessionProductEvent::Opened {
+                ..
+            })
+            | CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::WritePending { .. },
+            )
+            | CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::WriteCommitted { .. },
+            )
+            | CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::WriteSkipped { .. },
+            )
+            | CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptStarted { .. },
+            )
+            | CodingAgentProductEventKind::Diagnostic(
+                CodingAgentDiagnosticProductEvent::Diagnostic { .. },
+            ) => Vec::new(),
         }
     }
 
@@ -722,7 +822,7 @@ impl CodingProtocolEventAdapter {
 }
 
 fn protocol_self_healing_replacements(
-    replacements: &[SelfHealingEditReplacement],
+    replacements: &[CodingAgentProductEventReplacement],
 ) -> Vec<ProtocolSelfHealingEditReplacement> {
     replacements
         .iter()
@@ -734,7 +834,7 @@ fn protocol_self_healing_replacements(
 }
 
 fn protocol_self_healing_check_output(
-    output: &SelfHealingEditCheckOutput,
+    output: &CodingAgentProductEventCheckOutput,
 ) -> ProtocolSelfHealingEditCheckOutput {
     ProtocolSelfHealingEditCheckOutput {
         command: output.command.clone(),
@@ -746,7 +846,7 @@ fn protocol_self_healing_check_output(
 
 fn delegation_folded_block(
     tool_call_id: &str,
-    target_kind: ProfileKind,
+    target_kind: CodingAgentProductEventProfileKind,
     target_id: &str,
     task: &str,
     status: &str,
@@ -766,10 +866,23 @@ fn delegation_folded_block(
     }
 }
 
-fn profile_kind_to_protocol(kind: ProfileKind) -> &'static str {
+fn profile_kind_to_protocol(kind: CodingAgentProductEventProfileKind) -> &'static str {
     match kind {
-        ProfileKind::Agent => "agent",
-        ProfileKind::Team => "team",
+        CodingAgentProductEventProfileKind::Agent => "agent",
+        CodingAgentProductEventProfileKind::Team => "team",
+    }
+}
+
+fn capability_revocation_to_protocol(
+    revocation: crate::coding_session::CodingAgentProductEventCapabilityRevocation,
+) -> &'static str {
+    match revocation {
+        crate::coding_session::CodingAgentProductEventCapabilityRevocation::FutureOnly => {
+            "future_only"
+        }
+        crate::coding_session::CodingAgentProductEventCapabilityRevocation::CancelMatchingOperations => {
+            "cancel_matching_operations"
+        }
     }
 }
 
