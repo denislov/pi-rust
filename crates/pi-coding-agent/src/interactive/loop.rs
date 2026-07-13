@@ -2336,8 +2336,9 @@ mod tests {
     use super::*;
     use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
     use crate::coding_session::{
-        CapabilityStatus, CodingAgentCapabilities, CodingAgentEvent, CodingAgentSession,
-        CodingAgentSessionOptions, CodingAgentSessionView, CodingSessionError, ProductEvent,
+        CapabilityStatus, CodingAgentCapabilities, CodingAgentEvent, CodingAgentProductEventKind,
+        CodingAgentSession, CodingAgentSessionOptions, CodingAgentSessionProductEvent,
+        CodingAgentSessionView, CodingAgentWorkflowProductEvent, CodingSessionError, ProductEvent,
         ProductEventSequence, ProfileId, UiSnapshot, UiSnapshotCursor,
     };
     use crate::runtime::SessionRunOptions;
@@ -2894,10 +2895,10 @@ mod tests {
                 event,
                 PromptTaskEvent::Coding(event)
                     if matches!(
-                        event.compatibility_event(),
-                        CodingAgentEvent::PromptFailed { operation_id, error }
+                        event.event(),
+                        CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptFailed { operation_id, error })
                             if operation_id == &partial_commit_operation_id
-                                && error == &expected_error
+                                && error.message == expected_error.to_string()
                     )
             )
         }));
@@ -2989,16 +2990,18 @@ mod tests {
                 event,
                 PromptTaskEvent::Coding(event)
                     if matches!(
-                        event.compatibility_event(),
-                        CodingAgentEvent::SessionOpened { .. }
+                        event.event(),
+                        CodingAgentProductEventKind::Session(CodingAgentSessionProductEvent::Opened { .. })
                     )
             )
         }));
         while let Some(event) = source_receiver.try_recv().unwrap() {
             assert!(
                 !matches!(
-                    event.compatibility_event(),
-                    CodingAgentEvent::SessionOpened { .. }
+                    event.event(),
+                    CodingAgentProductEventKind::Session(
+                        CodingAgentSessionProductEvent::Opened { .. }
+                    )
                 ),
                 "failed fork must not publish a replacement SessionOpened transition"
             );
@@ -3042,9 +3045,9 @@ mod tests {
         let mut observed_profile_change = false;
         while let Some(event) = source_receiver.try_recv().unwrap() {
             if matches!(
-                event.compatibility_event(),
-                CodingAgentEvent::DefaultAgentProfileChanged { profile_id }
-                    if profile_id.as_str() == "reviewer"
+                event.event(),
+                CodingAgentProductEventKind::Profile(crate::coding_session::CodingAgentProfileProductEvent::DefaultChanged { profile_id })
+                    if profile_id == "reviewer"
             ) {
                 observed_profile_change = true;
             }

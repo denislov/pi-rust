@@ -1,5 +1,9 @@
 use crate::coding_session::{
-    CodingAgentEvent, ProductEvent, ProductEventSequence, ProfileKind, UiSnapshot,
+    CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent, CodingAgentEvent,
+    CodingAgentMessageProductEvent, CodingAgentProductEventKind,
+    CodingAgentProductEventProfileKind, CodingAgentRuntimeProductEvent,
+    CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent, ProductEvent,
+    ProductEventSequence, ProfileKind, UiSnapshot,
 };
 use pi_ai::types::Usage;
 
@@ -147,7 +151,7 @@ impl CodingEventBridge {
     }
 
     pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<UiEvent> {
-        self.handle(event.compatibility_event())
+        self.handle_typed(event.event())
     }
 
     #[allow(dead_code)] // retained for bridge unit tests
@@ -472,6 +476,281 @@ impl CodingEventBridge {
             | CodingAgentEvent::PromptCompleted { .. }
             | CodingAgentEvent::Diagnostic { .. }
             | CodingAgentEvent::CapabilityChanged { .. } => Vec::new(),
+        }
+    }
+
+    fn handle_typed(&mut self, event: &CodingAgentProductEventKind) -> Vec<UiEvent> {
+        match event {
+            CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::TurnStarted {
+                ..
+            }) => {
+                vec![UiEvent::TurnStarted]
+            }
+            CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Delta {
+                text,
+                ..
+            }) => {
+                vec![UiEvent::AssistantDelta { text: text.clone() }]
+            }
+            CodingAgentProductEventKind::Message(
+                CodingAgentMessageProductEvent::ThinkingDelta { text, .. },
+            ) => {
+                vec![UiEvent::ThinkingDelta { text: text.clone() }]
+            }
+            CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Completed {
+                usage,
+                ..
+            }) => {
+                let context_tokens = match usage.total_tokens {
+                    0 => None,
+                    tokens => Some(tokens),
+                };
+                vec![
+                    UiEvent::AssistantDone,
+                    UiEvent::UsageUpdate {
+                        input: usage.input,
+                        output: usage.output,
+                        cache_read: usage.cache_read,
+                        cache_write: usage.cache_write,
+                        cost: usage.input_cost
+                            + usage.output_cost
+                            + usage.cache_read_cost
+                            + usage.cache_write_cost,
+                        context_tokens,
+                    },
+                ]
+            }
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Started {
+                tool_call_id,
+                name,
+                arguments_json,
+                ..
+            }) => delegation_block_from_tool_start(tool_call_id, name, arguments_json).map_or_else(
+                || {
+                    vec![UiEvent::ToolStarted {
+                        call_id: tool_call_id.clone(),
+                        name: name.clone(),
+                        args: parse_tool_arguments(arguments_json),
+                    }]
+                },
+                |event| vec![event],
+            ),
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Updated {
+                tool_call_id,
+                message,
+                ..
+            }) => {
+                vec![UiEvent::ToolUpdated {
+                    call_id: tool_call_id.clone(),
+                    result: message.clone(),
+                }]
+            }
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Completed {
+                tool_call_id,
+                name,
+                summary,
+                ..
+            }) => delegation_block_from_tool_result(tool_call_id, name, summary).map_or_else(
+                || {
+                    vec![UiEvent::ToolFinished {
+                        call_id: tool_call_id.clone(),
+                        result: summary.clone(),
+                        is_error: false,
+                    }]
+                },
+                |event| vec![event],
+            ),
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Failed {
+                tool_call_id,
+                name,
+                message,
+                ..
+            }) => {
+                if is_delegation_tool(name) {
+                    vec![UiEvent::DelegationBlock {
+                        call_id: tool_call_id.clone(),
+                        target_kind: delegation_tool_kind_label(name)
+                            .unwrap_or("agent")
+                            .to_string(),
+                        target_id: String::new(),
+                        task: String::new(),
+                        status: "failed".into(),
+                        child_operation_id: None,
+                        summary: Some(format!("failed: {message}")),
+                        is_error: true,
+                    }]
+                } else {
+                    vec![UiEvent::ToolFinished {
+                        call_id: tool_call_id.clone(),
+                        result: message.clone(),
+                        is_error: true,
+                    }]
+                }
+            }
+            CodingAgentProductEventKind::Runtime(
+                CodingAgentRuntimeProductEvent::CompactionCompleted { summary, .. },
+            )
+            | CodingAgentProductEventKind::Session(
+                crate::coding_session::CodingAgentSessionProductEvent::CompactionCompleted {
+                    summary,
+                    ..
+                },
+            ) => vec![
+                UiEvent::CompactionNotice {
+                    summary: summary.clone(),
+                },
+                UiEvent::UsageUpdate {
+                    input: 0,
+                    output: 0,
+                    cache_read: 0,
+                    cache_write: 0,
+                    cost: 0.0,
+                    context_tokens: None,
+                },
+            ],
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptFailed { error, .. },
+            ) => vec![UiEvent::AgentError {
+                error: error.message.clone(),
+            }],
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptAborted { reason, .. },
+            ) => vec![UiEvent::AgentError {
+                error: format!("prompt aborted: {reason}"),
+            }],
+            CodingAgentProductEventKind::Delegation(payload) => {
+                let (ctx, status, summary, child, is_error) = match payload {
+                    CodingAgentDelegationProductEvent::Requested { context } => {
+                        (context, "requested", Some("requested".into()), None, false)
+                    }
+                    CodingAgentDelegationProductEvent::ConfirmationRequired { context, reason } => {
+                        (
+                            context,
+                            "confirmation_required",
+                            Some(format!(
+                                "confirmation required: {reason}\nApprove: /delegation approve {} {}\nReject: /delegation reject {} {} [reason]\nList pending: /delegations",
+                                context.operation_id,
+                                context.tool_call_id,
+                                context.operation_id,
+                                context.tool_call_id
+                            )),
+                            None,
+                            false,
+                        )
+                    }
+                    CodingAgentDelegationProductEvent::Approved { context } => {
+                        (context, "approved", Some("approved".into()), None, false)
+                    }
+                    CodingAgentDelegationProductEvent::Rejected { context, reason } => (
+                        context,
+                        "rejected",
+                        Some(format!("rejected: {reason}")),
+                        None,
+                        true,
+                    ),
+                    CodingAgentDelegationProductEvent::Started {
+                        context,
+                        child_operation_id,
+                    } => (context, "running", None, Some(child_operation_id), false),
+                    CodingAgentDelegationProductEvent::Completed {
+                        context,
+                        child_operation_id,
+                        final_text,
+                    } => (
+                        context,
+                        "completed",
+                        Some(format!("completed: {final_text}")),
+                        Some(child_operation_id),
+                        false,
+                    ),
+                    CodingAgentDelegationProductEvent::Failed {
+                        context,
+                        child_operation_id,
+                        error,
+                    } => (
+                        context,
+                        "failed",
+                        Some(format!("failed: {}", error.message)),
+                        Some(child_operation_id),
+                        true,
+                    ),
+                };
+                vec![UiEvent::DelegationBlock {
+                    call_id: ctx.tool_call_id.clone(),
+                    target_kind: profile_kind_label(match ctx.target_kind {
+                        CodingAgentProductEventProfileKind::Agent => ProfileKind::Agent,
+                        CodingAgentProductEventProfileKind::Team => ProfileKind::Team,
+                    })
+                    .into(),
+                    target_id: ctx.target_id.clone(),
+                    task: ctx.task.clone(),
+                    status: status.into(),
+                    child_operation_id: child.map(|id| id.clone()),
+                    summary,
+                    is_error,
+                }]
+            }
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
+                    path, replacements, ..
+                },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Self-healing edit started for {} ({}).",
+                    path,
+                    replacement_count_label(*replacements)
+                ),
+            }],
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
+                    path,
+                    attempt,
+                    replacements,
+                    check_output,
+                    ..
+                },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Self-healing edit repair attempt {} for {}: {}, {}.",
+                    attempt,
+                    path,
+                    replacement_count_label(replacements.len()),
+                    check_output
+                        .as_ref()
+                        .map(|o| format!("check exit {}", o.exit_code))
+                        .unwrap_or_else(|| "no check output".into())
+                ),
+            }],
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
+                    path,
+                    attempts,
+                    first_changed_line,
+                    ..
+                },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Self-healing edit completed for {} after {}{}.",
+                    path,
+                    attempt_count_label(*attempts),
+                    first_changed_line_label(*first_changed_line)
+                ),
+            }],
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditFailed { path, error, .. },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!("Self-healing edit failed for {}: {}", path, error.message),
+            }],
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecovered {
+                    operation_id,
+                    reason,
+                    ..
+                },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!("Recovered incomplete operation {operation_id}: {reason}"),
+            }],
+            _ => Vec::new(),
         }
     }
 }
