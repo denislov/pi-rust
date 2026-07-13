@@ -1,4 +1,4 @@
-use crate::coding_session::ProductEvent;
+use crate::coding_session::{CodingAgentProductEvent, ProductEvent};
 use crate::protocol::events::CodingProtocolEventAdapter;
 use crate::protocol::types::ProtocolEvent;
 
@@ -15,6 +15,13 @@ impl RpcCodingEventAdapter {
 
     pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<ProtocolEvent> {
         self.inner.push_internal_product_event(event)
+    }
+
+    pub(crate) fn push_public_product_event(
+        &mut self,
+        event: &CodingAgentProductEvent,
+    ) -> Vec<ProtocolEvent> {
+        self.inner.push_product_event(event)
     }
 }
 

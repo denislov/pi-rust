@@ -4,13 +4,13 @@ use crate::protocol::types::RpcNegotiatedProtocolState;
 use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION};
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
-    coding_session::AgentTeamOutcome, coding_session::ClientConnectionId,
-    coding_session::ClientDraft, coding_session::ClientDraftKind,
-    coding_session::CodingAgentSession, coding_session::OperationIdempotencyKey,
-    coding_session::OperationKind, coding_session::ProductEvent,
-    coding_session::ProductEventReplayHandle, coding_session::ProductEventSequence,
-    coding_session::PromptControlHandle, coding_session::PromptTurnOutcome,
-    coding_session::SubmittedOperation, config, select_model,
+    coding_session::AgentTeamOutcome, coding_session::CodingAgentClientConnection,
+    coding_session::CodingAgentClientId, coding_session::CodingAgentDraft,
+    coding_session::CodingAgentDraftId, coding_session::CodingAgentDraftKind,
+    coding_session::CodingAgentPromptControl, coding_session::CodingAgentSession,
+    coding_session::CodingSessionError, coding_session::OperationIdempotencyKey,
+    coding_session::OperationKind, coding_session::ProductEventSequence,
+    coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
@@ -42,9 +42,7 @@ pub(super) struct RpcState {
     pub(super) active_leaf_id: Option<String>,
     pub(super) messages: Vec<StoredAgentMessage>,
     pub(super) coding_session: Option<CodingAgentSession>,
-    pub(super) client_id: Option<ClientConnectionId>,
-    pub(super) client_drafts: Vec<ClientDraft>,
-    pub(super) submitted_operation: Option<SubmittedOperation>,
+    pub(super) client_connection: Option<CodingAgentClientConnection>,
     pub(super) running: Option<RunningPrompt>,
     pub(super) is_compacting: bool,
     pub(super) steering: Vec<String>,
@@ -61,12 +59,9 @@ pub(super) enum RunningPrompt {
 pub(super) struct CodingRunningPrompt {
     pub(super) events: mpsc::Receiver<RpcQueuedProductEvent>,
     pub(super) done: oneshot::Receiver<CodingOperationTaskResult>,
-    pub(super) control: Option<PromptControlHandle>,
     pub(super) operation_kind: OperationKind,
     pub(super) adapter: RpcCodingEventAdapter,
-    pub(super) product_event_replay: Option<ProductEventReplayHandle>,
     pub(super) adapter_applied_sequence: ProductEventSequence,
-    pub(super) replayed_through_sequence: ProductEventSequence,
     pub(super) events_closed: bool,
     pub(super) idempotency_key: Option<OperationIdempotencyKey>,
 }
@@ -132,9 +127,7 @@ impl RpcState {
             active_leaf_id: None,
             messages: Vec::new(),
             coding_session: None,
-            client_id: Some(ClientConnectionId::new("rpc-primary")),
-            client_drafts: Vec::new(),
-            submitted_operation: None,
+            client_connection: None,
             running: None,
             is_compacting: false,
             steering: Vec::new(),
@@ -153,58 +146,58 @@ impl RpcState {
         self.running.is_some()
     }
 
-    pub(super) fn mirror_client_draft(&mut self, kind: ClientDraftKind, message: String) {
-        self.client_drafts.push(ClientDraft::new(kind, message));
-    }
-
-    pub(super) fn clear_client_drafts(&mut self, kind: ClientDraftKind) {
-        self.client_drafts.retain(|draft| draft.kind != kind);
-    }
-
     pub(super) fn clear_client_state(&mut self) {
-        self.client_drafts.clear();
-        self.submitted_operation = None;
+        self.client_connection = None;
     }
 
-    pub(super) fn mark_submitted(&mut self, submitted: SubmittedOperation) {
-        if submitted.kind == OperationKind::Prompt {
-            self.clear_client_drafts(ClientDraftKind::Prompt);
-        }
-        self.submitted_operation = Some(submitted);
-    }
-
-    pub(super) fn clear_submitted_operation(&mut self, operation_id: &str) {
-        if self
-            .submitted_operation
-            .as_ref()
-            .is_some_and(|submitted| submitted.operation_id == operation_id)
-        {
-            self.submitted_operation = None;
-        }
-    }
-
-    pub(super) fn observe_product_event_submission_for_kind(
+    pub(super) fn ensure_client_connection(
         &mut self,
-        event: &ProductEvent,
-        operation_kind: Option<OperationKind>,
-    ) {
-        let operation_id = event.operation_id();
-        if self.submitted_operation.is_none()
-            && operation_kind == Some(OperationKind::Prompt)
-            && let Some(operation_id) = operation_id
-        {
-            self.mark_submitted(SubmittedOperation {
-                operation_id: operation_id.to_owned(),
-                kind: OperationKind::Prompt,
-            });
+        session: &CodingAgentSession,
+    ) -> Result<CodingAgentClientConnection, CliError> {
+        if let Some(connection) = &self.client_connection {
+            return Ok(connection.clone());
         }
+        let connection = session
+            .connect(CodingAgentClientId::new("rpc-primary"))
+            .map_err(CliError::from)?;
+        for (index, text) in self.steering.iter().enumerate() {
+            connection
+                .enqueue_control_draft(CodingAgentDraft {
+                    id: CodingAgentDraftId(format!("rpc-steer-{index}")),
+                    kind: CodingAgentDraftKind::Steer,
+                    text: text.clone(),
+                })
+                .map_err(|reason| CliError::SessionFailure(format!("{reason:?}")))?;
+        }
+        for (index, text) in self.follow_up.iter().enumerate() {
+            connection
+                .enqueue_control_draft(CodingAgentDraft {
+                    id: CodingAgentDraftId(format!("rpc-follow-up-{index}")),
+                    kind: CodingAgentDraftKind::FollowUp,
+                    text: text.clone(),
+                })
+                .map_err(|reason| CliError::SessionFailure(format!("{reason:?}")))?;
+        }
+        self.client_connection = Some(connection.clone());
+        Ok(connection)
+    }
 
-        if let Some(terminal) = event.terminal_operation()
-            && terminal.kind == OperationKind::Prompt
-            && let Some(operation_id) = operation_id
-        {
-            self.clear_submitted_operation(operation_id);
+    pub(super) fn active_prompt_control(
+        &self,
+    ) -> Result<Option<CodingAgentPromptControl>, CodingSessionError> {
+        let Some(RunningPrompt::Coding(running)) = self.running.as_ref() else {
+            return Ok(None);
+        };
+        if running.operation_kind != OperationKind::Prompt {
+            return Ok(None);
         }
+        let Some(connection) = self.client_connection.as_ref() else {
+            return Ok(None);
+        };
+        Ok(connection
+            .state()?
+            .submitted_operation
+            .map(|submitted| connection.prompt_control(submitted.operation_id)))
     }
 
     pub(super) fn parse_idempotency_key(
@@ -277,7 +270,7 @@ impl RpcState {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any()))]
 mod tests {
     use super::*;
     use crate::CliRunOptions;

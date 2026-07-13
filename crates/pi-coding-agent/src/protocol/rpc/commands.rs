@@ -1,13 +1,13 @@
 use crate::CliError;
 use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome};
 use crate::coding_session::{
-    AgentProfile, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    DelegationConfirmationMode, DelegationPolicy, OperationKind, PendingDelegationConfirmation,
-    ProductEventReceiver, ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind,
-    ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
-    SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
-    SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
-    TeamStrategy, TeamSupervisor,
+    AgentProfile, CodingAgentControlId, CodingAgentSession, CodingAgentSessionOptions,
+    CodingSessionError, DelegationConfirmationMode, DelegationPolicy, OperationKind,
+    PendingDelegationConfirmation, ProductEventReceiver, ProductEventSequence, ProfileDiagnostic,
+    ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
+    SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
+    SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
+    SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
@@ -119,7 +119,7 @@ impl RpcState {
                     return Ok(());
                 }
                 if let Some(RunningPrompt::Coding(running)) = self.running.as_ref() {
-                    let Some(control) = running.control.as_ref() else {
+                    if running.operation_kind != OperationKind::Prompt {
                         write_rpc_response(
                             writer,
                             RpcResponse::error(
@@ -133,16 +133,29 @@ impl RpcState {
                         )
                         .await?;
                         return Ok(());
+                    }
+                    let Some(control) = self.active_prompt_control()? else {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(id, "steer", "agent is not streaming"),
+                        )
+                        .await?;
+                        return Ok(());
                     };
-                    match control.steer(message) {
-                        Ok(()) => {
+                    match control.steer(
+                        CodingAgentControlId(
+                            id.clone().unwrap_or_else(|| format!("rpc-steer-{message}")),
+                        ),
+                        message,
+                    ) {
+                        Ok(_) => {
                             write_rpc_response(writer, RpcResponse::success(id, "steer", None))
                                 .await?
                         }
                         Err(error) => {
                             write_rpc_response(
                                 writer,
-                                RpcResponse::error(id, "steer", error.to_string()),
+                                RpcResponse::error(id, "steer", format!("{:?}", error.reason)),
                             )
                             .await?
                         }
@@ -171,7 +184,7 @@ impl RpcState {
                     return Ok(());
                 }
                 if let Some(RunningPrompt::Coding(running)) = self.running.as_ref() {
-                    let Some(control) = running.control.as_ref() else {
+                    if running.operation_kind != OperationKind::Prompt {
                         write_rpc_response(
                             writer,
                             RpcResponse::error(
@@ -185,16 +198,30 @@ impl RpcState {
                         )
                         .await?;
                         return Ok(());
+                    }
+                    let Some(control) = self.active_prompt_control()? else {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(id, "follow_up", "agent is not streaming"),
+                        )
+                        .await?;
+                        return Ok(());
                     };
-                    match control.follow_up(message) {
-                        Ok(()) => {
+                    match control.follow_up(
+                        CodingAgentControlId(
+                            id.clone()
+                                .unwrap_or_else(|| format!("rpc-follow-up-{message}")),
+                        ),
+                        message,
+                    ) {
+                        Ok(_) => {
                             write_rpc_response(writer, RpcResponse::success(id, "follow_up", None))
                                 .await?
                         }
                         Err(error) => {
                             write_rpc_response(
                                 writer,
-                                RpcResponse::error(id, "follow_up", error.to_string()),
+                                RpcResponse::error(id, "follow_up", format!("{:?}", error.reason)),
                             )
                             .await?
                         }
@@ -208,7 +235,7 @@ impl RpcState {
             RpcCommand::Abort { id } => {
                 let cancelled = if let Some(RunningPrompt::Coding(running)) = self.running.as_ref()
                 {
-                    let Some(control) = running.control.as_ref() else {
+                    if running.operation_kind != OperationKind::Prompt {
                         write_rpc_response(
                             writer,
                             RpcResponse::error(
@@ -222,13 +249,24 @@ impl RpcState {
                         )
                         .await?;
                         return Ok(());
+                    }
+                    let Some(control) = self.active_prompt_control()? else {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(id, "abort", "agent is not streaming"),
+                        )
+                        .await?;
+                        return Ok(());
                     };
-                    match control.abort("rpc abort requested") {
-                        Ok(()) => true,
+                    match control.abort(
+                        CodingAgentControlId(id.clone().unwrap_or_else(|| "rpc-abort".into())),
+                        "rpc abort requested",
+                    ) {
+                        Ok(_) => true,
                         Err(error) => {
                             write_rpc_response(
                                 writer,
-                                RpcResponse::error(id, "abort", error.to_string()),
+                                RpcResponse::error(id, "abort", format!("{:?}", error.reason)),
                             )
                             .await?;
                             return Ok(());

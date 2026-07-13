@@ -24,7 +24,10 @@ impl RpcState {
                 .as_ref()
                 .map(|path| path.display().to_string()),
             session_id: projection.session_id,
-            client_id: self.client_id.as_ref().map(|id| id.as_str().to_owned()),
+            client_id: self
+                .client_connection
+                .as_ref()
+                .map(|connection| connection.client_id.as_str().to_owned()),
             snapshot_sequence: projection.snapshot_sequence,
             capability_generation: projection.capability_generation,
             snapshot_version: projection.snapshot_version,
@@ -38,17 +41,36 @@ impl RpcState {
     }
 
     fn session_projection(&self) -> RpcSessionProjection {
-        if let Some(session) = self.coding_session.as_ref() {
-            let snapshot = session.ui_snapshot(self.client_drafts.clone());
+        if let Some(connection) = self.client_connection.as_ref()
+            && let Ok(snapshot) = connection.state()
+        {
             return RpcSessionProjection {
                 session_id: self
                     .active_leaf_id
                     .clone()
                     .unwrap_or(snapshot.session.session_id),
-                pending_message_count: snapshot.client_drafts.len(),
+                pending_message_count: snapshot.drafts.len(),
+                capabilities: if self.is_streaming() {
+                    self.capabilities().into()
+                } else {
+                    snapshot.capabilities.into()
+                },
+                snapshot_sequence: snapshot.cursor.last_event_sequence,
+                capability_generation: snapshot.cursor.capability_generation,
+                snapshot_version: snapshot.version,
+            };
+        }
+        if let Some(session) = self.coding_session.as_ref() {
+            let snapshot = session.snapshot();
+            return RpcSessionProjection {
+                session_id: self
+                    .active_leaf_id
+                    .clone()
+                    .unwrap_or(snapshot.session.session_id),
+                pending_message_count: snapshot.drafts.len(),
                 capabilities: snapshot.capabilities.into(),
-                snapshot_sequence: snapshot.cursor.last_event_sequence.get(),
-                capability_generation: snapshot.cursor.capability_generation.get(),
+                snapshot_sequence: snapshot.cursor.last_event_sequence,
+                capability_generation: snapshot.cursor.capability_generation,
                 snapshot_version: snapshot.version,
             };
         }
@@ -172,8 +194,8 @@ mod tests {
     use super::*;
     use crate::CliRunOptions;
     use crate::coding_session::{
-        ClientConnectionId, ClientDraft, ClientDraftKind, CodingAgentSession,
-        CodingAgentSessionOptions,
+        CodingAgentClientId, CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind,
+        CodingAgentSession, CodingAgentSessionOptions,
     };
 
     fn serialized_session_state(state: &RpcState) -> Value {
@@ -186,8 +208,12 @@ mod tests {
             .await
             .unwrap();
         let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        state.client_connection = Some(
+            session
+                .connect(CodingAgentClientId::new("rpc-primary"))
+                .unwrap(),
+        );
         state.coding_session = Some(session);
-        state.client_id = Some(ClientConnectionId::new("rpc-primary"));
 
         let value = serialized_session_state(&state);
 
@@ -206,11 +232,21 @@ mod tests {
             .await
             .unwrap();
         let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        let connection = session
+            .connect(CodingAgentClientId::new("rpc-primary"))
+            .unwrap();
+        connection
+            .set_prompt_draft(CodingAgentDraftId("draft-one".into()), "draft one")
+            .unwrap();
+        connection
+            .enqueue_control_draft(CodingAgentDraft {
+                id: CodingAgentDraftId("draft-two".into()),
+                kind: CodingAgentDraftKind::FollowUp,
+                text: "draft two".into(),
+            })
+            .unwrap();
+        state.client_connection = Some(connection);
         state.coding_session = Some(session);
-        state.client_drafts = vec![
-            ClientDraft::new(ClientDraftKind::Prompt, "draft one"),
-            ClientDraft::new(ClientDraftKind::FollowUp, "draft two"),
-        ];
         state.steering = vec!["steer one".into(), "steer two".into()];
         state.follow_up = vec!["follow up".into()];
 
