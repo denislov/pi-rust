@@ -26,7 +26,6 @@ const EVENT_RETAINED_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone)]
 pub(crate) struct EventService {
-    sender: broadcast::Sender<CodingAgentEvent>,
     product_sender: broadcast::Sender<ProductEvent>,
     publication_state: Arc<Mutex<EventPublicationState>>,
     channel_capacity: usize,
@@ -88,10 +87,8 @@ impl EventService {
 
     fn with_event_capacities(channel_capacity: usize, retained_capacity: usize) -> Self {
         let channel_capacity = channel_capacity.max(1);
-        let (sender, _) = broadcast::channel(channel_capacity);
         let (product_sender, _) = broadcast::channel(channel_capacity);
         Self {
-            sender,
             product_sender,
             publication_state: Arc::new(Mutex::new(EventPublicationState {
                 next_sequence: 1,
@@ -178,9 +175,6 @@ impl EventService {
         let product_event = ProductEvent::from_compat_event(sequence, event);
         self.retain_product_event(&mut state, product_event.clone());
         let _ = self.product_sender.send(product_event.clone());
-        let _ = self
-            .sender
-            .send(product_event.compatibility_event().clone());
         product_event
     }
 
@@ -711,13 +705,6 @@ impl EventService {
         })
     }
 
-    #[deprecated(note = "use ProductEventReceiver instead")]
-    pub(crate) fn subscribe(&self) -> CodingAgentEventReceiver {
-        CodingAgentEventReceiver {
-            inner: self.sender.subscribe(),
-        }
-    }
-
     pub(crate) fn subscribe_product_events(&self) -> ProductEventReceiver {
         ProductEventReceiver {
             inner: self.product_sender.subscribe(),
@@ -1006,28 +993,6 @@ impl ProductEventReceiver {
     }
 }
 
-#[derive(Debug)]
-pub struct CodingAgentEventReceiver {
-    inner: broadcast::Receiver<CodingAgentEvent>,
-}
-
-impl CodingAgentEventReceiver {
-    pub async fn recv(&mut self) -> Result<CodingAgentEvent, CodingSessionError> {
-        self.inner.recv().await.map_err(map_recv_error)
-    }
-
-    pub fn try_recv(&mut self) -> Result<Option<CodingAgentEvent>, CodingSessionError> {
-        match self.inner.try_recv() {
-            Ok(event) => Ok(Some(event)),
-            Err(broadcast::error::TryRecvError::Empty) => Ok(None),
-            Err(broadcast::error::TryRecvError::Closed) => Err(CodingSessionError::Cancelled),
-            Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
-                Err(CodingSessionError::EventStreamLag { skipped })
-            }
-        }
-    }
-}
-
 fn map_recv_error(error: broadcast::error::RecvError) -> CodingSessionError {
     match error {
         broadcast::error::RecvError::Closed => CodingSessionError::Cancelled,
@@ -1038,7 +1003,6 @@ fn map_recv_error(error: broadcast::error::RecvError) -> CodingSessionError {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use pi_agent_core::{AgentEvent, AgentToolOutput, AgentToolResult, ProviderRequestSnapshot};
     use pi_ai::types::{
@@ -1130,7 +1094,7 @@ mod tests {
     }
 
     #[test]
-    fn event_service_wraps_emitted_events_with_sequence_and_preserves_compatibility_receiver() {
+    fn event_service_wraps_emitted_events_with_sequence_and_typed_payloads() {
         let service = EventService::new();
         let mut receiver = service.subscribe_product_events();
 
@@ -1185,10 +1149,10 @@ mod tests {
     }
 
     #[test]
-    fn event_service_publishes_internal_product_events_alongside_compatibility_stream() {
+    fn event_service_publishes_one_typed_product_event_stream() {
         let service = EventService::new();
         let mut product_receiver = service.subscribe_product_events();
-        let mut compatibility_receiver = service.subscribe_product_events();
+        let mut second_product_receiver = service.subscribe_product_events();
 
         let emitted = service.emit(CodingAgentEvent::PromptCompleted {
             operation_id: "op_1".into(),
@@ -1211,7 +1175,7 @@ mod tests {
             Some(ProductEventTerminalStatus::Completed)
         );
         assert!(matches!(
-            compatibility_receiver
+            second_product_receiver
                 .try_recv()
                 .unwrap()
                 .as_ref()

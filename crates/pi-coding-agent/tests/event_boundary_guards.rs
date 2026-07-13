@@ -518,10 +518,7 @@ fn first_party_code_does_not_consume_compatibility_event_subscription() {
         "crates/pi-coding-agent/tests",
     ];
     let repo_root = workspace_path("");
-    let allowed = [
-        "crates/pi-coding-agent/tests/public_api.rs",
-        "crates/pi-coding-agent/tests/event_boundary_guards.rs",
-    ];
+    let allowed = ["crates/pi-coding-agent/tests/event_boundary_guards.rs"];
     let mut violations = Vec::new();
 
     for root in scan_roots {
@@ -542,7 +539,7 @@ fn first_party_code_does_not_consume_compatibility_event_subscription() {
 }
 
 #[test]
-fn compatibility_subscribe_is_not_a_stable_runtime_path() {
+fn legacy_receiver_and_duplicate_broadcast_are_absent() {
     let owner_source = std::fs::read_to_string(workspace_path(
         "crates/pi-coding-agent/src/coding_session/mod.rs",
     ))
@@ -552,17 +549,39 @@ fn compatibility_subscribe_is_not_a_stable_runtime_path() {
     ))
     .expect("read event service");
 
-    assert!(
-        owner_source
-            .contains("#[deprecated(note = \"use subscribe_product_events_public instead\")]")
-            || owner_source.contains("#[cfg(test)]\n    pub fn subscribe("),
-        "CodingAgentSession::subscribe compatibility path should be deprecated or test-gated"
-    );
-    assert!(
-        event_service_source.contains("#[deprecated(note = \"use ProductEventReceiver instead\")]")
-            || event_service_source.contains("#[cfg(test)]\n    pub(crate) fn subscribe("),
-        "EventService compatibility CodingAgentEvent subscribe path should be deprecated or test-gated"
-    );
+    let owner_forbidden = [
+        "pub use event_service::CodingAgentEventReceiver",
+        "pub fn subscribe(&self) -> CodingAgentEventReceiver",
+        "use subscribe_product_events_public instead",
+        "#[allow(deprecated)]\n    pub fn subscribe(",
+    ];
+    let event_service_forbidden = [
+        "struct CodingAgentEventReceiver",
+        "impl CodingAgentEventReceiver",
+        "pub(crate) fn subscribe(&self)",
+        "Sender<CodingAgentEvent>",
+        ".sender\n            .send(",
+        "use ProductEventReceiver instead",
+        "#[allow(deprecated)]\nmod tests",
+    ];
+
+    for forbidden in owner_forbidden {
+        assert!(
+            !owner_source.contains(forbidden),
+            "coding session owner reintroduced legacy receiver/subscription fragment: {forbidden}"
+        );
+    }
+    for forbidden in event_service_forbidden {
+        assert!(
+            !event_service_source.contains(forbidden),
+            "EventService reintroduced legacy receiver/duplicate broadcast fragment: {forbidden}"
+        );
+    }
+
+    assert!(owner_source.contains("pub fn subscribe_product_events_public(&self)"));
+    assert!(event_service_source.contains("broadcast::Sender<ProductEvent>"));
+    assert!(event_service_source.contains("self.product_sender.send(product_event.clone())"));
+    assert!(event_service_source.contains("retained_product_events.push_back(event)"));
 }
 
 fn collect_source_violations(

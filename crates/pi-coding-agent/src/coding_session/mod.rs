@@ -55,7 +55,6 @@ pub use error::CodingSessionError;
 pub use event::CodingAgentEvent;
 #[allow(unused_imports)]
 pub(crate) use event::{ProductEvent, ProductEventSequence};
-pub use event_service::CodingAgentEventReceiver;
 pub(crate) use event_service::ProductEventReceiver;
 pub use export::{CodingAgentSessionExport, CodingAgentSessionExportItem};
 pub(crate) use plugin_load_flow::PluginLoadOutcome;
@@ -387,14 +386,6 @@ impl CodingAgentSession {
             }
             SessionPersistence::NonPersistent(_) => Ok(None),
         }
-    }
-
-    #[deprecated(note = "use subscribe_product_events_public instead")]
-    #[allow(deprecated)]
-    pub fn subscribe(&self) -> CodingAgentEventReceiver {
-        let receiver = self.event_service.subscribe();
-        self.emit_pending_startup_recovery_markers();
-        receiver
     }
 
     pub(crate) fn subscribe_product_events(&self) -> ProductEventReceiver {
@@ -1652,7 +1643,6 @@ fn apply_finalized_session_write(
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use std::{
         fs,
