@@ -11,8 +11,18 @@ use pi_coding_agent::api::{
     CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput, CliRunOptions,
     CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId, CodingAgentEvent,
     CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginDiagnostic,
-    CodingAgentPluginLoadOutcome, CodingAgentProductEvent, CodingAgentProductEventReceiver,
-    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
+    CodingAgentPluginLoadOutcome, CodingAgentProductEvent, CodingAgentProductEventCapabilityRevocation,
+    CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
+    CodingAgentProductEventDurability, CodingAgentProductEventError, CodingAgentProductEventFamily,
+    CodingAgentProductEventKind, CodingAgentProductEventProfileKind, CodingAgentProductEventReceiver,
+    CodingAgentProductEventReplacement, CodingAgentProductEventTerminalOperation,
+    CodingAgentProductEventTerminalOperationKind, CodingAgentProductEventTerminalStatus,
+    CodingAgentProductEventUsage, CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
+    CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,
+    CodingAgentDiagnosticProductEvent, CodingAgentMessageProductEvent,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent,
+    CodingAgentSessionProductEvent, CodingAgentTeamProductEvent, CodingAgentToolProductEvent,
+    CodingAgentWorkflowProductEvent, CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
     CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic, CodingDiagnosticSeverity,
     CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
@@ -391,6 +401,11 @@ async fn coding_session_snapshot_public_facade_is_importable() {
 fn coding_session_product_event_subscription_public_facade_is_importable() {
     let _event_type_name = std::any::type_name::<CodingAgentProductEvent>();
     let _receiver_type_name = std::any::type_name::<CodingAgentProductEventReceiver>();
+}
+
+#[allow(dead_code)]
+fn typed_product_event_family(event: &CodingAgentProductEvent) -> CodingAgentProductEventFamily {
+    event.family()
 }
 
 #[test]
