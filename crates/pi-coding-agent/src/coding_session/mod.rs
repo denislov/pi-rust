@@ -152,8 +152,6 @@ use std::sync::{Arc, Mutex};
 use crate::plugins::{
     CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
 };
-use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
-
 #[derive(Debug)]
 pub struct CodingAgentSession {
     persistence: SessionPersistence,
@@ -418,6 +416,9 @@ impl CodingAgentSession {
             let mut markers = self.startup_recovery_markers.lock().unwrap();
             std::mem::take(&mut *markers)
         };
+        if !markers.is_empty() {
+            self.snapshot_coordinator.mark_recovery_projected();
+        }
         for marker in markers {
             self.event_service.emit_operation_recovered(
                 marker.operation_id,
@@ -433,7 +434,8 @@ impl CodingAgentSession {
     }
 
     pub fn snapshot(&self) -> CodingAgentSnapshot {
-        self.ui_snapshot(Vec::new()).into()
+        self.emit_pending_startup_recovery_markers();
+        self.snapshot_coordinator.snapshot().into()
     }
 
     pub fn connect(&self, id: CodingAgentClientId) -> CodingAgentClientConnection {
@@ -446,17 +448,9 @@ impl CodingAgentSession {
     pub(crate) fn ui_snapshot(&self, client_drafts: Vec<ClientDraft>) -> UiSnapshot {
         self.emit_pending_startup_recovery_markers();
         IntentRouter::admit_query(&self.operation_control, QueryIntent::SessionView);
-        UiSnapshot::new(
-            UiSnapshotCursor {
-                last_event_sequence: self.event_service.current_product_sequence(),
-                capability_generation: self.capability_snapshots.current_generation(),
-            },
-            UI_SNAPSHOT_PROTOCOL_VERSION,
-            self.view(),
-            self.capabilities(),
-            self.operation_control.active(),
-            client_drafts,
-        )
+        let mut snapshot = self.snapshot_coordinator.snapshot();
+        snapshot.client_drafts = client_drafts;
+        snapshot
     }
 
     #[allow(dead_code)]
@@ -465,9 +459,36 @@ impl CodingAgentSession {
         id: ClientConnectionId,
         client_drafts: Vec<ClientDraft>,
     ) -> (ClientConnection, UiSnapshot) {
-        let snapshot = self.ui_snapshot(client_drafts);
+        self.emit_pending_startup_recovery_markers();
+        let handle = self.client_service.connect_or_takeover(id.clone()).unwrap();
+        for (index, draft) in client_drafts.into_iter().enumerate() {
+            let record = snapshot_coordinator::DraftRecord {
+                id: format!("legacy-{index}"),
+                kind: draft.kind,
+                text: draft.text,
+            };
+            match record.kind {
+                ClientDraftKind::Prompt => self
+                    .client_service
+                    .set_prompt_draft(&handle, Some(record))
+                    .unwrap(),
+                ClientDraftKind::Steer | ClientDraftKind::FollowUp => self
+                    .client_service
+                    .enqueue_control_draft(&handle, record)
+                    .unwrap(),
+            }
+        }
+        let snapshot = self.client_service.client_snapshot(&handle).unwrap();
         let connection = ClientConnection::new(id, snapshot.clone());
         (connection, snapshot)
+    }
+
+    fn refresh_snapshot_projection(&self) {
+        let session = self.view();
+        let capabilities = self.capabilities();
+        let generation = self.capability_snapshots.current_generation();
+        self.snapshot_coordinator
+            .install_projection(session, capabilities, generation);
     }
 
     #[allow(dead_code)]
@@ -615,7 +636,6 @@ impl CodingAgentSession {
         let replay_state = replay_derived_owner_state(&mut session_service)?;
         let snapshot_coordinator = SnapshotCoordinator::new();
         let event_service = EventService::with_snapshot_coordinator(snapshot_coordinator.clone());
-        event_service.emit_session_opened(session_service.session_id().to_owned());
         let client_service = ClientService::new(snapshot_coordinator.clone());
 
         let session = Self {
@@ -628,19 +648,26 @@ impl CodingAgentSession {
             plugin_load_service: PluginLoadService::new(),
             profile_registry,
             default_plugin_load_options,
-            operation_control: OperationControl::new(),
+            operation_control: OperationControl::with_snapshot_coordinator(
+                snapshot_coordinator.clone(),
+            ),
             pending_delegation_confirmations: replay_state.pending_delegation_confirmations,
             branch_summary_service: BranchSummaryService::new(),
             delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
-            capability_snapshots: CapabilitySnapshotService::new(),
+            capability_snapshots: CapabilitySnapshotService::with_snapshot_coordinator(
+                snapshot_coordinator.clone(),
+            ),
             snapshot_coordinator,
             client_service,
             startup_recovery_markers: Mutex::new(replay_state.startup_recovery_markers),
         };
-
+        session.refresh_snapshot_projection();
+        session
+            .event_service
+            .emit_session_opened(session.view().session_id);
         Ok(session)
     }
 
@@ -651,7 +678,7 @@ impl CodingAgentSession {
     ) -> Result<Self, CodingSessionError> {
         let snapshot_coordinator = SnapshotCoordinator::new();
         let client_service = ClientService::new(snapshot_coordinator.clone());
-        Ok(Self {
+        let session = Self {
             persistence: SessionPersistence::NonPersistent(state),
             runtime_service: RuntimeService::new(),
             flow_service: FlowService::new(),
@@ -661,18 +688,24 @@ impl CodingAgentSession {
             plugin_load_service: PluginLoadService::new(),
             profile_registry,
             default_plugin_load_options,
-            operation_control: OperationControl::new(),
+            operation_control: OperationControl::with_snapshot_coordinator(
+                snapshot_coordinator.clone(),
+            ),
             pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
             branch_summary_service: BranchSummaryService::new(),
             delegation_confirmation_service: DelegationConfirmationService::new(),
             delegation_execution_service: DelegationExecutionService::new(),
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
-            capability_snapshots: CapabilitySnapshotService::new(),
+            capability_snapshots: CapabilitySnapshotService::with_snapshot_coordinator(
+                snapshot_coordinator.clone(),
+            ),
             snapshot_coordinator,
             client_service,
             startup_recovery_markers: Mutex::new(Vec::new()),
-        })
+        };
+        session.refresh_snapshot_projection();
+        Ok(session)
     }
 
     fn run_sync_operation(
@@ -768,6 +801,7 @@ impl CodingAgentSession {
                     replay_state.pending_delegation_confirmations;
                 *self.startup_recovery_markers.lock().unwrap() =
                     replay_state.startup_recovery_markers;
+                self.refresh_snapshot_projection();
                 self.event_service.emit_session_opened(forked_session_id);
                 Ok(OperationOutcome::ForkSession)
             }
@@ -783,6 +817,7 @@ impl CodingAgentSession {
                     &target_leaf_id,
                     &operation_permit.capability_snapshot().operation_id,
                 )?;
+                self.refresh_snapshot_projection();
                 Ok(OperationOutcome::SwitchActiveLeaf)
             }
             Operation::SetDefaultAgentProfile { profile_id } => {
@@ -799,6 +834,7 @@ impl CodingAgentSession {
                 let installed = self
                     .capability_snapshots
                     .install_next_generation(CapabilityRevocationPolicy::FutureOnly);
+                self.refresh_snapshot_projection();
                 self.event_service.emit_capability_changed(installed);
                 Ok(OperationOutcome::SetDefaultAgentProfile)
             }
@@ -1215,6 +1251,7 @@ impl CodingAgentSession {
             let installed = self
                 .capability_snapshots
                 .install_next_generation(CapabilityRevocationPolicy::FutureOnly);
+            self.refresh_snapshot_projection();
             self.event_service.emit_capability_changed(installed);
         }
         Ok(execution.outcome)

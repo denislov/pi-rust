@@ -1,6 +1,7 @@
 mod support;
 
 use std::collections::HashMap;
+use std::fs;
 
 use pi_agent_core::AgentResources;
 use pi_ai::providers::faux::FauxProvider;
@@ -395,6 +396,62 @@ async fn coding_session_snapshot_public_facade_is_importable() {
     let connected: CodingAgentClientConnection = session.connect(client_id.clone());
     assert_eq!(connected.client_id, client_id);
     assert_eq!(connected.snapshot.session.session_id, session_id);
+}
+
+#[test]
+fn snapshot_topology_has_one_registry_and_zero_authority_client_facade() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
+    let coordinator = fs::read_to_string(source_root.join("snapshot_coordinator.rs")).unwrap();
+    let client_service = fs::read_to_string(source_root.join("client_service.rs")).unwrap();
+    let event_service = fs::read_to_string(source_root.join("event_service.rs")).unwrap();
+
+    assert_eq!(coordinator.matches("clients: HashMap<").count(), 1);
+    assert!(coordinator.contains("pub(crate) struct SnapshotState"));
+    assert!(coordinator.contains("retained_product_events: VecDeque<ProductEvent>"));
+    assert!(coordinator.contains("pub(crate) projection: Option<SnapshotProjection>"));
+    assert!(client_service.contains("coordinator: Arc<SnapshotCoordinator>"));
+    assert!(!client_service.contains("HashMap<"));
+    assert!(!client_service.contains("Mutex<"));
+    assert!(!event_service.contains("EventPublicationState"));
+    assert!(!event_service.contains("publication_state"));
+}
+
+#[tokio::test]
+async fn snapshot_writers_finish_without_deadlock_and_publish_coherent_revisions() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
+    let owner = fs::read_to_string(source_root.join("mod.rs")).unwrap();
+    let operation_control = fs::read_to_string(source_root.join("operation_control.rs")).unwrap();
+    let event_service = fs::read_to_string(source_root.join("event_service.rs")).unwrap();
+
+    assert!(owner.contains("std::mem::take(&mut *markers)"));
+    assert!(owner.contains("self.refresh_snapshot_projection();"));
+    assert!(operation_control.contains("drop(active);"));
+    assert!(operation_control.contains("set_active_operation(None)"));
+    let drop_before_send = event_service.find("drop(state);").unwrap();
+    let broadcast_send = event_service.find("self.product_sender.send").unwrap();
+    assert!(drop_before_send < broadcast_send);
+
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        session.run(CodingAgentOperation::SetDefaultAgentProfile {
+            profile_id: ProfileId::from("snapshot-writer"),
+        }),
+    )
+    .await
+    .expect("snapshot writer must not deadlock")
+    .unwrap();
+
+    let snapshot = session.snapshot();
+    assert_eq!(
+        snapshot.session.default_agent_profile_id,
+        ProfileId::from("snapshot-writer")
+    );
+    assert_eq!(snapshot.cursor.capability_generation, 2);
+    assert_eq!(snapshot.active_operation, None);
+    assert!(snapshot.cursor.last_event_sequence >= 2);
 }
 
 #[test]

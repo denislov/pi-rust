@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use super::CodingSessionError;
+use super::snapshot_coordinator::SnapshotCoordinator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationKind {
@@ -85,14 +86,24 @@ pub(crate) fn prompt_control_channel() -> (PromptControlHandle, PromptControlRec
     (PromptControlHandle { sender }, receiver)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct OperationState {
     active: Arc<Mutex<Option<OperationKind>>>,
+    snapshot_coordinator: Arc<SnapshotCoordinator>,
 }
 
 impl OperationState {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self::with_snapshot_coordinator(SnapshotCoordinator::new())
+    }
+
+    pub(crate) fn with_snapshot_coordinator(
+        snapshot_coordinator: Arc<SnapshotCoordinator>,
+    ) -> Self {
+        Self {
+            active: Arc::new(Mutex::new(None)),
+            snapshot_coordinator,
+        }
     }
 
     pub(crate) fn active(&self) -> Option<OperationKind> {
@@ -117,14 +128,17 @@ impl OperationState {
             });
         }
         *active = Some(kind);
+        drop(active);
+        self.snapshot_coordinator.set_active_operation(Some(kind));
         Ok(OperationGuard {
             active: Arc::clone(&self.active),
+            snapshot_coordinator: Arc::clone(&self.snapshot_coordinator),
             kind,
         })
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct OperationControl {
     state: OperationState,
     prompt_control_receiver: Option<PromptControlReceiver>,
@@ -132,8 +146,14 @@ pub(crate) struct OperationControl {
 
 impl OperationControl {
     pub(crate) fn new() -> Self {
+        Self::with_snapshot_coordinator(SnapshotCoordinator::new())
+    }
+
+    pub(crate) fn with_snapshot_coordinator(
+        snapshot_coordinator: Arc<SnapshotCoordinator>,
+    ) -> Self {
         Self {
-            state: OperationState::new(),
+            state: OperationState::with_snapshot_coordinator(snapshot_coordinator),
             prompt_control_receiver: None,
         }
     }
@@ -177,6 +197,7 @@ impl OperationControl {
 #[must_use = "dropping OperationGuard clears the active operation"]
 pub(crate) struct OperationGuard {
     active: Arc<Mutex<Option<OperationKind>>>,
+    snapshot_coordinator: Arc<SnapshotCoordinator>,
     kind: OperationKind,
 }
 
@@ -187,6 +208,8 @@ impl Drop for OperationGuard {
         };
         if *active == Some(self.kind) {
             *active = None;
+            drop(active);
+            self.snapshot_coordinator.set_active_operation(None);
         }
     }
 }

@@ -1,4 +1,5 @@
 use super::client_projection::ClientConnectionId;
+use super::client_projection::UiSnapshot;
 use super::operation_control::OperationKind;
 use super::snapshot_coordinator::{
     ClientHandle, ClientRegistryError, DraftRecord, SnapshotCoordinator,
@@ -26,6 +27,12 @@ impl ClientService {
         sequence: u64,
     ) -> Result<u64, ClientRegistryError> {
         self.coordinator.acknowledge(handle, sequence)
+    }
+    pub(crate) fn client_snapshot(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<UiSnapshot, ClientRegistryError> {
+        self.coordinator.client_snapshot(handle)
     }
     pub(crate) fn set_prompt_draft(
         &self,

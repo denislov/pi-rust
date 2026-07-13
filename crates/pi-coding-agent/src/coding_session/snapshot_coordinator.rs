@@ -1,5 +1,9 @@
-use super::client_projection::ClientConnectionId;
+use super::capability_snapshot::CapabilityGeneration;
+use super::client_projection::{ClientConnectionId, ClientDraft, UiSnapshot, UiSnapshotCursor};
+use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
+use super::event::{ProductEvent, ProductEventSequence};
 use super::operation_control::OperationKind;
+use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -73,9 +77,38 @@ impl ClientRecord {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SnapshotProjection {
+    pub(crate) revision: u64,
+    pub(crate) session: CodingAgentSessionView,
+    pub(crate) capabilities: CodingAgentCapabilities,
+    pub(crate) active_operation: Option<OperationKind>,
+    pub(crate) capability_generation: CapabilityGeneration,
+}
+
+#[derive(Debug)]
 pub(crate) struct SnapshotState {
     pub(crate) clients: HashMap<ClientConnectionId, ClientRecord>,
+    pub(crate) projection: Option<SnapshotProjection>,
+    pub(crate) capability_generation: CapabilityGeneration,
+    pub(crate) next_event_sequence: u64,
+    pub(crate) retained_product_events: VecDeque<ProductEvent>,
+    pub(crate) dropped_before: Option<ProductEventSequence>,
+    pub(crate) recovery_revision: u64,
+}
+
+impl Default for SnapshotState {
+    fn default() -> Self {
+        Self {
+            clients: HashMap::new(),
+            projection: None,
+            capability_generation: CapabilityGeneration::new(1),
+            next_event_sequence: 1,
+            retained_product_events: VecDeque::new(),
+            dropped_before: None,
+            recovery_revision: 0,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -108,6 +141,107 @@ impl SnapshotCoordinator {
             .clients
             .insert(id.clone(), ClientRecord::new(generation));
         Ok(ClientHandle { id, generation })
+    }
+
+    pub(crate) fn install_projection(
+        &self,
+        session: CodingAgentSessionView,
+        capabilities: CodingAgentCapabilities,
+        capability_generation: CapabilityGeneration,
+    ) {
+        let mut state = self.state.lock().unwrap();
+        let active_operation = state
+            .projection
+            .as_ref()
+            .and_then(|projection| projection.active_operation);
+        let revision = state
+            .projection
+            .as_ref()
+            .map_or(1, |projection| projection.revision + 1);
+        state.projection = Some(SnapshotProjection {
+            revision,
+            session,
+            capabilities,
+            active_operation,
+            capability_generation,
+        });
+        state.capability_generation = capability_generation;
+    }
+
+    pub(crate) fn current_capability_generation(&self) -> CapabilityGeneration {
+        self.state.lock().unwrap().capability_generation
+    }
+
+    pub(crate) fn install_next_capability_generation(&self) -> CapabilityGeneration {
+        let mut state = self.state.lock().unwrap();
+        let next = state.capability_generation.next();
+        state.capability_generation = next;
+        if let Some(projection) = state.projection.as_mut() {
+            projection.revision += 1;
+            projection.capability_generation = next;
+        }
+        next
+    }
+
+    pub(crate) fn set_active_operation(&self, active_operation: Option<OperationKind>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(projection) = state.projection.as_mut() {
+            projection.revision += 1;
+            projection.active_operation = active_operation;
+        }
+    }
+
+    pub(crate) fn mark_recovery_projected(&self) {
+        self.state.lock().unwrap().recovery_revision += 1;
+    }
+
+    pub(crate) fn snapshot(&self) -> UiSnapshot {
+        self.snapshot_for_client(None)
+            .expect("snapshot projection must be installed by session construction")
+    }
+
+    pub(crate) fn client_snapshot(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<UiSnapshot, ClientRegistryError> {
+        self.snapshot_for_client(Some(handle))
+    }
+
+    fn snapshot_for_client(
+        &self,
+        handle: Option<&ClientHandle>,
+    ) -> Result<UiSnapshot, ClientRegistryError> {
+        let mut state = self.state.lock().unwrap();
+        let client_drafts = match handle {
+            Some(handle) => {
+                let record = Self::record(&mut state, handle)?;
+                record
+                    .prompt_draft
+                    .iter()
+                    .chain(record.steer_drafts.iter())
+                    .chain(record.follow_up_drafts.iter())
+                    .map(|draft| ClientDraft::new(draft.kind, draft.text.clone()))
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        let projection = state
+            .projection
+            .clone()
+            .expect("snapshot projection must be installed by session construction");
+        Ok(UiSnapshot::new(
+            UiSnapshotCursor {
+                last_event_sequence: ProductEventSequence::new(
+                    state.next_event_sequence.saturating_sub(1),
+                ),
+                capability_generation: projection.capability_generation,
+            },
+            UI_SNAPSHOT_PROTOCOL_VERSION,
+            projection.session,
+            projection.capabilities,
+            projection.active_operation,
+            client_drafts,
+        ))
     }
 
     fn record<'a>(

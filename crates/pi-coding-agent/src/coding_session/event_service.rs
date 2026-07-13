@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
 use futures::future::{BoxFuture, FutureExt};
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use pi_agent_core::AgentEvent;
@@ -28,17 +27,9 @@ const EVENT_RETAINED_CAPACITY: usize = 128;
 #[derive(Debug, Clone)]
 pub(crate) struct EventService {
     product_sender: broadcast::Sender<ProductEvent>,
-    publication_state: Arc<Mutex<EventPublicationState>>,
     snapshot_coordinator: Arc<SnapshotCoordinator>,
     channel_capacity: usize,
     retained_capacity: usize,
-}
-
-#[derive(Debug)]
-struct EventPublicationState {
-    next_sequence: u64,
-    retained_product_events: VecDeque<ProductEvent>,
-    dropped_before: Option<ProductEventSequence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,11 +128,6 @@ impl EventService {
         let (product_sender, _) = broadcast::channel(channel_capacity);
         Self {
             product_sender,
-            publication_state: Arc::new(Mutex::new(EventPublicationState {
-                next_sequence: 1,
-                retained_product_events: VecDeque::with_capacity(retained_capacity),
-                dropped_before: None,
-            })),
             snapshot_coordinator,
             channel_capacity,
             retained_capacity,
@@ -162,12 +148,12 @@ impl EventService {
     }
 
     pub(crate) fn current_product_sequence(&self) -> ProductEventSequence {
-        let state = self.publication_state.lock().unwrap();
-        ProductEventSequence::new(state.next_sequence.saturating_sub(1))
+        let state = self.snapshot_coordinator.state.lock().unwrap();
+        ProductEventSequence::new(state.next_event_sequence.saturating_sub(1))
     }
 
     pub(crate) fn backpressure_status(&self) -> EventBackpressureStatus {
-        let state = self.publication_state.lock().unwrap();
+        let state = self.snapshot_coordinator.state.lock().unwrap();
         EventBackpressureStatus {
             channel_capacity: self.channel_capacity,
             retained_capacity: self.retained_capacity,
@@ -175,7 +161,9 @@ impl EventService {
                 .retained_product_events
                 .front()
                 .map(ProductEvent::sequence),
-            current_sequence: ProductEventSequence::new(state.next_sequence.saturating_sub(1)),
+            current_sequence: ProductEventSequence::new(
+                state.next_event_sequence.saturating_sub(1),
+            ),
             dropped_before: state.dropped_before,
         }
     }
@@ -184,7 +172,7 @@ impl EventService {
         &self,
         cursor: ProductEventSequence,
     ) -> Result<Vec<ProductEvent>, CodingSessionError> {
-        let state = self.publication_state.lock().unwrap();
+        let state = self.snapshot_coordinator.state.lock().unwrap();
         let Some(oldest) = state
             .retained_product_events
             .front()
@@ -212,10 +200,7 @@ impl EventService {
         &self,
         cursor: ProductEventSequence,
     ) -> ProductEventRecovery {
-        // Snapshot/client writers use this same order (coordinator then
-        // publication), making the recovery cut one transaction fence.
-        let _snapshot_state = self.snapshot_coordinator.state.lock().unwrap();
-        let state = self.publication_state.lock().unwrap();
+        let state = self.snapshot_coordinator.state.lock().unwrap();
         let receiver = ProductEventReceiver {
             inner: self.product_sender.subscribe(),
         };
@@ -231,7 +216,8 @@ impl EventService {
                 };
             }
         }
-        let replayed_through = ProductEventSequence::new(state.next_sequence.saturating_sub(1));
+        let replayed_through =
+            ProductEventSequence::new(state.next_event_sequence.saturating_sub(1));
         let replay = state
             .retained_product_events
             .iter()
@@ -247,7 +233,11 @@ impl EventService {
         })
     }
 
-    fn retain_product_event(&self, state: &mut EventPublicationState, event: ProductEvent) {
+    fn retain_product_event(
+        &self,
+        state: &mut super::snapshot_coordinator::SnapshotState,
+        event: ProductEvent,
+    ) {
         if self.retained_capacity == 0 {
             state.dropped_before = Some(event.sequence().next());
             return;
@@ -266,13 +256,13 @@ impl EventService {
     }
 
     pub(crate) fn emit(&self, event: CodingAgentEvent) -> ProductEvent {
-        let mut state = self.publication_state.lock().unwrap();
-        let sequence = ProductEventSequence::new(state.next_sequence);
-        state.next_sequence += 1;
         let operation_id = event.operation_id().map(str::to_owned);
         let terminal_status = event.terminal_status();
         let durability = ProductEventDurability::from_emitted_event(&event);
         let typed_event = super::public_event::CodingAgentProductEventKind::from(&event);
+        let mut state = self.snapshot_coordinator.state.lock().unwrap();
+        let sequence = ProductEventSequence::new(state.next_event_sequence);
+        state.next_event_sequence += 1;
         let product_event = ProductEvent::new(
             sequence,
             typed_event,
@@ -281,6 +271,7 @@ impl EventService {
             durability,
         );
         self.retain_product_event(&mut state, product_event.clone());
+        drop(state);
         let _ = self.product_sender.send(product_event.clone());
         product_event
     }

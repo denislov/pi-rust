@@ -8,7 +8,9 @@ use super::CodingSessionError;
 use super::operation_control::OperationKind;
 use super::profiles::ProfileId;
 use super::session_log::event::PersistedRuntimeGenerationRef;
+use super::snapshot_coordinator::SnapshotCoordinator;
 use crate::plugins::PluginCapabilities;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct CapabilityGeneration(u64);
@@ -22,7 +24,7 @@ impl CapabilityGeneration {
         self.0
     }
 
-    fn next(self) -> Self {
+    pub(crate) fn next(self) -> Self {
         Self(self.0 + 1)
     }
 }
@@ -330,27 +332,34 @@ pub(crate) struct CapabilitySnapshotInput {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CapabilitySnapshotService {
-    current_generation: CapabilityGeneration,
+    snapshot_coordinator: Arc<SnapshotCoordinator>,
 }
 
 impl CapabilitySnapshotService {
     pub(crate) fn new() -> Self {
+        Self::with_snapshot_coordinator(SnapshotCoordinator::new())
+    }
+
+    pub(crate) fn with_snapshot_coordinator(
+        snapshot_coordinator: Arc<SnapshotCoordinator>,
+    ) -> Self {
         Self {
-            current_generation: CapabilityGeneration::new(1),
+            snapshot_coordinator,
         }
     }
 
     pub(crate) fn current_generation(&self) -> CapabilityGeneration {
-        self.current_generation
+        self.snapshot_coordinator.current_capability_generation()
     }
 
     pub(crate) fn install_next_generation(
         &mut self,
         revocation: CapabilityRevocationPolicy,
     ) -> InstalledCapabilityGeneration {
-        self.current_generation = self.current_generation.next();
         InstalledCapabilityGeneration {
-            generation: self.current_generation,
+            generation: self
+                .snapshot_coordinator
+                .install_next_capability_generation(),
             revocation,
         }
     }
@@ -395,7 +404,7 @@ impl CapabilitySnapshotService {
             .filter(|_| allowed_tools.iter().any(|name| name == "bash"))
             .map(|cwd| ShellCapability { cwd: cwd.clone() });
         OperationCapabilitySnapshot {
-            generation: self.current_generation,
+            generation: self.current_generation(),
             operation_id: input.operation_id,
             actor: input.actor,
             model,
