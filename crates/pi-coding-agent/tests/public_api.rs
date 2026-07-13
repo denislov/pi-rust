@@ -11,7 +11,7 @@ use pi_coding_agent::api::{
     CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput, CliRunOptions,
     CodingAgentAgentProductEvent, CodingAgentCapabilities, CodingAgentCapabilityProductEvent,
     CodingAgentClientConnection, CodingAgentClientId, CodingAgentDelegationEventContext,
-    CodingAgentDelegationProductEvent, CodingAgentDiagnosticProductEvent, CodingAgentEvent,
+    CodingAgentDelegationProductEvent, CodingAgentDiagnosticProductEvent,
     CodingAgentMessageProductEvent, CodingAgentOperation, CodingAgentOperationOutcome,
     CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome, CodingAgentProductEvent,
     CodingAgentProductEventCapabilityRevocation, CodingAgentProductEventCheckOutput,
@@ -721,18 +721,6 @@ async fn coding_session_public_api_symbols_are_importable() {
     };
     assert_eq!(error.code(), "unsupported_capability");
     assert_eq!(error.to_string(), "unsupported capability: prompt");
-
-    let event = CodingAgentEvent::PromptFailed {
-        operation_id: "op_public_api".into(),
-        error,
-    };
-    assert!(matches!(
-        event,
-        CodingAgentEvent::PromptFailed {
-            operation_id,
-            error: CodingSessionError::UnsupportedCapability { .. },
-        } if operation_id == "op_public_api"
-    ));
 
     let prompt_options = PromptTurnOptions::new(PromptInvocation::Text("hello".into()))
         .with_mode(PromptTurnMode::Print);

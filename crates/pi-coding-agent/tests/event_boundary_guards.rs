@@ -16,6 +16,10 @@ const INTERNAL_EVENT: &str = include_str!("../src/coding_session/event.rs");
 const PUBLIC_PROJECTION: &str = include_str!("../src/coding_session/public_projection.rs");
 const PUBLIC_OPERATION: &str = include_str!("../src/coding_session/public_operation.rs");
 const PRODUCT_EVENT_CONTRACT: &str = include_str!("../../../docs/product-event-contract.md");
+const CRATE_ROOT: &str = include_str!("../src/lib.rs");
+const PROTOCOL_EVENT_ADAPTER: &str = include_str!("../src/protocol/events.rs");
+const PROTOCOL_EVENT_TESTS: &str = include_str!("protocol_events.rs");
+const INTERACTIVE_EVENT_TESTS: &str = include_str!("interactive_event_bridge.rs");
 
 #[test]
 fn typed_public_event_boundary_is_fail_closed() {
@@ -497,6 +501,32 @@ fn interactive_projection_consumes_product_events() {
     assert!(
         INTERACTIVE_LOOP.contains("ui_projection.apply_product_event"),
         "interactive prompt-task event application should consume ProductEvent through UiProjection"
+    );
+}
+
+#[test]
+fn stable_facade_and_adapters_reject_raw_event_projection() {
+    let stable_api = region(
+        CRATE_ROOT,
+        "pub mod api {",
+        "#[cfg(any(test, feature = \"test-harness\", debug_assertions))]",
+    );
+    assert!(
+        !stable_api.contains("CodingAgentEvent"),
+        "the stable facade must not export the private raw admission event"
+    );
+    assert!(
+        !PROTOCOL_EVENT_ADAPTER.contains("pub fn push(&mut self, event: &CodingAgentEvent)"),
+        "the protocol adapter must not expose a public raw-event projection method"
+    );
+    assert!(
+        !INTERACTIVE_EVENT_BRIDGE.contains("pub fn handle(&mut self, event: &CodingAgentEvent)"),
+        "the interactive bridge must not expose a public raw-event projection method"
+    );
+    assert!(
+        !PROTOCOL_EVENT_TESTS.contains("CodingAgentEvent")
+            && !INTERACTIVE_EVENT_TESTS.contains("CodingAgentEvent"),
+        "first-party adapter behavior tests must enter through typed product-event fixtures"
     );
 }
 

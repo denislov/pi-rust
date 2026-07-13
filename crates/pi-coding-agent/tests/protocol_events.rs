@@ -1,12 +1,24 @@
+mod support;
+
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason, Usage};
 use pi_coding_agent::api::{
-    CapabilityRevocationPolicy, CodingAgentEvent, CodingSessionError, ProfileKind,
-    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+    CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
+    CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,
+    CodingAgentMessageProductEvent, CodingAgentProductEventCapabilityRevocation,
+    CodingAgentProductEventKind, CodingAgentProductEventProfileKind,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
+    CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+    CodingSessionError, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
+    SelfHealingEditReplacement,
 };
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
 use pi_coding_agent::protocol::types::{CompactionReason, ProtocolEvent};
 use serde_json::{Value, json};
+use support::{
+    product_check_output, product_diagnostic, product_error, product_event, product_replacement,
+    product_usage,
+};
 
 const FLOW_NODE_FIELD_NAMES: &[&str] = &[
     "flowNode",
@@ -65,47 +77,47 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
 
     let mut events = Vec::new();
     for event in [
-        CodingAgentEvent::AgentTurnStarted {
+        CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::TurnStarted {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
             agent_turn: 1,
-        },
-        CodingAgentEvent::ProviderRequestStarted {
+        }),
+        CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::ProviderRequestStarted {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
             provider: "typed-provider".into(),
             model: "typed-model".into(),
-        },
-        CodingAgentEvent::AssistantMessageStarted {
+        }),
+        CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Started {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
             message_id: Some("msg_1".into()),
-        },
-        CodingAgentEvent::AssistantThinkingDelta {
+        }),
+        CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::ThinkingDelta {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
             message_id: Some("msg_1".into()),
             text: "think".into(),
-        },
-        CodingAgentEvent::AssistantMessageDelta {
+        }),
+        CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Delta {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
             message_id: Some("msg_1".into()),
             text: "hello".into(),
-        },
-        CodingAgentEvent::AssistantMessageCompleted {
+        }),
+        CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Completed {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
             message_id: Some("msg_1".into()),
             final_text: "hello".into(),
-            usage: Usage::default(),
-        },
-        CodingAgentEvent::PromptCompleted {
+            usage: product_usage(Usage::default()),
+        }),
+        CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
-        },
+        }),
     ] {
-        events.extend(adapter.push(&event));
+        events.extend(adapter.push_product_event(&product_event(event)));
     }
 
     assert!(matches!(events[0], ProtocolEvent::TurnStart));
@@ -167,84 +179,94 @@ fn product_event_protocol_adapter_does_not_emit_flow_node_fields() {
     };
 
     let events = [
-        CodingAgentEvent::AgentTurnStarted {
+        CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::TurnStarted {
             operation_id: "op_prompt".into(),
             turn_id: "turn_prompt".into(),
             agent_turn: 1,
-        },
-        CodingAgentEvent::AssistantMessageStarted {
+        }),
+        CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Started {
             operation_id: "op_prompt".into(),
             turn_id: "turn_prompt".into(),
             message_id: Some("msg_prompt".into()),
-        },
-        CodingAgentEvent::AssistantMessageDelta {
+        }),
+        CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Delta {
             operation_id: "op_prompt".into(),
             turn_id: "turn_prompt".into(),
             message_id: Some("msg_prompt".into()),
             text: "hello".into(),
-        },
-        CodingAgentEvent::AssistantMessageCompleted {
+        }),
+        CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Completed {
             operation_id: "op_prompt".into(),
             turn_id: "turn_prompt".into(),
             message_id: Some("msg_prompt".into()),
             final_text: "hello".into(),
-            usage: Usage::default(),
-        },
-        CodingAgentEvent::PromptCompleted {
+            usage: product_usage(Usage::default()),
+        }),
+        CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted {
             operation_id: "op_prompt".into(),
             turn_id: "turn_prompt".into(),
-        },
-        CodingAgentEvent::RuntimeCompactionCompleted {
+        }),
+        CodingAgentProductEventKind::Runtime(CodingAgentRuntimeProductEvent::CompactionCompleted {
             operation_id: "op_prompt".into(),
             turn_id: "turn_prompt".into(),
             summary: "runtime summary".into(),
             first_kept_message_id: "msg_prompt".into(),
             tokens_before: 120,
-        },
-        CodingAgentEvent::SessionCompactionCompleted {
+        }),
+        CodingAgentProductEventKind::Session(CodingAgentSessionProductEvent::CompactionCompleted {
             operation_id: "op_compact".into(),
             turn_id: "turn_compact".into(),
             summary: "manual summary".into(),
             first_kept_message_id: "msg_prompt".into(),
             tokens_before: 100,
-        },
-        CodingAgentEvent::DefaultAgentProfileChanged {
+        }),
+        CodingAgentProductEventKind::Profile(CodingAgentProfileProductEvent::DefaultChanged {
             profile_id: "coder".into(),
-        },
-        CodingAgentEvent::SelfHealingEditStarted {
-            operation_id: "op_edit".into(),
-            path: "src/app.txt".into(),
-            replacements: 1,
-        },
-        CodingAgentEvent::SelfHealingEditRepairAttempted {
-            operation_id: "op_edit".into(),
-            path: "src/app.txt".into(),
-            attempt: 1,
-            replacements: vec![SelfHealingEditReplacement::new("old", "new")],
-            diagnostics: vec![SelfHealingEditDiagnostic {
-                message: "fixed".into(),
-            }],
-            check_output: Some(check_output.clone()),
-        },
-        CodingAgentEvent::SelfHealingEditCompleted {
-            operation_id: "op_edit".into(),
-            path: "src/app.txt".into(),
-            attempts: 2,
-            first_changed_line: Some(2),
-            check_output: Some(check_output),
-        },
-        CodingAgentEvent::DelegationRequested {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
-        },
+        }),
+        CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
+                operation_id: "op_edit".into(),
+                path: "src/app.txt".into(),
+                replacements: 1,
+            },
+        ),
+        CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
+                operation_id: "op_edit".into(),
+                path: "src/app.txt".into(),
+                attempt: 1,
+                replacements: vec![product_replacement(SelfHealingEditReplacement::new(
+                    "old", "new",
+                ))],
+                diagnostics: vec![product_diagnostic(SelfHealingEditDiagnostic {
+                    message: "fixed".into(),
+                })],
+                check_output: Some(product_check_output(check_output.clone())),
+            },
+        ),
+        CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
+                operation_id: "op_edit".into(),
+                path: "src/app.txt".into(),
+                attempts: 2,
+                first_changed_line: Some(2),
+                check_output: Some(product_check_output(check_output)),
+            },
+        ),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Requested {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
+        }),
     ]
     .into_iter()
-    .flat_map(|event| adapter.push(&event))
+    .flat_map(|event| adapter.push_product_event(&product_event(event)))
     .map(|event| serde_json::to_value(event).unwrap())
     .collect::<Vec<_>>();
 
@@ -263,21 +285,21 @@ fn coding_event_adapter_maps_agent_invocation_lifecycle_to_protocol_events() {
     );
 
     let events = [
-        CodingAgentEvent::AgentInvocationStarted {
+        CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::InvocationStarted {
             operation_id: "op_parent".into(),
             child_operation_id: "op_child".into(),
             profile_id: "coder".into(),
             task: "do work".into(),
-        },
-        CodingAgentEvent::AgentInvocationCompleted {
+        }),
+        CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::InvocationCompleted {
             operation_id: "op_parent".into(),
             child_operation_id: "op_child".into(),
             profile_id: "coder".into(),
             final_text: "done".into(),
-        },
+        }),
     ]
     .into_iter()
-    .flat_map(|event| adapter.push(&event))
+    .flat_map(|event| adapter.push_product_event(&product_event(event)))
     .map(|event| serde_json::to_value(event).unwrap())
     .collect::<Vec<_>>();
 
@@ -311,33 +333,33 @@ fn coding_event_adapter_maps_agent_team_lifecycle_to_protocol_events() {
     );
 
     let events = [
-        CodingAgentEvent::AgentTeamStarted {
+        CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::Started {
             operation_id: "op_team".into(),
             team_id: "implementation".into(),
             task: "ship feature".into(),
-        },
-        CodingAgentEvent::AgentTeamMemberStarted {
+        }),
+        CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::MemberStarted {
             operation_id: "op_team".into(),
             child_operation_id: "op_member".into(),
             team_id: "implementation".into(),
             profile_id: "coder".into(),
             task: "ship feature".into(),
-        },
-        CodingAgentEvent::AgentTeamMemberCompleted {
+        }),
+        CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::MemberCompleted {
             operation_id: "op_team".into(),
             child_operation_id: "op_member".into(),
             team_id: "implementation".into(),
             profile_id: "coder".into(),
             final_text: "member done".into(),
-        },
-        CodingAgentEvent::AgentTeamCompleted {
+        }),
+        CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::Completed {
             operation_id: "op_team".into(),
             team_id: "implementation".into(),
             final_text: "team done".into(),
-        },
+        }),
     ]
     .into_iter()
-    .flat_map(|event| adapter.push(&event))
+    .flat_map(|event| adapter.push_product_event(&product_event(event)))
     .map(|event| serde_json::to_value(event).unwrap())
     .collect::<Vec<_>>();
 
@@ -385,39 +407,45 @@ fn delegation_protocol_events_include_folded_block_payload() {
     );
 
     let events = [
-        CodingAgentEvent::DelegationRequested {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
-        },
-        CodingAgentEvent::DelegationStarted {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Requested {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
+        }),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Started {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
             child_operation_id: "op_child".into(),
-        },
-        CodingAgentEvent::DelegationCompleted {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
+        }),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Completed {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
             child_operation_id: "op_child".into(),
             final_text: "child result".into(),
-        },
+        }),
     ]
     .into_iter()
-    .flat_map(|event| adapter.push(&event))
+    .flat_map(|event| adapter.push_product_event(&product_event(event)))
     .map(|event| serde_json::to_value(event).unwrap())
     .collect::<Vec<_>>();
 
@@ -450,84 +478,100 @@ fn coding_event_adapter_maps_profile_and_delegation_lifecycle_to_protocol_events
     );
 
     let events = [
-        CodingAgentEvent::DefaultAgentProfileChanged {
+        CodingAgentProductEventKind::Profile(CodingAgentProfileProductEvent::DefaultChanged {
             profile_id: "coder".into(),
-        },
-        CodingAgentEvent::DelegationRequested {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
-        },
-        CodingAgentEvent::DelegationRejected {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate_team".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Team,
-            target_id: "review-team".into(),
-            task: "review parser".into(),
+        }),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Requested {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
+        }),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Rejected {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate_team".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Team,
+                target_id: "review-team".into(),
+                task: "review parser".into(),
+            },
             reason: "delegation target is not allowed".into(),
-        },
-        CodingAgentEvent::DelegationApproved {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
-        },
-        CodingAgentEvent::DelegationConfirmationRequired {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate_team".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Team,
-            target_id: "review-team".into(),
-            task: "review parser".into(),
-            reason: "team delegation requires confirmation under writes policy".into(),
-        },
-        CodingAgentEvent::DelegationStarted {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
+        }),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Approved {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
+        }),
+        CodingAgentProductEventKind::Delegation(
+            CodingAgentDelegationProductEvent::ConfirmationRequired {
+                context: CodingAgentDelegationEventContext {
+                    operation_id: "op_parent".into(),
+                    turn_id: "turn_parent".into(),
+                    tool_call_id: "tool_delegate_team".into(),
+                    requesting_profile_id: "planner".into(),
+                    target_kind: CodingAgentProductEventProfileKind::Team,
+                    target_id: "review-team".into(),
+                    task: "review parser".into(),
+                },
+                reason: "team delegation requires confirmation under writes policy".into(),
+            },
+        ),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Started {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
             child_operation_id: "op_child".into(),
-        },
-        CodingAgentEvent::DelegationCompleted {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "coder".into(),
-            task: "implement parser".into(),
+        }),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Completed {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+            },
             child_operation_id: "op_child".into(),
             final_text: "child result".into(),
-        },
-        CodingAgentEvent::DelegationFailed {
-            operation_id: "op_parent".into(),
-            turn_id: "turn_parent".into(),
-            tool_call_id: "tool_delegate_failed".into(),
-            requesting_profile_id: "planner".into(),
-            target_kind: ProfileKind::Agent,
-            target_id: "missing-coder".into(),
-            task: "implement parser".into(),
-            child_operation_id: "op_child_failed".into(),
-            error: CodingSessionError::Input {
-                message: "Unknown agent profile: missing-coder".into(),
+        }),
+        CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Failed {
+            context: CodingAgentDelegationEventContext {
+                operation_id: "op_parent".into(),
+                turn_id: "turn_parent".into(),
+                tool_call_id: "tool_delegate_failed".into(),
+                requesting_profile_id: "planner".into(),
+                target_kind: CodingAgentProductEventProfileKind::Agent,
+                target_id: "missing-coder".into(),
+                task: "implement parser".into(),
             },
-        },
+            child_operation_id: "op_child_failed".into(),
+            error: product_error(CodingSessionError::Input {
+                message: "Unknown agent profile: missing-coder".into(),
+            }),
+        }),
     ]
     .into_iter()
-    .flat_map(|event| adapter.push(&event))
+    .flat_map(|event| adapter.push_product_event(&product_event(event)))
     .map(|event| serde_json::to_value(event).unwrap())
     .collect::<Vec<_>>();
 
@@ -700,38 +744,48 @@ fn coding_event_adapter_maps_self_healing_edit_lifecycle_to_protocol_events() {
         exit_code: 0,
     };
     let events = [
-        CodingAgentEvent::SelfHealingEditStarted {
-            operation_id: "op_edit".into(),
-            path: "src/app.txt".into(),
-            replacements: 1,
-        },
-        CodingAgentEvent::SelfHealingEditRepairAttempted {
-            operation_id: "op_edit".into(),
-            path: "src/app.txt".into(),
-            attempt: 1,
-            replacements: vec![SelfHealingEditReplacement::new("deux", "dos")],
-            diagnostics: vec![SelfHealingEditDiagnostic {
-                message: "compile error".into(),
-            }],
-            check_output: Some(check_output.clone()),
-        },
-        CodingAgentEvent::SelfHealingEditCompleted {
-            operation_id: "op_edit".into(),
-            path: "src/app.txt".into(),
-            attempts: 2,
-            first_changed_line: Some(2),
-            check_output: Some(check_output),
-        },
-        CodingAgentEvent::SelfHealingEditFailed {
-            operation_id: "op_edit_failed".into(),
-            path: "src/bad.txt".into(),
-            error: CodingSessionError::Input {
-                message: "bad edit".into(),
+        CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
+                operation_id: "op_edit".into(),
+                path: "src/app.txt".into(),
+                replacements: 1,
             },
-        },
+        ),
+        CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
+                operation_id: "op_edit".into(),
+                path: "src/app.txt".into(),
+                attempt: 1,
+                replacements: vec![product_replacement(SelfHealingEditReplacement::new(
+                    "deux", "dos",
+                ))],
+                diagnostics: vec![product_diagnostic(SelfHealingEditDiagnostic {
+                    message: "compile error".into(),
+                })],
+                check_output: Some(product_check_output(check_output.clone())),
+            },
+        ),
+        CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
+                operation_id: "op_edit".into(),
+                path: "src/app.txt".into(),
+                attempts: 2,
+                first_changed_line: Some(2),
+                check_output: Some(product_check_output(check_output)),
+            },
+        ),
+        CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::SelfHealingEditFailed {
+                operation_id: "op_edit_failed".into(),
+                path: "src/bad.txt".into(),
+                error: product_error(CodingSessionError::Input {
+                    message: "bad edit".into(),
+                }),
+            },
+        ),
     ]
     .into_iter()
-    .flat_map(|event| adapter.push(&event))
+    .flat_map(|event| adapter.push_product_event(&product_event(event)))
     .map(|event| serde_json::to_value(event).unwrap())
     .collect::<Vec<_>>();
 
@@ -789,13 +843,15 @@ fn coding_event_adapter_maps_tool_events_to_protocol_events() {
         "faux-model".into(),
     );
 
-    let start = adapter.push(&CodingAgentEvent::ToolCallStarted {
-        operation_id: "op_1".into(),
-        turn_id: "turn_1".into(),
-        tool_call_id: "tool_1".into(),
-        name: "read".into(),
-        arguments_json: r#"{"path":"Cargo.toml"}"#.into(),
-    });
+    let start = adapter.push_product_event(&product_event(CodingAgentProductEventKind::Tool(
+        CodingAgentToolProductEvent::Started {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: "tool_1".into(),
+            name: "read".into(),
+            arguments_json: r#"{"path":"Cargo.toml"}"#.into(),
+        },
+    )));
     assert!(matches!(
         &start[0],
         ProtocolEvent::ToolExecutionStart {
@@ -807,37 +863,43 @@ fn coding_event_adapter_maps_tool_events_to_protocol_events() {
             && args == &json!({"path": "Cargo.toml"})
     ));
 
-    let invalid = adapter.push(&CodingAgentEvent::ToolCallStarted {
-        operation_id: "op_1".into(),
-        turn_id: "turn_1".into(),
-        tool_call_id: "tool_invalid".into(),
-        name: "read".into(),
-        arguments_json: "not-json".into(),
-    });
+    let invalid = adapter.push_product_event(&product_event(CodingAgentProductEventKind::Tool(
+        CodingAgentToolProductEvent::Started {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: "tool_invalid".into(),
+            name: "read".into(),
+            arguments_json: "not-json".into(),
+        },
+    )));
     assert!(matches!(
         &invalid[0],
         ProtocolEvent::ToolExecutionStart { args, .. } if args == &Value::Null
     ));
 
-    let update = adapter.push(&CodingAgentEvent::ToolCallUpdated {
-        operation_id: "op_1".into(),
-        turn_id: "turn_1".into(),
-        tool_call_id: "tool_1".into(),
-        name: "read".into(),
-        message: "reading".into(),
-    });
+    let update = adapter.push_product_event(&product_event(CodingAgentProductEventKind::Tool(
+        CodingAgentToolProductEvent::Updated {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: "tool_1".into(),
+            name: "read".into(),
+            message: "reading".into(),
+        },
+    )));
     assert!(matches!(
         update[0],
         ProtocolEvent::ToolExecutionUpdate { .. }
     ));
 
-    let completed = adapter.push(&CodingAgentEvent::ToolCallCompleted {
-        operation_id: "op_1".into(),
-        turn_id: "turn_1".into(),
-        tool_call_id: "tool_1".into(),
-        name: "read".into(),
-        summary: "file".into(),
-    });
+    let completed = adapter.push_product_event(&product_event(CodingAgentProductEventKind::Tool(
+        CodingAgentToolProductEvent::Completed {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: "tool_1".into(),
+            name: "read".into(),
+            summary: "file".into(),
+        },
+    )));
     assert!(matches!(
         completed[0],
         ProtocolEvent::ToolExecutionEnd {
@@ -855,13 +917,15 @@ fn coding_event_adapter_maps_session_compaction_as_manual_protocol_events() {
         "faux-model".into(),
     );
 
-    let events = adapter.push(&CodingAgentEvent::SessionCompactionCompleted {
-        operation_id: "op_1".into(),
-        turn_id: "turn_1".into(),
-        summary: "manual summary".into(),
-        first_kept_message_id: "msg_2".into(),
-        tokens_before: 1200,
-    });
+    let events = adapter.push_product_event(&product_event(CodingAgentProductEventKind::Session(
+        CodingAgentSessionProductEvent::CompactionCompleted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            summary: "manual summary".into(),
+            first_kept_message_id: "msg_2".into(),
+            tokens_before: 1200,
+        },
+    )));
 
     assert!(matches!(
         events.as_slice(),
@@ -890,12 +954,14 @@ fn coding_event_adapter_maps_prompt_failure_with_provider() {
         "faux-model".into(),
     );
 
-    let events = adapter.push(&CodingAgentEvent::PromptFailed {
-        operation_id: "op_1".into(),
-        error: pi_coding_agent::api::CodingSessionError::Provider {
-            message: "LLM failed".into(),
+    let events = adapter.push_product_event(&product_event(CodingAgentProductEventKind::Workflow(
+        CodingAgentWorkflowProductEvent::PromptFailed {
+            operation_id: "op_1".into(),
+            error: product_error(pi_coding_agent::api::CodingSessionError::Provider {
+                message: "LLM failed".into(),
+            }),
         },
-    });
+    )));
 
     assert!(matches!(
         &events[0],
@@ -929,10 +995,12 @@ fn coding_event_adapter_maps_capability_changed_to_payloaded_protocol_event() {
         "faux-model".into(),
     );
 
-    let events = adapter.push(&CodingAgentEvent::CapabilityChanged {
-        generation: 7,
-        revocation: CapabilityRevocationPolicy::FutureOnly,
-    });
+    let events = adapter.push_product_event(&product_event(
+        CodingAgentProductEventKind::Capability(CodingAgentCapabilityProductEvent::Changed {
+            generation: 7,
+            revocation: CodingAgentProductEventCapabilityRevocation::FutureOnly,
+        }),
+    ));
 
     assert!(matches!(
         events.as_slice(),
