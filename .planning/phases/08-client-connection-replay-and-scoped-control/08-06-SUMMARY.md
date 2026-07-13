@@ -79,7 +79,7 @@ status: complete
 
 ## Deviations
 
-The plan's new dedicated `scoped_control` public test group was not added in this execution; existing operation-control, client-service, public API, and boundary suites were retained and passed. Follow-up Plan 08-07 should add the external end-to-end matrix before RPC migration is considered complete.
+None - the dedicated `scoped_control` public API coverage was added as a deterministic offline fixture and the focused test passes.
 
 ## Next Phase Readiness
 

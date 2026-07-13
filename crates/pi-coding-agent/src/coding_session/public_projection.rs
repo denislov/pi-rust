@@ -138,13 +138,24 @@ pub struct CodingAgentControlRejection {
     pub reason: CodingAgentControlRejectionReason,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodingAgentPromptControl {
     pub client_id: CodingAgentClientId,
     pub generation: CodingAgentConnectionGeneration,
     pub operation_id: String,
+    #[serde(skip, default = "SnapshotCoordinator::new")]
     pub(crate) coordinator: Arc<SnapshotCoordinator>,
 }
+
+impl PartialEq for CodingAgentPromptControl {
+    fn eq(&self, other: &Self) -> bool {
+        self.client_id == other.client_id
+            && self.generation == other.generation
+            && self.operation_id == other.operation_id
+    }
+}
+
+impl Eq for CodingAgentPromptControl {}
 
 impl CodingAgentPromptControl {
     fn submit(

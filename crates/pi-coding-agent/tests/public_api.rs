@@ -11,26 +11,28 @@ use pi_coding_agent::api::{
     AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CapabilityStatus, CliArgs,
     CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput, CliRunOptions,
     CodingAgentAgentProductEvent, CodingAgentCapabilities, CodingAgentCapabilityProductEvent,
-    CodingAgentClientConnection, CodingAgentClientId, CodingAgentDelegationEventContext,
-    CodingAgentDelegationProductEvent, CodingAgentDiagnosticProductEvent,
-    CodingAgentMessageProductEvent, CodingAgentOperation, CodingAgentOperationOutcome,
-    CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome, CodingAgentProductEvent,
-    CodingAgentProductEventCapabilityRevocation, CodingAgentProductEventCheckOutput,
-    CodingAgentProductEventDiagnostic, CodingAgentProductEventDurability,
-    CodingAgentProductEventError, CodingAgentProductEventFamily, CodingAgentProductEventKind,
-    CodingAgentProductEventProfileKind, CodingAgentProductEventReceiver,
-    CodingAgentProductEventReplacement, CodingAgentProductEventTerminalOperation,
-    CodingAgentProductEventTerminalOperationKind, CodingAgentProductEventTerminalStatus,
-    CodingAgentProductEventUsage, CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent,
-    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
-    CodingAgentSessionOptions, CodingAgentSessionProductEvent, CodingAgentSessionSummary,
-    CodingAgentSessionView, CodingAgentSnapshot, CodingAgentSnapshotCursor,
-    CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
-    CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError, ColorValue,
-    CompactionProtocolResult, CompactionReason, ContextFile, DetectionConfidence, DetectionSource,
-    ModelRotation, ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions,
-    ProfileDiagnostic, ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode,
-    PromptTurnOptions, PromptTurnOutcome, ProtocolDelegationFoldedBlock, ProtocolEvent,
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentControlId, CodingAgentControlKind,
+    CodingAgentControlRejectionReason, CodingAgentDelegationEventContext,
+    CodingAgentDelegationProductEvent, CodingAgentDiagnosticProductEvent, CodingAgentDraft,
+    CodingAgentDraftId, CodingAgentDraftKind, CodingAgentMessageProductEvent, CodingAgentOperation,
+    CodingAgentOperationOutcome, CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome,
+    CodingAgentProductEvent, CodingAgentProductEventCapabilityRevocation,
+    CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
+    CodingAgentProductEventDurability, CodingAgentProductEventError, CodingAgentProductEventFamily,
+    CodingAgentProductEventKind, CodingAgentProductEventProfileKind,
+    CodingAgentProductEventReceiver, CodingAgentProductEventReplacement,
+    CodingAgentProductEventTerminalOperation, CodingAgentProductEventTerminalOperationKind,
+    CodingAgentProductEventTerminalStatus, CodingAgentProductEventUsage,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSession,
+    CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
+    CodingAgentSessionProductEvent, CodingAgentSessionSummary, CodingAgentSessionView,
+    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingAgentTeamProductEvent,
+    CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent, CodingDiagnostic,
+    CodingDiagnosticSeverity, CodingSessionError, ColorValue, CompactionProtocolResult,
+    CompactionReason, ContextFile, DetectionConfidence, DetectionSource, ModelRotation,
+    ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions, ProfileDiagnostic,
+    ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions,
+    PromptTurnOutcome, ProtocolDelegationFoldedBlock, ProtocolEvent,
     ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS,
     ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions, RpcCapabilities,
     RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata,
@@ -427,6 +429,60 @@ async fn client_connection_state_takeover_ack_and_drafts_are_generation_scoped()
         first.acknowledge(1).unwrap_err().code(),
         "stale_client_connection"
     );
+}
+
+#[tokio::test]
+async fn scoped_control_authorization_and_rejected_drafts_are_typed_and_preserved() {
+    let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let first = session
+        .connect(CodingAgentClientId::new("control-client"))
+        .unwrap();
+    first
+        .enqueue_control_draft(CodingAgentDraft {
+            id: CodingAgentDraftId("draft-control".into()),
+            kind: CodingAgentDraftKind::Steer,
+            text: "steer me".into(),
+        })
+        .unwrap();
+    let control = first.prompt_control("prompt-not-running");
+    assert_eq!(
+        control
+            .abort(CodingAgentControlId("abort-1".into()), "cancel")
+            .unwrap_err()
+            .reason,
+        CodingAgentControlRejectionReason::TargetNotRunning
+    );
+    assert_eq!(
+        control
+            .steer(CodingAgentControlId("".into()), "")
+            .unwrap_err()
+            .reason,
+        CodingAgentControlRejectionReason::InvalidInput
+    );
+    assert_eq!(
+        control
+            .steer_draft(CodingAgentDraftId("draft-control".into()))
+            .unwrap_err()
+            .reason,
+        CodingAgentControlRejectionReason::TargetNotRunning
+    );
+    assert_eq!(first.state().unwrap().drafts[0].id.0, "draft-control");
+
+    let takeover = session
+        .connect(CodingAgentClientId::new("control-client"))
+        .unwrap();
+    let stale = first.prompt_control("prompt-not-running");
+    assert_eq!(
+        stale
+            .abort(CodingAgentControlId("abort-stale".into()), "cancel")
+            .unwrap_err()
+            .reason,
+        CodingAgentControlRejectionReason::StaleConnection
+    );
+    assert_eq!(takeover.state().unwrap().drafts[0].text, "steer me");
+    let _ = CodingAgentControlKind::Abort;
 }
 
 #[tokio::test]
