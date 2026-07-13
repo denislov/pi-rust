@@ -1,11 +1,10 @@
 use crate::coding_session::{
-    CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent, CodingAgentEvent,
-    CodingAgentMessageProductEvent, CodingAgentProductEventKind,
-    CodingAgentProductEventProfileKind, CodingAgentRuntimeProductEvent,
-    CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent, ProductEvent,
-    ProductEventSequence, ProfileKind, UiSnapshot,
+    CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent,
+    CodingAgentMessageProductEvent, CodingAgentProductEvent, CodingAgentProductEventKind,
+    CodingAgentProductEventProfileKind, CodingAgentProductEventUsage,
+    CodingAgentRuntimeProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+    ProductEvent, ProductEventSequence, ProfileKind, UiSnapshot,
 };
-use pi_ai::types::Usage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
@@ -116,7 +115,7 @@ fn snapshot_hydration_events(snapshot: &UiSnapshot) -> Vec<UiEvent> {
     Vec::new()
 }
 
-/// Stateless event bridge: converts `CodingAgentEvent` to `Vec<UiEvent>`.
+/// Stateless event bridge: converts typed product events to `Vec<UiEvent>`.
 ///
 /// No longer accumulates tokens — `UiEvent::UsageUpdate` carries per-event
 /// delta values. The receiver (`InteractiveRoot::apply_events`) accumulates
@@ -127,7 +126,7 @@ pub struct CodingEventBridge;
 /// Estimate current context size from a usage snapshot.
 /// Mirrors `pi-agent-core::compaction::estimate::calculate_context_tokens`
 /// and the TS `getContextUsage` use of the latest assistant usage.
-fn calculate_context_tokens(usage: &Usage) -> u32 {
+fn calculate_context_tokens(usage: &CodingAgentProductEventUsage) -> u32 {
     if usage.total_tokens > 0 {
         usage.total_tokens
     } else {
@@ -154,329 +153,8 @@ impl CodingEventBridge {
         self.handle_typed(event.event())
     }
 
-    #[allow(dead_code)] // retained for bridge unit tests
-    pub(crate) fn handle_product_event(&mut self, event: &ProductEvent) -> Vec<UiEvent> {
-        self.push_product_event(event)
-    }
-
-    pub fn handle(&mut self, event: &CodingAgentEvent) -> Vec<UiEvent> {
-        match event {
-            CodingAgentEvent::AgentTurnStarted { .. } => vec![UiEvent::TurnStarted],
-            CodingAgentEvent::AssistantMessageDelta { text, .. } => {
-                vec![UiEvent::AssistantDelta { text: text.clone() }]
-            }
-            CodingAgentEvent::AssistantThinkingDelta { text, .. } => {
-                vec![UiEvent::ThinkingDelta { text: text.clone() }]
-            }
-            CodingAgentEvent::AssistantMessageCompleted { usage, .. } => {
-                // Emit per-event delta values. The receiver accumulates.
-                let context_tokens = match calculate_context_tokens(usage) {
-                    0 => None,
-                    tokens => Some(tokens),
-                };
-                vec![
-                    UiEvent::AssistantDone,
-                    UiEvent::UsageUpdate {
-                        input: usage.input,
-                        output: usage.output,
-                        cache_read: usage.cache_read,
-                        cache_write: usage.cache_write,
-                        cost: usage.cost.input
-                            + usage.cost.output
-                            + usage.cost.cache_read
-                            + usage.cost.cache_write,
-                        context_tokens,
-                    },
-                ]
-            }
-            CodingAgentEvent::ToolCallStarted {
-                tool_call_id,
-                name,
-                arguments_json,
-                ..
-            } => {
-                if let Some(event) =
-                    delegation_block_from_tool_start(tool_call_id, name, arguments_json)
-                {
-                    vec![event]
-                } else {
-                    vec![UiEvent::ToolStarted {
-                        call_id: tool_call_id.clone(),
-                        name: name.clone(),
-                        args: parse_tool_arguments(arguments_json),
-                    }]
-                }
-            }
-            CodingAgentEvent::ToolCallUpdated {
-                tool_call_id,
-                name: _,
-                message,
-                ..
-            } => {
-                vec![UiEvent::ToolUpdated {
-                    call_id: tool_call_id.clone(),
-                    result: message.clone(),
-                }]
-            }
-            CodingAgentEvent::ToolCallCompleted {
-                tool_call_id,
-                name,
-                summary,
-                ..
-            } => {
-                if let Some(event) = delegation_block_from_tool_result(tool_call_id, name, summary)
-                {
-                    vec![event]
-                } else {
-                    vec![UiEvent::ToolFinished {
-                        call_id: tool_call_id.clone(),
-                        result: summary.clone(),
-                        is_error: false,
-                    }]
-                }
-            }
-            CodingAgentEvent::ToolCallFailed {
-                tool_call_id,
-                name,
-                message,
-                ..
-            } => {
-                if is_delegation_tool(name) {
-                    vec![UiEvent::DelegationBlock {
-                        call_id: tool_call_id.clone(),
-                        target_kind: delegation_tool_kind_label(name)
-                            .unwrap_or("agent")
-                            .to_string(),
-                        target_id: String::new(),
-                        task: String::new(),
-                        status: "failed".to_string(),
-                        child_operation_id: None,
-                        summary: Some(format!("failed: {message}")),
-                        is_error: true,
-                    }]
-                } else {
-                    vec![UiEvent::ToolFinished {
-                        call_id: tool_call_id.clone(),
-                        result: message.clone(),
-                        is_error: true,
-                    }]
-                }
-            }
-            CodingAgentEvent::RuntimeCompactionCompleted { summary, .. }
-            | CodingAgentEvent::SessionCompactionCompleted { summary, .. } => vec![
-                UiEvent::CompactionNotice {
-                    summary: summary.clone(),
-                },
-                // Compaction doesn't consume tokens — emit zero delta.
-                // Only context_tokens is reset to None.
-                UiEvent::UsageUpdate {
-                    input: 0,
-                    output: 0,
-                    cache_read: 0,
-                    cache_write: 0,
-                    cost: 0.0,
-                    context_tokens: None,
-                },
-            ],
-            CodingAgentEvent::PromptFailed { error, .. } => vec![UiEvent::AgentError {
-                error: error.to_string(),
-            }],
-            CodingAgentEvent::PromptAborted { reason, .. } => vec![UiEvent::AgentError {
-                error: format!("prompt aborted: {reason}"),
-            }],
-            CodingAgentEvent::DelegationRequested {
-                tool_call_id,
-                target_kind,
-                target_id,
-                task,
-                ..
-            } => vec![UiEvent::DelegationBlock {
-                call_id: tool_call_id.clone(),
-                target_kind: profile_kind_label(*target_kind).to_string(),
-                target_id: target_id.to_string(),
-                task: task.clone(),
-                status: "requested".to_string(),
-                child_operation_id: None,
-                summary: Some("requested".to_string()),
-                is_error: false,
-            }],
-            CodingAgentEvent::DelegationConfirmationRequired {
-                operation_id,
-                tool_call_id,
-                target_kind,
-                target_id,
-                task,
-                reason,
-                ..
-            } => vec![UiEvent::DelegationBlock {
-                call_id: tool_call_id.clone(),
-                target_kind: profile_kind_label(*target_kind).to_string(),
-                target_id: target_id.to_string(),
-                task: task.clone(),
-                status: "confirmation_required".to_string(),
-                child_operation_id: None,
-                summary: Some(format!(
-                    "confirmation required: {reason}\nApprove: /delegation approve {operation_id} {tool_call_id}\nReject: /delegation reject {operation_id} {tool_call_id} [reason]\nList pending: /delegations"
-                )),
-                is_error: false,
-            }],
-            CodingAgentEvent::DelegationApproved {
-                tool_call_id,
-                target_kind,
-                target_id,
-                task,
-                ..
-            } => vec![UiEvent::DelegationBlock {
-                call_id: tool_call_id.clone(),
-                target_kind: profile_kind_label(*target_kind).to_string(),
-                target_id: target_id.to_string(),
-                task: task.clone(),
-                status: "approved".to_string(),
-                child_operation_id: None,
-                summary: Some("approved".to_string()),
-                is_error: false,
-            }],
-            CodingAgentEvent::DelegationRejected {
-                tool_call_id,
-                target_kind,
-                target_id,
-                task,
-                reason,
-                ..
-            } => vec![UiEvent::DelegationBlock {
-                call_id: tool_call_id.clone(),
-                target_kind: profile_kind_label(*target_kind).to_string(),
-                target_id: target_id.to_string(),
-                task: task.clone(),
-                status: "rejected".to_string(),
-                child_operation_id: None,
-                summary: Some(format!("rejected: {reason}")),
-                is_error: true,
-            }],
-            CodingAgentEvent::DelegationStarted {
-                tool_call_id,
-                target_kind,
-                target_id,
-                task,
-                child_operation_id,
-                ..
-            } => vec![UiEvent::DelegationBlock {
-                call_id: tool_call_id.clone(),
-                target_kind: profile_kind_label(*target_kind).to_string(),
-                target_id: target_id.to_string(),
-                task: task.clone(),
-                status: "running".to_string(),
-                child_operation_id: Some(child_operation_id.clone()),
-                summary: None,
-                is_error: false,
-            }],
-            CodingAgentEvent::DelegationCompleted {
-                tool_call_id,
-                target_kind,
-                target_id,
-                task,
-                child_operation_id,
-                final_text,
-                ..
-            } => vec![UiEvent::DelegationBlock {
-                call_id: tool_call_id.clone(),
-                target_kind: profile_kind_label(*target_kind).to_string(),
-                target_id: target_id.to_string(),
-                task: task.clone(),
-                status: "completed".to_string(),
-                child_operation_id: Some(child_operation_id.clone()),
-                summary: Some(format!("completed: {final_text}")),
-                is_error: false,
-            }],
-            CodingAgentEvent::DelegationFailed {
-                tool_call_id,
-                target_kind,
-                target_id,
-                task,
-                child_operation_id,
-                error,
-                ..
-            } => vec![UiEvent::DelegationBlock {
-                call_id: tool_call_id.clone(),
-                target_kind: profile_kind_label(*target_kind).to_string(),
-                target_id: target_id.to_string(),
-                task: task.clone(),
-                status: "failed".to_string(),
-                child_operation_id: Some(child_operation_id.clone()),
-                summary: Some(format!("failed: {error}")),
-                is_error: true,
-            }],
-            CodingAgentEvent::SelfHealingEditStarted {
-                path, replacements, ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Self-healing edit started for {} ({}).",
-                    path,
-                    replacement_count_label(*replacements)
-                ),
-            }],
-            CodingAgentEvent::SelfHealingEditRepairAttempted {
-                path,
-                attempt,
-                replacements,
-                check_output,
-                ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Self-healing edit repair attempt {} for {}: {}, {}.",
-                    attempt,
-                    path,
-                    replacement_count_label(replacements.len()),
-                    check_output_label(check_output.as_ref())
-                ),
-            }],
-            CodingAgentEvent::SelfHealingEditCompleted {
-                path,
-                attempts,
-                first_changed_line,
-                ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!(
-                    "Self-healing edit completed for {} after {}{}.",
-                    path,
-                    attempt_count_label(*attempts),
-                    first_changed_line_label(*first_changed_line)
-                ),
-            }],
-            CodingAgentEvent::SelfHealingEditFailed { path, error, .. } => {
-                vec![UiEvent::SystemNotice {
-                    text: format!("Self-healing edit failed for {}: {}", path, error),
-                }]
-            }
-            CodingAgentEvent::OperationRecovered {
-                operation_id,
-                reason,
-                ..
-            } => vec![UiEvent::SystemNotice {
-                text: format!("Recovered incomplete operation {operation_id}: {reason}"),
-            }],
-            CodingAgentEvent::SessionOpened { .. }
-            | CodingAgentEvent::DefaultAgentProfileChanged { .. }
-            | CodingAgentEvent::AgentInvocationStarted { .. }
-            | CodingAgentEvent::AgentInvocationCompleted { .. }
-            | CodingAgentEvent::AgentInvocationFailed { .. }
-            | CodingAgentEvent::AgentInvocationAborted { .. }
-            | CodingAgentEvent::AgentTeamStarted { .. }
-            | CodingAgentEvent::AgentTeamMemberStarted { .. }
-            | CodingAgentEvent::AgentTeamMemberCompleted { .. }
-            | CodingAgentEvent::AgentTeamCompleted { .. }
-            | CodingAgentEvent::AgentTeamFailed { .. }
-            | CodingAgentEvent::AgentTeamAborted { .. }
-            | CodingAgentEvent::SessionWritePending { .. }
-            | CodingAgentEvent::SessionWriteCommitted { .. }
-            | CodingAgentEvent::SessionWriteSkipped { .. }
-            | CodingAgentEvent::PromptStarted { .. }
-            | CodingAgentEvent::ProviderRequestStarted { .. }
-            | CodingAgentEvent::AssistantMessageStarted { .. }
-            | CodingAgentEvent::PromptCompleted { .. }
-            | CodingAgentEvent::Diagnostic { .. }
-            | CodingAgentEvent::CapabilityChanged { .. } => Vec::new(),
-        }
+    pub fn handle_product_event(&mut self, event: &CodingAgentProductEvent) -> Vec<UiEvent> {
+        self.handle_typed(event.event())
     }
 
     fn handle_typed(&mut self, event: &CodingAgentProductEventKind) -> Vec<UiEvent> {
@@ -501,7 +179,7 @@ impl CodingEventBridge {
                 usage,
                 ..
             }) => {
-                let context_tokens = match usage.total_tokens {
+                let context_tokens = match calculate_context_tokens(usage) {
                     0 => None,
                     tokens => Some(tokens),
                 };
@@ -775,14 +453,6 @@ fn first_changed_line_label(first_changed_line: Option<usize>) -> String {
         .unwrap_or_default()
 }
 
-fn check_output_label(
-    output: Option<&crate::coding_session::SelfHealingEditCheckOutput>,
-) -> String {
-    output
-        .map(|output| format!("check exit {}", output.exit_code))
-        .unwrap_or_else(|| "no check output".to_string())
-}
-
 fn delegation_block_from_tool_start(
     tool_call_id: &str,
     tool_name: &str,
@@ -963,7 +633,7 @@ mod tests {
         );
         let mut bridge = CodingEventBridge::new();
 
-        let events = bridge.handle_product_event(&product_event);
+        let events = bridge.push_product_event(&product_event);
 
         assert_eq!(
             events,

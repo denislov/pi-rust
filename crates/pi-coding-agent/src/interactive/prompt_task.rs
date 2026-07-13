@@ -787,7 +787,7 @@ fn complete_owned_task<T>(
 }
 
 fn product_event_has_visible_ui(bridge: &mut CodingEventBridge, event: &ProductEvent) -> bool {
-    !bridge.handle_product_event(event).is_empty()
+    !bridge.push_product_event(event).is_empty()
 }
 
 fn active_session_target(session: &CodingAgentSession) -> ResolvedSessionTarget {

@@ -14,7 +14,7 @@ impl RpcCodingEventAdapter {
     }
 
     pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<ProtocolEvent> {
-        self.inner.push_product_event(event)
+        self.inner.push_internal_product_event(event)
     }
 }
 

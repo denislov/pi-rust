@@ -1,7 +1,7 @@
 use crate::coding_session::{
     CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
     CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,
-    CodingAgentDiagnosticProductEvent, CodingAgentEvent, CodingAgentMessageProductEvent,
+    CodingAgentDiagnosticProductEvent, CodingAgentMessageProductEvent, CodingAgentProductEvent,
     CodingAgentProductEventCheckOutput, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentProductEventReplacement,
     CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
@@ -39,13 +39,19 @@ impl CodingProtocolEventAdapter {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn push_product_event(&mut self, event: &ProductEvent) -> Vec<ProtocolEvent> {
+    pub(crate) fn push_internal_product_event(
+        &mut self,
+        event: &ProductEvent,
+    ) -> Vec<ProtocolEvent> {
         self.push_typed(event.event())
     }
 
-    pub fn push(&mut self, event: &CodingAgentEvent) -> Vec<ProtocolEvent> {
-        let event = CodingAgentProductEventKind::from(event);
-        self.push_typed(&event)
+    pub fn push_product_event(&mut self, event: &CodingAgentProductEvent) -> Vec<ProtocolEvent> {
+        self.push_typed(event.event())
+    }
+
+    pub(crate) fn push_prompt_failure(&mut self, message: &str) -> Vec<ProtocolEvent> {
+        self.push_prompt_failed_message(message)
     }
 
     fn push_typed(&mut self, event: &CodingAgentProductEventKind) -> Vec<ProtocolEvent> {
@@ -1002,7 +1008,7 @@ mod tests {
             },
         );
 
-        let events = adapter.push_product_event(&product_event);
+        let events = adapter.push_internal_product_event(&product_event);
 
         assert!(matches!(
             &events[0],

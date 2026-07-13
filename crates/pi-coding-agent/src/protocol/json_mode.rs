@@ -1,8 +1,8 @@
 use crate::CliOutput;
 use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
-    CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions, CodingSessionError,
-    ProductEvent, ProductEventReceiver, PromptTurnOptions, PromptTurnOutcome,
+    CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, ProductEvent,
+    ProductEventReceiver, PromptTurnOptions, PromptTurnOutcome,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::events::CodingProtocolEventAdapter;
@@ -68,14 +68,8 @@ pub async fn run_json_mode(options: PromptRunOptions) -> CliOutput {
             stderr: format!("{error}\n"),
         },
         Err(error) => {
-            let _ = push_coding_protocol_events(
-                &mut stdout,
-                &mut adapter,
-                &CodingAgentEvent::PromptFailed {
-                    operation_id: "json_prompt".into(),
-                    error: error.clone(),
-                },
-            );
+            let _ =
+                push_protocol_events(&mut stdout, adapter.push_prompt_failure(&error.to_string()));
             CliOutput {
                 exit_code: 1,
                 stdout,
@@ -206,12 +200,11 @@ fn drain_json_events(
     }
 }
 
-fn push_coding_protocol_events(
+fn push_protocol_events(
     stdout: &mut String,
-    adapter: &mut CodingProtocolEventAdapter,
-    event: &CodingAgentEvent,
+    events: Vec<ProtocolEvent>,
 ) -> Result<(), CodingSessionError> {
-    for protocol_event in adapter.push(event) {
+    for protocol_event in events {
         stdout.push_str(&serialize_json_line(&protocol_event).map_err(|error| {
             CodingSessionError::Provider {
                 message: error.to_string(),
@@ -226,20 +219,13 @@ fn push_product_protocol_events(
     adapter: &mut CodingProtocolEventAdapter,
     event: &ProductEvent,
 ) -> Result<(), CodingSessionError> {
-    for protocol_event in adapter.push_product_event(event) {
-        stdout.push_str(&serialize_json_line(&protocol_event).map_err(|error| {
-            CodingSessionError::Provider {
-                message: error.to_string(),
-            }
-        })?);
-    }
-    Ok(())
+    push_protocol_events(stdout, adapter.push_internal_product_event(event))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding_session::{ProductEvent, ProductEventSequence};
+    use crate::coding_session::{CodingAgentEvent, ProductEvent, ProductEventSequence};
 
     #[test]
     fn json_mode_protocol_adapter_accepts_product_events() {
