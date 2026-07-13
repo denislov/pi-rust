@@ -1388,12 +1388,396 @@ impl From<&CodingAgentEvent> for CodingAgentProductEventKind {
 mod tests {
     use super::*;
     use crate::coding_session::event::ProductEventSequence;
+    use crate::coding_session::{
+        ProfileId, ProfileKind, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
+        SelfHealingEditReplacement,
+    };
+    use pi_ai::types::{Cost, Usage};
 
     fn project(sequence: u64, event: CodingAgentEvent) -> CodingAgentProductEvent {
         CodingAgentProductEvent::from_internal(ProductEvent::from_compat_event(
             ProductEventSequence::new(sequence),
             event,
         ))
+    }
+
+    fn exhaustive_inventory_fixture() -> Vec<CodingAgentProductEvent> {
+        let pid = || ProfileId::from("profile");
+        let error = || super::super::CodingSessionError::UnsupportedCapability {
+            capability: "fixture".into(),
+        };
+        let delegation = || {
+            (
+                "op".to_owned(),
+                "turn".to_owned(),
+                "call".to_owned(),
+                pid(),
+                ProfileKind::Agent,
+                pid(),
+                "task".to_owned(),
+            )
+        };
+        let usage = Usage {
+            input: 1,
+            output: 2,
+            cache_read: 3,
+            cache_write: 4,
+            total_tokens: 10,
+            cost: Cost::default(),
+        };
+        let mut events = vec![
+            CodingAgentEvent::SessionOpened {
+                session_id: "session".into(),
+            },
+            CodingAgentEvent::SessionWritePending {
+                operation_id: "op".into(),
+            },
+            CodingAgentEvent::SessionWriteCommitted {
+                operation_id: "op".into(),
+                session_id: "session".into(),
+            },
+            CodingAgentEvent::SessionWriteSkipped {
+                operation_id: "op".into(),
+                reason: "skip".into(),
+            },
+            CodingAgentEvent::SessionCompactionCompleted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                summary: "summary".into(),
+                first_kept_message_id: "message".into(),
+                tokens_before: 5,
+            },
+            CodingAgentEvent::DefaultAgentProfileChanged { profile_id: pid() },
+            CodingAgentEvent::AgentInvocationStarted {
+                operation_id: "op".into(),
+                child_operation_id: "child".into(),
+                profile_id: pid(),
+                task: "task".into(),
+            },
+            CodingAgentEvent::AgentInvocationCompleted {
+                operation_id: "op".into(),
+                child_operation_id: "child".into(),
+                profile_id: pid(),
+                final_text: "done".into(),
+            },
+            CodingAgentEvent::AgentInvocationFailed {
+                operation_id: "op".into(),
+                child_operation_id: "child".into(),
+                profile_id: pid(),
+                error: error(),
+            },
+            CodingAgentEvent::AgentInvocationAborted {
+                operation_id: "op".into(),
+                child_operation_id: "child".into(),
+                profile_id: pid(),
+                reason: "abort".into(),
+            },
+            CodingAgentEvent::AgentTurnStarted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                agent_turn: 1,
+            },
+            CodingAgentEvent::ProviderRequestStarted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                provider: "faux".into(),
+                model: "model".into(),
+            },
+            CodingAgentEvent::AgentTeamStarted {
+                operation_id: "op".into(),
+                team_id: pid(),
+                task: "task".into(),
+            },
+            CodingAgentEvent::AgentTeamMemberStarted {
+                operation_id: "op".into(),
+                child_operation_id: "child".into(),
+                team_id: pid(),
+                profile_id: pid(),
+                task: "task".into(),
+            },
+            CodingAgentEvent::AgentTeamMemberCompleted {
+                operation_id: "op".into(),
+                child_operation_id: "child".into(),
+                team_id: pid(),
+                profile_id: pid(),
+                final_text: "done".into(),
+            },
+            CodingAgentEvent::AgentTeamCompleted {
+                operation_id: "op".into(),
+                team_id: pid(),
+                final_text: "done".into(),
+            },
+            CodingAgentEvent::AgentTeamFailed {
+                operation_id: "op".into(),
+                team_id: pid(),
+                error: error(),
+            },
+            CodingAgentEvent::AgentTeamAborted {
+                operation_id: "op".into(),
+                team_id: pid(),
+                reason: "abort".into(),
+            },
+            CodingAgentEvent::AssistantMessageStarted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                message_id: None,
+            },
+            CodingAgentEvent::AssistantMessageDelta {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                message_id: Some("message".into()),
+                text: "delta".into(),
+            },
+            CodingAgentEvent::AssistantThinkingDelta {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                message_id: None,
+                text: "thinking".into(),
+            },
+            CodingAgentEvent::AssistantMessageCompleted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                message_id: Some("message".into()),
+                final_text: "done".into(),
+                usage,
+            },
+            CodingAgentEvent::ToolCallStarted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                tool_call_id: "call".into(),
+                name: "read".into(),
+                arguments_json: "{}".into(),
+            },
+            CodingAgentEvent::ToolCallUpdated {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                tool_call_id: "call".into(),
+                name: "read".into(),
+                message: "running".into(),
+            },
+            CodingAgentEvent::ToolCallCompleted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                tool_call_id: "call".into(),
+                name: "read".into(),
+                summary: "done".into(),
+            },
+            CodingAgentEvent::ToolCallFailed {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                tool_call_id: "call".into(),
+                name: "read".into(),
+                message: "failed".into(),
+            },
+            CodingAgentEvent::RuntimeCompactionCompleted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+                summary: "summary".into(),
+                first_kept_message_id: "message".into(),
+                tokens_before: 5,
+            },
+        ];
+        let (
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        ) = delegation();
+        events.push(CodingAgentEvent::DelegationRequested {
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        });
+        let (
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        ) = delegation();
+        events.push(CodingAgentEvent::DelegationRejected {
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            reason: "rejected".into(),
+        });
+        let (
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        ) = delegation();
+        events.push(CodingAgentEvent::DelegationApproved {
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        });
+        let (
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        ) = delegation();
+        events.push(CodingAgentEvent::DelegationConfirmationRequired {
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            reason: "confirm".into(),
+        });
+        let (
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        ) = delegation();
+        events.push(CodingAgentEvent::DelegationStarted {
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            child_operation_id: "child".into(),
+        });
+        let (
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        ) = delegation();
+        events.push(CodingAgentEvent::DelegationCompleted {
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            child_operation_id: "child".into(),
+            final_text: "done".into(),
+        });
+        let (
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+        ) = delegation();
+        events.push(CodingAgentEvent::DelegationFailed {
+            operation_id,
+            turn_id,
+            tool_call_id,
+            requesting_profile_id,
+            target_kind,
+            target_id,
+            task,
+            child_operation_id: "child".into(),
+            error: error(),
+        });
+        events.extend([
+            CodingAgentEvent::SelfHealingEditStarted {
+                operation_id: "op".into(),
+                path: "file".into(),
+                replacements: 1,
+            },
+            CodingAgentEvent::SelfHealingEditRepairAttempted {
+                operation_id: "op".into(),
+                path: "file".into(),
+                attempt: 1,
+                replacements: vec![SelfHealingEditReplacement::new("old", "new")],
+                diagnostics: vec![SelfHealingEditDiagnostic {
+                    message: "diagnostic".into(),
+                }],
+                check_output: Some(SelfHealingEditCheckOutput {
+                    command: "check".into(),
+                    stdout: "out".into(),
+                    stderr: String::new(),
+                    exit_code: 0,
+                }),
+            },
+            CodingAgentEvent::SelfHealingEditCompleted {
+                operation_id: "op".into(),
+                path: "file".into(),
+                attempts: 1,
+                first_changed_line: Some(1),
+                check_output: None,
+            },
+            CodingAgentEvent::SelfHealingEditFailed {
+                operation_id: "op".into(),
+                path: "file".into(),
+                error: error(),
+            },
+            CodingAgentEvent::PromptStarted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+            },
+            CodingAgentEvent::PromptCompleted {
+                operation_id: "op".into(),
+                turn_id: "turn".into(),
+            },
+            CodingAgentEvent::PromptFailed {
+                operation_id: "op".into(),
+                error: error(),
+            },
+            CodingAgentEvent::PromptAborted {
+                operation_id: "op".into(),
+                reason: "abort".into(),
+            },
+            CodingAgentEvent::OperationRecovered {
+                operation_id: "op".into(),
+                recovery_id: "recovery".into(),
+                reason: "restart".into(),
+            },
+            CodingAgentEvent::Diagnostic {
+                operation_id: None,
+                message: "diagnostic".into(),
+            },
+            CodingAgentEvent::CapabilityChanged {
+                generation: 2,
+                revocation: super::super::CapabilityRevocationPolicy::FutureOnly,
+            },
+        ]);
+        events
+            .into_iter()
+            .enumerate()
+            .map(|(index, event)| project(index as u64 + 1, event))
+            .collect()
     }
 
     #[test]
@@ -1458,5 +1842,60 @@ mod tests {
     fn exhaustive_inventory_covers_all_current_variants() {
         let projected = exhaustive_inventory_fixture();
         assert_eq!(projected.len(), 45);
+        let expected_counts = [5, 1, 6, 6, 4, 4, 1, 7, 9, 1, 1];
+        let families = [
+            CodingAgentProductEventFamily::Session,
+            CodingAgentProductEventFamily::Profile,
+            CodingAgentProductEventFamily::Agent,
+            CodingAgentProductEventFamily::Team,
+            CodingAgentProductEventFamily::Message,
+            CodingAgentProductEventFamily::Tool,
+            CodingAgentProductEventFamily::Runtime,
+            CodingAgentProductEventFamily::Delegation,
+            CodingAgentProductEventFamily::Workflow,
+            CodingAgentProductEventFamily::Diagnostic,
+            CodingAgentProductEventFamily::Capability,
+        ];
+        let counts: Vec<_> = families
+            .iter()
+            .map(|family| {
+                projected
+                    .iter()
+                    .filter(|event| event.family() == *family)
+                    .count()
+            })
+            .collect();
+        assert_eq!(counts, expected_counts);
+        assert_eq!(projected[0].operation_id(), None);
+        assert_eq!(
+            projected[1].durability(),
+            &CodingAgentProductEventDurability::PendingSessionWrite {
+                operation_id: "op".into()
+            }
+        );
+        assert_eq!(
+            projected[2].durability(),
+            &CodingAgentProductEventDurability::Durable {
+                session_id: "session".into()
+            }
+        );
+        assert_eq!(
+            projected[3].durability(),
+            &CodingAgentProductEventDurability::LiveOnly
+        );
+        assert_eq!(projected[43].operation_id(), None);
+        assert_eq!(projected[44].operation_id(), None);
+        assert_eq!(
+            projected[42].terminal_status(),
+            Some(CodingAgentProductEventTerminalStatus::Recovered)
+        );
+        assert_eq!(projected[42].terminal_operation(), None);
+        assert_eq!(
+            projected
+                .iter()
+                .map(CodingAgentProductEvent::sequence)
+                .collect::<Vec<_>>(),
+            (1..=45).collect::<Vec<_>>()
+        );
     }
 }
