@@ -1897,9 +1897,10 @@ mod tests {
             .unwrap()
             .expect("startup recovery should be projected after subscription");
         assert!(matches!(
-            event.compatibility_event(),
-            CodingAgentEvent::OperationRecovered { operation_id, .. }
-                if operation_id == "op_in_doubt"
+            event.event(),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecovered { operation_id, .. }
+            ) if operation_id == "op_in_doubt"
         ));
     }
 
@@ -1916,8 +1917,12 @@ mod tests {
 
         let event = receiver.recv().await.unwrap();
         assert_eq!(event.sequence, 1);
-        assert_eq!(event.family, "Diagnostic");
-        assert_eq!(event.kind, "Diagnostic(Diagnostic)");
+        assert!(matches!(
+            event.event(),
+            CodingAgentProductEventKind::Diagnostic(
+                CodingAgentDiagnosticProductEvent::Diagnostic { message, .. }
+            ) if message == "public event"
+        ));
     }
 
     #[tokio::test]
@@ -1938,8 +1943,12 @@ mod tests {
             .unwrap()
             .expect("emitted event should be available without blocking");
         assert_eq!(event.sequence, 1);
-        assert_eq!(event.family, "Diagnostic");
-        assert_eq!(event.kind, "Diagnostic(Diagnostic)");
+        assert!(matches!(
+            event.event(),
+            CodingAgentProductEventKind::Diagnostic(
+                CodingAgentDiagnosticProductEvent::Diagnostic { message, .. }
+            ) if message == "public event"
+        ));
     }
 
     #[tokio::test]
@@ -3074,17 +3083,20 @@ runtime = "lua"
         let emitted = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
         assert!(
             emitted.iter().any(|event| matches!(
-                event.compatibility_event(),
-                CodingAgentEvent::SessionOpened { session_id }
+                event.event(),
+                CodingAgentProductEventKind::Session(
+                    CodingAgentSessionProductEvent::Opened { session_id }
+                )
                     if session_id == &session.view().session_id
             )),
             "pre-fork receiver should observe the forked session transition: {emitted:#?}"
         );
         assert!(
             emitted.iter().any(|event| matches!(
-                event.compatibility_event(),
-                CodingAgentEvent::DefaultAgentProfileChanged { profile_id }
-                    if profile_id == &ProfileId::from("default")
+                event.event(),
+                CodingAgentProductEventKind::Profile(
+                    CodingAgentProfileProductEvent::DefaultChanged { profile_id }
+                ) if profile_id == "default"
             )),
             "pre-fork receiver should observe post-fork runtime events: {emitted:#?}"
         );
@@ -4203,8 +4215,10 @@ runtime = "lua"
         );
         let emitted = std::iter::from_fn(|| fork_events.try_recv().unwrap()).collect::<Vec<_>>();
         assert!(emitted.iter().any(|event| matches!(
-            event.compatibility_event(),
-            CodingAgentEvent::SessionOpened { session_id }
+            event.event(),
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::Opened { session_id }
+            )
                 if session_id == &session.view().session_id
         )));
         assert!(
@@ -4445,12 +4459,16 @@ runtime = "lua"
         assert!(session.pending_delegation_confirmations().is_empty());
         let emitted = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
         assert!(emitted.iter().any(|event| matches!(
-            event.compatibility_event(),
-            CodingAgentEvent::DelegationRejected { reason, .. } if reason == "not now"
+            event.event(),
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Rejected { reason, .. }
+            ) if reason == "not now"
         )));
         assert!(emitted.iter().any(|event| matches!(
-            event.compatibility_event(),
-            CodingAgentEvent::DelegationApproved { .. }
+            event.event(),
+            CodingAgentProductEventKind::Delegation(
+                CodingAgentDelegationProductEvent::Approved { .. }
+            )
         )));
         assert!(
             emitted

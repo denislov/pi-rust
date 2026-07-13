@@ -1324,7 +1324,7 @@ mod tests {
     }
 
     fn prompt_started_event(sequence: u64, operation_id: &str) -> ProductEvent {
-        ProductEvent::from_compat_event(
+        ProductEvent::from_event_for_tests(
             ProductEventSequence::new(sequence),
             CodingAgentEvent::PromptStarted {
                 operation_id: operation_id.into(),
@@ -1334,7 +1334,7 @@ mod tests {
     }
 
     fn prompt_completed_event(sequence: u64, operation_id: &str) -> ProductEvent {
-        ProductEvent::from_compat_event(
+        ProductEvent::from_event_for_tests(
             ProductEventSequence::new(sequence),
             CodingAgentEvent::PromptCompleted {
                 operation_id: operation_id.into(),

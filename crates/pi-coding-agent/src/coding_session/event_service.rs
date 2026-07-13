@@ -11,7 +11,7 @@ use pi_ai::types::{AssistantMessageEvent, ContentBlock};
 use super::capability_snapshot::InstalledCapabilityGeneration;
 use super::{
     CodingAgentEvent, CodingSessionError, ProfileId, ProfileKind,
-    event::{ProductEvent, ProductEventSequence},
+    event::{ProductEvent, ProductEventDurability, ProductEventSequence},
     manual_compaction_flow::ManualCompactionOutcome,
     plugin_load_flow::PluginLoadOutcome,
     prompt::{DelegationRequest, PromptTurnOutcome},
@@ -172,7 +172,17 @@ impl EventService {
         let mut state = self.publication_state.lock().unwrap();
         let sequence = ProductEventSequence::new(state.next_sequence);
         state.next_sequence += 1;
-        let product_event = ProductEvent::from_compat_event(sequence, event);
+        let operation_id = event.operation_id().map(str::to_owned);
+        let terminal_status = event.terminal_status();
+        let durability = ProductEventDurability::from_emitted_event(&event);
+        let typed_event = super::public_event::CodingAgentProductEventKind::from(&event);
+        let product_event = ProductEvent::new(
+            sequence,
+            typed_event,
+            operation_id,
+            terminal_status,
+            durability,
+        );
         self.retain_product_event(&mut state, product_event.clone());
         let _ = self.product_sender.send(product_event.clone());
         product_event
@@ -1012,12 +1022,11 @@ mod tests {
     use serde_json::json;
 
     use super::super::event::{
-        ProductEventDurability, ProductEventFamily, ProductEventKind, ProductEventSequence,
-        ProductEventTerminalStatus, WorkflowProductEventKind,
+        ProductEventDurability, ProductEventSequence, ProductEventTerminalStatus,
     };
     use super::super::public_event::{
-        CodingAgentCapabilityProductEvent, CodingAgentProductEventKind,
-        CodingAgentWorkflowProductEvent,
+        CodingAgentCapabilityProductEvent, CodingAgentProductEventFamily,
+        CodingAgentProductEventKind, CodingAgentWorkflowProductEvent,
     };
     use super::*;
 
@@ -1109,7 +1118,10 @@ mod tests {
         });
 
         assert_eq!(first.sequence(), ProductEventSequence(1));
-        assert_eq!(first.family(), ProductEventFamily::Workflow);
+        assert_eq!(
+            first.event().family(),
+            CodingAgentProductEventFamily::Workflow
+        );
         assert_eq!(first.operation_id(), Some("op_1"));
         assert_eq!(
             first.terminal_status(),
@@ -1117,8 +1129,10 @@ mod tests {
         );
         assert_eq!(first.durability(), &ProductEventDurability::LiveOnly);
         assert!(matches!(
-            first.compatibility_event(),
-            CodingAgentEvent::PromptCompleted { .. }
+            first.event(),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptCompleted { .. }
+            )
         ));
         assert!(matches!(
             receiver
@@ -1132,7 +1146,10 @@ mod tests {
         ));
 
         assert_eq!(second.sequence(), ProductEventSequence(2));
-        assert_eq!(second.family(), ProductEventFamily::Capability);
+        assert_eq!(
+            second.event().family(),
+            CodingAgentProductEventFamily::Capability
+        );
         assert_eq!(second.operation_id(), None);
         assert_eq!(second.terminal_status(), None);
         assert_eq!(second.durability(), &ProductEventDurability::LiveOnly);
@@ -1165,10 +1182,12 @@ mod tests {
             .expect("product event is published");
         assert_eq!(product_event, emitted);
         assert_eq!(product_event.sequence(), ProductEventSequence(1));
-        assert_eq!(
-            product_event.kind(),
-            ProductEventKind::Workflow(WorkflowProductEventKind::PromptCompleted)
-        );
+        assert!(matches!(
+            product_event.event(),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptCompleted { .. }
+            )
+        ));
         assert_eq!(product_event.operation_id(), Some("op_1"));
         assert_eq!(
             product_event.terminal_status(),
@@ -2431,6 +2450,9 @@ mod tests {
             event.terminal_status(),
             Some(ProductEventTerminalStatus::Recovered)
         );
-        assert_eq!(event.family(), ProductEventFamily::Workflow);
+        assert_eq!(
+            event.event().family(),
+            CodingAgentProductEventFamily::Workflow
+        );
     }
 }

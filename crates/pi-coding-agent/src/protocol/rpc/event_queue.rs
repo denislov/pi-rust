@@ -60,7 +60,7 @@ mod tests {
     use crate::coding_session::{CodingAgentEvent, ProductEvent, ProductEventSequence};
 
     fn event(sequence: u64) -> ProductEvent {
-        ProductEvent::from_compat_event(
+        ProductEvent::from_event_for_tests(
             ProductEventSequence::new(sequence),
             CodingAgentEvent::Diagnostic {
                 operation_id: None,

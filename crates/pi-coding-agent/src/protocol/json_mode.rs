@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn json_mode_protocol_adapter_accepts_product_events() {
-        let product_event = ProductEvent::from_compat_event(
+        let product_event = ProductEvent::from_event_for_tests(
             ProductEventSequence(1),
             CodingAgentEvent::AssistantMessageDelta {
                 operation_id: "op_json".into(),

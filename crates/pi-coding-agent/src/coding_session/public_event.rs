@@ -1625,7 +1625,7 @@ mod tests {
     // product-event-inventory:end
 
     fn project(sequence: u64, event: CodingAgentEvent) -> CodingAgentProductEvent {
-        CodingAgentProductEvent::from_internal(ProductEvent::from_compat_event(
+        CodingAgentProductEvent::from_internal(ProductEvent::from_event_for_tests(
             ProductEventSequence::new(sequence),
             event,
         ))

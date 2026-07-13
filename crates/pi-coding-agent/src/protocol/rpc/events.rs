@@ -69,7 +69,7 @@ mod tests {
         .enumerate()
         {
             let product_event =
-                ProductEvent::from_compat_event(ProductEventSequence(index as u64 + 1), event);
+                ProductEvent::from_event_for_tests(ProductEventSequence(index as u64 + 1), event);
             events.extend(adapter.push_product_event(&product_event));
         }
 
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn rpc_adapter_accepts_internal_product_events() {
         let mut adapter = adapter();
-        let product_event = ProductEvent::from_compat_event(
+        let product_event = ProductEvent::from_event_for_tests(
             ProductEventSequence(1),
             CodingAgentEvent::PromptFailed {
                 operation_id: "op_1".into(),
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn rpc_adapter_maps_product_failure_to_protocol_error_message() {
         let mut adapter = adapter();
-        let product_event = ProductEvent::from_compat_event(
+        let product_event = ProductEvent::from_event_for_tests(
             ProductEventSequence(1),
             CodingAgentEvent::PromptFailed {
                 operation_id: "op_1".into(),

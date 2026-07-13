@@ -1956,7 +1956,7 @@ mod tests {
     use crate::coding_session::{CodingAgentEvent, ProductEventSequence};
 
     fn product_event(sequence: u64, event: CodingAgentEvent) -> ProductEvent {
-        ProductEvent::from_compat_event(ProductEventSequence::new(sequence), event)
+        ProductEvent::from_event_for_tests(ProductEventSequence::new(sequence), event)
     }
 
     fn function_body<'a>(source: &'a str, function_name: &str) -> &'a str {

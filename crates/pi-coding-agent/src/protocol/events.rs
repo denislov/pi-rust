@@ -993,7 +993,7 @@ mod tests {
             "faux-provider".into(),
             "faux-model".into(),
         );
-        let product_event = ProductEvent::from_compat_event(
+        let product_event = ProductEvent::from_event_for_tests(
             ProductEventSequence::new(1),
             CodingAgentEvent::OperationRecovered {
                 operation_id: "op_recovered".into(),

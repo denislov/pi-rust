@@ -306,7 +306,7 @@ mod tests {
     fn explicit_prompt_operation_observer_updates_submission_state_without_running_prompt() {
         let mut state = RpcState::new(CliRunOptions::default()).unwrap();
         state.client_drafts = vec![ClientDraft::new(ClientDraftKind::Prompt, "draft prompt")];
-        let started = ProductEvent::from_compat_event(
+        let started = ProductEvent::from_event_for_tests(
             ProductEventSequence::new(1),
             CodingAgentEvent::PromptStarted {
                 operation_id: "op_observed".into(),
@@ -330,7 +330,7 @@ mod tests {
             })
         );
 
-        let completed = ProductEvent::from_compat_event(
+        let completed = ProductEvent::from_event_for_tests(
             ProductEventSequence::new(2),
             CodingAgentEvent::PromptCompleted {
                 operation_id: "op_observed".into(),

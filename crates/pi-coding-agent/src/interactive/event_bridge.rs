@@ -952,7 +952,7 @@ mod tests {
 
     #[test]
     fn coding_event_bridge_accepts_product_events() {
-        let product_event = ProductEvent::from_compat_event(
+        let product_event = ProductEvent::from_event_for_tests(
             ProductEventSequence(1),
             CodingAgentEvent::AssistantMessageDelta {
                 operation_id: "op_interactive".into(),
@@ -974,7 +974,7 @@ mod tests {
     }
 
     fn assistant_delta_event(sequence: u64, text: &str) -> ProductEvent {
-        ProductEvent::from_compat_event(
+        ProductEvent::from_event_for_tests(
             ProductEventSequence::new(sequence),
             CodingAgentEvent::AssistantMessageDelta {
                 operation_id: "op_interactive".into(),
@@ -1025,7 +1025,7 @@ mod tests {
         let mut projection = UiProjection::from_snapshot(snapshot);
         projection.drain();
 
-        let first = ProductEvent::from_compat_event(
+        let first = ProductEvent::from_event_for_tests(
             ProductEventSequence::new(3),
             CodingAgentEvent::AssistantMessageDelta {
                 operation_id: "op_interactive".into(),
@@ -1034,7 +1034,7 @@ mod tests {
                 text: "hello ".into(),
             },
         );
-        let second = ProductEvent::from_compat_event(
+        let second = ProductEvent::from_event_for_tests(
             ProductEventSequence::new(4),
             CodingAgentEvent::AssistantThinkingDelta {
                 operation_id: "op_interactive".into(),

@@ -2364,7 +2364,7 @@ mod tests {
         sequence: ProductEventSequence,
         event: CodingAgentEvent,
     ) -> PromptTaskEvent {
-        PromptTaskEvent::Coding(ProductEvent::from_compat_event(sequence, event))
+        PromptTaskEvent::Coding(ProductEvent::from_event_for_tests(sequence, event))
     }
 
     fn capabilities() -> CodingAgentCapabilities {
