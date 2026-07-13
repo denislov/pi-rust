@@ -393,9 +393,124 @@ async fn coding_session_snapshot_public_facade_is_importable() {
     let _cursor_type_name = std::any::type_name::<CodingAgentSnapshotCursor>();
 
     let client_id = CodingAgentClientId::new("public-client");
-    let connected: CodingAgentClientConnection = session.connect(client_id.clone());
+    let connected: CodingAgentClientConnection = session.connect(client_id.clone()).unwrap();
     assert_eq!(connected.client_id, client_id);
     assert_eq!(connected.snapshot.session.session_id, session_id);
+}
+
+#[tokio::test]
+async fn client_connection_state_takeover_ack_and_drafts_are_generation_scoped() {
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let first = session.connect(CodingAgentClientId::new("stateful-client")).unwrap();
+    first
+        .set_prompt_draft(
+            pi_coding_agent::api::CodingAgentDraftId("draft-1".into()),
+            "hello",
+        )
+        .unwrap();
+    let snapshot = first.state().unwrap();
+    assert_eq!(snapshot.drafts.len(), 1);
+    assert_eq!(snapshot.drafts[0].id.0, "draft-1");
+    assert_eq!(first.acknowledge(0).unwrap(), 0);
+
+    let second = session.connect(CodingAgentClientId::new("stateful-client")).unwrap();
+    assert!(second.generation.0 > first.generation.0);
+    assert_eq!(second.state().unwrap().drafts[0].text, "hello");
+    assert_eq!(first.state().unwrap_err().code(), "stale_client_connection");
+    assert_eq!(first.acknowledge(1).unwrap_err().code(), "stale_client_connection");
+}
+
+#[tokio::test]
+async fn client_connection_replays_unacknowledged_delivery_and_ack_is_explicit() {
+    let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let connection = session.connect(CodingAgentClientId::new("replay-client")).unwrap();
+    let recovery = connection.reconnect(0).unwrap();
+    match recovery {
+        pi_coding_agent::api::CodingAgentReconnect::Replayed { events, cursor } => {
+            assert!(events.is_empty());
+            assert_eq!(cursor.last_event_sequence, 0);
+        }
+        other => panic!("unexpected recovery: {other:?}"),
+    }
+    assert_eq!(connection.acknowledge(0).unwrap(), 0);
+}
+
+#[tokio::test]
+async fn submission_lease_drop_preserves_draft_and_releases_exclusivity() {
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let connection = session.connect(CodingAgentClientId::new("lease-client")).unwrap();
+    connection
+        .set_prompt_draft(
+            pi_coding_agent::api::CodingAgentDraftId("draft-lease".into()),
+            "tracked prompt",
+        )
+        .unwrap();
+    let operation = CodingAgentOperation::Prompt(PromptTurnOptions::new(
+        PromptInvocation::Text("tracked prompt".into()),
+    ));
+    let lease = connection
+        .prepare_submission(
+            &mut session,
+            pi_coding_agent::api::CodingAgentDraftId("draft-lease".into()),
+            &operation,
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .prepare_submission(
+                &mut session,
+                pi_coding_agent::api::CodingAgentDraftId("draft-lease".into()),
+                &operation,
+            )
+            .unwrap_err()
+            .code(),
+        "submission_preparation_busy"
+    );
+    drop(lease);
+    assert_eq!(connection.state().unwrap().drafts[0].text, "tracked prompt");
+    let replacement = connection
+        .prepare_submission(
+            &mut session,
+            pi_coding_agent::api::CodingAgentDraftId("draft-lease".into()),
+            &operation,
+        )
+        .unwrap();
+    drop(replacement);
+}
+
+#[test]
+fn client_errors_have_stable_non_overlapping_codes() {
+    assert_eq!(
+        CodingSessionError::StaleClientConnection { client_id: "c".into() }.code(),
+        "stale_client_connection"
+    );
+    assert_eq!(
+        CodingSessionError::SubmissionPreparationBusy.code(),
+        "submission_preparation_busy"
+    );
+    assert_eq!(
+        CodingSessionError::ClientCapacityExceeded { limit: 64 }.code(),
+        "client_capacity_exceeded"
+    );
+}
+
+#[test]
+fn legacy_run_connection_surface_has_no_dispatcher() {
+    let source = fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/coding_session/public_projection.rs"),
+    )
+    .unwrap();
+    let connection = source.split("impl CodingAgentClientConnection").nth(1).unwrap();
+    assert!(!connection.contains("pub async fn run("));
+    assert!(!connection.contains("pub async fn submit("));
+    assert!(connection.contains("prepare_submission("));
 }
 
 #[test]
