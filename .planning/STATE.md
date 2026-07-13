@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Typed Product Events and Client Lifecycle Contract
-current_phase: 06
-current_phase_name: Product Event Inventory and Typed Contract
-status: ready_for_phase_07
-stopped_at: Phase 06 verified complete
-last_updated: "2026-07-13T06:15:00.000Z"
+current_phase: 8
+current_phase_name: Client Connection, Replay, and Scoped Control
+status: ready_for_phase_08
+stopped_at: Phase 07 verified complete
+last_updated: "2026-07-13T12:07:33.220Z"
 last_activity: 2026-07-13
-last_activity_desc: Completed Phase 06 product event contract execution
+last_activity_desc: Phase 07 complete, transitioned to Phase 8
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 25
+  completed_phases: 2
+  total_plans: 8
+  completed_plans: 8
+  percent: 50
 ---
 
 # Project State
@@ -24,20 +24,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Every first-party live-session product operation follows one typed, admitted, behavior-preserving runtime path through `CodingAgentSession::run`.
-**Current focus:** Phase 06 — Product Event Inventory and Typed Contract
+**Current focus:** Phase 08 — Client Connection, Replay, and Scoped Control
 
 ## Current Position
 
-Phase: 06 (Product Event Inventory and Typed Contract) — COMPLETE
-Plan: 3 of 3
-Status: Verified complete — ready for Phase 07
-Last activity: 2026-07-13 — Completed Phase 06 event inventory gap closure; verifier rerun pending
+Phase: 8 — Client Connection, Replay, and Scoped Control
+Plan: Not started
+Status: Phase 07 verified complete — ready to plan Phase 08
+Last activity: 2026-07-13 — Phase 07 complete, transitioned to Phase 8
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 22
+- Total plans completed: 27
 - Average duration: -
 - Total execution time: 0.0 hours
 
@@ -50,6 +50,7 @@ Last activity: 2026-07-13 — Completed Phase 06 event inventory gap closure; ve
 | 03 | 9 | - | - |
 | 04 | 4 | - | - |
 | 5 | 3 | - | - |
+| 07 | 5 | - | - |
 
 **Recent Trend:**
 

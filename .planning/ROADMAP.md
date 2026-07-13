@@ -26,25 +26,25 @@
 
 **Requirements:** COMPAT-01, COMPAT-02
 
-**Plans:** 5 plans
+**Plans:** 5/5 plans complete
 
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — Establish owned typed payloads inside the private ProductEvent envelope.
+- [x] 07-01-PLAN.md — Establish owned typed payloads inside the private ProductEvent envelope.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 07-02-PLAN.md — Migrate protocol, JSON, and RPC projections to typed product events.
-- [ ] 07-03-PLAN.md — Migrate interactive projections and loop assertions to typed product events.
+- [x] 07-02-PLAN.md — Migrate protocol, JSON, and RPC projections to typed product events.
+- [x] 07-03-PLAN.md — Migrate interactive projections and loop assertions to typed product events.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 07-04-PLAN.md — Migrate receiver tests and delete the legacy receiver/duplicate broadcast.
+- [x] 07-04-PLAN.md — Migrate receiver tests and delete the legacy receiver/duplicate broadcast.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 07-05-PLAN.md — Delete raw compatibility storage, close guards/docs, and run workspace gates.
+- [x] 07-05-PLAN.md — Delete raw compatibility storage, close guards/docs, and run workspace gates.
 
 **Success criteria:**
 
@@ -82,7 +82,7 @@ Plans:
 ## Progress
 
 - [x] Phase 6: Product Event Inventory and Typed Contract
-- [ ] Phase 7: Adapter Migration and Compatibility Deletion
+- [x] Phase 7: Adapter Migration and Compatibility Deletion (completed 2026-07-13)
 - [ ] Phase 8: Client Connection, Replay, and Scoped Control
 - [ ] Phase 9: Lifecycle Association, Guards, and Closure
 
