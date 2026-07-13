@@ -981,10 +981,21 @@ fn collect_coding_agent_session_methods(
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if !in_impl {
-            if trimmed
-                .strip_prefix("impl CodingAgentSession")
-                .is_some_and(|suffix| suffix.trim_start().starts_with('{'))
-            {
+            let impl_suffix = trimmed.strip_prefix("impl CodingAgentSession");
+            let starts_impl = impl_suffix.is_some_and(|suffix| {
+                let suffix = suffix.trim_start();
+                suffix.is_empty() || suffix.starts_with('{')
+            });
+            let opens_here = impl_suffix.is_some_and(|suffix| suffix.trim_start().starts_with('{'));
+            let opens_next = starts_impl
+                && !opens_here
+                && lines
+                    .get(index + 1..)
+                    .into_iter()
+                    .flatten()
+                    .find(|next| !next.trim().is_empty())
+                    .is_some_and(|next| next.trim().starts_with('{'));
+            if opens_here || opens_next {
                 in_impl = true;
                 depth = brace_delta(line);
             }
@@ -994,7 +1005,9 @@ fn collect_coding_agent_session_methods(
         if depth == 1 {
             if trimmed.starts_with("#[") {
                 attributes.push(trimmed.to_owned());
-            } else if let Some((visibility, name)) = parse_visible_method(trimmed) {
+            } else if (trimmed.starts_with("pub ") || trimmed.starts_with("pub(crate) "))
+                && let Some((visibility, name)) = parse_visible_method_signature(&lines, index)
+            {
                 let end_index = visible_method_end(&lines, index);
                 methods.push(SessionMethod {
                     name,
@@ -1019,6 +1032,20 @@ fn collect_coding_agent_session_methods(
             attributes.clear();
         }
     }
+}
+
+fn parse_visible_method_signature(lines: &[&str], start: usize) -> Option<(&'static str, String)> {
+    let mut signature = String::new();
+    for line in lines.iter().skip(start).take(12) {
+        if !signature.is_empty() {
+            signature.push(' ');
+        }
+        signature.push_str(line.trim());
+        if signature.contains('{') {
+            break;
+        }
+    }
+    parse_visible_method(&signature)
 }
 
 fn visible_method_end(lines: &[&str], start: usize) -> usize {
@@ -1500,6 +1527,33 @@ fn adapter_scanner_fixture_matrix_is_sanitized_and_structural() {
     assert!(production.contains("(session).prompt("));
     assert!(!production.contains("comment"));
     assert!(production.contains("other.prompt("));
+}
+
+#[test]
+fn session_method_inventory_accepts_multiline_impl_and_signature() {
+    let fixture = tempfile::tempdir().expect("create session method fixture");
+    let source_path = fixture.path().join("session.rs");
+    fs::write(
+        &source_path,
+        r#"
+            impl CodingAgentSession
+            {
+                pub async fn prompt(
+                    &mut self,
+                    prompt: &str,
+                ) -> Result<(), Error> {
+                    todo!()
+                }
+            }
+        "#,
+    )
+    .expect("write session method fixture");
+
+    let mut methods = Vec::new();
+    collect_coding_agent_session_methods(fixture.path(), &source_path, &mut methods);
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0].name, "prompt");
+    assert_eq!(methods[0].visibility, "pub");
 }
 
 fn production_lines(source: &str) -> impl Iterator<Item = &str> {

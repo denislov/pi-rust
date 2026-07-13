@@ -40,7 +40,7 @@ status: complete
 
 ## Verification
 
-- Focused boundary/API/public suite: 44 tests passed.
+- Focused boundary/API/public suite: 45 tests passed after resolving the code-review blocker.
 - `cargo fmt --check`: passed.
 - `cargo test -p pi-coding-agent`: 653 passed, 1 ignored.
 - `cargo check -p pi-coding-agent`: passed.

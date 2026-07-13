@@ -1,5 +1,5 @@
 ---
-status: findings
+status: issues_found
 findings:
   blocker: 1
   warning: 2
@@ -8,6 +8,11 @@ findings:
 ---
 
 # Phase 05 Code Review
+
+## Resolution
+
+- BLOCKER 1 resolved in the follow-up guard fix: the collector now accepts an exact `CodingAgentSession` impl whose opening brace is on a later line, accumulates multiline visible method signatures, and has a regression fixture for both forms. `product_runtime_boundary_guards` passes 16/16.
+- Warnings 2 and 3 remain advisory hardening opportunities; the current recursive roots and 12-cell external fixture matrix are covered by passing focused tests.
 
 ## BLOCKER
 
@@ -33,4 +38,3 @@ The same line-oriented parser also requires a complete visible method signature 
 ### 3. Negative fixture success is not tied to the fixture's own diagnostic
 
 `crates/pi-coding-agent/tests/api_boundary_guards.rs:144-170` accepts any compiler output containing `error[E0432]` or `error[E0603]`. It does not verify that the diagnostic points at the copied fixture source or names the forbidden symbol/category. A dependency/build regression that emits one of those codes can make a negative fixture appear to enforce privacy even when its import is no longer testing the intended path. Preserve the category-level diagnostic requirement, but also assert the fixture filename and at least one forbidden symbol appear in stderr for each case.
-

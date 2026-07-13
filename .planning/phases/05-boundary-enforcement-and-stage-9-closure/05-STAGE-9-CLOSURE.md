@@ -24,14 +24,14 @@ The final boundary is enforced by:
 
 | UTC | Exact command | Scope | Result |
 |---|---|---|---|
-| `2026-07-13T02:07:54Z` | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards -- --nocapture` | Recursive JSON/print/RPC/interactive production inventory; receiver-aware 16-method deletion ledger; compatibility synonyms; production `allow(deprecated)` | PASS; 15 tests, zero guard violations |
+| `2026-07-13T02:07:54Z` | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards -- --nocapture` | Recursive JSON/print/RPC/interactive production inventory; receiver-aware 16-method deletion ledger; compatibility synonyms; production `allow(deprecated)` | PASS; 16 tests after code-review fix, zero guard violations |
 | `2026-07-13T02:08:26Z` | `rg -n 'allow\\(deprecated\\)' crates/pi-coding-agent/src/{print_mode.rs,protocol,interactive}` plus receiver-aware guard assertions | `crates/pi-coding-agent/src/{lib.rs,print_mode.rs,protocol,interactive,coding_session}` | PASS; no production local suppression; guard inventory reports zero unexpected calls/definitions |
 
 ## Command Evidence
 
 | UTC | Exact command | Status | Meaningful conclusion |
 |---|---|---|---|
-| `2026-07-13T02:07:54Z` | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --test api_boundary_guards --test public_api -- --nocapture` | PASS | 44 focused tests: 15 + 6 + 23 |
+| `2026-07-13T02:07:54Z` | `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --test api_boundary_guards --test public_api -- --nocapture` | PASS | 45 focused tests after code-review fix: 16 + 6 + 23 |
 | `2026-07-13T02:07:54Z` | `cargo fmt --check` | PASS | Formatting clean |
 | `2026-07-13T02:08:26Z` | `cargo test -p pi-coding-agent` | PASS | 653 passed, 1 ignored |
 | `2026-07-13T02:08:26Z` | `cargo check -p pi-coding-agent` | PASS | Crate compiled; only existing dead-code/deprecation warnings |
