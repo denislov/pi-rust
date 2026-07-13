@@ -891,6 +891,16 @@ impl CodingAgentEvent {
 mod tests {
     use super::*;
 
+    #[test]
+    fn product_event_runtime_envelope_has_no_raw_compatibility_storage() {
+        let source = include_str!("event.rs");
+        let raw_field = ["compatibility", "_event: CodingAgentEvent"].concat();
+        let raw_accessor = ["fn compatibility", "_event(&self)"].concat();
+
+        assert!(!source.contains(&raw_field));
+        assert!(!source.contains(&raw_accessor));
+    }
+
     fn profile_id(value: &str) -> ProfileId {
         ProfileId::new(value.to_owned()).expect("valid profile id")
     }
