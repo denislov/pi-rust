@@ -56,7 +56,7 @@
 |-------------|-------|--------|
 | EVENT-01 | Phase 6 | Complete |
 | EVENT-02 | Phase 6 | Complete |
-| EVENT-03 | Phase 6 | Pending |
+| EVENT-03 | Phase 6 | Complete |
 | COMPAT-01 | Phase 7 | Pending |
 | COMPAT-02 | Phase 7 | Pending |
 | COMPAT-03 | Phase 9 | Pending |
