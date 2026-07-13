@@ -2,7 +2,7 @@
 
 ## What This Is
 
-This project completed the Stage 9 runtime convergence for the existing `pi-rust` coding-agent workspace. `CodingAgentSession::run(CodingAgentOperation)` is the single public live-session operation dispatcher used by every first-party adapter and test, and the replaced workflow-specific session methods are deleted. The authoritative closure evidence is [05-STAGE-9-CLOSURE.md](phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md).
+This project completed the Stage 9 runtime convergence for the existing `pi-rust` coding-agent workspace. `CodingAgentSession::run(CodingAgentOperation)` is the single public live-session operation dispatcher used by every first-party adapter and test, and the replaced workflow-specific session methods are deleted. The authoritative closure evidence is [05-STAGE-9-CLOSURE.md](milestones/v1.0-phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md).
 
 The existing implementation plan at `docs/superpowers/plans/2026-07-10-canonical-operation-runtime-convergence-plan.md` is design input and historical evidence, not the new execution structure. Current code, tests, source guards, and repository history determine what is actually complete and how the remaining work is phased.
 

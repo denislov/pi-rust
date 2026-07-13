@@ -1,7 +1,7 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
+milestone_name: Canonical Operation Runtime Convergence
 current_phase: 0
 status: Awaiting next milestone
 stopped_at: Completed 05-03-PLAN.md; Stage 9 closed
@@ -21,10 +21,10 @@ current_phase_name: Boundary Enforcement and Stage 9 Closure
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-12)
+See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Every first-party live-session product operation follows one typed, admitted, behavior-preserving runtime path through `CodingAgentSession::run`.
-**Current focus:** Stage 9 closed; bounded Stage 10 event convergence remains deferred
+**Current focus:** Planning the next milestone; bounded Stage 10 event convergence remains deferred
 
 ## Current Position
 
@@ -120,9 +120,8 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 1 must establish the exact live gap set before later phases are planned in implementation detail.
-- Interactive event/control multiplexing and persistent navigation transitions have the highest behavioral-regression risk.
-- Broad workflow methods must not be deleted until production and test callers have both migrated.
+- No active milestone blockers.
+- Carry the v1.0 audit's three non-blocking hardening items into future planning where relevant.
 
 ## Deferred Items
 

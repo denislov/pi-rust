@@ -3,7 +3,7 @@
 > 生成时间: 2026-07-05
 > 展示 `pi-agent-core` 与 `pi-coding-agent` 的内部结构及协作关系。
 >
-> Stage 9 已完成：外部使用 `pi_coding_agent::api`，所有 first-party live-session 操作经 `CodingAgentSession::run(CodingAgentOperation)` 进入统一 admission/dispatch 路径。验证证据见 [05-STAGE-9-CLOSURE.md](../../.planning/phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md)。Stage 10 仅处理 typed `ProductEvent` payload convergence 与 compatibility subscription deletion。
+> Stage 9 已完成：外部使用 `pi_coding_agent::api`，所有 first-party live-session 操作经 `CodingAgentSession::run(CodingAgentOperation)` 进入统一 admission/dispatch 路径。验证证据见 [05-STAGE-9-CLOSURE.md](../../.planning/milestones/v1.0-phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md)。Stage 10 仅处理 typed `ProductEvent` payload convergence 与 compatibility subscription deletion。
 
 ---
 

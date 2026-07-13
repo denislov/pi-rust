@@ -4,6 +4,8 @@
 
 **Phases completed:** 5 phases, 22 plans, 45 tasks
 
+**Closeout:** Verified with non-blocking technical debt; 37/37 requirements, 12/12 integration surfaces, and 8/8 end-to-end flows passed.
+
 **Key accomplishments:**
 
 - Structural audit scaffold with 15-row Operation Matrix seeded from live source, three-mode Bash validator enforcing locked taxonomies, and concrete Nyquist task map across 3 plans and 7 tasks
@@ -26,5 +28,13 @@
 - Delegation decisions now use admitted typed operations with durable evidence preserved, and both public approval/rejection compatibility methods are deleted without shims.
 - Canonical navigation and branch-summary operations now carry the final behavior tests, while the complete 16-method compatibility surface is deleted and Phase 4 closure gates pass.
 - A locked offline Cargo consumer now proves both the complete canonical facade and the compiler-enforced privacy of every internal runtime category.
+
+**Deferred hardening:**
+
+- Make top-level first-party adapter ownership independently discoverable from the guard that enforces its closed-world inventory.
+- Bind negative external compile fixtures to the expected forbidden symbol or span, beyond checking `E0432`/`E0603` categories.
+- Revisit Phase 3's `wave_0_complete: false` metadata if a future Nyquist contract requires it.
+
+**Audit:** `.planning/milestones/v1.0-MILESTONE-AUDIT.md` (`TECH_DEBT`, no blockers)
 
 ---
