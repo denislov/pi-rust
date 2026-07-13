@@ -58,13 +58,31 @@ the stable facade is compiler-enforced, the broad workflow methods are gone,
 and the final workspace/security/integration audits passed. Historical
 evidence is archived under `.planning/milestones/`.
 
+## Current Milestone: v1.1 Typed Product Events and Client Lifecycle Contract
+
+**Goal:** Turn the existing internal typed event, retained replay, snapshot, and control foundations into a stable public product-event and long-lived client contract without regressing operation, durability, or adapter behavior.
+
+**Target features:**
+- Publish a typed `CodingAgentProductEvent` contract with operation identity, terminal status, durability, and payload semantics derived from the existing internal event inventory.
+- Migrate RPC, interactive, JSON/print, and tests away from compatibility event unwrapping, then delete obsolete compatibility receivers and subscriptions with behavioral evidence.
+- Promote existing `connect`, snapshot cursor, retained replay, event-gap, submitted-operation, draft, and prompt-control foundations into reconnectable client lifecycle APIs.
+- Close directly related adapter inventory and compile-fixture guard debt while preserving the private ownership of services, queues, and Flow nodes.
+
 ## Next Milestone Goals
 
-Define the next version with `$gsd-new-milestone`. The bounded candidate work
-is Stage 10: replace compatibility-backed `ProductEvent` payloads with typed
-families and delete compatibility event subscriptions after all consumers have
-migrated. Preserve event ordering, sequence identity, replay, durability,
-control multiplexing, and external response behavior.
+v1.1 combines the bounded Stage 10 typed event convergence with the existing
+client lifecycle foundations: reconnectable retained replay, snapshot recovery,
+submitted operation state, client drafts, scoped control, detach/close, and
+shutdown. Stage 11 remains a contract goal, not a requirement to rename the
+session owner to `CodingAgentRuntime`.
+
+## Active Requirements
+
+- [ ] Public typed product events expose stable identity, terminal, durability, and payload semantics.
+- [ ] First-party consumers no longer depend on compatibility event unwrapping, receivers, or subscriptions.
+- [ ] Public client connections support snapshot, replay, stale-cursor recovery, submitted operation state, drafts, and scoped control.
+- [ ] Detach/close, shutdown, and operation/outcome/terminal-event association have explicit behavior.
+- [ ] Directly related adapter inventory and compile-fail guard debt is closed.
 
 ## Constraints
 
@@ -105,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-13 after v1.0 milestone*
+*Last updated: 2026-07-13 after v1.1 milestone kickoff*

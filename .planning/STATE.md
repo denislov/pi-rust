@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: Canonical Operation Runtime Convergence
-current_phase: 0
-status: Awaiting next milestone
-stopped_at: Completed 05-03-PLAN.md; Stage 9 closed
-last_updated: "2026-07-13T04:16:30.836Z"
+milestone: v1.1
+milestone_name: Typed Product Events and Client Lifecycle Contract
+status: planning
+last_updated: "2026-07-13T04:39:32.523Z"
 last_activity: 2026-07-13
-last_activity_desc: Milestone v1.0 completed and archived
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 22
-  completed_plans: 22
-  percent: 100
-current_phase_name: Boundary Enforcement and Stage 9 Closure
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -24,14 +20,14 @@ current_phase_name: Boundary Enforcement and Stage 9 Closure
 See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Every first-party live-session product operation follows one typed, admitted, behavior-preserving runtime path through `CodingAgentSession::run`.
-**Current focus:** Planning the next milestone; bounded Stage 10 event convergence remains deferred
+**Current focus:** Defining v1.1 typed product-event and client lifecycle contracts
 
 ## Current Position
 
-Phase: Milestone v1.0 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-13 — Milestone v1.0 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-13 — Milestone v1.1 started
 
 ## Performance Metrics
 
@@ -85,7 +81,7 @@ Recent decisions affecting current work:
 
 - [Roadmap]: Use architecture- and migration-dependency phases because this milestone converges a shared runtime boundary.
 - [Phase 1]: Treat live source, tests, boundary guards, and Git history as authoritative; prior plan checkboxes are reference evidence only.
-- [Milestone]: Keep typed `ProductEvent` payload convergence and compatibility subscription deletion in Stage 10.
+- [Milestone v1.1]: Combine typed `ProductEvent` payload convergence with the existing client lifecycle foundations; keep owner renaming and broad daemon orchestration deferred.
 - [Phase ?]: 01-01: Audit schema frozen with 15-row Operation Matrix seeded from live source; validator enforces locked taxonomies in three modes
 - [Phase ?]: 01-01: Wave 0 ownership at task 01-01-01; Nyquist compliance pending until Plan 01-03 final gate
 - [Phase 01]: 01-02: Populated 15-row Operation Matrix from live source with 46 evidence IDs, 26 production callers, 32 test callers, 16 compatibility methods, 4 authority conflicts, and 8 findings; corrected 3 non-deprecated methods and fixed validator SIGPIPE/taxonomy bugs
@@ -127,7 +123,8 @@ None yet.
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| Stage 10 | Typed `ProductEvent` payload convergence and compatibility subscription deletion | Deferred | Roadmap creation |
+| v1.1 | Typed `ProductEvent` payload convergence and compatibility subscription deletion | Active | Milestone kickoff |
+| v1.1 | Client lifecycle contract over connect, replay, recovery, control, detach, and shutdown | Active | Milestone kickoff |
 
 ## Session Continuity
 
