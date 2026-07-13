@@ -59,7 +59,7 @@ Plans:
 
 **Requirements:** CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01
 
-**Plans:** 6 plans
+**Plans:** 7 plans
 
 Plans:
 **Wave 1**
@@ -68,7 +68,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 08-02-PLAN.md — Implement the session-owned generation registry, drafts, acknowledgements, and submitted-state machine.
+- [ ] 08-02-PLAN.md — Implement client state machines inside the sole SnapshotState with a zero-authority ClientService facade.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -76,15 +76,19 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 08-04-PLAN.md — Wire stateful connect/reconnect, explicit acknowledgement, drafts, and submitted state through the public handle.
+- [ ] 08-04-PLAN.md — Install the authoritative coordinator topology and migrate all six snapshot-visible writer families.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 08-05-PLAN.md — Add owner-only, generation-bound, operation-scoped Prompt controls with typed receipts and rejections.
+- [ ] 08-05-PLAN.md — Wire public connection/recovery and exact submission lease/drop/provenance semantics while preserving legacy run.
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 08-06-PLAN.md — Migrate RPC mirrors to the public connection contract and close guards, validation, and workspace gates.
+- [ ] 08-06-PLAN.md — Add owner-only, generation-bound, operation-scoped Prompt controls with typed receipts and rejections.
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 08-07-PLAN.md — Migrate RPC mirrors to the public connection contract and close guards, validation, and workspace gates.
 
 **Success criteria:**
 

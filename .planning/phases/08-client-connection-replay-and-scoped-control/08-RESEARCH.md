@@ -76,7 +76,11 @@ The repository already has the right ownership seams but not the Phase 8 contrac
 
 The implementation should therefore extend the session-owned client projection rather than introduce a second dispatcher or move state into adapters. `[VERIFIED: codegraph/source]` `EventService` serializes product sequence assignment under one `Mutex`, retains a bounded deque (baseline 128), broadcasts through Tokio `broadcast`, and reports `EventStreamGap` for retained-history misses. `[VERIFIED: codegraph/source]` RPC state already demonstrates replay-after-snapshot, applied-sequence deduplication, draft mirroring, and bounded idempotency records; those behaviors are evidence to centralize, not a second source of truth.
 
-**Primary recommendation:** Add a session-owned client registry keyed by stable client id and generation; make the public connection a stateful capability handle whose atomic snapshot/recovery methods coordinate the client registry and `EventService` publication state, while control commands continue through the existing Prompt-only channel and are admitted outside `run(CodingAgentOperation)`.
+**Primary recommendation:** Put the session-owned client registry keyed by stable client id and generation inside the sole SnapshotState; make the public connection a stateful capability handle whose atomic snapshot/recovery methods delegate to its coordinator, while control commands continue through the existing Prompt-only channel and are admitted outside `run(CodingAgentOperation)`.
+
+**Authoritative topology refinement:** `SnapshotCoordinator` contains the single `SnapshotState`. `SnapshotState` owns the sole client registry/state together with session-view projection, capability source/projection, active operation, event cursor/publication projection, and recovery metadata. `ClientService` is only `Arc<SnapshotCoordinator>` plus concrete delegating methods and owns no independent map or state. `CodingAgentClientConnection` likewise holds the shared Arc plus id/generation; snapshot/draft/ack/reconnect never borrow the session or use callbacks. The explicit preparation exception accepts `&mut CodingAgentSession` only to install the session-wide lease.
+
+Snapshot-visible writers use six fixed two-phase routes: startup drains marker ownership before coordinator projection/emission; OperationGuard drop records a pending clear before a coordinator-safe synchronous hook; capability installation computes an immutable generation before transactional source/projection commit and post-release emit; navigation performs IO/await before immutable view swap and post-release publish; EventService builds outside locks, assigns cursor/updates recovery and publication projection transactionally, then broadcasts after release; client mutation validates generation and mutates the sole registry transactionally, returning owned results after release. Each route requires a named test plus bounded deadlock timeout and mixed-revision assertions.
 
 ## Architectural Responsibility Map
 
@@ -104,7 +108,7 @@ The implementation should therefore extend the session-owned client projection r
 
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| `thiserror` | 2.0.18 | Typed recovery/control rejection errors | Extend `CodingSessionError` only where errors cross existing session boundaries; prefer public enums/results for non-error recovery branches. `[VERIFIED: AGENTS.md/source]` |
+| `thiserror` | 2.0.18 | Exceptional connection/preparation failures | `error.rs` owns `StaleClientConnection`, `SubmissionPreparationBusy`, and `ClientCapacityExceeded` plus stable `code()` arms. Expected mutation/control rejection uses public outcome enums, never a duplicate error variant. `[VERIFIED: AGENTS.md/source]` |
 | `uuid` | 1.23.2 | Existing operation/session ids | Reuse existing ID generation conventions; do not add a control-id crate. `[VERIFIED: AGENTS.md]` |
 
 **Installation:** None. Phase 8 is a code/config migration inside existing workspace dependencies; no external package addition is presumed or required.
@@ -153,7 +157,7 @@ CodingAgentSession client registry (id -> generation + drafts + submitted + ack 
 
 ### Pattern 4: Immutable operation-scoped control capability
 
-**What:** Public control handle captures client id, generation, Prompt operation id, and stable control id. Before enqueue, validate owner, generation, active target, input, and idempotency key. A successful result is an enqueue receipt, not application completion; duplicate `(client, operation, control)` returns the original receipt.
+**What:** Public control handle captures client id, generation, Prompt operation id, and stable control id. Admission validates syntax plus immutable identity, looks up the exact scoped key, compares the stored normalized signature, returns the original receipt for an identical retry or typed conflict for mismatch, and only on a miss checks new-key capacity before target-running/channel and enqueue/store. A successful result is an enqueue receipt, not application completion.
 
 **Code anchor:** `[VERIFIED: source]` `PromptControlHandle` currently wraps only an `UnboundedSender<PromptControlCommand>` and returns `CodingSessionError::Session` on closed receiver. Wrap this private sender behind a session-owned admission method; do not expose raw sender or operation control internals.
 
@@ -379,12 +383,12 @@ This phase has no external service dependency and adds no package. The local too
 2. **Where should accepted/running transitions be observed?**
    - What we know: `run` admission and event publication are separate boundaries; Phase 9 owns exhaustive terminal association.
    - What's unclear: Exact event/admission hook for `Accepted` and `Running` without changing operation semantics.
-   - Resolution: one session-wide non-Clone `ClientSubmissionLease` is acquired by generation-checked preparation and consumed only by the existing `CodingAgentSession::run` admission path. Its fingerprint validates the operation presented to run and never selects among client slots. The sole commit point is after valid admission permit and canonical id; RAII clears precommit abandonment, while postcommit failures become Terminal Failed/Cancelled without draft restoration. Terminal observation stores the exact product-event sequence plus operation id as `TerminalAcknowledgementAnchor`; Phase 9 still owns exhaustive terminal-family association.
+   - Resolution: public non-Clone `CodingAgentSubmissionLease` is acquired only by `prepare_submission(&self, session: &mut CodingAgentSession, draft_id, operation)` and owns the generation-scoped, session-wide exclusive precommit guard. Preparation is not dispatch; the caller next invokes unchanged `session.run(operation)`. Drop before run or precommit future cancellation clears Prepared/Consuming and preserves the draft. Canonical run consumes it into internal `SubmissionCommitGuard`; immediately after `IntentRouter::admit_operation` yields permit plus operation id, `commit()` binds the id, sets Accepted, and clears the matching Prompt draft once. Postcommit Drop/future cancellation synchronously records Terminal Cancelled; returned failures record Terminal Failed; neither restores a draft. No-lease run is untracked, takeover invalidates old-generation leases, and wrapper Drop after consumption is a no-op. Terminal observation stores the exact product-event sequence plus operation id as `TerminalAcknowledgementAnchor`; Phase 9 still owns exhaustive terminal-family association.
 
 3. **What capacities should be public/configurable?**
    - What we know: Event retention baseline is 128 and RPC idempotency records are capped at 64.
    - What's unclear: Public exposure and per-client idempotency/draft limits.
-   - Resolution: Keep capacities private and deterministic: maximum live client records 64 per session, each Prompt/Steer/FollowUp queue 64 entries, and each client receipt cache 64 records. `ClientService::connect` returns typed `ClientCapacityExceeded` for a new identity at capacity, while same-id takeover remains allowed. Queue saturation returns typed `QueueCapacityExceeded` without mutating drafts; receipt lookup precedes volatile target/channel checks. Test constructors may lower these limits, but the public API does not expose them.
+   - Resolution: Keep capacities private and deterministic: maximum live client records 64 per session, each Prompt/Steer/FollowUp queue 64 entries, and each client receipt set 64 accepted records. `SnapshotCoordinator::connect_or_takeover` returns exceptional `CodingSessionError::ClientCapacityExceeded` for a new identity at capacity, while same-id takeover remains allowed. Expected queue saturation returns public typed `QueueCapacityExceeded` without mutating drafts. Receipt order is syntax/immutable identity, scoped-key lookup, signature comparison, then on miss new-key capacity before target/channel and enqueue/store. Accepted records never release in Phase 8; Phase 9 owns release. Test constructors may lower limits, but the public API does not expose them.
 
 ## State of the Art
 

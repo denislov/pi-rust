@@ -14,8 +14,8 @@ This phase is a promotion and convergence task, not a greenfield subsystem. The 
 | `crates/pi-coding-agent/src/coding_session/public_projection.rs` | public model/projection | transform, request-response, streaming handle | same file's `CodingAgentSnapshot`, `CodingAgentClientConnection`, receiver wrapper | exact extension |
 | `crates/pi-coding-agent/src/coding_session/client_projection.rs` | private model/store | event-driven state, CRUD | same file's `ClientConnection`, drafts, submitted operation | exact extension |
 | `crates/pi-coding-agent/src/coding_session/mod.rs` | runtime owner/controller | request-response, event-driven | existing service-container fields plus `connect`, `ui_snapshot`, `run` | exact owner pattern |
-| `crates/pi-coding-agent/src/coding_session/client_service.rs` | session-owned service/store | CRUD, event-driven, receipt accounting | `EventService` ownership and `CapabilitySnapshotService` generation ownership | selected final owner |
-| `crates/pi-coding-agent/src/coding_session/snapshot_coordinator.rs` | shared projection coordinator | short synchronous transactions, monotonic revision | `EventService.publication_state` plus session service container ownership | new composition; no exact analog |
+| `crates/pi-coding-agent/src/coding_session/client_service.rs` | stateless facade | delegation only | one shared `Arc<SnapshotCoordinator>` | zero authority; no map/state |
+| `crates/pi-coding-agent/src/coding_session/snapshot_coordinator.rs` | sole projection/client-state owner | short synchronous transactions, monotonic revision | `EventService.publication_state` plus session service container ownership | selected final owner |
 | `crates/pi-coding-agent/src/coding_session/public_operation.rs` | canonical dispatcher/provenance owner | preparation lease -> admission -> commit | existing `CodingAgentSession::run` admission path | exact dispatcher seam |
 | `crates/pi-coding-agent/src/coding_session/capability_snapshot.rs` and `session_service.rs` | snapshot-relevant writers | generation/session projection mutation | existing private state owners | writer integration |
 | `crates/pi-coding-agent/src/coding_session/event_service.rs` | service/provider | pub-sub, retained streaming | `publication_state`, `product_events_after`, `ProductEventReceiver` | exact extension |
@@ -143,7 +143,7 @@ pub fn connect(&self, id: CodingAgentClientId) -> CodingAgentClientConnection {
 }
 ```
 
-**Planner assignment:** Add a session-owned registry keyed by `ClientConnectionId` with monotonically increasing generation, acknowledged sequence, one Prompt draft, ordered Steer/FollowUp entries, submitted state, and bounded receipt/idempotency records. A takeover must preserve the record but increment generation. Every mutation checks `(client id, generation)` while holding the registry lock. `connect` remains a query/control entry point; ordinary product submission still calls `CodingAgentSession::run(CodingAgentOperation)` and must not be duplicated on the connection handle.
+**Planner assignment:** `SnapshotCoordinator` contains the single `SnapshotState`; that state owns the sole registry keyed by `ClientConnectionId`, acknowledged sequence, Prompt/Steer/FollowUp drafts, submitted state, receipt records, session-view/capability/active-operation projection, and event cursor/recovery metadata. `ClientService` holds only the same `Arc<SnapshotCoordinator>` and delegates named transitions. A takeover preserves the record but increments generation. Every mutation checks `(client id, generation)` in the coordinator transaction and returns an owned result after release. `connect` remains a query/control entry point; ordinary product submission still calls `CodingAgentSession::run(CodingAgentOperation)` and must not be duplicated on the connection handle.
 
 The existing `mark_submitted` at `client_projection.rs:109-124` clears Prompt drafts and terminal state too eagerly for Phase 08. Copy its matching-ID discipline, but move clearing to acceptance and retain terminal submitted state until acknowledged.
 
@@ -275,7 +275,7 @@ pub(crate) fn prompt_control_handle(
 }
 ```
 
-**Planner assignment:** Keep `PromptControlCommand` and raw sender private. Add a public immutable handle containing client ID, connection generation, and Prompt operation ID, whose methods call back into session-owned authorization/idempotency logic. Validate in stable order: input, live generation, owner, target identity, target running/channel open, duplicate key, then enqueue. On success cache and return a typed receipt. On rejection preserve drafts and return a stable typed reason. Never resolve the target as “current Prompt” after the handle was created.
+**Planner assignment:** Keep `PromptControlCommand` and raw sender private. Add a public immutable handle containing client ID, connection generation, and Prompt operation ID, whose methods delegate into coordinator-owned authorization/idempotency logic. The only executable order is: syntax plus immutable identity validation; exact scoped-key lookup; stored normalized-signature comparison; identical returns original receipt and mismatch returns typed conflict; only a miss checks new-key capacity, then target-running/channel; enqueue and store. Accepted records remain until Phase 9 lifecycle release. On rejection preserve drafts. Never resolve the target as “current Prompt” after the handle was created.
 
 ### 5. RPC Migration, Bounded Idempotency, and Replay Dedup
 
@@ -299,19 +299,7 @@ pub(super) struct RpcState {
 }
 ```
 
-The bounded cache pattern is directly reusable internally:
-
-```rust
-if !self.idempotency_records.contains_key(&key) {
-    self.idempotency_order.push_back(key.clone());
-}
-self.idempotency_records.insert(key, RpcIdempotencyRecord { /* ... */ });
-while self.idempotency_order.len() > RPC_IDEMPOTENCY_RECORD_LIMIT {
-    if let Some(expired) = self.idempotency_order.pop_front() {
-        self.idempotency_records.remove(&expired);
-    }
-}
-```
+**HISTORICAL RPC BEHAVIOR — MUST NOT COPY FOR PHASE 8 RECEIPTS:** RPC's bounded command cache discarded old entries. That implementation is intentionally omitted because accepted Phase 8 receipt records never discard or release during the live session. For a new scoped key at capacity, return the typed receipt-capacity rejection before target/channel inspection or enqueue; Phase 9 owns lifecycle release.
 
 RPC's replay/live dedup shows the behavioral invariant to preserve:
 
@@ -420,7 +408,7 @@ The established state pattern is `Arc<Mutex<...>>` for short synchronous ownersh
 
 ### 6. Canonical dispatcher provenance analog
 
-`crates/pi-coding-agent/src/coding_session/public_operation.rs` is the provenance analog for this phase: `CodingOperation::into_internal` and the admission path in `CodingAgentSession::run` are the only ordinary-dispatch boundary. A private non-Clone `ClientSubmissionLease` is generation-scoped, session-wide exclusive, RAII-cleared, and consumed by that path before `Accepted` and Prompt-draft clearing. It must never become a second `run`/submit entry point or a public operation type. Plan 08-04 owns its exact commit point; Plan 08-05 references it only for control-vs-operation separation.
+`crates/pi-coding-agent/src/coding_session/public_operation.rs` is the provenance analog for this phase: `CodingOperation::into_internal` and the admission path in `CodingAgentSession::run` are the only ordinary-dispatch boundary. Public non-Clone `CodingAgentSubmissionLease` owns a precommit guard and is generation-scoped/session-wide exclusive. `prepare_submission(&self, session: &mut CodingAgentSession, draft_id, operation)` installs it without a callback and is preparation only. Canonical run consumes it into an internal `SubmissionCommitGuard`; precommit Drop preserves the draft, commit occurs immediately after `IntentRouter::admit_operation` returns permit plus operation id, and postcommit Drop records Terminal Cancelled synchronously. Ordinary no-lease run remains untracked. Plan 08-05 owns this exact lifecycle; Plan 08-06 only consumes its control-vs-operation separation.
 
 For control idempotency, the ordering is deliberately key-first: validate syntax and immutable identity, look up the scoped receipt and compare its stored normalized request signature, then consult volatile running/channel/capacity state only on a cache miss. This preserves response-loss retries after target completion while returning a typed payload conflict for the same key with different kind, text, reason, or draft identity. The prior volatile-check-before-receipt wording is obsolete.
 
