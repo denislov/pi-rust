@@ -18,6 +18,19 @@ const PRODUCT_EVENT_CONTRACT: &str = include_str!("../../../docs/product-event-c
 
 #[test]
 fn typed_public_event_boundary_is_fail_closed() {
+    let documented_events = region(
+        PRODUCT_EVENT_CONTRACT,
+        "<!-- product-event-inventory:start -->",
+        "<!-- product-event-inventory:end -->",
+    );
+    assert_eq!(
+        documented_events
+            .lines()
+            .filter(|line| line.starts_with("| `"))
+            .count(),
+        45,
+        "the authoritative product-event inventory must contain 45 rows"
+    );
     for forbidden in ["format!(\"{:?}\"", "format!(\"{:#?}\""] {
         assert!(
             !PUBLIC_EVENT.contains(forbidden) && !PUBLIC_PROJECTION.contains(forbidden),
