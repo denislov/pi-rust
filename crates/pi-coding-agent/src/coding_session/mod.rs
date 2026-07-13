@@ -173,7 +173,79 @@ pub struct CodingAgentSession {
     capability_snapshots: CapabilitySnapshotService,
     snapshot_coordinator: Arc<SnapshotCoordinator>,
     client_service: ClientService,
+    pending_submission: Option<PendingSubmissionLease>,
     startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SubmissionLeaseLifecycle {
+    Prepared,
+    Consuming,
+    Committed,
+    Abandoned,
+}
+
+#[derive(Debug)]
+struct PendingSubmissionLease {
+    handle: snapshot_coordinator::ClientHandle,
+    draft_id: String,
+    kind: &'static str,
+    text: String,
+    lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
+}
+
+#[derive(Debug)]
+struct SubmissionCommitGuard {
+    coordinator: Arc<SnapshotCoordinator>,
+    handle: snapshot_coordinator::ClientHandle,
+    lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
+    operation_id: Option<String>,
+    kind: operation_control::OperationKind,
+    finished: bool,
+}
+
+impl SubmissionCommitGuard {
+    fn commit(&mut self, operation_id: String) -> Result<(), CodingSessionError> {
+        self.coordinator
+            .mark_submitted(&self.handle, operation_id.clone(), self.kind)
+            .map_err(|error| CodingSessionError::Input {
+                message: error.to_string(),
+            })?;
+        self.coordinator
+            .mark_running(&self.handle, operation_id.clone(), self.kind)
+            .map_err(|error| CodingSessionError::Input {
+                message: error.to_string(),
+            })?;
+        *self.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Committed;
+        self.operation_id = Some(operation_id);
+        Ok(())
+    }
+
+    fn finish(&mut self, status: event::ProductEventTerminalStatus) {
+        if let Some(operation_id) = &self.operation_id {
+            let _ = self.coordinator.mark_terminal(
+                &self.handle,
+                operation_id.clone(),
+                self.kind,
+                self.coordinator.current_event_sequence(),
+                status,
+            );
+        }
+        self.finished = true;
+    }
+}
+
+impl Drop for SubmissionCommitGuard {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        if self.operation_id.is_some() {
+            self.finish(event::ProductEventTerminalStatus::Aborted);
+        } else {
+            *self.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Abandoned;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -273,14 +345,70 @@ impl CodingAgentSession {
         &mut self,
         operation: CodingAgentOperation,
     ) -> Result<CodingAgentOperationOutcome, CodingSessionError> {
+        let fingerprint = operation.submission_fingerprint();
+        let submission = self.consume_submission_lease(fingerprint.as_ref());
         let operation = operation.into_internal(self.default_plugin_load_options.clone());
         let dispatch_mode = operation.metadata().dispatch_mode;
         let outcome = match dispatch_mode {
-            OperationDispatchMode::Async => self.run_operation(operation).await?,
+            OperationDispatchMode::Async => self.run_operation(operation, submission).await?,
             OperationDispatchMode::SyncReadOnly => self.run_sync_operation(operation)?,
             OperationDispatchMode::SyncMutable => self.run_sync_mut_operation(operation)?,
         };
         Ok(CodingAgentOperationOutcome::from_internal(outcome))
+    }
+
+    pub(crate) fn install_submission_lease(
+        &mut self,
+        handle: snapshot_coordinator::ClientHandle,
+        draft_id: String,
+        kind: &'static str,
+        text: String,
+    ) -> Result<Arc<Mutex<SubmissionLeaseLifecycle>>, CodingSessionError> {
+        if let Some(pending) = &self.pending_submission {
+            let lifecycle = *pending.lifecycle.lock().unwrap();
+            if lifecycle != SubmissionLeaseLifecycle::Abandoned
+                && self.snapshot_coordinator.is_current(&pending.handle)
+            {
+                return Err(CodingSessionError::SubmissionPreparationBusy);
+            }
+        }
+        let lifecycle = Arc::new(Mutex::new(SubmissionLeaseLifecycle::Prepared));
+        self.pending_submission = Some(PendingSubmissionLease {
+            handle,
+            draft_id,
+            kind,
+            text,
+            lifecycle: lifecycle.clone(),
+        });
+        Ok(lifecycle)
+    }
+
+    fn consume_submission_lease(
+        &mut self,
+        fingerprint: Option<&(&'static str, String)>,
+    ) -> Option<SubmissionCommitGuard> {
+        let pending = self.pending_submission.as_ref()?;
+        if *pending.lifecycle.lock().unwrap() == SubmissionLeaseLifecycle::Abandoned {
+            self.pending_submission = None;
+            return None;
+        }
+        let Some((kind, text)) = fingerprint else {
+            return None;
+        };
+        if pending.kind != *kind || pending.text != *text {
+            return None;
+        }
+        let pending = self.pending_submission.take().unwrap();
+        let _ = pending.draft_id;
+        *pending.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Consuming;
+        Some(SubmissionCommitGuard {
+            coordinator: self.snapshot_coordinator.clone(),
+            handle: pending.handle,
+            lifecycle: pending.lifecycle,
+            operation_id: None,
+            kind: operation_control::OperationKind::Prompt,
+            finished: false,
+        })
     }
 
     pub async fn create(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
@@ -438,10 +566,34 @@ impl CodingAgentSession {
         self.snapshot_coordinator.snapshot().into()
     }
 
-    pub fn connect(&self, id: CodingAgentClientId) -> CodingAgentClientConnection {
+    pub fn connect(
+        &self,
+        id: CodingAgentClientId,
+    ) -> Result<CodingAgentClientConnection, CodingSessionError> {
         let internal_id = public_projection::internal_client_id(&id);
-        let (connection, snapshot) = self.connect_client(internal_id, Vec::new());
-        public_projection::public_client_connection(id, connection, snapshot)
+        let handle = self
+            .client_service
+            .connect_or_takeover(internal_id)
+            .map_err(|error| match error {
+                snapshot_coordinator::ClientRegistryError::ClientCapacityExceeded { limit } => {
+                    CodingSessionError::ClientCapacityExceeded { limit }
+                }
+                other => CodingSessionError::Input {
+                    message: other.to_string(),
+                },
+            })?;
+        let state = self
+            .snapshot_coordinator
+            .client_state(&handle)
+            .map_err(|error| CodingSessionError::Input {
+                message: error.to_string(),
+            })?;
+        Ok(public_projection::public_client_connection(
+            id,
+            self.snapshot_coordinator.clone(),
+            handle,
+            state,
+        ))
     }
 
     #[allow(dead_code)]
@@ -586,7 +738,10 @@ impl CodingAgentSession {
         &mut self,
         options: PluginLoadOptions,
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
-        match self.run_operation(Operation::PluginLoad(options)).await? {
+        match self
+            .run_operation(Operation::PluginLoad(options), None)
+            .await?
+        {
             OperationOutcome::PluginLoad(outcome) => Ok(outcome),
             OperationOutcome::PluginCommand(_) => {
                 unreachable!("plugin load operation returned plugin command outcome")
@@ -662,6 +817,7 @@ impl CodingAgentSession {
             ),
             snapshot_coordinator,
             client_service,
+            pending_submission: None,
             startup_recovery_markers: Mutex::new(replay_state.startup_recovery_markers),
         };
         session.refresh_snapshot_projection();
@@ -702,6 +858,7 @@ impl CodingAgentSession {
             ),
             snapshot_coordinator,
             client_service,
+            pending_submission: None,
             startup_recovery_markers: Mutex::new(Vec::new()),
         };
         session.refresh_snapshot_projection();
@@ -1068,6 +1225,7 @@ impl CodingAgentSession {
     async fn run_operation(
         &mut self,
         operation: Operation,
+        mut submission: Option<SubmissionCommitGuard>,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
         let operation_permit = IntentRouter::admit_operation(
@@ -1075,9 +1233,12 @@ impl CodingAgentSession {
             &admission,
             OperationDispatchMode::Async,
         )?;
+        if let Some(guard) = submission.as_mut() {
+            guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
+        }
         let snapshot = operation_permit.capability_snapshot().clone();
 
-        match operation {
+        let result = match operation {
             Operation::Prompt(options) => {
                 let result = self.prompt_inner(options, &snapshot).await;
                 self.operation_control.clear_prompt_control_receiver();
@@ -1198,7 +1359,15 @@ impl CodingAgentSession {
                 )
                 .await
                 .map(|_| OperationOutcome::DelegationApproval),
+        };
+        if let Some(guard) = submission.as_mut() {
+            guard.finish(if result.is_ok() {
+                event::ProductEventTerminalStatus::Completed
+            } else {
+                event::ProductEventTerminalStatus::Failed
+            });
         }
+        result
     }
 
     async fn run_branch_summary_admitted(
@@ -2721,7 +2890,7 @@ runtime = "lua"
             PromptTurnOptions::new(PromptInvocation::Text("task".into())),
         ));
 
-        let error = session.run_operation(operation).await.unwrap_err();
+        let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "input");
         assert!(
@@ -3391,7 +3560,7 @@ runtime = "lua"
             tool_call_id: "missing_tool".into(),
         };
 
-        let error = session.run_operation(operation).await.unwrap_err();
+        let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "input");
         assert!(
@@ -3453,7 +3622,7 @@ runtime = "lua"
             PromptTurnOptions::new(PromptInvocation::Text("task".into())),
         ));
 
-        let error = session.run_operation(operation).await.unwrap_err();
+        let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "input");
         assert!(
@@ -3476,7 +3645,7 @@ runtime = "lua"
             vec![SelfHealingEditReplacement::new("old", "new")],
         ));
 
-        let error = session.run_operation(operation).await.unwrap_err();
+        let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "unsupported_capability");
         assert!(
@@ -3502,7 +3671,7 @@ runtime = "lua"
             reuse_existing: false,
         };
 
-        let error = session.run_operation(operation).await.unwrap_err();
+        let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "unsupported_capability");
         assert!(
@@ -3521,7 +3690,7 @@ runtime = "lua"
             .unwrap();
         let operation = Operation::PluginLoad(PluginLoadOptions::new());
 
-        let outcome = session.run_operation(operation).await.unwrap();
+        let outcome = session.run_operation(operation, None).await.unwrap();
 
         let OperationOutcome::PluginLoad(outcome) = outcome else {
             panic!("expected plugin load outcome");
@@ -3542,7 +3711,7 @@ runtime = "lua"
                 custom_instructions: None,
             }));
 
-        let error = session.run_operation(operation).await.unwrap_err();
+        let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "config");
         assert!(
@@ -3563,7 +3732,7 @@ runtime = "lua"
             "hello".into(),
         )));
 
-        let error = session.run_operation(operation).await.unwrap_err();
+        let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "config");
         assert!(error.to_string().contains("runtime snapshot"), "{error}");

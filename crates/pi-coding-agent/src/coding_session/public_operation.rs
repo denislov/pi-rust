@@ -104,6 +104,16 @@ pub enum CodingAgentOperationOutcome {
 }
 
 impl CodingAgentOperation {
+    pub(crate) fn submission_fingerprint(&self) -> Option<(&'static str, String)> {
+        match self {
+            Self::Prompt(options) => match options.invocation() {
+                crate::runtime::PromptInvocation::Text(text) => Some(("prompt", text.clone())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub(crate) fn into_internal(self, plugin_load: PluginLoadOptions) -> Operation {
         match self {
             Self::Prompt(options) => Operation::Prompt(options),

@@ -1,11 +1,16 @@
-use super::client_projection::{ClientConnection, ClientConnectionId, UiSnapshot};
+use super::client_projection::{ClientConnectionId, ClientDraftKind, UiSnapshot};
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use super::error::CodingSessionError;
 use super::event_service::ProductEventReceiver;
 use super::public_event::{CodingAgentProductEvent, CodingAgentProductEventTerminalStatus};
 use crate::protocol::version::ProtocolFamilyVersion;
 use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
+
+use super::snapshot_coordinator::{
+    ClientGeneration, ClientHandle, ClientRegistryError, ClientSnapshotState, DraftRecord,
+    SnapshotCoordinator, SubmittedOperationStatus,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CodingAgentClientId(String);
@@ -141,7 +146,16 @@ pub struct CodingAgentPromptControl {
 #[derive(Debug)]
 pub struct CodingAgentSubmissionLease {
     operation_id: String,
-    _not_clone: PhantomData<*mut ()>,
+    pub(crate) shared: Arc<Mutex<super::SubmissionLeaseLifecycle>>,
+}
+
+impl Drop for CodingAgentSubmissionLease {
+    fn drop(&mut self) {
+        let mut lifecycle = self.shared.lock().unwrap();
+        if matches!(*lifecycle, super::SubmissionLeaseLifecycle::Prepared) {
+            *lifecycle = super::SubmissionLeaseLifecycle::Abandoned;
+        }
+    }
 }
 
 impl CodingAgentSubmissionLease {
@@ -167,26 +181,134 @@ pub struct CodingAgentSnapshot {
     pub submitted_operation: Option<CodingAgentSubmittedOperation>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct CodingAgentClientConnection {
+    coordinator: Arc<SnapshotCoordinator>,
     pub client_id: CodingAgentClientId,
     pub generation: CodingAgentConnectionGeneration,
     pub snapshot: CodingAgentSnapshot,
 }
 
 impl CodingAgentClientConnection {
+    fn handle(&self) -> ClientHandle {
+        ClientHandle {
+            id: internal_client_id(&self.client_id),
+            generation: ClientGeneration(self.generation.0),
+        }
+    }
+
+    pub fn state(&self) -> Result<CodingAgentSnapshot, CodingSessionError> {
+        self.coordinator
+            .client_state(&self.handle())
+            .map(public_client_snapshot)
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub fn acknowledge(&self, sequence: u64) -> Result<u64, CodingSessionError> {
+        self.coordinator
+            .acknowledge(&self.handle(), sequence)
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub fn reconnect(
+        &self,
+        requested_after: u64,
+    ) -> Result<CodingAgentReconnect, CodingSessionError> {
+        match self
+            .coordinator
+            .retained_events_after(&self.handle(), requested_after)
+            .map_err(|error| registry_error(&self.client_id, error))?
+        {
+            Ok((events, through)) => Ok(CodingAgentReconnect::Replayed {
+                events: events
+                    .into_iter()
+                    .map(CodingAgentProductEvent::from_internal)
+                    .collect(),
+                cursor: CodingAgentSnapshotCursor {
+                    last_event_sequence: through,
+                    capability_generation: self.state()?.cursor.capability_generation,
+                },
+            }),
+            Err((requested_sequence, oldest_available_sequence)) => {
+                let snapshot = self.state()?;
+                Ok(CodingAgentReconnect::FreshSnapshotRequired(
+                    CodingAgentFreshSnapshotRecovery {
+                        requested_sequence,
+                        oldest_available_sequence,
+                        fresh_cursor: snapshot.cursor.clone(),
+                        reason: CodingAgentRecoveryReason::RetainedHistoryGap,
+                        snapshot: Box::new(snapshot),
+                    },
+                ))
+            }
+        }
+    }
+
+    pub fn set_prompt_draft(
+        &self,
+        id: CodingAgentDraftId,
+        text: impl Into<String>,
+    ) -> Result<(), CodingSessionError> {
+        self.coordinator
+            .set_prompt_draft(
+                &self.handle(),
+                Some(DraftRecord {
+                    id: id.0,
+                    kind: ClientDraftKind::Prompt,
+                    text: text.into(),
+                }),
+            )
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub fn enqueue_control_draft(
+        &self,
+        draft: CodingAgentDraft,
+    ) -> Result<(), CodingAgentMutationRejection> {
+        let kind = match draft.kind {
+            CodingAgentDraftKind::Steer => ClientDraftKind::Steer,
+            CodingAgentDraftKind::FollowUp => ClientDraftKind::FollowUp,
+            CodingAgentDraftKind::Prompt => return Err(CodingAgentMutationRejection::InvalidInput),
+        };
+        self.coordinator
+            .enqueue_draft(
+                &self.handle(),
+                DraftRecord {
+                    id: draft.id.0,
+                    kind,
+                    text: draft.text,
+                },
+            )
+            .map_err(|error| match error {
+                ClientRegistryError::QueueCapacityExceeded { .. } => {
+                    CodingAgentMutationRejection::QueueCapacity
+                }
+                ClientRegistryError::StaleClient => CodingAgentMutationRejection::NotOwner,
+                _ => CodingAgentMutationRejection::InvalidInput,
+            })
+    }
+
     /// Prepare admission provenance; ordinary execution remains on `CodingAgentSession::run`.
     pub fn prepare_submission(
         &self,
-        _session: &mut super::CodingAgentSession,
-        _draft_id: CodingAgentDraftId,
+        session: &mut super::CodingAgentSession,
+        draft_id: CodingAgentDraftId,
         operation: &super::CodingAgentOperation,
     ) -> Result<CodingAgentSubmissionLease, CodingSessionError> {
+        let Some((kind, text)) = operation.submission_fingerprint() else {
+            return Err(CodingSessionError::Input {
+                message: "submission preparation requires a text Prompt operation".into(),
+            });
+        };
+        let handle = self.handle();
+        self.coordinator
+            .validate_prompt_draft(&handle, &draft_id.0, &text)
+            .map_err(|error| registry_error(&self.client_id, error))?;
+        let shared = session.install_submission_lease(handle, draft_id.0, kind, text)?;
         let operation_id = format!("client:{}:{}", self.client_id.as_str(), self.generation.0);
-        let _ = operation;
         Ok(CodingAgentSubmissionLease {
             operation_id,
-            _not_clone: PhantomData,
+            shared,
         })
     }
 }
@@ -266,19 +388,79 @@ impl From<UiSnapshot> for CodingAgentSnapshot {
     }
 }
 
+fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
+    let mut snapshot: CodingAgentSnapshot = state.snapshot.into();
+    snapshot.drafts = state
+        .drafts
+        .into_iter()
+        .map(|draft| CodingAgentDraft {
+            id: CodingAgentDraftId(draft.id),
+            kind: match draft.kind {
+                ClientDraftKind::Prompt => CodingAgentDraftKind::Prompt,
+                ClientDraftKind::Steer => CodingAgentDraftKind::Steer,
+                ClientDraftKind::FollowUp => CodingAgentDraftKind::FollowUp,
+            },
+            text: draft.text,
+        })
+        .collect();
+    snapshot.submitted_operation = state.submitted_operation.map(|submitted| match submitted {
+        SubmittedOperationStatus::Accepted { operation_id, kind } => {
+            CodingAgentSubmittedOperation {
+                operation_id,
+                kind: kind.as_str().into(),
+                status: CodingAgentSubmittedOperationStatus::Accepted,
+            }
+        }
+        SubmittedOperationStatus::Running { operation_id, kind } => CodingAgentSubmittedOperation {
+            operation_id,
+            kind: kind.as_str().into(),
+            status: CodingAgentSubmittedOperationStatus::Running,
+        },
+        SubmittedOperationStatus::Terminal {
+            operation_id,
+            kind,
+            status,
+            ..
+        } => CodingAgentSubmittedOperation {
+            operation_id,
+            kind: kind.as_str().into(),
+            status: CodingAgentSubmittedOperationStatus::Terminal {
+                status: status.into(),
+            },
+        },
+    });
+    snapshot
+}
+
+fn registry_error(id: &CodingAgentClientId, error: ClientRegistryError) -> CodingSessionError {
+    match error {
+        ClientRegistryError::StaleClient => CodingSessionError::StaleClientConnection {
+            client_id: id.as_str().into(),
+        },
+        ClientRegistryError::ClientCapacityExceeded { limit } => {
+            CodingSessionError::ClientCapacityExceeded { limit }
+        }
+        other => CodingSessionError::Input {
+            message: other.to_string(),
+        },
+    }
+}
+
 pub(crate) fn internal_client_id(id: &CodingAgentClientId) -> ClientConnectionId {
     ClientConnectionId::new(id.as_str())
 }
 
 pub(crate) fn public_client_connection(
     id: CodingAgentClientId,
-    connection: ClientConnection,
-    snapshot: UiSnapshot,
+    coordinator: Arc<SnapshotCoordinator>,
+    handle: ClientHandle,
+    state: ClientSnapshotState,
 ) -> CodingAgentClientConnection {
-    debug_assert_eq!(connection.id().as_str(), id.as_str());
+    debug_assert_eq!(handle.id.as_str(), id.as_str());
     CodingAgentClientConnection {
+        coordinator,
         client_id: id,
-        generation: CodingAgentConnectionGeneration(0),
-        snapshot: snapshot.into(),
+        generation: CodingAgentConnectionGeneration(handle.generation.0),
+        snapshot: public_client_snapshot(state),
     }
 }

@@ -71,8 +71,13 @@ impl ClientService {
         kind: OperationKind,
         sequence: u64,
     ) -> Result<(), ClientRegistryError> {
-        self.coordinator
-            .mark_terminal(handle, operation_id, kind, sequence)
+        self.coordinator.mark_terminal(
+            handle,
+            operation_id,
+            kind,
+            sequence,
+            super::event::ProductEventTerminalStatus::Completed,
+        )
     }
 }
 

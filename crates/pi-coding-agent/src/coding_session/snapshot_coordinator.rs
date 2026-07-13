@@ -1,7 +1,7 @@
 use super::capability_snapshot::CapabilityGeneration;
 use super::client_projection::{ClientConnectionId, ClientDraft, UiSnapshot, UiSnapshotCursor};
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
-use super::event::{ProductEvent, ProductEventSequence};
+use super::event::{ProductEvent, ProductEventSequence, ProductEventTerminalStatus};
 use super::operation_control::OperationKind;
 use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 use std::collections::{HashMap, VecDeque};
@@ -40,7 +40,16 @@ pub(crate) enum SubmittedOperationStatus {
         operation_id: String,
         kind: OperationKind,
         anchor: TerminalAcknowledgementAnchor,
+        status: ProductEventTerminalStatus,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ClientSnapshotState {
+    pub(crate) snapshot: UiSnapshot,
+    pub(crate) drafts: Vec<DraftRecord>,
+    pub(crate) submitted_operation: Option<SubmittedOperationStatus>,
+    pub(crate) acknowledged_sequence: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +152,22 @@ impl SnapshotCoordinator {
         Ok(ClientHandle { id, generation })
     }
 
+    pub(crate) fn is_current(&self, handle: &ClientHandle) -> bool {
+        let state = self.state.lock().unwrap();
+        state
+            .clients
+            .get(&handle.id)
+            .is_some_and(|record| record.generation == handle.generation)
+    }
+
+    pub(crate) fn current_event_sequence(&self) -> u64 {
+        self.state
+            .lock()
+            .unwrap()
+            .next_event_sequence
+            .saturating_sub(1)
+    }
+
     pub(crate) fn install_projection(
         &self,
         session: CodingAgentSessionView,
@@ -205,6 +230,70 @@ impl SnapshotCoordinator {
         handle: &ClientHandle,
     ) -> Result<UiSnapshot, ClientRegistryError> {
         self.snapshot_for_client(Some(handle))
+    }
+
+    pub(crate) fn client_state(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<ClientSnapshotState, ClientRegistryError> {
+        let snapshot = self.client_snapshot(handle)?;
+        let mut state = self.state.lock().unwrap();
+        let record = Self::record(&mut state, handle)?;
+        let drafts = record
+            .prompt_draft
+            .iter()
+            .chain(record.steer_drafts.iter())
+            .chain(record.follow_up_drafts.iter())
+            .cloned()
+            .collect();
+        Ok(ClientSnapshotState {
+            snapshot,
+            drafts,
+            submitted_operation: record.submitted_operation.clone(),
+            acknowledged_sequence: record.acknowledged_sequence,
+        })
+    }
+
+    pub(crate) fn retained_events_after(
+        &self,
+        handle: &ClientHandle,
+        requested_after: u64,
+    ) -> Result<Result<(Vec<ProductEvent>, u64), (u64, u64)>, ClientRegistryError> {
+        let mut state = self.state.lock().unwrap();
+        Self::record(&mut state, handle)?;
+        let current = state.next_event_sequence.saturating_sub(1);
+        if let Some(oldest) = state
+            .retained_product_events
+            .front()
+            .map(ProductEvent::sequence)
+            && requested_after != 0
+            && requested_after < oldest.get()
+        {
+            return Ok(Err((requested_after, oldest.get())));
+        }
+        Ok(Ok((
+            state
+                .retained_product_events
+                .iter()
+                .filter(|event| event.sequence().get() > requested_after)
+                .cloned()
+                .collect(),
+            current,
+        )))
+    }
+
+    pub(crate) fn validate_prompt_draft(
+        &self,
+        handle: &ClientHandle,
+        draft_id: &str,
+        text: &str,
+    ) -> Result<(), ClientRegistryError> {
+        let mut state = self.state.lock().unwrap();
+        let record = Self::record(&mut state, handle)?;
+        match &record.prompt_draft {
+            Some(draft) if draft.id == draft_id && draft.text == text => Ok(()),
+            _ => Err(ClientRegistryError::InvalidInput),
+        }
     }
 
     fn snapshot_for_client(
@@ -366,6 +455,7 @@ impl SnapshotCoordinator {
         operation_id: String,
         kind: OperationKind,
         terminal_sequence: u64,
+        status: ProductEventTerminalStatus,
     ) -> Result<(), ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
         let record = Self::record(&mut state, handle)?;
@@ -385,6 +475,7 @@ impl SnapshotCoordinator {
                 operation_id,
                 terminal_sequence,
             },
+            status,
         });
         Ok(())
     }
