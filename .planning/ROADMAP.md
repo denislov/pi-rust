@@ -61,7 +61,7 @@
 
 ## Progress
 
-- [x] Phase 6: Product Event Inventory and Typed Contract (completed 2026-07-13)
+- [ ] Phase 6: Product Event Inventory and Typed Contract (verification gaps found)
 - [ ] Phase 7: Adapter Migration and Compatibility Deletion
 - [ ] Phase 8: Client Connection, Replay, and Scoped Control
 - [ ] Phase 9: Lifecycle Association, Guards, and Closure
