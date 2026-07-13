@@ -70,6 +70,12 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
             turn_id: "turn_1".into(),
             agent_turn: 1,
         },
+        CodingAgentEvent::ProviderRequestStarted {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            provider: "typed-provider".into(),
+            model: "typed-model".into(),
+        },
         CodingAgentEvent::AssistantMessageStarted {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
@@ -103,6 +109,16 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
     }
 
     assert!(matches!(events[0], ProtocolEvent::TurnStart));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ProtocolEvent::MessageStart {
+            message: StoredAgentMessage::Assistant {
+                provider,
+                model,
+                ..
+            }
+        } if provider == "typed-provider" && model == "typed-model"
+    )));
     assert!(
         events
             .iter()
@@ -780,7 +796,28 @@ fn coding_event_adapter_maps_tool_events_to_protocol_events() {
         name: "read".into(),
         arguments_json: r#"{"path":"Cargo.toml"}"#.into(),
     });
-    assert!(matches!(start[0], ProtocolEvent::ToolExecutionStart { .. }));
+    assert!(matches!(
+        &start[0],
+        ProtocolEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+            args,
+        } if tool_call_id == "tool_1"
+            && tool_name == "read"
+            && args == &json!({"path": "Cargo.toml"})
+    ));
+
+    let invalid = adapter.push(&CodingAgentEvent::ToolCallStarted {
+        operation_id: "op_1".into(),
+        turn_id: "turn_1".into(),
+        tool_call_id: "tool_invalid".into(),
+        name: "read".into(),
+        arguments_json: "not-json".into(),
+    });
+    assert!(matches!(
+        &invalid[0],
+        ProtocolEvent::ToolExecutionStart { args, .. } if args == &Value::Null
+    ));
 
     let update = adapter.push(&CodingAgentEvent::ToolCallUpdated {
         operation_id: "op_1".into(),

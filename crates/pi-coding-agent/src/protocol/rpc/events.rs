@@ -22,7 +22,8 @@ impl RpcCodingEventAdapter {
 mod tests {
     use super::*;
     use crate::coding_session::{
-        CodingAgentEvent, CodingSessionError, ProductEvent, ProductEventSequence,
+        CodingAgentEvent, CodingAgentProductEventKind, CodingAgentWorkflowProductEvent,
+        CodingSessionError, ProductEvent, ProductEventSequence,
     };
     use pi_agent_core::transcript::StoredAgentMessage;
     use pi_ai::types::{StopReason, Usage};
@@ -102,6 +103,15 @@ mod tests {
                 },
             },
         );
+        assert!(matches!(
+            product_event.event(),
+            CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptFailed {
+                operation_id,
+                error,
+            }) if operation_id == "op_1"
+                && error.code == "provider"
+                && error.message == "provider error: provider failed"
+        ));
 
         let events = adapter.push_product_event(&product_event);
 
