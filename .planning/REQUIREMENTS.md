@@ -20,9 +20,9 @@
 
 ### Client Lifecycle
 
-- [ ] **CLIENT-01**: A public client connection can obtain a snapshot cursor and resume retained product events from that cursor.
-- [ ] **CLIENT-02**: A stale cursor produces a typed fresh-snapshot-required/event-gap result, and reconnect behavior distinguishes resumable history from required snapshot recovery.
-- [ ] **CLIENT-03**: Public client state exposes submitted-operation identity/status and client-local draft semantics without exposing internal services or queues.
+- [x] **CLIENT-01**: A public client connection can obtain a snapshot cursor and resume retained product events from that cursor.
+- [x] **CLIENT-02**: A stale cursor produces a typed fresh-snapshot-required/event-gap result, and reconnect behavior distinguishes resumable history from required snapshot recovery.
+- [x] **CLIENT-03**: Public client state exposes submitted-operation identity/status and client-local draft semantics without exposing internal services or queues.
 - [ ] **CLIENT-04**: Client detach/close and runtime shutdown have explicit idempotent behavior and do not corrupt session ownership or event publication.
 
 ### Control And Association
@@ -60,9 +60,9 @@
 | COMPAT-01 | Phase 7 | Complete |
 | COMPAT-02 | Phase 7 | Complete |
 | COMPAT-03 | Phase 9 | Pending |
-| CLIENT-01 | Phase 8 | Pending |
-| CLIENT-02 | Phase 8 | Pending |
-| CLIENT-03 | Phase 8 | Pending |
+| CLIENT-01 | Phase 8 | Complete |
+| CLIENT-02 | Phase 8 | Complete |
+| CLIENT-03 | Phase 8 | Complete |
 | CLIENT-04 | Phase 9 | Pending |
 | CONTROL-01 | Phase 8 | Pending |
 | CONTROL-02 | Phase 9 | Pending |

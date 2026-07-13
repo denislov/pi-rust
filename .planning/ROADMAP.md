@@ -59,24 +59,24 @@ Plans:
 
 **Requirements:** CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01
 
-**Plans:** 7 plans
+**Plans:** 4/7 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 08-01-PLAN.md — Freeze the stable client/recovery/state/control value contract and privacy guards.
+- [x] 08-01-PLAN.md — Freeze the stable client/recovery/state/control value contract and privacy guards.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 08-02-PLAN.md — Implement client state machines inside the sole SnapshotState with a zero-authority ClientService facade.
+- [x] 08-02-PLAN.md — Implement client state machines inside the sole SnapshotState with a zero-authority ClientService facade.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 08-03-PLAN.md — Implement the atomic retained-replay/live-receiver boundary in EventService after SnapshotCoordinator exists.
+- [x] 08-03-PLAN.md — Implement the atomic retained-replay/live-receiver boundary in EventService after SnapshotCoordinator exists.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 08-04-PLAN.md — Install the authoritative coordinator topology and migrate all six snapshot-visible writer families.
+- [x] 08-04-PLAN.md — Install the authoritative coordinator topology and migrate all six snapshot-visible writer families.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
