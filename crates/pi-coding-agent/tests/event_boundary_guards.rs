@@ -11,6 +11,152 @@ const RPC_STATS: &str = include_str!("../src/protocol/rpc/stats.rs");
 const INTERACTIVE_EVENT_BRIDGE: &str = include_str!("../src/interactive/event_bridge.rs");
 const INTERACTIVE_LOOP: &str = include_str!("../src/interactive/loop.rs");
 const SESSION_SERVICE: &str = include_str!("../src/coding_session/session_service.rs");
+const PUBLIC_EVENT: &str = include_str!("../src/coding_session/public_event.rs");
+const PUBLIC_PROJECTION: &str = include_str!("../src/coding_session/public_projection.rs");
+const PUBLIC_OPERATION: &str = include_str!("../src/coding_session/public_operation.rs");
+const PRODUCT_EVENT_CONTRACT: &str = include_str!("../../../docs/product-event-contract.md");
+
+#[test]
+fn typed_public_event_boundary_is_fail_closed() {
+    for forbidden in ["format!(\"{:?}\"", "format!(\"{:#?}\""] {
+        assert!(
+            !PUBLIC_EVENT.contains(forbidden) && !PUBLIC_PROJECTION.contains(forbidden),
+            "public event identity must not be derived through Debug formatting: {forbidden}"
+        );
+    }
+
+    for line in PUBLIC_EVENT.lines().filter(|line| line.contains("pub ")) {
+        assert!(
+            !line.contains("CodingAgentEvent"),
+            "public event declaration leaks the compatibility event: {line}"
+        );
+    }
+
+    let conversion = region(
+        PUBLIC_EVENT,
+        "impl From<&CodingAgentEvent> for CodingAgentProductEventKind",
+        "#[cfg(test)]",
+    );
+    assert!(
+        !conversion
+            .lines()
+            .any(|line| line.trim_start().starts_with("_ =>")),
+        "compatibility-to-public conversion must remain exhaustive without a wildcard"
+    );
+
+    for family in [
+        "Session",
+        "Profile",
+        "Agent",
+        "Team",
+        "Message",
+        "Tool",
+        "Runtime",
+        "Delegation",
+        "Workflow",
+        "Diagnostic",
+        "Capability",
+    ] {
+        assert!(
+            PRODUCT_EVENT_CONTRACT.contains(&format!("| {family} |")),
+            "product-event contract omits family {family}"
+        );
+    }
+}
+
+#[test]
+fn operation_outcome_documentation_matches_public_enums_exactly() {
+    let operations = enum_variants(PUBLIC_OPERATION, "CodingAgentOperation");
+    let outcomes = enum_variants(PUBLIC_OPERATION, "CodingAgentOperationOutcome");
+    let matrix = region(
+        PRODUCT_EVENT_CONTRACT,
+        "<!-- operation-outcome-matrix:start -->",
+        "<!-- operation-outcome-matrix:end -->",
+    );
+    let rows: Vec<_> = matrix
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .map(|line| {
+            let columns: Vec<_> = line.split('|').map(str::trim).collect();
+            (
+                columns[1].trim_matches('`').to_owned(),
+                columns[2].trim_matches('`').to_owned(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        rows.len(),
+        operations.len(),
+        "one matrix row is required per operation"
+    );
+    assert_eq!(
+        rows.len(),
+        outcomes.len(),
+        "one matrix row is required per outcome"
+    );
+    let documented_operations: std::collections::BTreeSet<_> = rows
+        .iter()
+        .map(|(operation, _)| operation.clone())
+        .collect();
+    let documented_outcomes: std::collections::BTreeSet<_> =
+        rows.iter().map(|(_, outcome)| outcome.clone()).collect();
+    assert_eq!(
+        documented_operations.len(),
+        rows.len(),
+        "operation rows must be unique"
+    );
+    assert_eq!(
+        documented_outcomes.len(),
+        rows.len(),
+        "outcome rows must be unique"
+    );
+    assert_eq!(documented_operations, operations.into_iter().collect());
+    assert_eq!(documented_outcomes, outcomes.into_iter().collect());
+}
+
+fn region<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    let start = source
+        .find(start)
+        .unwrap_or_else(|| panic!("missing region start: {start}"));
+    let rest = &source[start..];
+    let end = rest
+        .find(end)
+        .unwrap_or_else(|| panic!("missing region end: {end}"));
+    &rest[..end]
+}
+
+fn enum_variants(source: &str, enum_name: &str) -> std::collections::BTreeSet<String> {
+    let declaration = format!("pub enum {enum_name} {{");
+    let start = source
+        .find(&declaration)
+        .unwrap_or_else(|| panic!("missing {enum_name}"));
+    let body = &source[start + declaration.len()..];
+    let mut depth = 1_i32;
+    let mut variants = std::collections::BTreeSet::new();
+    for line in body.lines() {
+        if depth == 1 {
+            let trimmed = line.trim();
+            let candidate = trimmed
+                .split(['(', ' ', '{', ','])
+                .next()
+                .unwrap_or_default();
+            if candidate.chars().next().is_some_and(char::is_uppercase) {
+                variants.insert(candidate.to_owned());
+            }
+        }
+        depth += line.matches('{').count() as i32;
+        depth -= line.matches('}').count() as i32;
+        if depth == 0 {
+            break;
+        }
+    }
+    assert!(
+        !variants.is_empty(),
+        "{enum_name} inventory must not be empty"
+    );
+    variants
+}
 
 #[test]
 fn workflow_flows_emit_diagnostics_through_event_service_helpers() {
