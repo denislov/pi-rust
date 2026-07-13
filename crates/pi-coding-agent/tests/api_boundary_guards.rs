@@ -380,7 +380,7 @@ fn client_connection_is_stateful_but_not_a_dispatcher_or_service_escape_hatch() 
         .split("pub struct CodingAgentClientConnection")
         .nth(1)
         .expect("public connection should exist")
-        .split("pub struct CodingAgentProductEventReceiver")
+        .split("pub struct CodingAgentReconnectReceiver")
         .next()
         .unwrap();
     assert!(connection.contains("coordinator: Arc<SnapshotCoordinator>"));

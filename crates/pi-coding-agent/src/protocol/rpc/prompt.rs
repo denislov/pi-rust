@@ -1170,7 +1170,9 @@ pub(super) async fn reconnect_running_prompt_after(
         }
     };
     let (retained_events, through) = match recovery {
-        CodingAgentReconnect::Replayed { events, cursor } => (events, cursor.last_event_sequence),
+        CodingAgentReconnect::Replayed { events, cursor, .. } => {
+            (events, cursor.last_event_sequence)
+        }
         CodingAgentReconnect::FreshSnapshotRequired(recovery) => {
             state.running = Some(RunningPrompt::Coding(running));
             return Err(CodingSessionError::EventStreamGap {

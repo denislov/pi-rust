@@ -476,34 +476,6 @@ impl SnapshotCoordinator {
         })
     }
 
-    pub(crate) fn retained_events_after(
-        &self,
-        handle: &ClientHandle,
-        requested_after: u64,
-    ) -> Result<Result<(Vec<ProductEvent>, u64), (u64, u64)>, ClientRegistryError> {
-        let mut state = self.state.lock().unwrap();
-        Self::record(&mut state, handle)?;
-        let current = state.next_event_sequence.saturating_sub(1);
-        if let Some(oldest) = state
-            .retained_product_events
-            .front()
-            .map(ProductEvent::sequence)
-            && requested_after != 0
-            && requested_after < oldest.get()
-        {
-            return Ok(Err((requested_after, oldest.get())));
-        }
-        Ok(Ok((
-            state
-                .retained_product_events
-                .iter()
-                .filter(|event| event.sequence().get() > requested_after)
-                .cloned()
-                .collect(),
-            current,
-        )))
-    }
-
     pub(crate) fn validate_prompt_draft(
         &self,
         handle: &ClientHandle,
@@ -567,6 +539,44 @@ impl SnapshotCoordinator {
             return Err(ClientRegistryError::StaleClient);
         }
         Ok(record)
+    }
+
+    pub(crate) fn validate_client(
+        state: &SnapshotState,
+        handle: &ClientHandle,
+    ) -> Result<(), ClientRegistryError> {
+        let record = state
+            .clients
+            .get(&handle.id)
+            .ok_or(ClientRegistryError::StaleClient)?;
+        if record.generation != handle.generation {
+            return Err(ClientRegistryError::StaleClient);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn live_lag_recovery(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<(ClientSnapshotState, u64), ClientRegistryError> {
+        let state = self.client_state(handle)?;
+        let oldest_available = self
+            .state
+            .lock()
+            .unwrap()
+            .retained_product_events
+            .front()
+            .map(ProductEvent::sequence)
+            .map(ProductEventSequence::get)
+            .unwrap_or_else(|| {
+                state
+                    .snapshot
+                    .cursor
+                    .last_event_sequence
+                    .get()
+                    .saturating_add(1)
+            });
+        Ok((state, oldest_available))
     }
 
     pub(crate) fn acknowledge(

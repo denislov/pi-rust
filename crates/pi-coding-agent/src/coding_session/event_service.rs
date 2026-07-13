@@ -18,7 +18,7 @@ use super::{
         SelfHealingEditObserver, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
     },
     session_service::FinalizedSessionWrite,
-    snapshot_coordinator::SnapshotCoordinator,
+    snapshot_coordinator::{ClientHandle, ClientRegistryError, SnapshotCoordinator},
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 128;
@@ -53,6 +53,7 @@ pub(crate) struct ProductEventRecoveryBoundary {
     pub(crate) oldest_available: Option<ProductEventSequence>,
     pub(crate) replay: Vec<ProductEvent>,
     pub(crate) receiver: ProductEventReceiver,
+    pub(crate) capability_generation: u64,
 }
 
 #[derive(Debug)]
@@ -201,6 +202,24 @@ impl EventService {
         cursor: ProductEventSequence,
     ) -> ProductEventRecovery {
         let state = self.snapshot_coordinator.state.lock().unwrap();
+        self.recovery_boundary_from_state(&state, cursor)
+    }
+
+    pub(crate) fn recovery_boundary_after_for_client(
+        &self,
+        handle: &ClientHandle,
+        cursor: ProductEventSequence,
+    ) -> Result<ProductEventRecovery, ClientRegistryError> {
+        let state = self.snapshot_coordinator.state.lock().unwrap();
+        SnapshotCoordinator::validate_client(&state, handle)?;
+        Ok(self.recovery_boundary_from_state(&state, cursor))
+    }
+
+    fn recovery_boundary_from_state(
+        &self,
+        state: &super::snapshot_coordinator::SnapshotState,
+        cursor: ProductEventSequence,
+    ) -> ProductEventRecovery {
         let receiver = ProductEventReceiver {
             inner: self.product_sender.subscribe(),
         };
@@ -230,6 +249,7 @@ impl EventService {
             oldest_available,
             replay,
             receiver,
+            capability_generation: state.capability_generation.get(),
         })
     }
 

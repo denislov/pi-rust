@@ -495,7 +495,7 @@ async fn client_connection_replays_unacknowledged_delivery_and_ack_is_explicit()
         .unwrap();
     let recovery = connection.reconnect(0).unwrap();
     match recovery {
-        pi_coding_agent::api::CodingAgentReconnect::Replayed { events, cursor } => {
+        pi_coding_agent::api::CodingAgentReconnect::Replayed { events, cursor, .. } => {
             assert!(events.is_empty());
             assert_eq!(cursor.last_event_sequence, 0);
         }
@@ -602,6 +602,42 @@ async fn submission_lease_canonical_run_clears_draft_and_records_terminal() {
         submitted.status,
         pi_coding_agent::api::CodingAgentSubmittedOperationStatus::Terminal { .. }
     ));
+
+    let pi_coding_agent::api::CodingAgentReconnect::Replayed { events, cursor, .. } =
+        connection.reconnect(0).unwrap()
+    else {
+        panic!("terminal event must remain retained")
+    };
+    let terminal_sequence = events
+        .iter()
+        .filter(|event| event.terminal_status().is_some())
+        .map(CodingAgentProductEvent::sequence)
+        .max()
+        .expect("tracked prompt terminal event");
+    assert!(connection.state().unwrap().submitted_operation.is_some());
+    assert_eq!(
+        connection.acknowledge(terminal_sequence).unwrap(),
+        terminal_sequence
+    );
+    assert!(connection.state().unwrap().submitted_operation.is_none());
+    assert!(cursor.last_event_sequence >= terminal_sequence);
+}
+
+#[test]
+fn client_reconnect_source_uses_only_the_atomic_replay_live_boundary() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
+    let connection = fs::read_to_string(source_root.join("public_projection.rs")).unwrap();
+    let coordinator = fs::read_to_string(source_root.join("snapshot_coordinator.rs")).unwrap();
+    let reconnect = connection
+        .split("pub fn reconnect(")
+        .nth(1)
+        .and_then(|source| source.split("pub fn set_prompt_draft(").next())
+        .unwrap();
+
+    assert!(reconnect.contains("recovery_boundary_after_for_client"));
+    assert!(reconnect.contains("receiver: CodingAgentReconnectReceiver"));
+    assert!(!reconnect.contains("retained_events_after"));
+    assert!(!coordinator.contains("fn retained_events_after"));
 }
 
 #[test]

@@ -92,9 +92,9 @@ pub use public_projection::{
     CodingAgentControlRejection, CodingAgentControlRejectionReason, CodingAgentDraft,
     CodingAgentDraftId, CodingAgentDraftKind, CodingAgentFreshSnapshotRecovery,
     CodingAgentMutationRejection, CodingAgentProductEventReceiver, CodingAgentPromptControl,
-    CodingAgentReconnect, CodingAgentRecoveryReason, CodingAgentSnapshot,
-    CodingAgentSnapshotCursor, CodingAgentSubmissionLease, CodingAgentSubmittedOperation,
-    CodingAgentSubmittedOperationStatus,
+    CodingAgentReconnect, CodingAgentReconnectDelivery, CodingAgentReconnectReceiver,
+    CodingAgentRecoveryReason, CodingAgentSnapshot, CodingAgentSnapshotCursor,
+    CodingAgentSubmissionLease, CodingAgentSubmittedOperation, CodingAgentSubmittedOperationStatus,
 };
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
@@ -591,6 +591,7 @@ impl CodingAgentSession {
         Ok(public_projection::public_client_connection(
             id,
             self.snapshot_coordinator.clone(),
+            self.event_service.clone(),
             handle,
             state,
         ))
@@ -1903,6 +1904,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::delegation::delegation_runtime_seed_from_prompt_options;
+    use super::operation_control::PromptControlCommand;
     use super::plugin_load_flow::{PluginLoadCandidate, PluginLoadManifest, PluginLoadOptions};
     use super::prompt::DelegationRequest;
     use super::*;
@@ -2837,6 +2839,124 @@ runtime = "lua"
         .unwrap();
         assert!(event_log.contains("\"kind\":\"operation.aborted\""));
         assert!(event_log.contains("user cancelled"));
+    }
+
+    #[tokio::test]
+    async fn public_reconnect_receiver_projects_live_lag_as_fresh_snapshot_recovery() {
+        let session = CodingAgentSession::non_persistent_with_event_capacity_for_tests(
+            CodingAgentSessionOptions::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        let connection = session
+            .connect(CodingAgentClientId::new("lag-client"))
+            .unwrap();
+        let CodingAgentReconnect::Replayed {
+            mut receiver,
+            cursor,
+            ..
+        } = connection.reconnect(0).unwrap()
+        else {
+            panic!("initial cursor must establish a replay/live boundary")
+        };
+
+        session.event_service.emit(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "one".into(),
+        });
+        session.event_service.emit(CodingAgentEvent::Diagnostic {
+            operation_id: None,
+            message: "two".into(),
+        });
+
+        let Some(CodingAgentReconnectDelivery::FreshSnapshotRequired(recovery)) =
+            receiver.try_recv().unwrap()
+        else {
+            panic!("lagged reconnect receiver must require a typed fresh snapshot")
+        };
+        assert_eq!(recovery.reason, CodingAgentRecoveryReason::LiveReceiverLag);
+        assert_eq!(recovery.requested_sequence, cursor.last_event_sequence);
+        assert_eq!(recovery.oldest_available_sequence, 2);
+        assert_eq!(recovery.fresh_cursor.last_event_sequence, 2);
+    }
+
+    #[tokio::test]
+    async fn public_scoped_control_receipts_are_idempotent_fifo_and_acceptance_clears_drafts() {
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let connection = session
+            .connect(CodingAgentClientId::new("receipt-client"))
+            .unwrap();
+        for (id, kind, text) in [
+            ("steer-draft", CodingAgentDraftKind::Steer, "draft steer"),
+            (
+                "follow-draft",
+                CodingAgentDraftKind::FollowUp,
+                "draft follow",
+            ),
+        ] {
+            connection
+                .enqueue_control_draft(CodingAgentDraft {
+                    id: CodingAgentDraftId(id.into()),
+                    kind,
+                    text: text.into(),
+                })
+                .unwrap();
+        }
+        let (sender, mut receiver) = operation_control::prompt_control_channel();
+        session.snapshot_coordinator.bind_prompt_control(
+            connection.handle(),
+            "op-receipts".into(),
+            sender,
+        );
+        let control = connection.prompt_control("op-receipts");
+
+        let abort = control
+            .abort(CodingAgentControlId("abort-1".into()), "stop")
+            .unwrap();
+        assert_eq!(
+            control
+                .abort(CodingAgentControlId("abort-1".into()), "stop")
+                .unwrap(),
+            abort
+        );
+        assert_eq!(
+            control
+                .abort(CodingAgentControlId("abort-1".into()), "different")
+                .unwrap_err()
+                .reason,
+            CodingAgentControlRejectionReason::PayloadConflict
+        );
+        control
+            .steer(CodingAgentControlId("steer-1".into()), "direct steer")
+            .unwrap();
+        control
+            .steer_draft(CodingAgentDraftId("steer-draft".into()))
+            .unwrap();
+        control
+            .follow_up_draft(CodingAgentDraftId("follow-draft".into()))
+            .unwrap();
+
+        assert_eq!(
+            std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>(),
+            vec![
+                PromptControlCommand::Abort {
+                    reason: "stop".into()
+                },
+                PromptControlCommand::Steer {
+                    text: "direct steer".into()
+                },
+                PromptControlCommand::Steer {
+                    text: "draft steer".into()
+                },
+                PromptControlCommand::FollowUp {
+                    text: "draft follow".into()
+                },
+            ]
+        );
+        assert!(connection.state().unwrap().drafts.is_empty());
     }
 
     #[tokio::test]

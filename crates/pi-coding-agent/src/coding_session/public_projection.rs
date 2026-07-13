@@ -1,7 +1,8 @@
+use super::ProductEventSequence;
 use super::client_projection::{ClientConnectionId, ClientDraftKind, UiSnapshot};
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use super::error::CodingSessionError;
-use super::event_service::ProductEventReceiver;
+use super::event_service::{EventService, ProductEventReceiver, ProductEventRecovery};
 use super::public_event::{CodingAgentProductEvent, CodingAgentProductEventTerminalStatus};
 use crate::protocol::version::ProtocolFamilyVersion;
 use serde::{Deserialize, Serialize};
@@ -78,11 +79,12 @@ pub struct CodingAgentFreshSnapshotRecovery {
     pub snapshot: Box<CodingAgentSnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum CodingAgentReconnect {
     Replayed {
         events: Vec<CodingAgentProductEvent>,
         cursor: CodingAgentSnapshotCursor,
+        receiver: CodingAgentReconnectReceiver,
     },
     FreshSnapshotRequired(CodingAgentFreshSnapshotRecovery),
 }
@@ -273,13 +275,14 @@ pub struct CodingAgentSnapshot {
 #[derive(Debug, Clone)]
 pub struct CodingAgentClientConnection {
     coordinator: Arc<SnapshotCoordinator>,
+    event_service: EventService,
     pub client_id: CodingAgentClientId,
     pub generation: CodingAgentConnectionGeneration,
     pub snapshot: CodingAgentSnapshot,
 }
 
 impl CodingAgentClientConnection {
-    fn handle(&self) -> ClientHandle {
+    pub(crate) fn handle(&self) -> ClientHandle {
         ClientHandle {
             id: internal_client_id(&self.client_id),
             generation: ClientGeneration(self.generation.0),
@@ -313,26 +316,40 @@ impl CodingAgentClientConnection {
         requested_after: u64,
     ) -> Result<CodingAgentReconnect, CodingSessionError> {
         match self
-            .coordinator
-            .retained_events_after(&self.handle(), requested_after)
+            .event_service
+            .recovery_boundary_after_for_client(
+                &self.handle(),
+                ProductEventSequence::new(requested_after),
+            )
             .map_err(|error| registry_error(&self.client_id, error))?
         {
-            Ok((events, through)) => Ok(CodingAgentReconnect::Replayed {
-                events: events
+            ProductEventRecovery::Ready(boundary) => Ok(CodingAgentReconnect::Replayed {
+                events: boundary
+                    .replay
                     .into_iter()
                     .map(CodingAgentProductEvent::from_internal)
                     .collect(),
                 cursor: CodingAgentSnapshotCursor {
-                    last_event_sequence: through,
-                    capability_generation: self.state()?.cursor.capability_generation,
+                    last_event_sequence: boundary.replayed_through.get(),
+                    capability_generation: boundary.capability_generation,
+                },
+                receiver: CodingAgentReconnectReceiver {
+                    inner: boundary.receiver,
+                    coordinator: self.coordinator.clone(),
+                    client_id: self.client_id.clone(),
+                    handle: self.handle(),
+                    last_sequence: boundary.replayed_through.get(),
                 },
             }),
-            Err((requested_sequence, oldest_available_sequence)) => {
+            ProductEventRecovery::RetainedGap {
+                requested_after,
+                oldest_available,
+            } => {
                 let snapshot = self.state()?;
                 Ok(CodingAgentReconnect::FreshSnapshotRequired(
                     CodingAgentFreshSnapshotRecovery {
-                        requested_sequence,
-                        oldest_available_sequence,
+                        requested_sequence: requested_after.get(),
+                        oldest_available_sequence: oldest_available.get(),
                         fresh_cursor: snapshot.cursor.clone(),
                         reason: CodingAgentRecoveryReason::RetainedHistoryGap,
                         snapshot: Box::new(snapshot),
@@ -408,6 +425,62 @@ impl CodingAgentClientConnection {
             operation_id,
             shared,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct CodingAgentReconnectReceiver {
+    inner: ProductEventReceiver,
+    coordinator: Arc<SnapshotCoordinator>,
+    client_id: CodingAgentClientId,
+    handle: ClientHandle,
+    last_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CodingAgentReconnectDelivery {
+    Event(CodingAgentProductEvent),
+    FreshSnapshotRequired(CodingAgentFreshSnapshotRecovery),
+}
+
+impl CodingAgentReconnectReceiver {
+    pub async fn recv(&mut self) -> Result<CodingAgentReconnectDelivery, CodingSessionError> {
+        match self.inner.recv().await {
+            Ok(event) => Ok(self.project_event(event)),
+            Err(CodingSessionError::EventStreamLag { .. }) => self.project_live_lag(),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn try_recv(&mut self) -> Result<Option<CodingAgentReconnectDelivery>, CodingSessionError> {
+        match self.inner.try_recv() {
+            Ok(Some(event)) => Ok(Some(self.project_event(event))),
+            Ok(None) => Ok(None),
+            Err(CodingSessionError::EventStreamLag { .. }) => self.project_live_lag().map(Some),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn project_event(&mut self, event: super::ProductEvent) -> CodingAgentReconnectDelivery {
+        self.last_sequence = event.sequence().get();
+        CodingAgentReconnectDelivery::Event(CodingAgentProductEvent::from_internal(event))
+    }
+
+    fn project_live_lag(&self) -> Result<CodingAgentReconnectDelivery, CodingSessionError> {
+        let (state, oldest_available_sequence) =
+            self.coordinator
+                .live_lag_recovery(&self.handle)
+                .map_err(|error| registry_error(&self.client_id, error))?;
+        let snapshot = public_client_snapshot(state);
+        Ok(CodingAgentReconnectDelivery::FreshSnapshotRequired(
+            CodingAgentFreshSnapshotRecovery {
+                requested_sequence: self.last_sequence,
+                oldest_available_sequence,
+                fresh_cursor: snapshot.cursor.clone(),
+                reason: CodingAgentRecoveryReason::LiveReceiverLag,
+                snapshot: Box::new(snapshot),
+            },
+        ))
     }
 }
 
@@ -551,12 +624,14 @@ pub(crate) fn internal_client_id(id: &CodingAgentClientId) -> ClientConnectionId
 pub(crate) fn public_client_connection(
     id: CodingAgentClientId,
     coordinator: Arc<SnapshotCoordinator>,
+    event_service: EventService,
     handle: ClientHandle,
     state: ClientSnapshotState,
 ) -> CodingAgentClientConnection {
     debug_assert_eq!(handle.id.as_str(), id.as_str());
     CodingAgentClientConnection {
         coordinator,
+        event_service,
         client_id: id,
         generation: CodingAgentConnectionGeneration(handle.generation.0),
         snapshot: public_client_snapshot(state),
