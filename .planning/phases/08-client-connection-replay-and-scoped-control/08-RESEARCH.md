@@ -67,7 +67,7 @@
 | CLIENT-01 | Public client connection obtains a snapshot cursor and resumes retained product events | Existing `EventService::current_product_sequence`, retained deque, `product_events_after`, and broadcast receiver provide the implementation seam; public connection must own the replay/live handoff. |
 | CLIENT-02 | Stale cursor yields typed fresh-snapshot/event-gap recovery and reconnect distinguishes resumable history | Existing `EventStreamGap` and `EventStreamLag` carry the two failure classes but need a public structured recovery result with fresh snapshot metadata. |
 | CLIENT-03 | Public client state exposes submitted-operation identity/status and client-local draft semantics without internals | `ClientConnection`, `ClientDraft`, and `SubmittedOperation` are private foundations; `CodingAgentSnapshot` currently leaks only count and must project full typed state. |
-| CONTROL-01 | Scoped public abort/steer/follow-up contract remains outside ordinary operation queue | `PromptControlHandle` and `PromptControlCommand` already use a separate Tokio unbounded channel; public handles need owner/generation/operation binding, typed receipts/rejections, and idempotency. |
+| CONTROL-01 | Scoped public abort/steer/follow-up contract remains outside ordinary operation queue | `PromptControlHandle` and `PromptControlCommand` already use a separate Tokio channel; Phase 8 must hard-bound admission/transport and add owner/generation/operation binding, typed receipts/rejections, and idempotency. |
 </phase_requirements>
 
 ## Summary
@@ -97,7 +97,7 @@ The implementation should therefore extend the session-owned client projection r
 |---------|---------|---------|-------------|
 | Rust standard library `Arc`, `Mutex`, `HashMap`, `VecDeque` | Rust 1.96 toolchain (edition 2024) | Session-owned generation registry, state snapshots, retained/idempotency indexes | Already used by `CodingAgentSession`, `EventService`, and projections; no new dependency is necessary. `[VERIFIED: cargo/rustc and source]` |
 | Tokio `broadcast` | 1.52.3 workspace dependency | Live product-event fan-out and lag detection | Existing `EventService` uses it and maps `Lagged` to typed session errors. `[VERIFIED: AGENTS.md and source]` |
-| Tokio `mpsc::unbounded_channel` | 1.52.3 workspace dependency | Prompt-scoped abort/steer/follow-up control channel | Existing `PromptControlHandle` uses this separate channel; retain separation from ordinary operation queue. `[VERIFIED: AGENTS.md and source]` |
+| Tokio `mpsc` bounded channel | 1.52.3 workspace dependency | Prompt-scoped abort/steer/follow-up control channel with hard backpressure | Replace the existing unbounded Prompt transport with a bounded private channel while retaining separation from the ordinary operation queue. `[VERIFIED: AGENTS.md and source]` |
 | Serde 1.0.228 | Workspace dependency | Stable public snapshot, recovery, draft, submitted-state, and receipt serialization where adapters require it | Existing public event/protocol types use Serde; preserve snake_case wire conventions. `[VERIFIED: AGENTS.md and source]` |
 
 ### Supporting
@@ -162,7 +162,7 @@ CodingAgentSession client registry (id -> generation + drafts + submitted + ack 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
 | Live fan-out and lag detection | A custom async broadcast queue | Existing Tokio `broadcast` through `EventService` | Existing receiver/error behavior and adapter tests depend on it. |
-| Prompt command transport | A new ordinary `CodingAgentOperation` variant or bespoke queue | Existing `PromptControlHandle` + `PromptControlCommand` channel | Locked CONTROL-01 requires controls outside the ordinary operation queue. |
+| Prompt command transport | A new ordinary `CodingAgentOperation` variant or unbounded bespoke queue | Bounded `PromptControlHandle` + `PromptControlCommand` channel | Locked CONTROL-01 requires controls outside the ordinary operation queue and the high-severity queue threat requires hard backpressure. |
 | Durable session recovery | Persist client drafts/acks into session log as session facts | Session-owned client projection plus existing `SessionService` replay for durable facts | Client-local state is not durable session truth; avoid changing log schema in this phase. |
 | Event deduplication | Timestamp/hash or exactly-once claim | Stable `ProductEventSequence` + explicit client acknowledgement | Sequence is already assigned by the publisher and supports at-least-once recovery. |
 | Public contract exposure | Re-export private `Operation`, service, queue, or Flow types | Curated `pi_coding_agent::api` projection types | Existing API boundary guards require internals to remain private. |
@@ -369,22 +369,22 @@ This phase has no external service dependency and adds no package. The local too
 | A1 | Tokio 1.52.3 `broadcast`/`mpsc` semantics remain compatible with current usage shown in source. `[ASSUMED]` | Standard Stack / Architecture | A changed API or semantic detail could require a small adapter change; verify against official docs before implementation. |
 | A2 | Client-local registry need not be persisted in Rust-native session log. `[ASSUMED]` | Runtime State Inventory | Persisting it would expand schema/durability scope; current locked decisions describe reconnect within a live session, not process restart. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **What exact public method shape represents replay plus live receiver?**
    - What we know: Existing `connect` returns a value-only connection and `subscribe_product_events_public` returns an independent receiver.
    - What's unclear: Whether the planner chooses `reconnect(cursor)`, a connection method returning a recovery enum, or a connection-scoped stream wrapper.
-   - Recommendation: Keep one typed recovery result and ensure the implementation can atomically bind replay and live delivery; choose names in the API task.
+   - Resolution: `CodingAgentClientConnection::reconnect(cursor) -> Result<CodingAgentReconnect, CodingAgentConnectionError>` is the sole public recovery entry point. `CodingAgentReconnect::Replayed` carries converted `CodingAgentProductEvent` values, `CodingAgentProductEventReceiver`, and `through_cursor`; `FreshSnapshotRequired` carries the authoritative `CodingAgentSnapshot` and `CodingAgentRecoveryMetadata`. No independent public subscribe method is used for reconnect handoff.
 
 2. **Where should accepted/running transitions be observed?**
    - What we know: `run` admission and event publication are separate boundaries; Phase 9 owns exhaustive terminal association.
    - What's unclear: Exact event/admission hook for `Accepted` and `Running` without changing operation semantics.
-   - Recommendation: Derive `Accepted` at canonical admission and `Running` at existing operation-start event/guard, with tests proving monotonicity; defer full outcome/event association.
+   - Resolution: `ClientSubmissionProvenance` is prepared by `ClientService::prepare_submission(client_id, generation, draft_ref)` and consumed by the existing `CodingAgentSession::run` admission path in `public_operation.rs`. Admission atomically records the client/operation association and `Accepted`; the existing operation-start guard records `Running`. Terminal observation stores the exact product-event sequence plus operation id as `TerminalAcknowledgementAnchor`; Phase 9 still owns exhaustive terminal-family association.
 
 3. **What capacities should be public/configurable?**
    - What we know: Event retention baseline is 128 and RPC idempotency records are capped at 64.
    - What's unclear: Public exposure and per-client idempotency/draft limits.
-   - Recommendation: Keep capacities private/configured through existing test constructors unless a stable API requirement emerges; document deterministic bounds and rejection behavior.
+   - Resolution: Keep capacities private and deterministic: maximum live client records 64 per session, each Prompt/Steer/FollowUp queue 64 entries, and each client receipt cache 64 records. `ClientService::connect` returns typed `ClientCapacityExceeded` for a new identity at capacity, while same-id takeover remains allowed. Queue saturation returns typed `QueueCapacityExceeded` without mutating drafts; receipt lookup precedes volatile target/channel checks. Test constructors may lower these limits, but the public API does not expose them.
 
 ## State of the Art
 

@@ -2,7 +2,7 @@
 phase: 08
 slug: client-connection-replay-and-scoped-control
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-13
 ---
@@ -39,15 +39,16 @@ created: 2026-07-13
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 08-W0-01 | Wave 0 | 0 | CLIENT-01 | T-08-REPLAY-GAP | Snapshot cursor and atomic replay/live handoff do not omit or handoff-duplicate product events. | async integration | `cargo test -p pi-coding-agent --test public_api client_connection` | ❌ W0 | ⬜ pending |
-| 08-W0-02 | Wave 0 | 0 | CLIENT-02 | T-08-STALE-RECOVERY | Retention gaps and live lag return typed fresh-snapshot recovery with bounded metadata and no private error-string parsing. | unit + async integration | `cargo test -p pi-coding-agent --lib event_service` | Partial; public recovery tests ❌ W0 | ⬜ pending |
-| 08-W0-03 | Wave 0 | 0 | CLIENT-03 | T-08-STALE-HANDLE | Same-id takeover restores client state and invalidates old-generation mutation, acknowledgement, and control authority. | async integration | `cargo test -p pi-coding-agent --test public_api client_state` | ❌ W0 | ⬜ pending |
-| 08-W0-04 | Wave 0 | 0 | CONTROL-01 | T-08-CONTROL-AUTH | Only the submitting client controls the immutable target Prompt; stable control ids deduplicate retries and preserve order. | async integration | `cargo test -p pi-coding-agent --test public_api scoped_control` | ❌ W0 | ⬜ pending |
-| 08-W0-05 | Wave 0 | 0 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-API-LEAK | Stable API exports public projections only; private `ProductEvent`, raw Prompt control, services, queues, and Flow nodes remain unreachable. | source guard + compile contract | `cargo test -p pi-coding-agent --test api_boundary_guards --test product_runtime_boundary_guards` | Existing guards; Phase 8 assertions ❌ W0 | ⬜ pending |
+| 08-01-T1/T2/T3 | Wave 1 | 1 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-API-LEAK | Public projections are exhaustively constructible while private ProductEvent/control/service/queue/Flow types and a second dispatcher remain unreachable. | compile contract + source guard | `cargo test -p pi-coding-agent --test public_api --test api_boundary_guards client_contract --quiet` | present in plan | ⬜ pending |
+| 08-02-T1/T2/T3 | Wave 2 | 2 | CLIENT-03 | T-08-STALE-HANDLE, T-08-RESOURCE-BOUND | Same-id takeover preserves state and stales old generations; 64-client/64-queue/64-receipt private limits reject new identities or entries without mutation. | deterministic unit | `cargo test -p pi-coding-agent --lib client_service --quiet` | present in plan | ⬜ pending |
+| 08-03-T1/T2 | Wave 2 | 2 | CLIENT-01, CLIENT-02 | T-08-REPLAY-GAP | Event retention and replay/live handoff preserve sequence authority and classify retained gap versus receiver lag. | unit + async integration | `cargo test -p pi-coding-agent --lib event_service --quiet && cargo test -p pi-coding-agent --test public_api client_connection --quiet` | present in plan | ⬜ pending |
+| 08-04-T1/T2/T3 | Wave 3 | 3 | CLIENT-01, CLIENT-02, CLIENT-03 | T-08-REPLAY-GAP, T-08-STALE-HANDLE | Fixed lock order plus epoch validation retries coherent snapshots; public lag receive returns typed FreshSnapshotRequired; provenance is consumed by canonical run admission and terminal anchor is exact. | deterministic race + async integration | `cargo test -p pi-coding-agent --test public_api client_connection --quiet && cargo test -p pi-coding-agent --test public_api client_state --quiet` | present in plan | ⬜ pending |
+| 08-05-T1/T2 | Wave 4 | 4 | CONTROL-01 | T-08-CONTROL-AUTH, T-08-CONTROL-REPLAY, T-08-RESOURCE-BOUND | Owner/generation/target checks, receipt-first retry, bounded Prompt transport, typed saturation rejection, draft preservation, and FIFO ordering hold under response loss. | async integration + unit | `cargo test -p pi-coding-agent --test public_api scoped_control --quiet && cargo test -p pi-coding-agent --lib operation_control --quiet` | present in plan | ⬜ pending |
+| 08-06-T1/T2/T3 | Wave 5 | 5 | CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01 | T-08-API-LEAK, T-08-06-INPUT | RPC consumes the public connection authority with wire compatibility, retains unrelated idempotency, and source guards prevent adapter mirrors/ordinary dispatchers. | RPC integration + workspace | `cargo test -p pi-coding-agent --test rpc_mode --test protocol_events --test api_boundary_guards --quiet` | present in plan | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
-The planner replaces `08-W0-*` placeholders with concrete plan/task IDs once PLAN.md files establish their waves. No implementation task may claim Nyquist coverage solely through a workspace-wide command; each must name a focused automated assertion.
+The concrete plan/task IDs above are the RED-first dependencies for execution. Runtime status remains pending until implementation runs; no task claims Nyquist coverage solely through a workspace-wide command.
 
 ---
 
@@ -67,9 +68,9 @@ The planner replaces `08-W0-*` placeholders with concrete plan/task IDs once PLA
 
 ## Wave 0 Requirements
 
-- [ ] Extend `crates/pi-coding-agent/tests/public_api.rs` or add a focused client-connection integration suite covering public snapshot, recovery, state, and control types.
+- [ ] 08-01-T1 creates the RED public contract and boundary assertions.
 - [ ] Add deterministic test helpers for controlled product-event publication, test-sized retained capacity, same-id takeover generations, blocked Prompt control receivers, and response-loss retry.
-- [ ] Add public recovery tests for both retained-history gaps and live receiver lag.
+- [ ] 08-03-T1 and 08-04-T1 add public recovery tests for both retained-history gaps and live receiver lag.
 - [ ] Add boundary/source assertions preventing public exposure of private `ProductEvent`, `ProductEventReplayHandle`, raw `PromptControlHandle`, `OperationControl`, services, queues, and Flow nodes.
 - [ ] Preserve existing RPC and interactive assertions while client-local state and replay behavior move behind the public connection contract.
 
@@ -96,14 +97,15 @@ All Phase 8 behaviors must have deterministic automated verification. No behavio
 
 ## Validation Sign-Off
 
-- [ ] All concrete plan tasks have `<automated>` verification or explicit Wave 0 dependencies.
+- [ ] All concrete plan tasks (08-01 through 08-06) have `<automated>` verification or explicit RED-first dependencies.
 - [ ] Sampling continuity: no three consecutive tasks without automated focused verification.
-- [ ] Wave 0 covers every `❌ W0` reference above.
+- [ ] Wave 1 contains all RED-first contract tests before behavior wiring in later waves.
 - [ ] No watch-mode flags appear in verification commands.
 - [ ] Per-task focused feedback latency remains under 30 seconds, or the plan records a narrower deterministic filter.
 - [ ] Every Phase 8 requirement appears in at least one plan frontmatter `requirements` field.
 - [ ] Every locked D-01 through D-21 decision is cited by at least one plan `must_haves`/task acceptance criterion.
 - [ ] All high-severity threat rows have automated fail-closed assertions.
-- [ ] `nyquist_compliant: true` and `wave_0_complete: true` are set only after the concrete plan/task map and Wave 0 tests are present.
+- [x] `nyquist_compliant: true` reflects complete planning-time task/command/requirement/threat mapping; runtime pass/fail remains pending.
+- [ ] `wave_0_complete: true` is set only after 08-01 RED-first tests are implemented and observed failing for the intended missing behavior before production wiring.
 
 **Approval:** pending
