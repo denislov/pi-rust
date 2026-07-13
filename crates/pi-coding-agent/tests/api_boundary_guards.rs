@@ -249,7 +249,7 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
         "OperationDispatchMode::Async",
         "OperationDispatchMode::SyncReadOnly",
         "OperationDispatchMode::SyncMutable",
-        "run_operation(operation).await",
+        "run_operation(operation, submission).await",
         "run_sync_operation(operation)",
         "run_sync_mut_operation(operation)",
         "CodingAgentOperationOutcome::from_internal(outcome)",
@@ -367,6 +367,34 @@ fn stable_api_excludes_internal_runtime_contracts() {
         assert!(
             !exported_identifiers.contains(forbidden),
             "stable api must not re-export internal runtime contract {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn client_connection_is_stateful_but_not_a_dispatcher_or_service_escape_hatch() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(crate_root.join("src/coding_session/public_projection.rs"))
+        .expect("public projection source should be readable");
+    let connection = source
+        .split("pub struct CodingAgentClientConnection")
+        .nth(1)
+        .expect("public connection should exist")
+        .split("pub struct CodingAgentProductEventReceiver")
+        .next()
+        .unwrap();
+    assert!(connection.contains("coordinator: Arc<SnapshotCoordinator>"));
+    assert!(connection.contains("prepare_submission("));
+    for forbidden in [
+        "pub async fn run(",
+        "pub async fn submit(",
+        "RuntimeService",
+        "SessionService",
+        "ProductEventReceiver",
+    ] {
+        assert!(
+            !connection.contains(forbidden),
+            "connection leaked {forbidden}"
         );
     }
 }

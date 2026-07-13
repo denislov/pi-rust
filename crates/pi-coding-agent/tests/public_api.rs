@@ -400,10 +400,12 @@ async fn coding_session_snapshot_public_facade_is_importable() {
 
 #[tokio::test]
 async fn client_connection_state_takeover_ack_and_drafts_are_generation_scoped() {
-    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+    let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
         .await
         .unwrap();
-    let first = session.connect(CodingAgentClientId::new("stateful-client")).unwrap();
+    let first = session
+        .connect(CodingAgentClientId::new("stateful-client"))
+        .unwrap();
     first
         .set_prompt_draft(
             pi_coding_agent::api::CodingAgentDraftId("draft-1".into()),
@@ -415,11 +417,16 @@ async fn client_connection_state_takeover_ack_and_drafts_are_generation_scoped()
     assert_eq!(snapshot.drafts[0].id.0, "draft-1");
     assert_eq!(first.acknowledge(0).unwrap(), 0);
 
-    let second = session.connect(CodingAgentClientId::new("stateful-client")).unwrap();
+    let second = session
+        .connect(CodingAgentClientId::new("stateful-client"))
+        .unwrap();
     assert!(second.generation.0 > first.generation.0);
     assert_eq!(second.state().unwrap().drafts[0].text, "hello");
     assert_eq!(first.state().unwrap_err().code(), "stale_client_connection");
-    assert_eq!(first.acknowledge(1).unwrap_err().code(), "stale_client_connection");
+    assert_eq!(
+        first.acknowledge(1).unwrap_err().code(),
+        "stale_client_connection"
+    );
 }
 
 #[tokio::test]
@@ -427,7 +434,9 @@ async fn client_connection_replays_unacknowledged_delivery_and_ack_is_explicit()
     let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
         .await
         .unwrap();
-    let connection = session.connect(CodingAgentClientId::new("replay-client")).unwrap();
+    let connection = session
+        .connect(CodingAgentClientId::new("replay-client"))
+        .unwrap();
     let recovery = connection.reconnect(0).unwrap();
     match recovery {
         pi_coding_agent::api::CodingAgentReconnect::Replayed { events, cursor } => {
@@ -444,16 +453,18 @@ async fn submission_lease_drop_preserves_draft_and_releases_exclusivity() {
     let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
         .await
         .unwrap();
-    let connection = session.connect(CodingAgentClientId::new("lease-client")).unwrap();
+    let connection = session
+        .connect(CodingAgentClientId::new("lease-client"))
+        .unwrap();
     connection
         .set_prompt_draft(
             pi_coding_agent::api::CodingAgentDraftId("draft-lease".into()),
             "tracked prompt",
         )
         .unwrap();
-    let operation = CodingAgentOperation::Prompt(PromptTurnOptions::new(
-        PromptInvocation::Text("tracked prompt".into()),
-    ));
+    let operation = CodingAgentOperation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+        "tracked prompt".into(),
+    )));
     let lease = connection
         .prepare_submission(
             &mut session,
@@ -484,10 +495,66 @@ async fn submission_lease_drop_preserves_draft_and_releases_exclusivity() {
     drop(replacement);
 }
 
+#[tokio::test]
+async fn submission_lease_canonical_run_clears_draft_and_records_terminal() {
+    let api = "public-api-submission-lease";
+    let _provider_guard = ProviderGuard::register(
+        api,
+        std::sync::Arc::new(FauxProvider::simple_text("tracked response")),
+    );
+    let prompt = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+        prompt: "tracked prompt".into(),
+        model: model(api),
+        api_key: None,
+        auth_diagnostics: Vec::new(),
+        system_prompt: Some("test".into()),
+        max_turns: Some(1),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("tracked prompt".into()),
+    });
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let connection = session
+        .connect(CodingAgentClientId::new("lease-run-client"))
+        .unwrap();
+    let draft_id = pi_coding_agent::api::CodingAgentDraftId("draft-run".into());
+    connection
+        .set_prompt_draft(draft_id.clone(), "tracked prompt")
+        .unwrap();
+    let operation = CodingAgentOperation::Prompt(prompt);
+    let lease = connection
+        .prepare_submission(&mut session, draft_id, &operation)
+        .unwrap();
+
+    let outcome = session.run(operation).await.unwrap();
+    assert!(matches!(outcome, CodingAgentOperationOutcome::Prompt(_)));
+    drop(lease);
+    let state = connection.state().unwrap();
+    assert!(state.drafts.is_empty());
+    let submitted = state.submitted_operation.expect("tracked terminal state");
+    assert_eq!(submitted.kind, "prompt");
+    assert!(matches!(
+        submitted.status,
+        pi_coding_agent::api::CodingAgentSubmittedOperationStatus::Terminal { .. }
+    ));
+}
+
 #[test]
 fn client_errors_have_stable_non_overlapping_codes() {
     assert_eq!(
-        CodingSessionError::StaleClientConnection { client_id: "c".into() }.code(),
+        CodingSessionError::StaleClientConnection {
+            client_id: "c".into()
+        }
+        .code(),
         "stale_client_connection"
     );
     assert_eq!(
@@ -507,7 +574,10 @@ fn legacy_run_connection_surface_has_no_dispatcher() {
             .join("src/coding_session/public_projection.rs"),
     )
     .unwrap();
-    let connection = source.split("impl CodingAgentClientConnection").nth(1).unwrap();
+    let connection = source
+        .split("impl CodingAgentClientConnection")
+        .nth(1)
+        .unwrap();
     assert!(!connection.contains("pub async fn run("));
     assert!(!connection.contains("pub async fn submit("));
     assert!(connection.contains("prepare_submission("));
