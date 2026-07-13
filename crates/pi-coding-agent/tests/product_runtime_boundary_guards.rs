@@ -151,6 +151,7 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
         "fork_current_session",
         "summarize_branch",
         "summarize_branch_for_navigation",
+        "subscribe",
     ];
     add_expectations(
         &mut expected,
@@ -164,7 +165,6 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "non_persistent",
             "list",
             "export_session_html",
-            "subscribe",
             "subscribe_product_events_public",
             "snapshot",
             "connect",
@@ -299,6 +299,9 @@ fn absent_receiver_calls(scan: &SourceScan, names: &[&str]) -> Vec<String> {
     let mut violations = Vec::new();
     for path in paths {
         let relative = relative_path(&scan.repo_root, &path);
+        if relative == "crates/pi-coding-agent/tests/event_boundary_guards.rs" {
+            continue;
+        }
         let source = sanitize_rust_source(&fs::read_to_string(&path).expect("read Rust source"));
         let lines = source.lines().collect::<Vec<_>>();
         for (index, line) in lines.iter().enumerate() {
@@ -330,6 +333,11 @@ fn local_deprecation_suppression_violations(scan: &SourceScan, names: &[&str]) -
     paths.extend(rust_files_under(&scan.crate_root.join("tests")));
     let mut violations = Vec::new();
     for path in paths {
+        if relative_path(&scan.repo_root, &path)
+            == "crates/pi-coding-agent/tests/event_boundary_guards.rs"
+        {
+            continue;
+        }
         let source = sanitize_rust_source(&fs::read_to_string(&path).expect("read Rust source"));
         let lines = source.lines().collect::<Vec<_>>();
         for (index, line) in lines.iter().enumerate() {

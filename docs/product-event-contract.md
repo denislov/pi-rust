@@ -13,8 +13,17 @@ sequence is distinct from durable session-log envelope order.
 
 The typed `event` field serializes as `{"family":"snake_case","payload":{"kind":"snake_case",...}}`.
 Optional metadata serializes as `null` when absent. Transitional `family` and `kind` strings retain
-their legacy spelling for Phase 7 migration, but typed enums and snake_case Serde names are the
-authoritative identity.
+their legacy spelling after the Phase 7 runtime migration, but typed enums and snake_case Serde
+names are the authoritative identity. These serialized strings are retained wire fields, not a
+stored raw-event compatibility path.
+
+Internally, `EventService::emit` is the sole raw `CodingAgentEvent` admission boundary. It derives
+operation, terminal, and durability metadata and converts the raw value exactly once into the owned
+`CodingAgentProductEventKind` payload before sequence retention and the single product-event
+broadcast. `ProductEvent` stores no raw clone, exposes no compatibility accessor, and cannot
+rebroadcast a raw event. Deterministic unit fixtures may use the explicitly named `cfg(test)` raw
+constructor; it is unavailable to production code and is not exported through
+`pi_coding_agent::api`.
 
 Durability has three states:
 

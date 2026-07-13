@@ -584,6 +584,101 @@ fn legacy_receiver_and_duplicate_broadcast_are_absent() {
     assert!(event_service_source.contains("retained_product_events.push_back(event)"));
 }
 
+#[test]
+fn production_event_runtime_has_no_raw_compatibility_storage_or_transport() {
+    let repo_root = workspace_path("");
+    let scan_roots = [
+        "crates/pi-coding-agent/src/coding_session",
+        "crates/pi-coding-agent/src/protocol",
+        "crates/pi-coding-agent/src/interactive",
+        "crates/pi-coding-agent/src/lib.rs",
+    ];
+    let forbidden = [
+        ["compatibility", "_event"].concat(),
+        "CodingAgentEventReceiver".to_owned(),
+        "Sender<CodingAgentEvent>".to_owned(),
+        "Receiver<CodingAgentEvent>".to_owned(),
+        "broadcast::channel::<CodingAgentEvent>".to_owned(),
+        ["from_compat", "_event"].concat(),
+    ];
+    let mut violations = Vec::new();
+
+    for root in scan_roots {
+        collect_source_violations(
+            &repo_root,
+            &repo_root.join(root),
+            &[],
+            &mut violations,
+            |line| forbidden.iter().any(|needle| line.contains(needle)),
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "production event code reintroduced raw compatibility storage, accessors, receivers, broadcasts, or conversions:\n{}",
+        violations.join("\n")
+    );
+
+    let event_source = std::fs::read_to_string(
+        repo_root.join("crates/pi-coding-agent/src/coding_session/event.rs"),
+    )
+    .expect("read internal event source");
+    assert!(event_source.contains("#[cfg(test)]\n    pub(crate) fn from_event_for_tests("));
+
+    let event_service_source = std::fs::read_to_string(
+        repo_root.join("crates/pi-coding-agent/src/coding_session/event_service.rs"),
+    )
+    .expect("read event service source");
+    let emit = region(
+        &event_service_source,
+        "pub(crate) fn emit(&self, event: CodingAgentEvent) -> ProductEvent",
+        "pub(crate) fn emit_agent_event",
+    );
+    assert_eq!(
+        emit.matches("CodingAgentProductEventKind::from(&event)")
+            .count(),
+        1,
+        "EventService::emit must convert each raw event exactly once"
+    );
+    assert!(emit.contains("ProductEvent::new("));
+    assert!(
+        !emit
+            .lines()
+            .any(|line| line.trim() == "let raw_event = event.clone();")
+    );
+}
+
+#[test]
+fn compatibility_deletion_does_not_add_path_scoped_deprecation_suppressions() {
+    let repo_root = workspace_path("");
+    let guarded_files = [
+        "crates/pi-coding-agent/src/coding_session/event.rs",
+        "crates/pi-coding-agent/src/coding_session/event_service.rs",
+        "crates/pi-coding-agent/src/coding_session/mod.rs",
+        "crates/pi-coding-agent/src/protocol/events.rs",
+        "crates/pi-coding-agent/src/protocol/rpc/events.rs",
+        "crates/pi-coding-agent/src/interactive/event_bridge.rs",
+        "crates/pi-coding-agent/src/interactive/loop.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for relative in guarded_files {
+        let source =
+            std::fs::read_to_string(repo_root.join(relative)).expect("read guarded source");
+        for (line_index, line) in source.lines().enumerate() {
+            if line.contains("allow(deprecated)") {
+                violations.push(format!("{relative}:{}: {}", line_index + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "compatibility deletion paths must not suppress deprecated APIs:\n{}",
+        violations.join("\n")
+    );
+}
+
 fn collect_source_violations(
     repo_root: &std::path::Path,
     path: &std::path::Path,
