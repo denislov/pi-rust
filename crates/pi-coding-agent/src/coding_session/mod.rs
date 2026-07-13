@@ -2336,7 +2336,7 @@ mod tests {
                 PluginLoadManifest::new("", "Invalid Plugin", "1.0.0", PluginSource::Project),
                 PluginRegistry::new(),
             ));
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         // D-03: public PluginLoad cannot inject explicit candidates or registries.
         let outcome = session.load_plugins(options).await.unwrap();
@@ -2346,17 +2346,19 @@ mod tests {
         let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
         assert!(
             emitted_events.iter().any(|event| matches!(
-                event,
-                CodingAgentEvent::Diagnostic { message, .. }
-                    if message.contains("plugin id must not be empty")
+                event.event(),
+                CodingAgentProductEventKind::Diagnostic(
+                    CodingAgentDiagnosticProductEvent::Diagnostic { message, .. }
+                ) if message.contains("plugin id must not be empty")
             )),
             "{emitted_events:#?}"
         );
-        assert!(
-            emitted_events
-                .iter()
-                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged { .. }))
-        );
+        assert!(emitted_events.iter().any(|event| matches!(
+            event.event(),
+            CodingAgentProductEventKind::Capability(
+                CodingAgentCapabilityProductEvent::Changed { .. }
+            )
+        )));
 
         assert!(matches!(
             session
@@ -2476,7 +2478,7 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         let outcome = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
         let CodingAgentOperationOutcome::PluginLoad(outcome) = outcome else {
@@ -2501,15 +2503,21 @@ runtime = "lua"
         assert_eq!(
             emitted_events
                 .iter()
-                .filter(|event| matches!(event, CodingAgentEvent::Diagnostic { .. }))
+                .filter(|event| matches!(
+                    event.event(),
+                    CodingAgentProductEventKind::Diagnostic(
+                        CodingAgentDiagnosticProductEvent::Diagnostic { .. }
+                    )
+                ))
                 .count(),
             2
         );
-        assert!(
-            emitted_events
-                .iter()
-                .any(|event| matches!(event, CodingAgentEvent::CapabilityChanged { .. }))
-        );
+        assert!(emitted_events.iter().any(|event| matches!(
+            event.event(),
+            CodingAgentProductEventKind::Capability(
+                CodingAgentCapabilityProductEvent::Changed { .. }
+            )
+        )));
     }
 
     #[tokio::test]
@@ -3512,7 +3520,7 @@ runtime = "lua"
             .with_session_id("sess_prompt")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         let outcome = prompt_outcome(
             session
@@ -3532,12 +3540,16 @@ runtime = "lua"
         };
         assert!(leaf_id.starts_with("leaf_"));
         assert!(matches!(
-            events.try_recv().unwrap(),
-            Some(CodingAgentEvent::PromptStarted { .. })
+            events.try_recv().unwrap().as_ref().map(ProductEvent::event),
+            Some(CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptStarted { .. }
+            ))
         ));
         assert!(matches!(
-            events.try_recv().unwrap(),
-            Some(CodingAgentEvent::AgentTurnStarted { .. })
+            events.try_recv().unwrap().as_ref().map(ProductEvent::event),
+            Some(CodingAgentProductEventKind::Agent(
+                CodingAgentAgentProductEvent::TurnStarted { .. }
+            ))
         ));
         let remaining_events =
             std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
@@ -3552,7 +3564,12 @@ runtime = "lua"
         assert_eq!(
             remaining_events
                 .iter()
-                .filter(|event| matches!(event, CodingAgentEvent::PromptCompleted { .. }))
+                .filter(|event| matches!(
+                    event.event(),
+                    CodingAgentProductEventKind::Workflow(
+                        CodingAgentWorkflowProductEvent::PromptCompleted { .. }
+                    )
+                ))
                 .count(),
             1
         );
@@ -3668,7 +3685,7 @@ runtime = "lua"
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
             .unwrap();
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         let outcome = prompt_outcome(
             session
@@ -3692,9 +3709,10 @@ runtime = "lua"
             &["session_write_skipped", "prompt_completed"],
         );
         assert!(emitted_events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::SessionWriteSkipped { reason, .. }
-                if reason == "session persistence disabled"
+            event.event(),
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::WriteSkipped { reason, .. }
+            ) if reason == "session persistence disabled"
         )));
     }
 
@@ -3786,7 +3804,7 @@ runtime = "lua"
         )
         .await
         .unwrap();
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         let outcome = prompt_outcome(
             session
@@ -3808,7 +3826,12 @@ runtime = "lua"
         assert_eq!(
             emitted_events
                 .iter()
-                .filter(|event| matches!(event, CodingAgentEvent::PromptFailed { .. }))
+                .filter(|event| matches!(
+                    event.event(),
+                    CodingAgentProductEventKind::Workflow(
+                        CodingAgentWorkflowProductEvent::PromptFailed { .. }
+                    )
+                ))
                 .count(),
             1
         );
@@ -3873,7 +3896,7 @@ runtime = "lua"
             } => leaf_id,
             other => panic!("expected branch prompt success, got {other:?}"),
         };
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         let outcome = session
             .run(CodingAgentOperation::BranchSummary {
@@ -4601,7 +4624,7 @@ runtime = "lua"
                 .await
                 .unwrap(),
         );
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         let outcome = compact_outcome(
             session
@@ -4633,12 +4656,14 @@ runtime = "lua"
             ],
         );
         assert!(emitted_events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::SessionCompactionCompleted {
-                summary,
-                tokens_before,
-                ..
-            } if summary == "summary from compact" && *tokens_before > 0
+            event.event(),
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::CompactionCompleted {
+                    summary,
+                    tokens_before,
+                    ..
+                }
+            ) if summary == "summary from compact" && *tokens_before > 0
         )));
 
         let replay = session.persistent_session_service().replay().unwrap();
@@ -4702,7 +4727,7 @@ runtime = "lua"
             } => leaf_id,
             other => panic!("expected prompt success, got {other:?}"),
         };
-        let mut events = session.subscribe();
+        let mut events = session.subscribe_product_events();
 
         let outcome = compact_outcome(
             session
@@ -5079,8 +5104,11 @@ runtime = "lua"
         }
     }
 
-    fn assert_event_order(events: &[CodingAgentEvent], expected: &[&str]) {
-        let observed = events.iter().map(event_kind).collect::<Vec<_>>();
+    fn assert_event_order(events: &[ProductEvent], expected: &[&str]) {
+        let observed = events
+            .iter()
+            .map(|event| typed_event_kind(event.event()))
+            .collect::<Vec<_>>();
         let mut next_index = 0;
         for kind in observed {
             if next_index < expected.len() && kind == expected[next_index] {
@@ -5094,57 +5122,103 @@ runtime = "lua"
         );
     }
 
-    fn event_kind(event: &CodingAgentEvent) -> &'static str {
+    fn typed_event_kind(event: &CodingAgentProductEventKind) -> &'static str {
         match event {
-            CodingAgentEvent::SessionOpened { .. } => "session_opened",
-            CodingAgentEvent::DefaultAgentProfileChanged { .. } => "default_agent_profile_changed",
-            CodingAgentEvent::AgentInvocationStarted { .. } => "agent_invocation_started",
-            CodingAgentEvent::AgentInvocationCompleted { .. } => "agent_invocation_completed",
-            CodingAgentEvent::AgentInvocationFailed { .. } => "agent_invocation_failed",
-            CodingAgentEvent::AgentInvocationAborted { .. } => "agent_invocation_aborted",
-            CodingAgentEvent::AgentTeamStarted { .. } => "agent_team_started",
-            CodingAgentEvent::AgentTeamMemberStarted { .. } => "agent_team_member_started",
-            CodingAgentEvent::AgentTeamMemberCompleted { .. } => "agent_team_member_completed",
-            CodingAgentEvent::AgentTeamCompleted { .. } => "agent_team_completed",
-            CodingAgentEvent::AgentTeamFailed { .. } => "agent_team_failed",
-            CodingAgentEvent::AgentTeamAborted { .. } => "agent_team_aborted",
-            CodingAgentEvent::SelfHealingEditStarted { .. } => "self_healing_edit_started",
-            CodingAgentEvent::SelfHealingEditRepairAttempted { .. } => {
-                "self_healing_edit_repair_attempted"
-            }
-            CodingAgentEvent::SelfHealingEditCompleted { .. } => "self_healing_edit_completed",
-            CodingAgentEvent::SelfHealingEditFailed { .. } => "self_healing_edit_failed",
-            CodingAgentEvent::DelegationRequested { .. } => "delegation_requested",
-            CodingAgentEvent::DelegationRejected { .. } => "delegation_rejected",
-            CodingAgentEvent::DelegationApproved { .. } => "delegation_approved",
-            CodingAgentEvent::DelegationConfirmationRequired { .. } => {
-                "delegation_confirmation_required"
-            }
-            CodingAgentEvent::DelegationStarted { .. } => "delegation_started",
-            CodingAgentEvent::DelegationCompleted { .. } => "delegation_completed",
-            CodingAgentEvent::DelegationFailed { .. } => "delegation_failed",
-            CodingAgentEvent::SessionWritePending { .. } => "session_write_pending",
-            CodingAgentEvent::SessionWriteCommitted { .. } => "session_write_committed",
-            CodingAgentEvent::SessionWriteSkipped { .. } => "session_write_skipped",
-            CodingAgentEvent::PromptStarted { .. } => "prompt_started",
-            CodingAgentEvent::AgentTurnStarted { .. } => "agent_turn_started",
-            CodingAgentEvent::ProviderRequestStarted { .. } => "provider_request_started",
-            CodingAgentEvent::AssistantMessageStarted { .. } => "assistant_message_started",
-            CodingAgentEvent::AssistantMessageDelta { .. } => "assistant_message_delta",
-            CodingAgentEvent::AssistantThinkingDelta { .. } => "assistant_thinking_delta",
-            CodingAgentEvent::AssistantMessageCompleted { .. } => "assistant_message_completed",
-            CodingAgentEvent::ToolCallStarted { .. } => "tool_call_started",
-            CodingAgentEvent::ToolCallUpdated { .. } => "tool_call_updated",
-            CodingAgentEvent::ToolCallCompleted { .. } => "tool_call_completed",
-            CodingAgentEvent::ToolCallFailed { .. } => "tool_call_failed",
-            CodingAgentEvent::RuntimeCompactionCompleted { .. } => "runtime_compaction_completed",
-            CodingAgentEvent::SessionCompactionCompleted { .. } => "session_compaction_completed",
-            CodingAgentEvent::PromptCompleted { .. } => "prompt_completed",
-            CodingAgentEvent::PromptFailed { .. } => "prompt_failed",
-            CodingAgentEvent::PromptAborted { .. } => "prompt_aborted",
-            CodingAgentEvent::Diagnostic { .. } => "diagnostic",
-            CodingAgentEvent::CapabilityChanged { .. } => "capability_changed",
-            CodingAgentEvent::OperationRecovered { .. } => "operation_recovered",
+            CodingAgentProductEventKind::Session(CodingAgentSessionProductEvent::Opened {
+                ..
+            }) => "session_opened",
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::WritePending { .. },
+            ) => "session_write_pending",
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::WriteCommitted { .. },
+            ) => "session_write_committed",
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::WriteSkipped { .. },
+            ) => "session_write_skipped",
+            CodingAgentProductEventKind::Session(
+                CodingAgentSessionProductEvent::CompactionCompleted { .. },
+            ) => "session_compaction_completed",
+            CodingAgentProductEventKind::Profile(
+                CodingAgentProfileProductEvent::DefaultChanged { .. },
+            ) => "default_agent_profile_changed",
+            CodingAgentProductEventKind::Agent(event) => match event {
+                CodingAgentAgentProductEvent::InvocationStarted { .. } => {
+                    "agent_invocation_started"
+                }
+                CodingAgentAgentProductEvent::InvocationCompleted { .. } => {
+                    "agent_invocation_completed"
+                }
+                CodingAgentAgentProductEvent::InvocationFailed { .. } => "agent_invocation_failed",
+                CodingAgentAgentProductEvent::InvocationAborted { .. } => {
+                    "agent_invocation_aborted"
+                }
+                CodingAgentAgentProductEvent::TurnStarted { .. } => "agent_turn_started",
+                CodingAgentAgentProductEvent::ProviderRequestStarted { .. } => {
+                    "provider_request_started"
+                }
+            },
+            CodingAgentProductEventKind::Team(event) => match event {
+                CodingAgentTeamProductEvent::Started { .. } => "agent_team_started",
+                CodingAgentTeamProductEvent::MemberStarted { .. } => "agent_team_member_started",
+                CodingAgentTeamProductEvent::MemberCompleted { .. } => {
+                    "agent_team_member_completed"
+                }
+                CodingAgentTeamProductEvent::Completed { .. } => "agent_team_completed",
+                CodingAgentTeamProductEvent::Failed { .. } => "agent_team_failed",
+                CodingAgentTeamProductEvent::Aborted { .. } => "agent_team_aborted",
+            },
+            CodingAgentProductEventKind::Message(event) => match event {
+                CodingAgentMessageProductEvent::Started { .. } => "assistant_message_started",
+                CodingAgentMessageProductEvent::Delta { .. } => "assistant_message_delta",
+                CodingAgentMessageProductEvent::ThinkingDelta { .. } => "assistant_thinking_delta",
+                CodingAgentMessageProductEvent::Completed { .. } => "assistant_message_completed",
+            },
+            CodingAgentProductEventKind::Tool(event) => match event {
+                CodingAgentToolProductEvent::Started { .. } => "tool_call_started",
+                CodingAgentToolProductEvent::Updated { .. } => "tool_call_updated",
+                CodingAgentToolProductEvent::Completed { .. } => "tool_call_completed",
+                CodingAgentToolProductEvent::Failed { .. } => "tool_call_failed",
+            },
+            CodingAgentProductEventKind::Runtime(
+                CodingAgentRuntimeProductEvent::CompactionCompleted { .. },
+            ) => "runtime_compaction_completed",
+            CodingAgentProductEventKind::Delegation(event) => match event {
+                CodingAgentDelegationProductEvent::Requested { .. } => "delegation_requested",
+                CodingAgentDelegationProductEvent::Rejected { .. } => "delegation_rejected",
+                CodingAgentDelegationProductEvent::Approved { .. } => "delegation_approved",
+                CodingAgentDelegationProductEvent::ConfirmationRequired { .. } => {
+                    "delegation_confirmation_required"
+                }
+                CodingAgentDelegationProductEvent::Started { .. } => "delegation_started",
+                CodingAgentDelegationProductEvent::Completed { .. } => "delegation_completed",
+                CodingAgentDelegationProductEvent::Failed { .. } => "delegation_failed",
+            },
+            CodingAgentProductEventKind::Workflow(event) => match event {
+                CodingAgentWorkflowProductEvent::SelfHealingEditStarted { .. } => {
+                    "self_healing_edit_started"
+                }
+                CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted { .. } => {
+                    "self_healing_edit_repair_attempted"
+                }
+                CodingAgentWorkflowProductEvent::SelfHealingEditCompleted { .. } => {
+                    "self_healing_edit_completed"
+                }
+                CodingAgentWorkflowProductEvent::SelfHealingEditFailed { .. } => {
+                    "self_healing_edit_failed"
+                }
+                CodingAgentWorkflowProductEvent::PromptStarted { .. } => "prompt_started",
+                CodingAgentWorkflowProductEvent::PromptCompleted { .. } => "prompt_completed",
+                CodingAgentWorkflowProductEvent::PromptFailed { .. } => "prompt_failed",
+                CodingAgentWorkflowProductEvent::PromptAborted { .. } => "prompt_aborted",
+                CodingAgentWorkflowProductEvent::OperationRecovered { .. } => "operation_recovered",
+            },
+            CodingAgentProductEventKind::Diagnostic(
+                CodingAgentDiagnosticProductEvent::Diagnostic { .. },
+            ) => "diagnostic",
+            CodingAgentProductEventKind::Capability(
+                CodingAgentCapabilityProductEvent::Changed { .. },
+            ) => "capability_changed",
         }
     }
 }

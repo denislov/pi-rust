@@ -1051,7 +1051,52 @@ mod tests {
         ProductEventDurability, ProductEventFamily, ProductEventKind, ProductEventSequence,
         ProductEventTerminalStatus, WorkflowProductEventKind,
     };
+    use super::super::public_event::{
+        CodingAgentCapabilityProductEvent, CodingAgentProductEventKind,
+        CodingAgentWorkflowProductEvent,
+    };
     use super::*;
+
+    fn assert_typed_event_eq(actual: ProductEvent, expected: CodingAgentEvent) {
+        assert_eq!(
+            actual.event(),
+            &CodingAgentProductEventKind::from(&expected)
+        );
+    }
+
+    fn assert_optional_typed_event_eq(
+        actual: Option<ProductEvent>,
+        expected: Option<CodingAgentEvent>,
+    ) {
+        assert_eq!(
+            actual.as_ref().map(ProductEvent::event),
+            expected
+                .as_ref()
+                .map(CodingAgentProductEventKind::from)
+                .as_ref(),
+        );
+    }
+
+    macro_rules! assert_eq {
+        ($actual:expr, Some(CodingAgentEvent::$variant:ident { $($fields:tt)* }) $(,)?) => {
+            assert_optional_typed_event_eq(
+                $actual,
+                Some(CodingAgentEvent::$variant { $($fields)* }),
+            )
+        };
+        ($actual:expr, CodingAgentEvent::$variant:ident { $($fields:tt)* } $(,)?) => {
+            assert_typed_event_eq(
+                $actual,
+                CodingAgentEvent::$variant { $($fields)* },
+            )
+        };
+        ($left:expr, $right:expr $(,)?) => {
+            std::assert_eq!($left, $right)
+        };
+        ($left:expr, $right:expr, $($arg:tt)+) => {
+            std::assert_eq!($left, $right, $($arg)+)
+        };
+    }
 
     fn mapping_context() -> AgentEventMappingContext {
         AgentEventMappingContext::new("op_1", "turn_1").with_assistant_message_id("msg_1")
@@ -1087,7 +1132,7 @@ mod tests {
     #[test]
     fn event_service_wraps_emitted_events_with_sequence_and_preserves_compatibility_receiver() {
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
 
         let first = service.emit(CodingAgentEvent::PromptCompleted {
             operation_id: "op_1".into(),
@@ -1112,8 +1157,14 @@ mod tests {
             CodingAgentEvent::PromptCompleted { .. }
         ));
         assert!(matches!(
-            receiver.try_recv().unwrap(),
-            Some(CodingAgentEvent::PromptCompleted { .. })
+            receiver
+                .try_recv()
+                .unwrap()
+                .as_ref()
+                .map(ProductEvent::event),
+            Some(CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptCompleted { .. }
+            ))
         ));
 
         assert_eq!(second.sequence(), ProductEventSequence(2));
@@ -1122,8 +1173,14 @@ mod tests {
         assert_eq!(second.terminal_status(), None);
         assert_eq!(second.durability(), &ProductEventDurability::LiveOnly);
         assert!(matches!(
-            receiver.try_recv().unwrap(),
-            Some(CodingAgentEvent::CapabilityChanged { .. })
+            receiver
+                .try_recv()
+                .unwrap()
+                .as_ref()
+                .map(ProductEvent::event),
+            Some(CodingAgentProductEventKind::Capability(
+                CodingAgentCapabilityProductEvent::Changed { .. }
+            ))
         ));
     }
 
@@ -1131,7 +1188,7 @@ mod tests {
     fn event_service_publishes_internal_product_events_alongside_compatibility_stream() {
         let service = EventService::new();
         let mut product_receiver = service.subscribe_product_events();
-        let mut compatibility_receiver = service.subscribe();
+        let mut compatibility_receiver = service.subscribe_product_events();
 
         let emitted = service.emit(CodingAgentEvent::PromptCompleted {
             operation_id: "op_1".into(),
@@ -1154,8 +1211,14 @@ mod tests {
             Some(ProductEventTerminalStatus::Completed)
         );
         assert!(matches!(
-            compatibility_receiver.try_recv().unwrap(),
-            Some(CodingAgentEvent::PromptCompleted { .. })
+            compatibility_receiver
+                .try_recv()
+                .unwrap()
+                .as_ref()
+                .map(ProductEvent::event),
+            Some(CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptCompleted { .. }
+            ))
         ));
         assert_eq!(product_receiver.try_recv().unwrap(), None);
     }
@@ -1616,7 +1679,7 @@ mod tests {
     #[tokio::test]
     async fn event_service_emits_mapped_agent_events() {
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let context = mapping_context();
 
         let mapped = service.emit_agent_event(
@@ -1643,7 +1706,7 @@ mod tests {
     #[test]
     fn event_service_emits_plugin_load_outcome_events() {
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let outcome = crate::coding_session::plugin_load_flow::PluginLoadOutcome {
             loaded_plugin_ids: vec!["lua".into()],
             diagnostics: vec![crate::coding_session::plugin_service::PluginDiagnostic {
@@ -1673,7 +1736,7 @@ mod tests {
         };
 
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let installed = InstalledCapabilityGeneration {
             generation: CapabilityGeneration::new(3),
             revocation: CapabilityRevocationPolicy::FutureOnly,
@@ -1694,7 +1757,7 @@ mod tests {
     #[test]
     fn event_service_emits_session_opened_and_diagnostics() {
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
 
         service.emit_session_opened("sess_1");
         service.emit_diagnostic(Some("op_1"), "profile warning");
@@ -1728,7 +1791,7 @@ mod tests {
         use crate::coding_session::manual_compaction_flow::ManualCompactionOutcome;
 
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let compaction = ManualCompactionOutcome {
             summary: "short summary".into(),
             first_kept_message_id: "msg_2".into(),
@@ -1763,7 +1826,7 @@ mod tests {
         use crate::coding_session::session_service::FinalizedSessionWrite;
 
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let prompt_events = vec![
             CodingAgentEvent::PromptStarted {
                 operation_id: "op_prompt".into(),
@@ -1889,7 +1952,7 @@ mod tests {
         use crate::coding_session::{CodingDiagnostic, PromptTurnOutcome};
 
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let failed_error = CodingSessionError::Provider {
             message: "provider failed".into(),
         };
@@ -1992,7 +2055,7 @@ mod tests {
     #[test]
     fn event_service_emits_agent_invocation_lifecycle_events() {
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let failed_error = CodingSessionError::Provider {
             message: "child failed".into(),
         };
@@ -2064,7 +2127,7 @@ mod tests {
     #[test]
     fn event_service_emits_agent_team_lifecycle_events() {
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let failed_error = CodingSessionError::Provider {
             message: "team failed".into(),
         };
@@ -2152,7 +2215,7 @@ mod tests {
         use crate::coding_session::prompt::DelegationRequest;
 
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let request = DelegationRequest {
             operation_id: "op_1".into(),
             turn_id: "turn_1".into(),
@@ -2263,7 +2326,7 @@ mod tests {
         };
 
         let service = EventService::new();
-        let mut receiver = service.subscribe();
+        let mut receiver = service.subscribe_product_events();
         let check_output = SelfHealingEditCheckOutput {
             command: "cargo check".into(),
             stdout: "ok".into(),

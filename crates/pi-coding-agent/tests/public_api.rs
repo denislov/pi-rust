@@ -709,7 +709,7 @@ async fn coding_session_public_api_symbols_are_importable() {
     assert!(session.profile_diagnostics().is_empty());
     assert!(session.pending_delegation_confirmations().is_empty());
 
-    let mut receiver = session.subscribe();
+    let mut receiver = session.subscribe_product_events_public();
     assert!(receiver.try_recv().unwrap().is_none());
     let _receiver_type_name = std::any::type_name::<CodingAgentProductEventReceiver>();
     let _export_type_name = std::any::type_name::<CodingAgentSessionExport>();
@@ -1009,7 +1009,7 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
     )
     .await
     .unwrap();
-    let mut events = session.subscribe();
+    let mut events = session.subscribe_product_events_public();
 
     let outcome = session
         .run(CodingAgentOperation::SelfHealingEdit(
@@ -1068,12 +1068,14 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
     let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
     assert!(
         emitted_events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::SelfHealingEditStarted {
-                path,
-                replacements: 1,
-                ..
-            } if path == "src/app.txt"
+            event.event(),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
+                    path,
+                    replacements: 1,
+                    ..
+                }
+            ) if path == "src/app.txt"
         )),
         "{emitted_events:#?}"
     );
@@ -1081,22 +1083,26 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
         .iter()
         .filter(|event| {
             matches!(
-                event,
-                CodingAgentEvent::SelfHealingEditRepairAttempted { .. }
+                event.event(),
+                CodingAgentProductEventKind::Workflow(
+                    CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted { .. }
+                )
             )
         })
         .count();
     assert_eq!(repair_event_count, 1, "{emitted_events:#?}");
     assert!(
         emitted_events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::SelfHealingEditRepairAttempted {
-                path,
-                attempt: 1,
-                replacements,
-                check_output: Some(check_output),
-                ..
-            } if path == "src/app.txt"
+            event.event(),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
+                    path,
+                    attempt: 1,
+                    replacements,
+                    check_output: Some(check_output),
+                    ..
+                }
+            ) if path == "src/app.txt"
                 && replacements[0].old_text == "deux"
                 && replacements[0].new_text == "dos"
                 && check_output.exit_code == 0
@@ -1105,13 +1111,15 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
     );
     assert!(
         emitted_events.iter().any(|event| matches!(
-            event,
-            CodingAgentEvent::SelfHealingEditCompleted {
-                path,
-                attempts: 2,
-                check_output: Some(check_output),
-                ..
-            } if path == "src/app.txt" && check_output.exit_code == 0
+            event.event(),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
+                    path,
+                    attempts: 2,
+                    check_output: Some(check_output),
+                    ..
+                }
+            ) if path == "src/app.txt" && check_output.exit_code == 0
         )),
         "{emitted_events:#?}"
     );
