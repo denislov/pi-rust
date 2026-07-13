@@ -1,164 +1,24 @@
 # Roadmap: Canonical Operation Runtime Convergence
 
-## Overview
+## Milestones
 
-Stage 9 proceeds in dependency order from evidence to enforcement. The first phase establishes the trustworthy live baseline; the second makes the typed operation facade complete and behavior-preserving; the third moves every first-party production adapter onto that facade; the fourth migrates tests and removes the compatibility methods only after callers are gone; and the final phase hardens the boundary, runs closure audits, and records Stage 10 typed `ProductEvent` convergence as the next milestone rather than mixing it into this one.
+- [x] **v1.0 Canonical Operation Runtime Convergence** — Phases 1-5, shipped 2026-07-13. See [milestone archive](milestones/v1.0-ROADMAP.md), [requirements archive](milestones/v1.0-REQUIREMENTS.md), and [audit](milestones/v1.0-MILESTONE-AUDIT.md).
 
 ## Phases
 
-- [x] **Phase 1: Evidence-Based Baseline** - Establish the authoritative Stage 9 completion state and exact remaining gap set from live evidence. (completed 2026-07-11)
-- [x] **Phase 2: Canonical Facade Correctness** - Make the stable public operation contract and its internal dispatch path complete, exhaustive, and behavior-preserving. (completed 2026-07-11)
-- [x] **Phase 3: Production Adapter Convergence** - Route JSON, print, RPC, and interactive product work through canonical operations without changing adapter behavior. (completed 2026-07-12)
-- [x] **Phase 4: Test Convergence and Compatibility Deletion** - Move behavior coverage to `run()` and remove the replaced broad session methods after every caller has migrated.
-- [x] **Phase 5: Boundary Enforcement and Stage 9 Closure** - Prevent regression to compatibility paths, verify the workspace, and close Stage 9 with accurate documentation. (completed 2026-07-13)
+<details>
+<summary>[x] v1.0 Canonical Operation Runtime Convergence (Phases 1-5) — SHIPPED 2026-07-13</summary>
 
-## Phase Details
+- [x] Phase 1: Evidence-Based Baseline (3/3 plans) — completed 2026-07-11
+- [x] Phase 2: Canonical Facade Correctness (3/3 plans) — completed 2026-07-11
+- [x] Phase 3: Production Adapter Convergence (9/9 plans) — completed 2026-07-12
+- [x] Phase 4: Test Convergence and Compatibility Deletion (4/4 plans) — completed 2026-07-12
+- [x] Phase 5: Boundary Enforcement and Stage 9 Closure (3/3 plans) — completed 2026-07-13
 
-### Phase 1: Evidence-Based Baseline
+**Milestone result:** 37/37 requirements satisfied; 12/12 cross-phase connections wired; 8/8 E2E flows passed; Stage 10 event payload/subscription convergence explicitly deferred.
 
-**Goal**: Maintainers have a trustworthy, source-backed statement of what Stage 9 already delivers and what remains to be implemented.
-**Depends on**: Nothing (first phase)
-**Requirements**: AUDIT-01, AUDIT-02, AUDIT-03
-**Success Criteria** (what must be TRUE):
+</details>
 
-  1. Maintainers can inspect one current-state audit that reconciles source, tests, boundary guards, and Git history without treating old checklist marks as completion evidence.
-  2. Every live-session product operation is listed with its public variant, internal mapping, dispatch mode, public outcome, production callers, and test callers.
-  3. The audit classifies each finding as completed baseline, actual Stage 9 gap, obsolete plan content, or deferred Stage 10 work.
+## Next Milestone
 
-**Plans**: 3/3 plans complete
-
-- [x] 01-01-PLAN.md
-- [x] 01-02-PLAN.md
-- [x] 01-03-PLAN.md
-
-### Phase 2: Canonical Facade Correctness
-
-**Goal**: First-party callers can rely on one complete stable operation facade whose dispatch and outcome semantics preserve the existing runtime contract.
-**Depends on**: Phase 1
-**Requirements**: FACADE-01, FACADE-02, FACADE-03, FACADE-04, FACADE-05
-**Success Criteria** (what must be TRUE):
-
-  1. A first-party caller can import every required operation, outcome, and support type from `pi_coding_agent::api` without importing internal runtime contracts.
-  2. Every public operation submitted through `CodingAgentSession::run` reaches the metadata-selected async, sync-read-only, or sync-mutable dispatcher.
-  3. Every internal operation outcome is converted through one exhaustive public projection, including plugin, profile, delegation, fork, navigation, and export results.
-  4. Fork, active-leaf switch, branch-summary reuse, plugin, profile, and delegation operations retain their durable state, event continuity, and explicit error or partial-commit semantics.
-  5. Stable API checks demonstrate that internal operations, dispatch metadata, plugin load options, services, and Flow nodes remain inaccessible to callers.
-
-**Plans**: 3/3 plans complete
-**Wave 1**
-
-- [x] 02-01-PLAN.md — Close the stable facade signature graph and enforce privacy.
-- [x] 02-02-PLAN.md — Prove the independent 15-variant dispatch and outcome contract.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 02-03-PLAN.md — Verify high-risk durable semantics and complete the Phase 2 gate.
-
-### Phase 3: Production Adapter Convergence
-
-**Goal**: Every first-party product adapter executes live-session product work through `CodingAgentSession::run` while preserving its existing external contract.
-**Depends on**: Phase 2
-**Requirements**: ADAPT-01, ADAPT-02, ADAPT-03, ADAPT-04, RPC-01, RPC-02, RPC-03, RPC-04, INTER-01, INTER-02, INTER-03, INTER-04, INTER-05
-**Success Criteria** (what must be TRUE):
-
-  1. JSON and both persistent and transient print flows produce the same outputs, errors, and session effects while executing prompts through `CodingAgentOperation::Prompt`.
-  2. RPC prompt, agent, team, delegation, self-healing, profile, and plugin commands preserve response shapes, errors, event forwarding, and `tokio::select!` control handling while using canonical operations.
-  3. Interactive prompt and background workflows, mutations, delegation decisions, plugin actions, compaction, and branch summaries use canonical operations without changing visible behavior.
-  4. Interactive fork and navigation retain subscriber continuity, product-event sequencing, and refreshed snapshots and projections after transitions.
-  5. JSON, print, RPC, and interactive production sources contain neither replaced broad workflow calls nor local deprecation suppressions for those calls.
-
-**Plans**: 9/9 plans complete
-
-- [x] 03-08-PLAN.md
-- [x] 03-09-PLAN.md
-
-**Wave 1**
-
-- [x] 03-01-PLAN.md — Migrate JSON and persistent/transient print prompts with one parity gate.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 03-02-PLAN.md — Migrate RPC background/select-driven operations without changing controls or event flow.
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 03-03-PLAN.md — Migrate RPC mutation and plugin commands and close the RPC source gate.
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 03-04-PLAN.md — Migrate ordinary interactive background workflows and direct branch summary.
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 03-05-PLAN.md — Move profile and delegation mutations into async canonical operation ownership.
-
-**Wave 6** *(blocked on Wave 5 completion)*
-
-- [x] 03-06-PLAN.md — Migrate interactive navigation and run the complete Phase 3 closure gate.
-
-**Wave 7** *(blocked on Wave 6 completion)*
-
-- [x] 03-07-PLAN.md — Close interactive owner-continuity, fork-target, fallback-visibility, and boundary-test gaps.
-
-### Phase 4: Test Convergence and Compatibility Deletion
-
-**Goal**: The test suite proves public workflows through the canonical facade, and the obsolete broad live-session facade no longer exists.
-**Depends on**: Phase 3
-**Requirements**: TEST-01, TEST-02, TEST-03, TEST-04, DELETE-01, DELETE-02, DELETE-03, DELETE-04
-**Success Criteria** (what must be TRUE):
-
-  1. Owner, public API, and integration tests exercise public workflows through `run()` while preserving existing assertions for agents, teams, profiles, delegation, export, branch summaries, and self-healing edits.
-  2. Test-only helpers extract typed outcomes without becoming a production compatibility facade, and owner tests use crate-private operation paths only when custom internal options are genuinely required.
-  3. All replaced public and crate-private broad live-session workflow methods are absent after production and test callers have migrated.
-  4. A missed caller fails the migration checks and must move to canonical operations; no deleted workflow is restored or recreated under another name.
-  5. Construction, open/resume, snapshots, queries, event subscriptions, control paths, and static repository helpers remain available because they are not operation-facade replacements.
-
-**Plans**: 4/4 plans complete
-
-**Wave 1**
-
-- [x] 04-01-PLAN.md — Migrate agent/team/export tests and delete G1 compatibility methods.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 04-02-PLAN.md — Migrate prompt/profile/self-heal/plugin tests and delete G2 methods.
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 04-03-PLAN.md — Migrate delegation durability tests and delete public decision methods.
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 04-04-PLAN.md — Finish navigation/summary deletion and run the Phase 4 closure gate.
-
-### Phase 5: Boundary Enforcement and Stage 9 Closure
-
-**Goal**: The canonical operation boundary is regression-resistant, the complete workspace is verified, and Stage 9 is accurately closed.
-**Depends on**: Phase 4
-**Requirements**: GUARD-01, GUARD-02, GUARD-03, GUARD-04, CLOSE-01, CLOSE-02, CLOSE-03, CLOSE-04
-**Success Criteria** (what must be TRUE):
-
-  1. Recursive adapter guards reject replaced workflow calls and local production deprecation suppressions across JSON, print, RPC, and interactive sources.
-  2. Compiler-visible visibility, sealed-contract, and API checks enforce the stable facade wherever possible, with source scanning retained only for boundaries Rust cannot directly express.
-  3. Stable API completeness checks require the canonical public types and reject internal operation, dispatch, service, plugin-option, and Flow contracts.
-  4. Source audits, formatting, focused `pi-coding-agent` tests and checks, diff checks, and full workspace tests and checks all pass from the final tree.
-  5. Stage 9 documentation matches the verified implementation and names typed `ProductEvent` payload convergence and compatibility subscription deletion as Stage 10 work.
-
-**Plans**: 3/3 plans complete. Authoritative evidence: [05-STAGE-9-CLOSURE.md](phases/05-boundary-enforcement-and-stage-9-closure/05-STAGE-9-CLOSURE.md)
-
-- [x] 05-01-PLAN.md
-- [x] 05-02-PLAN.md
-- [x] 05-03-PLAN.md
-
-## Progress
-
-**Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Evidence-Based Baseline | 3/3 | Complete    | 2026-07-11 |
-| 2. Canonical Facade Correctness | 3/3 | Complete    | 2026-07-11 |
-| 3. Production Adapter Convergence | 9/9 | Complete    | 2026-07-12 |
-| 4. Test Convergence and Compatibility Deletion | 4/4 | Complete    | 2026-07-12 |
-| 5. Boundary Enforcement and Stage 9 Closure | 3/3 | Complete    | 2026-07-13 |
+Run `$gsd-new-milestone` to define the next version. The next milestone should begin from fresh requirements and may address the bounded Stage 10 handoff: typed `ProductEvent` payload convergence and compatibility-subscription deletion.

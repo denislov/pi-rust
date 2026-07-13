@@ -50,6 +50,22 @@ The repository now has a closed public operation boundary: first-party adapters 
 
 The most sensitive areas are the large session owner and interactive modules, event/control multiplexing, durable navigation transitions, and integration suites whose assertions encode behavioral guarantees. Changes should be sliced along existing ownership boundaries and verified before compatibility methods are removed.
 
+## Current State
+
+v1.0 shipped on 2026-07-13. The canonical operation runtime is complete and
+verified: all first-party adapters and tests use `CodingAgentSession::run`,
+the stable facade is compiler-enforced, the broad workflow methods are gone,
+and the final workspace/security/integration audits passed. Historical
+evidence is archived under `.planning/milestones/`.
+
+## Next Milestone Goals
+
+Define the next version with `$gsd-new-milestone`. The bounded candidate work
+is Stage 10: replace compatibility-backed `ProductEvent` payloads with typed
+families and delete compatibility event subscriptions after all consumers have
+migrated. Preserve event ordering, sequence identity, replay, durability,
+control multiplexing, and external response behavior.
+
 ## Constraints
 
 - **Architecture**: Preserve the dependency direction `pi-coding-agent -> pi-agent-core -> pi-ai` and `pi-coding-agent -> pi-tui`; product semantics must not move into lower-level crates
@@ -89,4 +105,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-13 for Stage 9 closure*
+*Last updated: 2026-07-13 after v1.0 milestone*
