@@ -26,6 +26,26 @@
 
 **Requirements:** COMPAT-01, COMPAT-02
 
+**Plans:** 5 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 07-01-PLAN.md — Establish owned typed payloads inside the private ProductEvent envelope.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 07-02-PLAN.md — Migrate protocol, JSON, and RPC projections to typed product events.
+- [ ] 07-03-PLAN.md — Migrate interactive projections and loop assertions to typed product events.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 07-04-PLAN.md — Migrate receiver tests and delete the legacy receiver/duplicate broadcast.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 07-05-PLAN.md — Delete raw compatibility storage, close guards/docs, and run workspace gates.
+
 **Success criteria:**
 
 - RPC, interactive, JSON/print, and test consumers match typed product events directly.
