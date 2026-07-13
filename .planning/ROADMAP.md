@@ -59,6 +59,30 @@ Plans:
 
 **Requirements:** CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01
 
+**Plans:** 6 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 08-01-PLAN.md — Freeze the stable client/recovery/state/control value contract and privacy guards.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 08-02-PLAN.md — Implement the session-owned generation registry, drafts, acknowledgements, and submitted-state machine.
+- [ ] 08-03-PLAN.md — Implement the atomic retained-replay/live-receiver boundary in EventService.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 08-04-PLAN.md — Wire stateful connect/reconnect, explicit acknowledgement, drafts, and submitted state through the public handle.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 08-05-PLAN.md — Add owner-only, generation-bound, operation-scoped Prompt controls with typed receipts and rejections.
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 08-06-PLAN.md — Migrate RPC mirrors to the public connection contract and close guards, validation, and workspace gates.
+
 **Success criteria:**
 
 - A client can connect, receive a snapshot cursor, resume retained events, and handle stale cursors with a typed recovery result.
