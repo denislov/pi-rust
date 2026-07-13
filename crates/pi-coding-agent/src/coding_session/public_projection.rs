@@ -1,8 +1,8 @@
 use super::client_projection::{ClientConnection, ClientConnectionId, UiSnapshot};
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use super::error::CodingSessionError;
-use super::event::ProductEvent;
 use super::event_service::ProductEventReceiver;
+use super::public_event::CodingAgentProductEvent;
 use crate::protocol::version::ProtocolFamilyVersion;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -40,23 +40,6 @@ pub struct CodingAgentClientConnection {
     pub snapshot: CodingAgentSnapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodingAgentProductEvent {
-    pub sequence: u64,
-    pub family: String,
-    pub kind: String,
-}
-
-impl From<ProductEvent> for CodingAgentProductEvent {
-    fn from(event: ProductEvent) -> Self {
-        Self {
-            sequence: event.sequence().get(),
-            family: format!("{:?}", event.family()),
-            kind: format!("{:?}", event.kind()),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct CodingAgentProductEventReceiver {
     inner: ProductEventReceiver,
@@ -68,13 +51,16 @@ impl CodingAgentProductEventReceiver {
     }
 
     pub async fn recv(&mut self) -> Result<CodingAgentProductEvent, CodingSessionError> {
-        self.inner.recv().await.map(CodingAgentProductEvent::from)
+        self.inner
+            .recv()
+            .await
+            .map(CodingAgentProductEvent::from_internal)
     }
 
     pub fn try_recv(&mut self) -> Result<Option<CodingAgentProductEvent>, CodingSessionError> {
         self.inner
             .try_recv()
-            .map(|event| event.map(CodingAgentProductEvent::from))
+            .map(|event| event.map(CodingAgentProductEvent::from_internal))
     }
 }
 

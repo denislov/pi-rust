@@ -26,8 +26,8 @@ mod plugin_service;
 mod profiles;
 mod prompt;
 mod prompt_flow;
-mod public_operation;
 mod public_event;
+mod public_operation;
 mod public_projection;
 mod runtime_service;
 mod self_healing_edit_flow;
@@ -68,13 +68,26 @@ pub use prompt::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
 };
+pub use public_event::{
+    CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
+    CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,
+    CodingAgentDiagnosticProductEvent, CodingAgentMessageProductEvent, CodingAgentProductEvent,
+    CodingAgentProductEventCapabilityRevocation, CodingAgentProductEventCheckOutput,
+    CodingAgentProductEventDiagnostic, CodingAgentProductEventDurability,
+    CodingAgentProductEventError, CodingAgentProductEventFamily, CodingAgentProductEventKind,
+    CodingAgentProductEventProfileKind, CodingAgentProductEventReplacement,
+    CodingAgentProductEventTerminalOperation, CodingAgentProductEventTerminalOperationKind,
+    CodingAgentProductEventTerminalStatus, CodingAgentProductEventUsage,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
+    CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+};
 pub use public_operation::{
     BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
     CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome,
 };
 pub use public_projection::{
-    CodingAgentClientConnection, CodingAgentClientId, CodingAgentProductEvent,
-    CodingAgentProductEventReceiver, CodingAgentSnapshot, CodingAgentSnapshotCursor,
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentProductEventReceiver,
+    CodingAgentSnapshot, CodingAgentSnapshotCursor,
 };
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
