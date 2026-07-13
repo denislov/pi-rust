@@ -14,18 +14,21 @@ This phase is a promotion and convergence task, not a greenfield subsystem. The 
 | `crates/pi-coding-agent/src/coding_session/public_projection.rs` | public model/projection | transform, request-response, streaming handle | same file's `CodingAgentSnapshot`, `CodingAgentClientConnection`, receiver wrapper | exact extension |
 | `crates/pi-coding-agent/src/coding_session/client_projection.rs` | private model/store | event-driven state, CRUD | same file's `ClientConnection`, drafts, submitted operation | exact extension |
 | `crates/pi-coding-agent/src/coding_session/mod.rs` | runtime owner/controller | request-response, event-driven | existing service-container fields plus `connect`, `ui_snapshot`, `run` | exact owner pattern |
-| optional new private `coding_session/client_service.rs` (or equivalent logic kept in `client_projection.rs`) | session-owned service/store | CRUD, event-driven, pub-sub coordination | `EventService` ownership and `CapabilitySnapshotService` generation ownership | role match; filename discretionary |
+| `crates/pi-coding-agent/src/coding_session/client_service.rs` | session-owned service/store | CRUD, event-driven, receipt accounting | `EventService` ownership and `CapabilitySnapshotService` generation ownership | selected final owner |
+| `crates/pi-coding-agent/src/coding_session/snapshot_coordinator.rs` | shared projection coordinator | short synchronous transactions, monotonic revision | `EventService.publication_state` plus session service container ownership | new composition; no exact analog |
+| `crates/pi-coding-agent/src/coding_session/public_operation.rs` | canonical dispatcher/provenance owner | preparation lease -> admission -> commit | existing `CodingAgentSession::run` admission path | exact dispatcher seam |
+| `crates/pi-coding-agent/src/coding_session/capability_snapshot.rs` and `session_service.rs` | snapshot-relevant writers | generation/session projection mutation | existing private state owners | writer integration |
 | `crates/pi-coding-agent/src/coding_session/event_service.rs` | service/provider | pub-sub, retained streaming | `publication_state`, `product_events_after`, `ProductEventReceiver` | exact extension |
 | `crates/pi-coding-agent/src/coding_session/operation_control.rs` | control service/guard | event-driven channel | `PromptControlHandle`, `OperationState`, receiver lifecycle | exact transport; authorization missing |
 | `crates/pi-coding-agent/src/coding_session/intent_router.rs` | admission middleware | request-response | `admit_operation`, `prompt_control_handle`, query classification | role match |
 | `crates/pi-coding-agent/src/coding_session/error.rs` | public error model | transform | `CodingSessionError` typed variants and stable `code()` | exact convention |
 | `crates/pi-coding-agent/src/lib.rs` | stable facade/configured barrel | transform | curated `api` re-export list | exact |
-| `crates/pi-coding-agent/src/protocol/rpc/state.rs` | adapter-local store to migrate | CRUD, bounded cache | draft/submitted mirrors and idempotency record eviction | behavioral evidence, not final owner |
+| `crates/pi-coding-agent/src/protocol/rpc/state.rs` | adapter-local store to migrate | CRUD, bounded cache | draft/submitted mirrors and historical FIFO behavior (not receipt eviction) | behavioral evidence, not final owner |
 | `crates/pi-coding-agent/src/protocol/rpc/prompt.rs` | adapter/controller to migrate | streaming, replay, request-response | replay/live sequence dedup and gap/lag conversion | behavioral evidence, partial match |
 | `crates/pi-coding-agent/tests/public_api.rs` | integration/contract test | request-response, async streaming | facade importability and session snapshot/connect tests | exact test style |
 | `crates/pi-coding-agent/tests/api_boundary_guards.rs` and `product_runtime_boundary_guards.rs` | compile/source boundary tests | batch/source audit | external fixture matrix and private-type/adaptor guards | exact test style |
 
-The optional private service file is inferred, not locked. If generation registry, acknowledgement, receipt cache, and atomic recovery make `client_projection.rs` too stateful, a private service is consistent with the repository. It must remain behind `CodingAgentSession`; do not expose it through `api`.
+The adjusted approach selects `client_service.rs` and `snapshot_coordinator.rs` as private final owners. Both remain behind `CodingAgentSession`; neither is exposed through `api`.
 
 ## Strongest Analogs
 
@@ -410,21 +413,21 @@ The established state pattern is `Arc<Mutex<...>>` for short synchronous ownersh
 - Scope control dedup by `(client_id, target_operation_id, control_id)`, not control ID alone.
 - Reuse a Steer/FollowUp draft ID as its control ID; identical text with a different ID remains distinct.
 - Preserve per-connection enqueue order through the existing single Prompt mpsc sender.
-- Use `HashMap` for lookup plus `VecDeque` for deterministic FIFO eviction, following RPC idempotency.
+- Use `HashMap` for lookup plus `VecDeque` only for insertion-order bookkeeping/capacity accounting. Accepted Phase 8 receipts are non-evicting for the live session; Phase 9 detach/close/shutdown owns release.
 - Keep capacities private/test-injectable unless a later stable requirement demands configuration.
 
 ## Actionable Planner Slices
 
 ### 6. Canonical dispatcher provenance analog
 
-`crates/pi-coding-agent/src/coding_session/public_operation.rs` is the provenance analog for this phase: `CodingAgentOperation::into_internal` and the admission path in `CodingAgentSession::run` are the only ordinary-dispatch boundary. `ClientSubmissionProvenance` is private, generation-scoped, uniquely owned, and consumed by that path before `Accepted` and Prompt-draft clearing. It must never become a second `run`/submit entry point or a public operation type. Plan 08-04 owns the carrier state machine and exact commit point; Plan 08-05 references it only for control-vs-operation separation.
+`crates/pi-coding-agent/src/coding_session/public_operation.rs` is the provenance analog for this phase: `CodingOperation::into_internal` and the admission path in `CodingAgentSession::run` are the only ordinary-dispatch boundary. A private non-Clone `ClientSubmissionLease` is generation-scoped, session-wide exclusive, RAII-cleared, and consumed by that path before `Accepted` and Prompt-draft clearing. It must never become a second `run`/submit entry point or a public operation type. Plan 08-04 owns its exact commit point; Plan 08-05 references it only for control-vs-operation separation.
 
 For control idempotency, the ordering is deliberately key-first: validate syntax and immutable identity, look up the scoped receipt and compare its stored normalized request signature, then consult volatile running/channel/capacity state only on a cache miss. This preserves response-loss retries after target completion while returning a typed payload conflict for the same key with different kind, text, reason, or draft identity. The prior volatile-check-before-receipt wording is obsolete.
 
 1. **Public contract and private state model:** extend `public_projection.rs`, `client_projection.rs`, `lib.rs`, and `public_api.rs` with typed drafts, submitted status, generation-bound connection, recovery result/metadata/reason, acknowledgement, control IDs/receipt/rejection, and operation-scoped control handle.
 2. **Session-owned registry and state transitions:** add the client registry/service to `CodingAgentSession`; implement takeover, stale-generation checks, complete atomic snapshot, draft CRUD, accepted/running/terminal monotonic transitions, and terminal acknowledgement. Keep `run` as the only ordinary dispatcher.
 3. **Atomic replay/live recovery:** extend `EventService` with a coordinated recovery boundary; add deterministic small-capacity and emit-during-handoff tests; distinguish retained gap from receiver lag in public metadata.
-4. **Scoped control and bounded idempotency:** wrap the private Prompt channel with owner/generation/operation validation, ordered enqueue, receipts, and FIFO-bounded dedup. Test stale handle, wrong owner, mismatch, finished/closed target, invalid input, retry, distinct IDs, and draft preservation.
+4. **Scoped control and bounded idempotency:** wrap the private Prompt channel with owner/generation/operation validation, ordered enqueue, receipts, and non-evicting live-session dedup. Test stale handle, wrong owner, mismatch, finished/closed target, invalid input, retry, distinct IDs, capacity rejection, and draft preservation.
 5. **Adapter migration and guards:** convert RPC state/prompt paths to the public connection contract, preserve JSON/events, then remove the mirrored authority. Extend public API, compile-fixture, source-boundary, and deterministic protocol tests.
 
 ## Gaps / No Exact Analog

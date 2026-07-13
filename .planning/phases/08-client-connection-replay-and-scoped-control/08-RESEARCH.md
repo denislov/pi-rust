@@ -379,7 +379,7 @@ This phase has no external service dependency and adds no package. The local too
 2. **Where should accepted/running transitions be observed?**
    - What we know: `run` admission and event publication are separate boundaries; Phase 9 owns exhaustive terminal association.
    - What's unclear: Exact event/admission hook for `Accepted` and `Running` without changing operation semantics.
-   - Resolution: `ClientSubmissionProvenance` is prepared by `ClientService::prepare_submission(client_id, generation, draft_ref)` and consumed by the existing `CodingAgentSession::run` admission path in `public_operation.rs`. Admission atomically records the client/operation association and `Accepted`; the existing operation-start guard records `Running`. Terminal observation stores the exact product-event sequence plus operation id as `TerminalAcknowledgementAnchor`; Phase 9 still owns exhaustive terminal-family association.
+   - Resolution: one session-wide non-Clone `ClientSubmissionLease` is acquired by generation-checked preparation and consumed only by the existing `CodingAgentSession::run` admission path. Its fingerprint validates the operation presented to run and never selects among client slots. The sole commit point is after valid admission permit and canonical id; RAII clears precommit abandonment, while postcommit failures become Terminal Failed/Cancelled without draft restoration. Terminal observation stores the exact product-event sequence plus operation id as `TerminalAcknowledgementAnchor`; Phase 9 still owns exhaustive terminal-family association.
 
 3. **What capacities should be public/configurable?**
    - What we know: Event retention baseline is 128 and RPC idempotency records are capped at 64.
