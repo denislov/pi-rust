@@ -10,7 +10,7 @@
 
 - [x] **EVENT-01**: Public consumers can inspect product-event kind through a stable typed enum rather than string-only family/kind fields.
 - [x] **EVENT-02**: Public product events expose stable sequence, operation identity, terminal status, durability, and documented payload semantics where the underlying event provides them.
-- [ ] **EVENT-03**: The event inventory covers all emitted product-event families and explicitly documents which operations have terminal events and how they associate with outcomes.
+- [x] **EVENT-03**: The event inventory covers all emitted product-event families and explicitly documents which operations have terminal events and how they associate with outcomes.
 
 ### Compatibility Boundary
 
@@ -56,7 +56,7 @@
 |-------------|-------|--------|
 | EVENT-01 | Phase 6 | Complete |
 | EVENT-02 | Phase 6 | Complete |
-| EVENT-03 | Phase 6 | Pending |
+| EVENT-03 | Phase 6 | Complete |
 | COMPAT-01 | Phase 7 | Pending |
 | COMPAT-02 | Phase 7 | Pending |
 | COMPAT-03 | Phase 9 | Pending |
