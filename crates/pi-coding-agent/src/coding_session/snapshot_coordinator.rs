@@ -2,7 +2,7 @@ use super::capability_snapshot::CapabilityGeneration;
 use super::client_projection::{ClientConnectionId, ClientDraft, UiSnapshot, UiSnapshotCursor};
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use super::event::{ProductEvent, ProductEventSequence, ProductEventTerminalStatus};
-use super::operation_control::OperationKind;
+use super::operation_control::{OperationKind, PromptControlHandle};
 use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -120,12 +120,234 @@ impl Default for SnapshotState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SnapshotCoordinator {
     pub(crate) state: Mutex<SnapshotState>,
+    prompt_control: Mutex<Option<PromptControlBinding>>,
+}
+
+#[derive(Debug, Clone)]
+struct PromptControlBinding {
+    owner: ClientHandle,
+    operation_id: String,
+    sender: PromptControlHandle,
+}
+
+impl Default for SnapshotCoordinator {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(SnapshotState::default()),
+            prompt_control: Mutex::new(None),
+        }
+    }
 }
 
 impl SnapshotCoordinator {
+    pub(crate) fn enqueue_prompt_control_draft(
+        &self,
+        handle: &ClientHandle,
+        operation_id: &str,
+        draft_id: super::public_projection::CodingAgentDraftId,
+        kind: super::public_projection::CodingAgentControlKind,
+    ) -> Result<
+        super::public_projection::CodingAgentControlReceipt,
+        super::public_projection::CodingAgentControlRejection,
+    > {
+        let text = {
+            let mut state = self.state.lock().unwrap();
+            let record = Self::record(&mut state, handle).map_err(|_| super::public_projection::CodingAgentControlRejection {
+                control_id: super::public_projection::CodingAgentControlId(draft_id.0.clone()),
+                operation_id: operation_id.into(),
+                kind,
+                reason: super::public_projection::CodingAgentControlRejectionReason::StaleConnection,
+            })?;
+            let queue = match kind {
+                super::public_projection::CodingAgentControlKind::Steer => &record.steer_drafts,
+                super::public_projection::CodingAgentControlKind::FollowUp => {
+                    &record.follow_up_drafts
+                }
+                super::public_projection::CodingAgentControlKind::Abort => {
+                    return Err(super::public_projection::CodingAgentControlRejection {
+                        control_id: super::public_projection::CodingAgentControlId(draft_id.0),
+                        operation_id: operation_id.into(), kind,
+                        reason: super::public_projection::CodingAgentControlRejectionReason::InvalidInput,
+                    });
+                }
+            };
+            queue
+                .iter()
+                .find(|draft| draft.id == draft_id.0)
+                .map(|draft| draft.text.clone())
+                .ok_or_else(|| super::public_projection::CodingAgentControlRejection {
+                    control_id: super::public_projection::CodingAgentControlId(draft_id.0.clone()),
+                    operation_id: operation_id.into(),
+                    kind,
+                    reason:
+                        super::public_projection::CodingAgentControlRejectionReason::InvalidInput,
+                })?
+        };
+        self.enqueue_prompt_control(
+            handle,
+            operation_id,
+            super::public_projection::CodingAgentControlId(draft_id.0),
+            kind,
+            text,
+        )
+    }
+
+    pub(crate) fn enqueue_prompt_control(
+        &self,
+        handle: &ClientHandle,
+        operation_id: &str,
+        control_id: super::public_projection::CodingAgentControlId,
+        kind: super::public_projection::CodingAgentControlKind,
+        text: String,
+    ) -> Result<
+        super::public_projection::CodingAgentControlReceipt,
+        super::public_projection::CodingAgentControlRejection,
+    > {
+        if control_id.0.trim().is_empty() || text.trim().is_empty() {
+            return Err(super::public_projection::CodingAgentControlRejection {
+                control_id,
+                operation_id: operation_id.into(),
+                kind,
+                reason: super::public_projection::CodingAgentControlRejectionReason::InvalidInput,
+            });
+        }
+        let mut state = self.state.lock().unwrap();
+        let record = match Self::record(&mut state, handle) {
+            Ok(record) => record,
+            Err(ClientRegistryError::StaleClient) => {
+                return Err(super::public_projection::CodingAgentControlRejection {
+                    control_id,
+                    operation_id: operation_id.into(),
+                    kind,
+                    reason:
+                        super::public_projection::CodingAgentControlRejectionReason::StaleConnection,
+                });
+            }
+            Err(_) => {
+                return Err(super::public_projection::CodingAgentControlRejection {
+                    control_id,
+                    operation_id: operation_id.into(),
+                    kind,
+                    reason:
+                        super::public_projection::CodingAgentControlRejectionReason::InvalidInput,
+                });
+            }
+        };
+        let key = format!("{}:{}", operation_id, control_id.0);
+        let signature = format!("{:?}:{}", kind, text);
+        if let Some(stored) = record.control_receipts.get(&key) {
+            if stored != &signature {
+                return Err(super::public_projection::CodingAgentControlRejection {
+                    control_id,
+                    operation_id: operation_id.into(),
+                    kind,
+                    reason:
+                        super::public_projection::CodingAgentControlRejectionReason::PayloadConflict,
+                });
+            }
+            return Ok(super::public_projection::CodingAgentControlReceipt {
+                control_id,
+                operation_id: operation_id.into(),
+                kind,
+            });
+        }
+        if record.control_receipts.len() >= MAX_RECEIPTS {
+            return Err(super::public_projection::CodingAgentControlRejection { control_id, operation_id: operation_id.into(), kind, reason: super::public_projection::CodingAgentControlRejectionReason::QueueCapacityExceeded });
+        }
+        let mut binding = self.prompt_control.lock().unwrap();
+        let Some(active) = binding.as_mut() else {
+            return Err(super::public_projection::CodingAgentControlRejection {
+                control_id,
+                operation_id: operation_id.into(),
+                kind,
+                reason:
+                    super::public_projection::CodingAgentControlRejectionReason::TargetNotRunning,
+            });
+        };
+        if active.owner.id != handle.id {
+            return Err(super::public_projection::CodingAgentControlRejection {
+                control_id,
+                operation_id: operation_id.into(),
+                kind,
+                reason: super::public_projection::CodingAgentControlRejectionReason::NotOwner,
+            });
+        }
+        if active.operation_id != operation_id {
+            return Err(super::public_projection::CodingAgentControlRejection {
+                control_id,
+                operation_id: operation_id.into(),
+                kind,
+                reason: super::public_projection::CodingAgentControlRejectionReason::TargetMismatch,
+            });
+        }
+        let sent = match kind {
+            super::public_projection::CodingAgentControlKind::Abort => active.sender.abort(text),
+            super::public_projection::CodingAgentControlKind::Steer => active.sender.steer(text),
+            super::public_projection::CodingAgentControlKind::FollowUp => {
+                active.sender.follow_up(text)
+            }
+        };
+        if let Err(error) = sent {
+            let reason = match error {
+                super::CodingSessionError::Busy { .. } => super::public_projection::CodingAgentControlRejectionReason::QueueCapacityExceeded,
+                _ => super::public_projection::CodingAgentControlRejectionReason::ControlChannelClosed,
+            };
+            return Err(super::public_projection::CodingAgentControlRejection {
+                control_id,
+                operation_id: operation_id.into(),
+                kind,
+                reason,
+            });
+        }
+        record.control_receipts.insert(key.clone(), signature);
+        record.control_receipt_order.push_back(key);
+        let queue = match kind {
+            super::public_projection::CodingAgentControlKind::Steer => {
+                Some(&mut record.steer_drafts)
+            }
+            super::public_projection::CodingAgentControlKind::FollowUp => {
+                Some(&mut record.follow_up_drafts)
+            }
+            super::public_projection::CodingAgentControlKind::Abort => None,
+        };
+        if let Some(queue) = queue
+            && let Some(position) = queue.iter().position(|draft| draft.id == control_id.0)
+        {
+            queue.remove(position);
+        }
+        Ok(super::public_projection::CodingAgentControlReceipt {
+            control_id,
+            operation_id: operation_id.into(),
+            kind,
+        })
+    }
+
+    pub(crate) fn bind_prompt_control(
+        &self,
+        owner: ClientHandle,
+        operation_id: String,
+        sender: PromptControlHandle,
+    ) {
+        *self.prompt_control.lock().unwrap() = Some(PromptControlBinding {
+            owner,
+            operation_id,
+            sender,
+        });
+    }
+
+    pub(crate) fn clear_prompt_control(&self, operation_id: &str) {
+        let mut binding = self.prompt_control.lock().unwrap();
+        if binding
+            .as_ref()
+            .is_some_and(|active| active.operation_id == operation_id)
+        {
+            *binding = None;
+        }
+    }
+
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }

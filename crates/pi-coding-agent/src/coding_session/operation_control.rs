@@ -50,11 +50,11 @@ pub(crate) enum PromptControlCommand {
     FollowUp { text: String },
 }
 
-pub(crate) type PromptControlReceiver = mpsc::UnboundedReceiver<PromptControlCommand>;
+pub(crate) type PromptControlReceiver = mpsc::Receiver<PromptControlCommand>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PromptControlHandle {
-    sender: mpsc::UnboundedSender<PromptControlCommand>,
+    sender: mpsc::Sender<PromptControlCommand>,
 }
 
 impl PromptControlHandle {
@@ -73,16 +73,19 @@ impl PromptControlHandle {
     }
 
     fn send(&self, command: PromptControlCommand) -> Result<(), CodingSessionError> {
-        self.sender
-            .send(command)
-            .map_err(|_| CodingSessionError::Session {
+        self.sender.try_send(command).map_err(|error| match error {
+            mpsc::error::TrySendError::Closed(_) => CodingSessionError::Session {
                 message: "prompt control receiver is closed".into(),
-            })
+            },
+            mpsc::error::TrySendError::Full(_) => CodingSessionError::Busy {
+                operation: "prompt_control_queue".into(),
+            },
+        })
     }
 }
 
 pub(crate) fn prompt_control_channel() -> (PromptControlHandle, PromptControlReceiver) {
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let (sender, receiver) = mpsc::channel(64);
     (PromptControlHandle { sender }, receiver)
 }
 
@@ -141,6 +144,7 @@ impl OperationState {
 #[derive(Debug)]
 pub(crate) struct OperationControl {
     state: OperationState,
+    prompt_control_sender: Option<PromptControlHandle>,
     prompt_control_receiver: Option<PromptControlReceiver>,
 }
 
@@ -154,6 +158,7 @@ impl OperationControl {
     ) -> Self {
         Self {
             state: OperationState::with_snapshot_coordinator(snapshot_coordinator),
+            prompt_control_sender: None,
             prompt_control_receiver: None,
         }
     }
@@ -173,15 +178,22 @@ impl OperationControl {
     pub(crate) fn prompt_control_handle(
         &mut self,
     ) -> Result<PromptControlHandle, CodingSessionError> {
-        self.state.ensure_idle()?;
+        if self.state.active() != Some(OperationKind::Prompt) {
+            self.state.ensure_idle()?;
+        }
         if self.prompt_control_receiver.is_some() {
             return Err(CodingSessionError::Busy {
                 operation: "prompt_control".into(),
             });
         }
         let (handle, receiver) = prompt_control_channel();
+        self.prompt_control_sender = Some(handle.clone());
         self.prompt_control_receiver = Some(receiver);
         Ok(handle)
+    }
+
+    pub(crate) fn current_prompt_control_handle(&self) -> Option<PromptControlHandle> {
+        self.prompt_control_sender.clone()
     }
 
     pub(crate) fn take_prompt_control_receiver(&mut self) -> Option<PromptControlReceiver> {
@@ -189,6 +201,7 @@ impl OperationControl {
     }
 
     pub(crate) fn clear_prompt_control_receiver(&mut self) {
+        self.prompt_control_sender = None;
         self.prompt_control_receiver = None;
     }
 }

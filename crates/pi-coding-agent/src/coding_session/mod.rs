@@ -1240,7 +1240,20 @@ impl CodingAgentSession {
 
         let result = match operation {
             Operation::Prompt(options) => {
+                if let Some(submission) = submission.as_ref() {
+                    let sender = match self.operation_control.current_prompt_control_handle() {
+                        Some(sender) => sender,
+                        None => self.operation_control.prompt_control_handle()?,
+                    };
+                    self.snapshot_coordinator.bind_prompt_control(
+                        submission.handle.clone(),
+                        snapshot.operation_id.clone(),
+                        sender,
+                    );
+                }
                 let result = self.prompt_inner(options, &snapshot).await;
+                self.snapshot_coordinator
+                    .clear_prompt_control(&snapshot.operation_id);
                 self.operation_control.clear_prompt_control_receiver();
                 result.map(OperationOutcome::Prompt)
             }

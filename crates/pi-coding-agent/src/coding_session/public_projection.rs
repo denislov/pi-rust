@@ -114,6 +114,8 @@ pub enum CodingAgentControlRejectionReason {
     TargetNotRunning,
     ControlChannelClosed,
     InvalidInput,
+    QueueCapacityExceeded,
+    PayloadConflict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,11 +138,87 @@ pub struct CodingAgentControlRejection {
     pub reason: CodingAgentControlRejectionReason,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CodingAgentPromptControl {
     pub client_id: CodingAgentClientId,
     pub generation: CodingAgentConnectionGeneration,
     pub operation_id: String,
+    pub(crate) coordinator: Arc<SnapshotCoordinator>,
+}
+
+impl CodingAgentPromptControl {
+    fn submit(
+        &self,
+        control_id: CodingAgentControlId,
+        kind: CodingAgentControlKind,
+        text: String,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.coordinator.enqueue_prompt_control(
+            &self.handle(),
+            &self.operation_id,
+            control_id,
+            kind,
+            text,
+        )
+    }
+
+    pub fn abort(
+        &self,
+        control_id: CodingAgentControlId,
+        reason: impl Into<String>,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.submit(control_id, CodingAgentControlKind::Abort, reason.into())
+    }
+
+    pub fn steer(
+        &self,
+        control_id: CodingAgentControlId,
+        text: impl Into<String>,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.submit(control_id, CodingAgentControlKind::Steer, text.into())
+    }
+
+    pub fn follow_up(
+        &self,
+        control_id: CodingAgentControlId,
+        text: impl Into<String>,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.submit(control_id, CodingAgentControlKind::FollowUp, text.into())
+    }
+
+    pub fn steer_draft(
+        &self,
+        draft_id: CodingAgentDraftId,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.submit_draft(draft_id, CodingAgentControlKind::Steer)
+    }
+
+    pub fn follow_up_draft(
+        &self,
+        draft_id: CodingAgentDraftId,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.submit_draft(draft_id, CodingAgentControlKind::FollowUp)
+    }
+
+    fn submit_draft(
+        &self,
+        draft_id: CodingAgentDraftId,
+        kind: CodingAgentControlKind,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.coordinator.enqueue_prompt_control_draft(
+            &self.handle(),
+            &self.operation_id,
+            draft_id,
+            kind,
+        )
+    }
+
+    fn handle(&self) -> ClientHandle {
+        ClientHandle {
+            id: internal_client_id(&self.client_id),
+            generation: ClientGeneration(self.generation.0),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -202,6 +280,15 @@ impl CodingAgentClientConnection {
             .client_state(&self.handle())
             .map(public_client_snapshot)
             .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub fn prompt_control(&self, operation_id: impl Into<String>) -> CodingAgentPromptControl {
+        CodingAgentPromptControl {
+            client_id: self.client_id.clone(),
+            generation: self.generation,
+            operation_id: operation_id.into(),
+            coordinator: self.coordinator.clone(),
+        }
     }
 
     pub fn acknowledge(&self, sequence: u64) -> Result<u64, CodingSessionError> {
