@@ -1394,6 +1394,236 @@ mod tests {
     };
     use pi_ai::types::{Cost, Usage};
 
+    // product-event-inventory:start
+    const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 45] = [
+        (
+            "SessionOpened",
+            CodingAgentProductEventFamily::Session,
+            "opened",
+        ),
+        (
+            "SessionWritePending",
+            CodingAgentProductEventFamily::Session,
+            "write_pending",
+        ),
+        (
+            "SessionWriteCommitted",
+            CodingAgentProductEventFamily::Session,
+            "write_committed",
+        ),
+        (
+            "SessionWriteSkipped",
+            CodingAgentProductEventFamily::Session,
+            "write_skipped",
+        ),
+        (
+            "SessionCompactionCompleted",
+            CodingAgentProductEventFamily::Session,
+            "compaction_completed",
+        ),
+        (
+            "DefaultAgentProfileChanged",
+            CodingAgentProductEventFamily::Profile,
+            "default_changed",
+        ),
+        (
+            "AgentInvocationStarted",
+            CodingAgentProductEventFamily::Agent,
+            "invocation_started",
+        ),
+        (
+            "AgentInvocationCompleted",
+            CodingAgentProductEventFamily::Agent,
+            "invocation_completed",
+        ),
+        (
+            "AgentInvocationFailed",
+            CodingAgentProductEventFamily::Agent,
+            "invocation_failed",
+        ),
+        (
+            "AgentInvocationAborted",
+            CodingAgentProductEventFamily::Agent,
+            "invocation_aborted",
+        ),
+        (
+            "AgentTurnStarted",
+            CodingAgentProductEventFamily::Agent,
+            "turn_started",
+        ),
+        (
+            "ProviderRequestStarted",
+            CodingAgentProductEventFamily::Agent,
+            "provider_request_started",
+        ),
+        (
+            "AgentTeamStarted",
+            CodingAgentProductEventFamily::Team,
+            "started",
+        ),
+        (
+            "AgentTeamMemberStarted",
+            CodingAgentProductEventFamily::Team,
+            "member_started",
+        ),
+        (
+            "AgentTeamMemberCompleted",
+            CodingAgentProductEventFamily::Team,
+            "member_completed",
+        ),
+        (
+            "AgentTeamCompleted",
+            CodingAgentProductEventFamily::Team,
+            "completed",
+        ),
+        (
+            "AgentTeamFailed",
+            CodingAgentProductEventFamily::Team,
+            "failed",
+        ),
+        (
+            "AgentTeamAborted",
+            CodingAgentProductEventFamily::Team,
+            "aborted",
+        ),
+        (
+            "AssistantMessageStarted",
+            CodingAgentProductEventFamily::Message,
+            "started",
+        ),
+        (
+            "AssistantMessageDelta",
+            CodingAgentProductEventFamily::Message,
+            "delta",
+        ),
+        (
+            "AssistantThinkingDelta",
+            CodingAgentProductEventFamily::Message,
+            "thinking_delta",
+        ),
+        (
+            "AssistantMessageCompleted",
+            CodingAgentProductEventFamily::Message,
+            "completed",
+        ),
+        (
+            "ToolCallStarted",
+            CodingAgentProductEventFamily::Tool,
+            "started",
+        ),
+        (
+            "ToolCallUpdated",
+            CodingAgentProductEventFamily::Tool,
+            "updated",
+        ),
+        (
+            "ToolCallCompleted",
+            CodingAgentProductEventFamily::Tool,
+            "completed",
+        ),
+        (
+            "ToolCallFailed",
+            CodingAgentProductEventFamily::Tool,
+            "failed",
+        ),
+        (
+            "RuntimeCompactionCompleted",
+            CodingAgentProductEventFamily::Runtime,
+            "compaction_completed",
+        ),
+        (
+            "DelegationRequested",
+            CodingAgentProductEventFamily::Delegation,
+            "requested",
+        ),
+        (
+            "DelegationRejected",
+            CodingAgentProductEventFamily::Delegation,
+            "rejected",
+        ),
+        (
+            "DelegationApproved",
+            CodingAgentProductEventFamily::Delegation,
+            "approved",
+        ),
+        (
+            "DelegationConfirmationRequired",
+            CodingAgentProductEventFamily::Delegation,
+            "confirmation_required",
+        ),
+        (
+            "DelegationStarted",
+            CodingAgentProductEventFamily::Delegation,
+            "started",
+        ),
+        (
+            "DelegationCompleted",
+            CodingAgentProductEventFamily::Delegation,
+            "completed",
+        ),
+        (
+            "DelegationFailed",
+            CodingAgentProductEventFamily::Delegation,
+            "failed",
+        ),
+        (
+            "SelfHealingEditStarted",
+            CodingAgentProductEventFamily::Workflow,
+            "self_healing_edit_started",
+        ),
+        (
+            "SelfHealingEditRepairAttempted",
+            CodingAgentProductEventFamily::Workflow,
+            "self_healing_edit_repair_attempted",
+        ),
+        (
+            "SelfHealingEditCompleted",
+            CodingAgentProductEventFamily::Workflow,
+            "self_healing_edit_completed",
+        ),
+        (
+            "SelfHealingEditFailed",
+            CodingAgentProductEventFamily::Workflow,
+            "self_healing_edit_failed",
+        ),
+        (
+            "PromptStarted",
+            CodingAgentProductEventFamily::Workflow,
+            "prompt_started",
+        ),
+        (
+            "PromptCompleted",
+            CodingAgentProductEventFamily::Workflow,
+            "prompt_completed",
+        ),
+        (
+            "PromptFailed",
+            CodingAgentProductEventFamily::Workflow,
+            "prompt_failed",
+        ),
+        (
+            "PromptAborted",
+            CodingAgentProductEventFamily::Workflow,
+            "prompt_aborted",
+        ),
+        (
+            "OperationRecovered",
+            CodingAgentProductEventFamily::Workflow,
+            "operation_recovered",
+        ),
+        (
+            "Diagnostic",
+            CodingAgentProductEventFamily::Diagnostic,
+            "diagnostic",
+        ),
+        (
+            "CapabilityChanged",
+            CodingAgentProductEventFamily::Capability,
+            "changed",
+        ),
+    ];
+    // product-event-inventory:end
+
     fn project(sequence: u64, event: CodingAgentEvent) -> CodingAgentProductEvent {
         CodingAgentProductEvent::from_internal(ProductEvent::from_compat_event(
             ProductEventSequence::new(sequence),
@@ -1843,6 +2073,16 @@ mod tests {
         let projected = exhaustive_inventory_fixture();
         assert_eq!(projected.len(), EXPECTED_PUBLIC_EVENT_INVENTORY.len());
         assert_eq!(projected.len(), 45);
+        for (index, (event, (_, family, kind))) in projected
+            .iter()
+            .zip(EXPECTED_PUBLIC_EVENT_INVENTORY.iter())
+            .enumerate()
+        {
+            assert_eq!(event.sequence(), index as u64 + 1, "inventory row {index}");
+            assert_eq!(event.family(), *family, "inventory row {index}");
+            assert_eq!(event.kind_name(), *kind, "inventory row {index}");
+            assert_public_inventory_payload(index, event);
+        }
         let expected_counts = [5, 1, 6, 6, 4, 4, 1, 7, 9, 1, 1];
         let families = [
             CodingAgentProductEventFamily::Session,
@@ -1897,6 +2137,240 @@ mod tests {
                 .map(CodingAgentProductEvent::sequence)
                 .collect::<Vec<_>>(),
             (1..=45).collect::<Vec<_>>()
+        );
+    }
+
+    fn assert_public_inventory_payload(index: usize, event: &CodingAgentProductEvent) {
+        use CodingAgentProductEventKind as K;
+        let valid = match (index, event.event()) {
+            (0, K::Session(CodingAgentSessionProductEvent::Opened { session_id })) => {
+                session_id == "session"
+            }
+            (1, K::Session(CodingAgentSessionProductEvent::WritePending { operation_id })) => {
+                operation_id == "op"
+            }
+            (2, K::Session(CodingAgentSessionProductEvent::WriteCommitted { session_id, .. })) => {
+                session_id == "session"
+            }
+            (3, K::Session(CodingAgentSessionProductEvent::WriteSkipped { reason, .. })) => {
+                reason == "skip"
+            }
+            (
+                4,
+                K::Session(CodingAgentSessionProductEvent::CompactionCompleted {
+                    turn_id,
+                    tokens_before,
+                    ..
+                }),
+            ) => turn_id == "turn" && *tokens_before == 5,
+            (5, K::Profile(CodingAgentProfileProductEvent::DefaultChanged { profile_id })) => {
+                profile_id == "profile"
+            }
+            (
+                6,
+                K::Agent(CodingAgentAgentProductEvent::InvocationStarted {
+                    child_operation_id,
+                    task,
+                    ..
+                }),
+            ) => child_operation_id == "child" && task == "task",
+            (7, K::Agent(CodingAgentAgentProductEvent::InvocationCompleted { final_text, .. })) => {
+                final_text == "done"
+            }
+            (8, K::Agent(CodingAgentAgentProductEvent::InvocationFailed { error, .. })) => {
+                error.code == "unsupported_capability"
+            }
+            (9, K::Agent(CodingAgentAgentProductEvent::InvocationAborted { reason, .. })) => {
+                reason == "abort"
+            }
+            (10, K::Agent(CodingAgentAgentProductEvent::TurnStarted { agent_turn, .. })) => {
+                *agent_turn == 1
+            }
+            (
+                11,
+                K::Agent(CodingAgentAgentProductEvent::ProviderRequestStarted {
+                    provider,
+                    model,
+                    ..
+                }),
+            ) => provider == "faux" && model == "model",
+            (12, K::Team(CodingAgentTeamProductEvent::Started { team_id, task, .. })) => {
+                team_id == "profile" && task == "task"
+            }
+            (
+                13,
+                K::Team(CodingAgentTeamProductEvent::MemberStarted {
+                    child_operation_id,
+                    profile_id,
+                    ..
+                }),
+            ) => child_operation_id == "child" && profile_id == "profile",
+            (14, K::Team(CodingAgentTeamProductEvent::MemberCompleted { final_text, .. })) => {
+                final_text == "done"
+            }
+            (15, K::Team(CodingAgentTeamProductEvent::Completed { final_text, .. })) => {
+                final_text == "done"
+            }
+            (16, K::Team(CodingAgentTeamProductEvent::Failed { error, .. })) => {
+                error.code == "unsupported_capability"
+            }
+            (17, K::Team(CodingAgentTeamProductEvent::Aborted { reason, .. })) => reason == "abort",
+            (18, K::Message(CodingAgentMessageProductEvent::Started { message_id, .. })) => {
+                message_id.is_none()
+            }
+            (
+                19,
+                K::Message(CodingAgentMessageProductEvent::Delta {
+                    message_id, text, ..
+                }),
+            ) => message_id.as_deref() == Some("message") && text == "delta",
+            (20, K::Message(CodingAgentMessageProductEvent::ThinkingDelta { text, .. })) => {
+                text == "thinking"
+            }
+            (
+                21,
+                K::Message(CodingAgentMessageProductEvent::Completed {
+                    final_text, usage, ..
+                }),
+            ) => final_text == "done" && usage.total_tokens == 10,
+            (
+                22,
+                K::Tool(CodingAgentToolProductEvent::Started {
+                    tool_call_id,
+                    arguments_json,
+                    ..
+                }),
+            ) => tool_call_id == "call" && arguments_json == "{}",
+            (23, K::Tool(CodingAgentToolProductEvent::Updated { message, .. })) => {
+                message == "running"
+            }
+            (24, K::Tool(CodingAgentToolProductEvent::Completed { summary, .. })) => {
+                summary == "done"
+            }
+            (25, K::Tool(CodingAgentToolProductEvent::Failed { message, .. })) => {
+                message == "failed"
+            }
+            (
+                26,
+                K::Runtime(CodingAgentRuntimeProductEvent::CompactionCompleted {
+                    first_kept_message_id,
+                    tokens_before,
+                    ..
+                }),
+            ) => first_kept_message_id == "message" && *tokens_before == 5,
+            (27, K::Delegation(CodingAgentDelegationProductEvent::Requested { context })) => {
+                context.target_kind == CodingAgentProductEventProfileKind::Agent
+                    && context.task == "task"
+            }
+            (28, K::Delegation(CodingAgentDelegationProductEvent::Rejected { reason, .. })) => {
+                reason == "rejected"
+            }
+            (29, K::Delegation(CodingAgentDelegationProductEvent::Approved { context })) => {
+                context.tool_call_id == "call"
+            }
+            (
+                30,
+                K::Delegation(CodingAgentDelegationProductEvent::ConfirmationRequired {
+                    reason,
+                    ..
+                }),
+            ) => reason == "confirm",
+            (
+                31,
+                K::Delegation(CodingAgentDelegationProductEvent::Started {
+                    child_operation_id,
+                    ..
+                }),
+            ) => child_operation_id == "child",
+            (
+                32,
+                K::Delegation(CodingAgentDelegationProductEvent::Completed { final_text, .. }),
+            ) => final_text == "done",
+            (33, K::Delegation(CodingAgentDelegationProductEvent::Failed { error, .. })) => {
+                error.code == "unsupported_capability"
+            }
+            (
+                34,
+                K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
+                    path,
+                    replacements,
+                    ..
+                }),
+            ) => path == "file" && *replacements == 1,
+            (
+                35,
+                K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
+                    attempt,
+                    replacements,
+                    diagnostics,
+                    check_output,
+                    ..
+                }),
+            ) => {
+                *attempt == 1
+                    && replacements[0].old_text == "old"
+                    && diagnostics[0].message == "diagnostic"
+                    && check_output
+                        .as_ref()
+                        .is_some_and(|output| output.command == "check")
+            }
+            (
+                36,
+                K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
+                    attempts,
+                    first_changed_line,
+                    ..
+                }),
+            ) => *attempts == 1 && *first_changed_line == Some(1),
+            (
+                37,
+                K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditFailed {
+                    error, ..
+                }),
+            ) => error.code == "unsupported_capability",
+            (38, K::Workflow(CodingAgentWorkflowProductEvent::PromptStarted { turn_id, .. })) => {
+                turn_id == "turn"
+            }
+            (39, K::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted { turn_id, .. })) => {
+                turn_id == "turn"
+            }
+            (40, K::Workflow(CodingAgentWorkflowProductEvent::PromptFailed { error, .. })) => {
+                error.code == "unsupported_capability"
+            }
+            (41, K::Workflow(CodingAgentWorkflowProductEvent::PromptAborted { reason, .. })) => {
+                reason == "abort"
+            }
+            (
+                42,
+                K::Workflow(CodingAgentWorkflowProductEvent::OperationRecovered {
+                    recovery_id,
+                    reason,
+                    ..
+                }),
+            ) => recovery_id == "recovery" && reason == "restart",
+            (
+                43,
+                K::Diagnostic(CodingAgentDiagnosticProductEvent::Diagnostic {
+                    operation_id,
+                    message,
+                }),
+            ) => operation_id.is_none() && message == "diagnostic",
+            (
+                44,
+                K::Capability(CodingAgentCapabilityProductEvent::Changed {
+                    generation,
+                    revocation,
+                }),
+            ) => {
+                *generation == 2
+                    && *revocation == CodingAgentProductEventCapabilityRevocation::FutureOnly
+            }
+            _ => false,
+        };
+        assert!(
+            valid,
+            "typed payload mismatch at inventory row {index}: {:?}",
+            event.event()
         );
     }
 }
