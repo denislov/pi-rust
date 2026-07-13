@@ -59,7 +59,7 @@ Plans:
 
 **Requirements:** CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01
 
-**Plans:** 5/7 plans executed
+**Plans:** 7/7 plans complete
 
 Plans:
 **Wave 1**
@@ -84,11 +84,11 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 08-06-PLAN.md — Add owner-only, generation-bound, operation-scoped Prompt controls with typed receipts and rejections.
+- [x] 08-06-PLAN.md — Add owner-only, generation-bound, operation-scoped Prompt controls with typed receipts and rejections.
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 08-07-PLAN.md — Migrate RPC mirrors to the public connection contract and close guards, validation, and workspace gates.
+- [x] 08-07-PLAN.md — Migrate RPC mirrors to the public connection contract and close guards, validation, and workspace gates.
 
 **Success criteria:**
 
@@ -114,7 +114,7 @@ Plans:
 
 - [x] Phase 6: Product Event Inventory and Typed Contract
 - [x] Phase 7: Adapter Migration and Compatibility Deletion (completed 2026-07-13)
-- [ ] Phase 8: Client Connection, Replay, and Scoped Control
+- [x] Phase 8: Client Connection, Replay, and Scoped Control (completed 2026-07-13)
 - [ ] Phase 9: Lifecycle Association, Guards, and Closure
 
 ---

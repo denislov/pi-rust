@@ -27,7 +27,7 @@
 
 ### Control And Association
 
-- [ ] **CONTROL-01**: A scoped public control contract supports existing abort, steer, and follow-up semantics without placing control signals into the ordinary operation queue.
+- [x] **CONTROL-01**: A scoped public control contract supports existing abort, steer, and follow-up semantics without placing control signals into the ordinary operation queue.
 - [ ] **CONTROL-02**: Operation id, submitted client operation, terminal product event, and terminal outcome association is explicit and tested for every operation that exposes terminal semantics.
 
 ### Boundary Hardening
@@ -64,7 +64,7 @@
 | CLIENT-02 | Phase 8 | Complete |
 | CLIENT-03 | Phase 8 | Complete |
 | CLIENT-04 | Phase 9 | Pending |
-| CONTROL-01 | Phase 8 | Pending |
+| CONTROL-01 | Phase 8 | Complete |
 | CONTROL-02 | Phase 9 | Pending |
 | GUARD-01 | Phase 9 | Pending |
 | GUARD-02 | Phase 9 | Pending |
