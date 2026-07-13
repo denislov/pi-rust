@@ -33,9 +33,14 @@ Every first-party live-session product operation follows one typed, admitted, be
 - [x] Verify focused `pi-coding-agent` suites and the full workspace with formatting, tests, checks, source audits, and clean diffs - Evidence in the Stage 9 closure report
 - [x] Update Stage 9 documentation and identify Stage 10 typed `ProductEvent` payload convergence and compatibility-subscription deletion as the next bounded runtime stage - Validated in Phase 5
 
+### Validated In Phases 6-7
+
+- [x] Publish a stable typed `CodingAgentProductEvent` contract with exhaustive payload, identity, terminal, and durability semantics - Validated in Phase 6
+- [x] Migrate RPC, JSON/print, interactive, and first-party tests to typed product events while preserving observable behavior - Validated in Phase 7
+- [x] Delete compatibility event storage, receivers, subscriptions, duplicate broadcasts, stable raw-event exports, and public raw adapter bypasses - Validated in Phase 7
+
 ### Out of Scope
 
-- Typed `ProductEvent` payload convergence and compatibility event-subscription deletion - reserved for Stage 10
 - A new lifecycle-grade public operation control handle - control signals remain separate from ordinary operations in this milestone
 - RPC wire-command or interactive rendering redesign - adapters must preserve their existing external behavior
 - Exposure of raw plugin load options, plugin registries, session services, provider internals, capability internals, or Flow nodes through the stable API - these remain implementation details
@@ -46,17 +51,13 @@ Every first-party live-session product operation follows one typed, admitted, be
 
 The operational product is the Rust 2024 `pi-coding-agent` crate, not the workspace-root placeholder binary. Its architecture is layered: product adapters submit work to the product operation runtime; `CodingAgentSession` owns admission, capabilities, services, flows, events, and persistence; `pi-agent-core` owns generic agent and flow execution; `pi-ai` owns providers and transport; and `pi-tui` owns generic terminal mechanics.
 
-The repository now has a closed public operation boundary: first-party adapters use contracts exported by `pi_coding_agent::api`, `CodingAgentSession::run` performs canonical admission and dispatch, and receiver-aware plus compiler-driven guards prevent the deleted broad facade from returning. Typed `ProductEvent` payload convergence and compatibility-subscription deletion remain explicitly deferred to Stage 10.
+The repository now has closed public operation and product-event boundaries: first-party adapters use typed contracts exported by `pi_coding_agent::api`, `CodingAgentSession::run` performs canonical admission and dispatch, and compiler-driven guards prevent broad workflow or raw compatibility-event facades from returning.
 
 The most sensitive areas are the large session owner and interactive modules, event/control multiplexing, durable navigation transitions, and integration suites whose assertions encode behavioral guarantees. Changes should be sliced along existing ownership boundaries and verified before compatibility methods are removed.
 
 ## Current State
 
-v1.0 shipped on 2026-07-13. The canonical operation runtime is complete and
-verified: all first-party adapters and tests use `CodingAgentSession::run`,
-the stable facade is compiler-enforced, the broad workflow methods are gone,
-and the final workspace/security/integration audits passed. Historical
-evidence is archived under `.planning/milestones/`.
+v1.0 shipped on 2026-07-13. Phases 6-7 of v1.1 are complete: the exhaustive typed product-event contract is public, all first-party adapters and tests consume typed events, and the raw compatibility storage/receiver/subscription path is deleted behind fail-closed guards. Phase 8 client connection, replay, and scoped-control planning is next.
 
 ## Current Milestone: v1.1 Typed Product Events and Client Lifecycle Contract
 
@@ -78,8 +79,6 @@ session owner to `CodingAgentRuntime`.
 
 ## Active Requirements
 
-- [ ] Public typed product events expose stable identity, terminal, durability, and payload semantics.
-- [ ] First-party consumers no longer depend on compatibility event unwrapping, receivers, or subscriptions.
 - [ ] Public client connections support snapshot, replay, stale-cursor recovery, submitted operation state, drafts, and scoped control.
 - [ ] Detach/close, shutdown, and operation/outcome/terminal-event association have explicit behavior.
 - [ ] Directly related adapter inventory and compile-fail guard debt is closed.
@@ -123,4 +122,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-13 after v1.1 milestone kickoff*
+*Last updated: 2026-07-13 after Phase 7 verification*
