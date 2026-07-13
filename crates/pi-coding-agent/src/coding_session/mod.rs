@@ -27,6 +27,7 @@ mod profiles;
 mod prompt;
 mod prompt_flow;
 mod public_operation;
+mod public_event;
 mod public_projection;
 mod runtime_service;
 mod self_healing_edit_flow;
