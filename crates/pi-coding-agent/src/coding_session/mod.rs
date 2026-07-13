@@ -85,8 +85,14 @@ pub use public_operation::{
     CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome,
 };
 pub use public_projection::{
-    CodingAgentClientConnection, CodingAgentClientId, CodingAgentProductEventReceiver,
-    CodingAgentSnapshot, CodingAgentSnapshotCursor,
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentConnectionGeneration,
+    CodingAgentControlId, CodingAgentControlKind, CodingAgentControlReceipt,
+    CodingAgentControlRejection, CodingAgentControlRejectionReason, CodingAgentDraft,
+    CodingAgentDraftId, CodingAgentDraftKind, CodingAgentFreshSnapshotRecovery,
+    CodingAgentMutationRejection, CodingAgentProductEventReceiver, CodingAgentPromptControl,
+    CodingAgentReconnect, CodingAgentRecoveryReason, CodingAgentSnapshot,
+    CodingAgentSnapshotCursor, CodingAgentSubmissionLease, CodingAgentSubmittedOperation,
+    CodingAgentSubmittedOperationStatus,
 };
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
