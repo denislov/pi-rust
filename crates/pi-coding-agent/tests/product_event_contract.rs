@@ -73,6 +73,7 @@ async fn public_receiver_preserves_typed_order_and_metadata() {
         skipped.durability(),
         &CodingAgentProductEventDurability::LiveOnly
     );
+
     assert_eq!(
         committed.terminal_status(),
         Some(CodingAgentProductEventTerminalStatus::Completed)
@@ -98,8 +99,14 @@ async fn public_receiver_preserves_typed_order_and_metadata() {
     );
 
     let json = serde_json::to_value(prompt_terminal).unwrap();
+    assert_eq!(json["family"], "Workflow");
+    assert_eq!(json["kind"], "Workflow(PromptCompleted)");
     assert_eq!(json["event"]["family"], "workflow");
     assert_eq!(json["event"]["payload"]["kind"], "prompt_completed");
+    assert_eq!(
+        json["operation_id"],
+        prompt_terminal.operation_id().unwrap()
+    );
     assert_eq!(json["terminal_status"], "completed");
     assert_eq!(json["terminal_operation"]["kind"], "prompt");
     assert_eq!(json["durability"]["state"], "live_only");
