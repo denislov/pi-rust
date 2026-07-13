@@ -5,6 +5,7 @@ mod branch_summary_service;
 mod capability_service;
 mod capability_snapshot;
 mod client_projection;
+mod client_service;
 mod context;
 mod delegation;
 mod delegation_confirmation_service;
@@ -34,6 +35,7 @@ mod self_healing_edit_flow;
 mod self_healing_edit_service;
 mod session_log;
 mod session_service;
+mod snapshot_coordinator;
 
 pub use agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
 pub use agent_team_flow::{AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome};
@@ -110,6 +112,7 @@ use capability_snapshot::{
     SessionReadCapability, SessionWriteCapability,
 };
 pub use capability_snapshot::{CapabilityRevocationPolicy, FilesystemCapability, ShellCapability};
+use client_service::ClientService;
 pub(crate) use delegation::{
     DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
     PendingDelegationConfirmationState, delegation_lineage_for_request, pending_state_from_replay,
@@ -142,6 +145,7 @@ use session_service::{
     FinalizedSessionWrite, SessionPersistence, SessionService, StartupRecoveryMarker,
     TransientSessionState,
 };
+use snapshot_coordinator::SnapshotCoordinator;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -169,6 +173,8 @@ pub struct CodingAgentSession {
     manual_compaction_service: ManualCompactionService,
     self_healing_edit_service: SelfHealingEditService,
     capability_snapshots: CapabilitySnapshotService,
+    snapshot_coordinator: Arc<SnapshotCoordinator>,
+    client_service: ClientService,
     startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
 }
 
@@ -606,6 +612,8 @@ impl CodingAgentSession {
         let replay_state = replay_derived_owner_state(&mut session_service)?;
         let event_service = EventService::new();
         event_service.emit_session_opened(session_service.session_id().to_owned());
+        let snapshot_coordinator = SnapshotCoordinator::new();
+        let client_service = ClientService::new(snapshot_coordinator.clone());
 
         let session = Self {
             persistence: SessionPersistence::Persistent(session_service),
@@ -625,6 +633,8 @@ impl CodingAgentSession {
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
             capability_snapshots: CapabilitySnapshotService::new(),
+            snapshot_coordinator,
+            client_service,
             startup_recovery_markers: Mutex::new(replay_state.startup_recovery_markers),
         };
 
@@ -636,6 +646,8 @@ impl CodingAgentSession {
         default_plugin_load_options: PluginLoadOptions,
         profile_registry: ProfileRegistry,
     ) -> Result<Self, CodingSessionError> {
+        let snapshot_coordinator = SnapshotCoordinator::new();
+        let client_service = ClientService::new(snapshot_coordinator.clone());
         Ok(Self {
             persistence: SessionPersistence::NonPersistent(state),
             runtime_service: RuntimeService::new(),
@@ -654,6 +666,8 @@ impl CodingAgentSession {
             manual_compaction_service: ManualCompactionService::new(),
             self_healing_edit_service: SelfHealingEditService::new(),
             capability_snapshots: CapabilitySnapshotService::new(),
+            snapshot_coordinator,
+            client_service,
             startup_recovery_markers: Mutex::new(Vec::new()),
         })
     }

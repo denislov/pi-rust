@@ -43,7 +43,7 @@ impl UiSnapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ClientConnectionId(String);
 
 impl ClientConnectionId {
