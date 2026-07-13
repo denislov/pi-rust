@@ -59,7 +59,7 @@ Plans:
 
 **Requirements:** CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01
 
-**Plans:** 4/7 plans executed
+**Plans:** 5/7 plans executed
 
 Plans:
 **Wave 1**
@@ -80,7 +80,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 08-05-PLAN.md — Wire public connection/recovery and exact submission lease/drop/provenance semantics while preserving legacy run.
+- [x] 08-05-PLAN.md — Wire public connection/recovery and exact submission lease/drop/provenance semantics while preserving legacy run.
 
 **Wave 6** *(blocked on Wave 5 completion)*
 

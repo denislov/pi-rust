@@ -5,16 +5,16 @@ milestone_name: Typed Product Events and Client Lifecycle Contract
 current_phase: 8
 current_phase_name: Client Connection, Replay, and Scoped Control
 status: executing
-stopped_at: Completed 08-04-PLAN.md
-last_updated: "2026-07-13T16:55:53.133Z"
+stopped_at: Completed 08-05-PLAN.md
+last_updated: "2026-07-13T17:13:07.887Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 8 Plan 04 snapshot writer convergence complete
+last_activity_desc: Phase 8 Plan 05 client connection and submission provenance complete
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 15
-  completed_plans: 12
-  percent: 80
+  completed_plans: 13
+  percent: 87
 ---
 
 # Project State
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 8 — Client Connection, Replay, and Scoped Control
-Plan: 4 of 7 complete
-Status: Executing
-Last activity: 2026-07-14 — Phase 8 Plan 04 snapshot writer convergence complete
+Plan: 5 of 7 complete
+Status: Ready to execute
+Last activity: 2026-07-14 — Phase 8 Plan 05 client connection and submission provenance complete
 
 ## Performance Metrics
 
@@ -80,6 +80,7 @@ Last activity: 2026-07-14 — Phase 8 Plan 04 snapshot writer convergence comple
 | Phase 06 P02 | 13min | 3 tasks | 4 files |
 | Phase 06 P03 | 8min | 2 tasks | 3 files |
 | Phase 08 P04 | 10min | 2 tasks | 7 files |
+| Phase 08 P05 | 9min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -124,6 +125,8 @@ Recent decisions affecting current work:
 - [Phase 06]: Parse public operation and outcome enums in a source guard so documentation drift fails closed. — Set equality catches additions, renames, omissions, and duplicate matrix rows.
 - [Phase 08]: Keep client records, session/capability/active-operation projections, capability generation, event cursor/replay, and recovery metadata under one SnapshotState mutex. — Atomic snapshots and replay/live cuts must not combine independently timed authorities.
 - [Phase 08]: Keep broadcast transport outside snapshot authority and send only after coordinator transaction release. — Receiver work cannot invert the coordinator lock or observe a pre-commit cursor.
+- [Phase 08]: Keep CodingAgentClientConnection as a generation-scoped Arc coordinator handle with state/preparation methods but no dispatcher.
+- [Phase 08]: Commit submission provenance only after canonical IntentRouter admission returns the operation id; precommit drop preserves the draft.
 
 ### Pending Todos
 
@@ -143,8 +146,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-13T16:55:53.127Z
-Stopped at: Completed 08-04-PLAN.md
+Last session: 2026-07-13T17:13:07.882Z
+Stopped at: Completed 08-05-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
