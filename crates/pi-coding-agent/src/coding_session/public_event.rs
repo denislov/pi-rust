@@ -1453,4 +1453,10 @@ mod tests {
             CodingAgentProductEventTerminalOperationKind::Prompt
         );
     }
+
+    #[test]
+    fn exhaustive_inventory_covers_all_current_variants() {
+        let projected = exhaustive_inventory_fixture();
+        assert_eq!(projected.len(), 45);
+    }
 }
