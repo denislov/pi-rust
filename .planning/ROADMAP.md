@@ -14,6 +14,7 @@
 **Requirements:** EVENT-01, EVENT-02, EVENT-03
 
 **Success criteria:**
+
 - Every current event emitter maps to a documented typed public event kind and payload contract.
 - Public consumers no longer need string parsing to identify event kind.
 - Operation identity, durability, terminal status, and unsupported/missing fields have explicit semantics.
@@ -26,6 +27,7 @@
 **Requirements:** COMPAT-01, COMPAT-02
 
 **Success criteria:**
+
 - RPC, interactive, JSON/print, and test consumers match typed product events directly.
 - Production code has no `compatibility_event()` consumer and no local compatibility deprecation suppression.
 - Legacy receiver/subscription/storage is deleted or test-gated only where migration evidence requires it.
@@ -38,6 +40,7 @@
 **Requirements:** CLIENT-01, CLIENT-02, CLIENT-03, CONTROL-01
 
 **Success criteria:**
+
 - A client can connect, receive a snapshot cursor, resume retained events, and handle stale cursors with a typed recovery result.
 - Reconnect semantics distinguish replayable history from fresh-snapshot-required recovery.
 - Submitted operation and client-local draft state are queryable/mutable through stable APIs without exposing internals.
@@ -50,6 +53,7 @@
 **Requirements:** COMPAT-03, CLIENT-04, CONTROL-02, GUARD-01, GUARD-02
 
 **Success criteria:**
+
 - Detach/close and shutdown are explicit, idempotent, and preserve session/event ownership invariants.
 - Operation id, submitted state, terminal outcome, and terminal event associations are tested for applicable operations.
 - Adapter-root and compile-fixture guard debt is closed with fail-closed tests.

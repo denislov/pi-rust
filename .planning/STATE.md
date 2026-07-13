@@ -2,15 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Typed Product Events and Client Lifecycle Contract
-status: planning
-last_updated: "2026-07-13T04:39:32.523Z"
+current_phase: 06
+current_phase_name: Product Event Inventory and Typed Contract
+status: executing
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-07-13T05:41:20.300Z"
 last_activity: 2026-07-13
+last_activity_desc: Completed 06-01 typed product event contract
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 1
+  percent: 50
 ---
 
 # Project State
@@ -20,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Every first-party live-session product operation follows one typed, admitted, behavior-preserving runtime path through `CodingAgentSession::run`.
-**Current focus:** Defining v1.1 typed product-event and client lifecycle contracts
+**Current focus:** Phase 06 — Product Event Inventory and Typed Contract
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-07-13 — Milestone v1.1 started
+Phase: 06 (Product Event Inventory and Typed Contract) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-07-13 — Completed 06-01 typed product event contract
 
 ## Performance Metrics
 
@@ -71,6 +75,7 @@ Last activity: 2026-07-13 — Milestone v1.1 started
 | Phase 04 P03 | 0 min | 2 tasks | 3 files |
 | Phase 04 P04 | 15 min | 2 tasks | 5 files |
 | Phase 05 P02 | 4min | 1 tasks | 14 files |
+| Phase 06 P01 | 18min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -109,6 +114,8 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-03 preserved delegation durability and `PartialCommit` identity while deleting both public decision methods.
 - [Phase 04]: 04-04 completed navigation/summary convergence and the receiver-aware 16-method absence ledger.
 - [Phase 05]: Recursive fail-closed adapter guards and external consumer compile fixtures enforce the canonical boundary; authoritative evidence is in `05-STAGE-9-CLOSURE.md`.
+- [Phase 06]: Keep event-level terminal status independent from the five existing root-operation terminal associations. — Tool, message, delegation, and session-write completion must not be mislabeled as root-operation completion.
+- [Phase 06]: Retain transitional event strings through explicit legacy-name mapping while typed enums and snake_case Serde are authoritative. — Phase 7 owns consumer migration and existing receivers must remain source-compatible in Phase 6.
 
 ### Pending Todos
 
@@ -128,8 +135,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-13T00:00:00Z
-Stopped at: Completed 05-03-PLAN.md; Stage 9 closed
+Last session: 2026-07-13T05:40:23.877Z
+Stopped at: Completed 06-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
