@@ -692,6 +692,9 @@ impl CodingAgentProductEvent {
     pub fn family_typed(&self) -> CodingAgentProductEventFamily {
         self.event.family()
     }
+    pub fn family(&self) -> CodingAgentProductEventFamily {
+        self.event.family()
+    }
     pub fn kind_name(&self) -> &'static str {
         self.event.as_str()
     }

@@ -9,31 +9,31 @@ use pi_coding_agent::api::{
     AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, AgentTeamMemberOutcome,
     AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CapabilityStatus, CliArgs,
     CliDiagnostic, CliDiagnosticSeverity, CliError, CliOutput, CliRunOptions,
-    CodingAgentCapabilities, CodingAgentClientConnection, CodingAgentClientId, CodingAgentEvent,
-    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginDiagnostic,
-    CodingAgentPluginLoadOutcome, CodingAgentProductEvent, CodingAgentProductEventCapabilityRevocation,
-    CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
-    CodingAgentProductEventDurability, CodingAgentProductEventError, CodingAgentProductEventFamily,
-    CodingAgentProductEventKind, CodingAgentProductEventProfileKind, CodingAgentProductEventReceiver,
+    CodingAgentAgentProductEvent, CodingAgentCapabilities, CodingAgentCapabilityProductEvent,
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentDelegationEventContext,
+    CodingAgentDelegationProductEvent, CodingAgentDiagnosticProductEvent, CodingAgentEvent,
+    CodingAgentMessageProductEvent, CodingAgentOperation, CodingAgentOperationOutcome,
+    CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome, CodingAgentProductEvent,
+    CodingAgentProductEventCapabilityRevocation, CodingAgentProductEventCheckOutput,
+    CodingAgentProductEventDiagnostic, CodingAgentProductEventDurability,
+    CodingAgentProductEventError, CodingAgentProductEventFamily, CodingAgentProductEventKind,
+    CodingAgentProductEventProfileKind, CodingAgentProductEventReceiver,
     CodingAgentProductEventReplacement, CodingAgentProductEventTerminalOperation,
     CodingAgentProductEventTerminalOperationKind, CodingAgentProductEventTerminalStatus,
-    CodingAgentProductEventUsage, CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
-    CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,
-    CodingAgentDiagnosticProductEvent, CodingAgentMessageProductEvent,
-    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent,
-    CodingAgentSessionProductEvent, CodingAgentTeamProductEvent, CodingAgentToolProductEvent,
-    CodingAgentWorkflowProductEvent, CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
-    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
-    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingDiagnostic, CodingDiagnosticSeverity,
-    CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
-    DetectionConfidence, DetectionSource, ModelRotation, ModelRotationEntry,
-    PendingDelegationConfirmation, PrintModeOptions, ProfileDiagnostic, ProfileId,
-    PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
-    ProtocolDelegationFoldedBlock, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
-    ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor,
-    ResolvedTheme, ResourceLoadOptions, RpcCapabilities, RpcCapabilityStatus, RpcCommand,
-    RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata, RpcResponse,
-    RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
+    CodingAgentProductEventUsage, CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent,
+    CodingAgentSession, CodingAgentSessionExport, CodingAgentSessionExportItem,
+    CodingAgentSessionOptions, CodingAgentSessionProductEvent, CodingAgentSessionSummary,
+    CodingAgentSessionView, CodingAgentSnapshot, CodingAgentSnapshotCursor,
+    CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+    CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError, ColorValue,
+    CompactionProtocolResult, CompactionReason, ContextFile, DetectionConfidence, DetectionSource,
+    ModelRotation, ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions,
+    ProfileDiagnostic, ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode,
+    PromptTurnOptions, PromptTurnOutcome, ProtocolDelegationFoldedBlock, ProtocolEvent,
+    ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS,
+    ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions, RpcCapabilities,
+    RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata,
+    RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
     SelfHealingEditRequest, SessionMode, StreamingBehavior, TeamProfile, TerminalTheme, ThemeBg,
@@ -401,6 +401,92 @@ async fn coding_session_snapshot_public_facade_is_importable() {
 fn coding_session_product_event_subscription_public_facade_is_importable() {
     let _event_type_name = std::any::type_name::<CodingAgentProductEvent>();
     let _receiver_type_name = std::any::type_name::<CodingAgentProductEventReceiver>();
+
+    let contract_types = [
+        std::any::type_name::<CodingAgentProductEventKind>(),
+        std::any::type_name::<CodingAgentProductEventFamily>(),
+        std::any::type_name::<CodingAgentProductEventDurability>(),
+        std::any::type_name::<CodingAgentProductEventTerminalStatus>(),
+        std::any::type_name::<CodingAgentProductEventTerminalOperation>(),
+        std::any::type_name::<CodingAgentProductEventTerminalOperationKind>(),
+        std::any::type_name::<CodingAgentProductEventError>(),
+        std::any::type_name::<CodingAgentProductEventUsage>(),
+        std::any::type_name::<CodingAgentProductEventReplacement>(),
+        std::any::type_name::<CodingAgentProductEventDiagnostic>(),
+        std::any::type_name::<CodingAgentProductEventCheckOutput>(),
+        std::any::type_name::<CodingAgentProductEventProfileKind>(),
+        std::any::type_name::<CodingAgentProductEventCapabilityRevocation>(),
+        std::any::type_name::<CodingAgentDelegationEventContext>(),
+    ];
+    assert!(
+        contract_types
+            .iter()
+            .all(|name| name.starts_with("pi_coding_agent::"))
+    );
+
+    let diagnostic =
+        CodingAgentProductEventKind::Diagnostic(CodingAgentDiagnosticProductEvent::Diagnostic {
+            operation_id: None,
+            message: "ready".into(),
+        });
+    assert_eq!(
+        typed_event_family(&diagnostic),
+        CodingAgentProductEventFamily::Diagnostic
+    );
+    assert_eq!(diagnostic.as_str(), "diagnostic");
+    assert_eq!(
+        serde_json::to_value(&diagnostic).unwrap()["family"],
+        "diagnostic"
+    );
+}
+
+fn typed_event_family(event: &CodingAgentProductEventKind) -> CodingAgentProductEventFamily {
+    match event {
+        CodingAgentProductEventKind::Session(value) => {
+            let _: &CodingAgentSessionProductEvent = value;
+            CodingAgentProductEventFamily::Session
+        }
+        CodingAgentProductEventKind::Profile(value) => {
+            let _: &CodingAgentProfileProductEvent = value;
+            CodingAgentProductEventFamily::Profile
+        }
+        CodingAgentProductEventKind::Agent(value) => {
+            let _: &CodingAgentAgentProductEvent = value;
+            CodingAgentProductEventFamily::Agent
+        }
+        CodingAgentProductEventKind::Team(value) => {
+            let _: &CodingAgentTeamProductEvent = value;
+            CodingAgentProductEventFamily::Team
+        }
+        CodingAgentProductEventKind::Message(value) => {
+            let _: &CodingAgentMessageProductEvent = value;
+            CodingAgentProductEventFamily::Message
+        }
+        CodingAgentProductEventKind::Tool(value) => {
+            let _: &CodingAgentToolProductEvent = value;
+            CodingAgentProductEventFamily::Tool
+        }
+        CodingAgentProductEventKind::Runtime(value) => {
+            let _: &CodingAgentRuntimeProductEvent = value;
+            CodingAgentProductEventFamily::Runtime
+        }
+        CodingAgentProductEventKind::Delegation(value) => {
+            let _: &CodingAgentDelegationProductEvent = value;
+            CodingAgentProductEventFamily::Delegation
+        }
+        CodingAgentProductEventKind::Workflow(value) => {
+            let _: &CodingAgentWorkflowProductEvent = value;
+            CodingAgentProductEventFamily::Workflow
+        }
+        CodingAgentProductEventKind::Diagnostic(value) => {
+            let _: &CodingAgentDiagnosticProductEvent = value;
+            CodingAgentProductEventFamily::Diagnostic
+        }
+        CodingAgentProductEventKind::Capability(value) => {
+            let _: &CodingAgentCapabilityProductEvent = value;
+            CodingAgentProductEventFamily::Capability
+        }
+    }
 }
 
 #[allow(dead_code)]
