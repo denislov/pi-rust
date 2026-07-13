@@ -1841,6 +1841,7 @@ mod tests {
     #[test]
     fn exhaustive_inventory_covers_all_current_variants() {
         let projected = exhaustive_inventory_fixture();
+        assert_eq!(projected.len(), EXPECTED_PUBLIC_EVENT_INVENTORY.len());
         assert_eq!(projected.len(), 45);
         let expected_counts = [5, 1, 6, 6, 4, 4, 1, 7, 9, 1, 1];
         let families = [
