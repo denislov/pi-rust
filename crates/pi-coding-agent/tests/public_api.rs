@@ -326,9 +326,14 @@ async fn submission_association_prepares_all_public_operation_classes() {
 
 #[tokio::test]
 async fn outcome_acknowledgement_is_distinct_from_event_acknowledgement() {
-    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-        .await
-        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_session_id("sess_outcome_ack")
+            .with_session_log_root(temp.path()),
+    )
+    .await
+    .unwrap();
     let connection = session
         .connect(CodingAgentClientId::new("outcome-ack-client"))
         .unwrap();
@@ -1047,7 +1052,7 @@ fn snapshot_writers_1_startup_drain_releases_marker_lock_before_projection() {
 fn snapshot_writers_2_operation_guard_releases_owner_lock_before_projection_clear() {
     let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
     let operation_control = fs::read_to_string(source_root.join("operation_control.rs")).unwrap();
-    let drop_lock = operation_control.rfind("drop(active);").unwrap();
+    let drop_lock = operation_control.rfind("drop(shared);").unwrap();
     let clear_projection = operation_control
         .find("set_active_operation(None)")
         .unwrap();

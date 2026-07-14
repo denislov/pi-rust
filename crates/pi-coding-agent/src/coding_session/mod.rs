@@ -1810,7 +1810,7 @@ impl CodingAgentSession {
             SessionPersistence::NonPersistent(state) => {
                 let mut ids = SystemIdGenerator;
                 let mut context = PromptTurnContext::new(
-                    PromptTurnIds::new(ids.next_operation_id(), ids.next_turn_id()),
+                    PromptTurnIds::new(snapshot.operation_id.clone(), ids.next_turn_id()),
                     options,
                 );
                 context.set_plugin_service(self.plugin_service.clone());
