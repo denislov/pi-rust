@@ -889,9 +889,6 @@ fn capability_revocation_to_protocol(
         crate::coding_session::CodingAgentProductEventCapabilityRevocation::FutureOnly => {
             "future_only"
         }
-        crate::coding_session::CodingAgentProductEventCapabilityRevocation::CancelMatchingOperations => {
-            "cancel_matching_operations"
-        }
     }
 }
 

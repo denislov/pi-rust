@@ -269,14 +269,12 @@ impl OperationCapabilitySnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityRevocationPolicy {
     FutureOnly,
-    CancelMatchingOperations,
 }
 
 impl CapabilityRevocationPolicy {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::FutureOnly => "future_only",
-            Self::CancelMatchingOperations => "cancel_matching_operations",
         }
     }
 }

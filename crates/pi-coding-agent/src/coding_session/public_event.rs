@@ -145,7 +145,6 @@ pub enum CodingAgentProductEventProfileKind {
 #[serde(rename_all = "snake_case")]
 pub enum CodingAgentProductEventCapabilityRevocation {
     FutureOnly,
-    CancelMatchingOperations,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -1369,9 +1368,6 @@ impl From<&CodingAgentEvent> for CodingAgentProductEventKind {
                 revocation: match revocation {
                     super::CapabilityRevocationPolicy::FutureOnly => {
                         CodingAgentProductEventCapabilityRevocation::FutureOnly
-                    }
-                    super::CapabilityRevocationPolicy::CancelMatchingOperations => {
-                        CodingAgentProductEventCapabilityRevocation::CancelMatchingOperations
                     }
                 },
             }),
