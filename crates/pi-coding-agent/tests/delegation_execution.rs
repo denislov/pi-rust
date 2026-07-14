@@ -1936,11 +1936,37 @@ fn drain_events(receiver: &mut CodingAgentProductEventReceiver) -> Vec<CodingAge
 }
 
 fn assert_event_count(events: &[CodingAgentProductEvent], kind: &str, expected: usize) {
+    let (expected_family, expected_kind) = kind
+        .rsplit_once('(')
+        .map(|(family, value)| (Some(family), value.trim_end_matches(')')))
+        .unwrap_or((None, kind));
+    let expected_family = expected_family.map(pascal_to_snake);
     assert_eq!(
-        events.iter().filter(|event| event.kind == kind).count(),
+        events
+            .iter()
+            .filter(|event| {
+                expected_family
+                    .as_deref()
+                    .is_none_or(|family| event.family_typed().as_str() == family)
+                    && event.kind_name() == pascal_to_snake(expected_kind)
+            })
+            .count(),
         expected,
         "unexpected {kind} event count: {events:#?}"
     );
+}
+
+fn pascal_to_snake(value: &str) -> String {
+    value
+        .chars()
+        .enumerate()
+        .flat_map(|(index, character)| {
+            (index > 0 && character.is_ascii_uppercase())
+                .then_some('_')
+                .into_iter()
+                .chain(std::iter::once(character.to_ascii_lowercase()))
+        })
+        .collect()
 }
 
 fn tool_names(context: &Context) -> Vec<String> {

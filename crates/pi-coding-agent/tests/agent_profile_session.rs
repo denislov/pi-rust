@@ -64,8 +64,11 @@ async fn set_default_agent_profile_updates_manifest_and_emits_event() {
         .try_recv()
         .unwrap()
         .expect("profile change should emit a public product event");
-    assert_eq!(event.family, "Profile");
-    assert_eq!(event.kind, "Profile(DefaultChanged)");
+    assert_eq!(
+        event.family_typed(),
+        pi_coding_agent::api::CodingAgentProductEventFamily::Profile
+    );
+    assert_eq!(event.kind_name(), "default_changed");
 }
 
 fn read_manifest(root: &std::path::Path, session_id: &str) -> serde_json::Value {

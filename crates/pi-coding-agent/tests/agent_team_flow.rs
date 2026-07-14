@@ -109,7 +109,7 @@ members = ["coder", "reviewer"]
     assert_eq!(
         events
             .iter()
-            .filter(|event| event.kind == "Team(MemberCompleted)")
+            .filter(|event| event.kind_name() == "member_completed")
             .count(),
         2,
         "expected two member completion events: {events:#?}"
@@ -395,7 +395,30 @@ fn drain_events(receiver: &mut CodingAgentProductEventReceiver) -> Vec<CodingAge
 }
 
 fn has_event(events: &[CodingAgentProductEvent], kind: &str) -> bool {
-    events.iter().any(|event| event.kind == kind)
+    let (expected_family, expected) = kind
+        .rsplit_once('(')
+        .map(|(family, value)| (Some(family), value.trim_end_matches(')')))
+        .unwrap_or((None, kind));
+    let expected_family = expected_family.map(pascal_to_snake);
+    events.iter().any(|event| {
+        expected_family
+            .as_deref()
+            .is_none_or(|family| event.family_typed().as_str() == family)
+            && event.kind_name() == pascal_to_snake(expected)
+    })
+}
+
+fn pascal_to_snake(value: &str) -> String {
+    value
+        .chars()
+        .enumerate()
+        .flat_map(|(index, character)| {
+            (index > 0 && character.is_ascii_uppercase())
+                .then_some('_')
+                .into_iter()
+                .chain(std::iter::once(character.to_ascii_lowercase()))
+        })
+        .collect()
 }
 
 fn extract_agent_team(

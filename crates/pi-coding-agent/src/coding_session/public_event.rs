@@ -565,118 +565,11 @@ impl CodingAgentProductEventKind {
             Self::Capability(CodingAgentCapabilityProductEvent::Changed { .. }) => "changed",
         }
     }
-
-    const fn legacy_family_name(&self) -> &'static str {
-        match self.family() {
-            CodingAgentProductEventFamily::Session => "Session",
-            CodingAgentProductEventFamily::Profile => "Profile",
-            CodingAgentProductEventFamily::Agent => "Agent",
-            CodingAgentProductEventFamily::Team => "Team",
-            CodingAgentProductEventFamily::Message => "Message",
-            CodingAgentProductEventFamily::Tool => "Tool",
-            CodingAgentProductEventFamily::Runtime => "Runtime",
-            CodingAgentProductEventFamily::Delegation => "Delegation",
-            CodingAgentProductEventFamily::Workflow => "Workflow",
-            CodingAgentProductEventFamily::Diagnostic => "Diagnostic",
-            CodingAgentProductEventFamily::Capability => "Capability",
-        }
-    }
-
-    const fn legacy_variant_name(&self) -> &'static str {
-        match self {
-            Self::Session(CodingAgentSessionProductEvent::Opened { .. }) => "Opened",
-            Self::Session(CodingAgentSessionProductEvent::WritePending { .. }) => "WritePending",
-            Self::Session(CodingAgentSessionProductEvent::WriteCommitted { .. }) => {
-                "WriteCommitted"
-            }
-            Self::Session(CodingAgentSessionProductEvent::WriteSkipped { .. }) => "WriteSkipped",
-            Self::Session(CodingAgentSessionProductEvent::CompactionCompleted { .. }) => {
-                "CompactionCompleted"
-            }
-            Self::Profile(CodingAgentProfileProductEvent::DefaultChanged { .. }) => {
-                "DefaultChanged"
-            }
-            Self::Agent(CodingAgentAgentProductEvent::InvocationStarted { .. }) => {
-                "InvocationStarted"
-            }
-            Self::Agent(CodingAgentAgentProductEvent::InvocationCompleted { .. }) => {
-                "InvocationCompleted"
-            }
-            Self::Agent(CodingAgentAgentProductEvent::InvocationFailed { .. }) => {
-                "InvocationFailed"
-            }
-            Self::Agent(CodingAgentAgentProductEvent::InvocationAborted { .. }) => {
-                "InvocationAborted"
-            }
-            Self::Agent(CodingAgentAgentProductEvent::TurnStarted { .. }) => "TurnStarted",
-            Self::Agent(CodingAgentAgentProductEvent::ProviderRequestStarted { .. }) => {
-                "ProviderRequestStarted"
-            }
-            Self::Team(CodingAgentTeamProductEvent::Started { .. }) => "Started",
-            Self::Team(CodingAgentTeamProductEvent::MemberStarted { .. }) => "MemberStarted",
-            Self::Team(CodingAgentTeamProductEvent::MemberCompleted { .. }) => "MemberCompleted",
-            Self::Team(CodingAgentTeamProductEvent::Completed { .. }) => "Completed",
-            Self::Team(CodingAgentTeamProductEvent::Failed { .. }) => "Failed",
-            Self::Team(CodingAgentTeamProductEvent::Aborted { .. }) => "Aborted",
-            Self::Message(CodingAgentMessageProductEvent::Started { .. }) => "Started",
-            Self::Message(CodingAgentMessageProductEvent::Delta { .. }) => "Delta",
-            Self::Message(CodingAgentMessageProductEvent::ThinkingDelta { .. }) => "ThinkingDelta",
-            Self::Message(CodingAgentMessageProductEvent::Completed { .. }) => "Completed",
-            Self::Tool(CodingAgentToolProductEvent::Started { .. }) => "Started",
-            Self::Tool(CodingAgentToolProductEvent::Updated { .. }) => "Updated",
-            Self::Tool(CodingAgentToolProductEvent::Completed { .. }) => "Completed",
-            Self::Tool(CodingAgentToolProductEvent::Failed { .. }) => "Failed",
-            Self::Runtime(CodingAgentRuntimeProductEvent::CompactionCompleted { .. }) => {
-                "CompactionCompleted"
-            }
-            Self::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => "ShutDown",
-            Self::Delegation(CodingAgentDelegationProductEvent::Requested { .. }) => "Requested",
-            Self::Delegation(CodingAgentDelegationProductEvent::Rejected { .. }) => "Rejected",
-            Self::Delegation(CodingAgentDelegationProductEvent::Approved { .. }) => "Approved",
-            Self::Delegation(CodingAgentDelegationProductEvent::ConfirmationRequired {
-                ..
-            }) => "ConfirmationRequired",
-            Self::Delegation(CodingAgentDelegationProductEvent::Started { .. }) => "Started",
-            Self::Delegation(CodingAgentDelegationProductEvent::Completed { .. }) => "Completed",
-            Self::Delegation(CodingAgentDelegationProductEvent::Failed { .. }) => "Failed",
-            Self::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditStarted { .. }) => {
-                "SelfHealingEditStarted"
-            }
-            Self::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
-                ..
-            }) => "SelfHealingEditRepairAttempted",
-            Self::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
-                ..
-            }) => "SelfHealingEditCompleted",
-            Self::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditFailed { .. }) => {
-                "SelfHealingEditFailed"
-            }
-            Self::Workflow(CodingAgentWorkflowProductEvent::PromptStarted { .. }) => {
-                "PromptStarted"
-            }
-            Self::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted { .. }) => {
-                "PromptCompleted"
-            }
-            Self::Workflow(CodingAgentWorkflowProductEvent::PromptFailed { .. }) => "PromptFailed",
-            Self::Workflow(CodingAgentWorkflowProductEvent::PromptAborted { .. }) => {
-                "PromptAborted"
-            }
-            Self::Workflow(CodingAgentWorkflowProductEvent::OperationRecovered { .. }) => {
-                "OperationRecovered"
-            }
-            Self::Diagnostic(CodingAgentDiagnosticProductEvent::Diagnostic { .. }) => "Diagnostic",
-            Self::Capability(CodingAgentCapabilityProductEvent::Changed { .. }) => "Changed",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct CodingAgentProductEvent {
     pub sequence: u64,
-    #[deprecated(note = "match event() or family_typed() instead")]
-    pub family: String,
-    #[deprecated(note = "match event() or use kind_name() instead")]
-    pub kind: String,
     event: CodingAgentProductEventKind,
     operation_id: Option<String>,
     terminal_status: Option<CodingAgentProductEventTerminalStatus>,
@@ -713,7 +606,6 @@ impl CodingAgentProductEvent {
         &self.durability
     }
 
-    #[allow(deprecated)]
     pub(crate) fn from_internal(source: ProductEvent) -> Self {
         let sequence = source.sequence().get();
         let operation_id = source.operation_id().map(str::to_owned);
@@ -723,12 +615,6 @@ impl CodingAgentProductEvent {
         let event = source.event().clone();
         Self {
             sequence,
-            family: event.legacy_family_name().to_owned(),
-            kind: format!(
-                "{}({})",
-                event.legacy_family_name(),
-                event.legacy_variant_name()
-            ),
             event,
             operation_id,
             terminal_status,

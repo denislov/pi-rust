@@ -100,8 +100,6 @@ impl ProviderGuard {
 pub fn product_event(event: CodingAgentProductEventKind) -> CodingAgentProductEvent {
     serde_json::from_value(json!({
         "sequence": 1,
-        "family": event.family().as_str(),
-        "kind": event.as_str(),
         "event": event,
         "operation_id": null,
         "terminal_status": null,
