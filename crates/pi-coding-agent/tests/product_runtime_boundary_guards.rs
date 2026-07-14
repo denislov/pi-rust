@@ -166,6 +166,8 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "list",
             "export_session_html",
             "subscribe_product_events_public",
+            "runtime_shutdown_handle",
+            "shutdown",
             "snapshot",
             "connect",
             "capabilities",
