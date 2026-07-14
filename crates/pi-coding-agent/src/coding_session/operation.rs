@@ -49,6 +49,26 @@ pub(crate) enum Operation {
 }
 
 impl Operation {
+    pub(crate) fn prompt_options_mut(&mut self) -> Option<&mut PromptTurnOptions> {
+        match self {
+            Self::Prompt(options) | Self::ManualCompaction(options) => Some(options),
+            Self::BranchSummary { options, .. } => Some(options),
+            Self::SelfHealingEdit(request) => request
+                .model_repair_mut()
+                .map(|repair| repair.prompt_options_mut()),
+            Self::AgentInvocation(options) => Some(options.prompt_options_mut()),
+            Self::AgentTeam(options) => Some(options.prompt_options_mut()),
+            Self::PluginLoad(_)
+            | Self::PluginCommand { .. }
+            | Self::ApproveDelegationConfirmation { .. }
+            | Self::RejectDelegationConfirmation { .. }
+            | Self::ForkSession { .. }
+            | Self::SwitchActiveLeaf { .. }
+            | Self::SetDefaultAgentProfile { .. }
+            | Self::Export(_) => None,
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn kind(&self) -> OperationKind {
         self.static_kind()

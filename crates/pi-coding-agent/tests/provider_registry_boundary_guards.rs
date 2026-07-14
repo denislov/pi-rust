@@ -235,6 +235,33 @@ fn product_agent_runtime_build_installs_scoped_ai_client_streamer() {
 }
 
 #[test]
+fn session_admission_installs_the_session_owned_provider_runtime() {
+    let scan = SourceScan::new();
+    let session = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
+        .expect("read coding session source");
+    let runtime_service = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/runtime_service.rs"),
+    )
+    .expect("read runtime service source");
+    let prompt = fs::read_to_string(scan.crate_root.join("src/coding_session/prompt.rs"))
+        .expect("read prompt runtime source");
+
+    assert!(
+        session.contains("self.runtime_service.install_provider_runtime(runtime)"),
+        "session admission must install its provider runtime into operation-local state"
+    );
+    assert!(
+        runtime_service.contains("runtime.set_provider_streamer("),
+        "RuntimeService must install a streamer backed by its scoped AiClient"
+    );
+    assert!(
+        prompt.contains("provider_streamer: Option<ProviderStreamer>"),
+        "operation runtime snapshots must carry the admitted provider streamer"
+    );
+}
+
+#[test]
 fn self_healing_model_repair_uses_scoped_runtime_streaming() {
     let scan = SourceScan::new();
     let self_healing = fs::read_to_string(

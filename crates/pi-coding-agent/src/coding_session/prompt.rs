@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use pi_agent_core::{
-    Agent, AgentEvent, AgentResources, AgentTool, AgentToolResult, ThinkingLevel, ToolExecutionMode,
+    Agent, AgentEvent, AgentResources, AgentTool, AgentToolResult, ProviderStreamer, ThinkingLevel,
+    ToolExecutionMode,
 };
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Model, ProviderAuthDiagnostic,
@@ -122,6 +123,10 @@ impl PromptTurnOptions {
 
     pub(crate) fn runtime(&self) -> Option<&RuntimeSnapshot> {
         self.runtime.as_ref()
+    }
+
+    pub(crate) fn runtime_mut(&mut self) -> Option<&mut RuntimeSnapshot> {
+        self.runtime.as_mut()
     }
 
     pub(crate) fn set_invocation(&mut self, invocation: PromptInvocation) {
@@ -333,6 +338,7 @@ pub(crate) struct RuntimeSnapshot {
     profile_tool_allowlist: Option<Vec<String>>,
     profile_skill_allowlist: Option<Vec<String>>,
     profile_diagnostics: Vec<CodingDiagnostic>,
+    provider_streamer: Option<ProviderStreamer>,
 }
 
 impl std::fmt::Debug for RuntimeSnapshot {
@@ -355,6 +361,7 @@ impl std::fmt::Debug for RuntimeSnapshot {
             .field("profile_tool_allowlist", &self.profile_tool_allowlist)
             .field("profile_skill_allowlist", &self.profile_skill_allowlist)
             .field("profile_diagnostics", &self.profile_diagnostics)
+            .field("has_provider_streamer", &self.provider_streamer.is_some())
             .finish()
     }
 }
@@ -398,6 +405,7 @@ impl RuntimeSnapshot {
             profile_tool_allowlist: None,
             profile_skill_allowlist: None,
             profile_diagnostics: Vec::new(),
+            provider_streamer: None,
         }
     }
 
@@ -511,6 +519,14 @@ impl RuntimeSnapshot {
 
     pub(crate) fn profile_diagnostics(&self) -> &[CodingDiagnostic] {
         &self.profile_diagnostics
+    }
+
+    pub(crate) fn provider_streamer(&self) -> Option<&ProviderStreamer> {
+        self.provider_streamer.as_ref()
+    }
+
+    pub(crate) fn set_provider_streamer(&mut self, provider_streamer: ProviderStreamer) {
+        self.provider_streamer = Some(provider_streamer);
     }
 }
 

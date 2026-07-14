@@ -83,6 +83,10 @@ impl SelfHealingEditModelRepairOptions {
         &self.prompt_options
     }
 
+    pub(crate) fn prompt_options_mut(&mut self) -> &mut PromptTurnOptions {
+        &mut self.prompt_options
+    }
+
     pub fn max_attempts(&self) -> usize {
         self.max_attempts
     }
@@ -145,6 +149,10 @@ impl SelfHealingEditRequest {
 
     pub fn model_repair(&self) -> Option<&SelfHealingEditModelRepairOptions> {
         self.model_repair.as_ref()
+    }
+
+    pub(crate) fn model_repair_mut(&mut self) -> Option<&mut SelfHealingEditModelRepairOptions> {
+        self.model_repair.as_mut()
     }
 
     #[allow(clippy::type_complexity)]

@@ -114,6 +114,10 @@ impl AgentTeamOptions {
         &self.prompt_options
     }
 
+    pub(crate) fn prompt_options_mut(&mut self) -> &mut PromptTurnOptions {
+        &mut self.prompt_options
+    }
+
     pub fn delegation_depth(&self) -> usize {
         self.delegation_depth
     }

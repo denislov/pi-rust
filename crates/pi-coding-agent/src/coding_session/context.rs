@@ -1,18 +1,33 @@
 use std::path::{Path, PathBuf};
 
 use pi_agent_core::transcript::SessionTreeNode;
+use pi_ai::AiClient;
 
 use crate::coding_session::operation_control::OperationKind;
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use crate::plugins::PluginCapabilities;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default)]
 pub struct CodingAgentSessionOptions {
     cwd: Option<PathBuf>,
     session_id: Option<String>,
     session_log_root: Option<PathBuf>,
     session_path: Option<PathBuf>,
     default_agent_profile_id: Option<ProfileId>,
+    ai_client: Option<AiClient>,
+}
+
+impl std::fmt::Debug for CodingAgentSessionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodingAgentSessionOptions")
+            .field("cwd", &self.cwd)
+            .field("session_id", &self.session_id)
+            .field("session_log_root", &self.session_log_root)
+            .field("session_path", &self.session_path)
+            .field("default_agent_profile_id", &self.default_agent_profile_id)
+            .field("has_scoped_ai_client", &self.ai_client.is_some())
+            .finish()
+    }
 }
 
 impl CodingAgentSessionOptions {
@@ -45,6 +60,11 @@ impl CodingAgentSessionOptions {
         self
     }
 
+    pub fn with_ai_client(mut self, ai_client: AiClient) -> Self {
+        self.ai_client = Some(ai_client);
+        self
+    }
+
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
@@ -63,6 +83,10 @@ impl CodingAgentSessionOptions {
 
     pub fn default_agent_profile_id(&self) -> Option<&ProfileId> {
         self.default_agent_profile_id.as_ref()
+    }
+
+    pub(crate) fn ai_client(&self) -> Option<&AiClient> {
+        self.ai_client.as_ref()
     }
 }
 

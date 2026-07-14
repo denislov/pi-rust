@@ -1,5 +1,18 @@
-#[derive(Debug, Default)]
-pub(crate) struct RuntimeService;
+#[derive(Clone)]
+pub(crate) struct RuntimeService {
+    ai_client: Arc<AiClient>,
+}
+
+impl std::fmt::Debug for RuntimeService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeService")
+            .field(
+                "registered_apis",
+                &self.ai_client.provider_registry().registered_apis(),
+            )
+            .finish()
+    }
+}
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -43,6 +56,9 @@ pub(crate) fn stream_model_for_scoped_runtime(
 }
 
 pub(crate) fn scoped_provider_streamer_for_runtime(runtime: &RuntimeSnapshot) -> ProviderStreamer {
+    if let Some(provider_streamer) = runtime.provider_streamer() {
+        return provider_streamer.clone();
+    }
     let ai_client = scoped_ai_client_for_runtime(runtime);
     Arc::new(move |model, context, opts| {
         seed_scoped_ai_client_from_global_test_provider(ai_client.as_ref(), &model.api);
@@ -73,7 +89,30 @@ fn seed_scoped_ai_client_from_global_test_provider(_ai_client: &AiClient, _api: 
 
 impl RuntimeService {
     pub(crate) fn new() -> Self {
-        Self
+        Self::with_ai_client(AiClient::new())
+    }
+
+    pub(crate) fn with_ai_client(ai_client: AiClient) -> Self {
+        Self {
+            ai_client: Arc::new(ai_client),
+        }
+    }
+
+    pub(crate) fn install_provider_runtime(&self, runtime: &mut RuntimeSnapshot) {
+        if runtime.register_builtins() {
+            self.ai_client.register_builtins();
+        }
+        if self
+            .ai_client
+            .lookup_provider(&runtime.model().api)
+            .is_none()
+        {
+            return;
+        }
+        let ai_client = self.ai_client.clone();
+        runtime.set_provider_streamer(Arc::new(move |model, context, opts| {
+            ai_client.stream_model(model, context, opts)
+        }));
     }
 
     #[cfg(test)]

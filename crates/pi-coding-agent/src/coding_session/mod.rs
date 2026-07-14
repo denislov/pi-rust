@@ -421,6 +421,14 @@ fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> Profi
         .unwrap_or_else(|| ProfileId::from("default"))
 }
 
+fn runtime_service_for_options(options: &CodingAgentSessionOptions) -> RuntimeService {
+    options
+        .ai_client()
+        .cloned()
+        .map(RuntimeService::with_ai_client)
+        .unwrap_or_else(RuntimeService::new)
+}
+
 fn default_cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
@@ -532,20 +540,24 @@ impl CodingAgentSession {
     pub async fn create(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::create(&options)?;
         let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
+        let runtime_service = runtime_service_for_options(&options);
         Self::from_services(
             session_service,
             default_plugin_load_options(&options),
             profile_registry,
+            runtime_service,
         )
     }
 
     pub async fn open(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::open(&options)?;
         let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
+        let runtime_service = runtime_service_for_options(&options);
         Self::from_services(
             session_service,
             default_plugin_load_options(&options),
             profile_registry,
+            runtime_service,
         )
     }
 
@@ -554,10 +566,12 @@ impl CodingAgentSession {
     ) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::open_or_create(&options)?;
         let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
+        let runtime_service = runtime_service_for_options(&options);
         Self::from_services(
             session_service,
             default_plugin_load_options(&options),
             profile_registry,
+            runtime_service,
         )
     }
 
@@ -573,6 +587,7 @@ impl CodingAgentSession {
             TransientSessionState::new(option_default_agent_profile_id(&options)),
             default_plugin_load_options(&options),
             profile_registry_for_options(&options, None)?,
+            runtime_service_for_options(&options),
         )
     }
 
@@ -949,6 +964,7 @@ impl CodingAgentSession {
         session_service: SessionService,
         default_plugin_load_options: PluginLoadOptions,
         profile_registry: ProfileRegistry,
+        runtime_service: RuntimeService,
     ) -> Result<Self, CodingSessionError> {
         let mut session_service = session_service;
         let replay_state = replay_derived_owner_state(&mut session_service)?;
@@ -958,7 +974,7 @@ impl CodingAgentSession {
 
         let session = Self {
             persistence: SessionPersistence::Persistent(session_service),
-            runtime_service: RuntimeService::new(),
+            runtime_service,
             flow_service: FlowService::new(),
             event_service,
             capability_service: CapabilityService::new(),
@@ -994,12 +1010,13 @@ impl CodingAgentSession {
         state: TransientSessionState,
         default_plugin_load_options: PluginLoadOptions,
         profile_registry: ProfileRegistry,
+        runtime_service: RuntimeService,
     ) -> Result<Self, CodingSessionError> {
         let snapshot_coordinator = SnapshotCoordinator::new();
         let client_service = ClientService::new(snapshot_coordinator.clone());
         let session = Self {
             persistence: SessionPersistence::NonPersistent(state),
-            runtime_service: RuntimeService::new(),
+            runtime_service,
             flow_service: FlowService::new(),
             event_service: EventService::with_snapshot_coordinator(snapshot_coordinator.clone()),
             capability_service: CapabilityService::new(),
@@ -1403,9 +1420,14 @@ impl CodingAgentSession {
 
     async fn run_operation(
         &mut self,
-        operation: Operation,
+        mut operation: Operation,
         mut submission: Option<SubmissionCommitGuard>,
     ) -> Result<OperationOutcome, CodingSessionError> {
+        if let Some(options) = operation.prompt_options_mut()
+            && let Some(runtime) = options.runtime_mut()
+        {
+            self.runtime_service.install_provider_runtime(runtime);
+        }
         let admission = self.resolve_operation_admission(&operation)?;
         let operation_permit = IntentRouter::admit_operation(
             &self.operation_control,
@@ -2100,6 +2122,7 @@ mod tests {
 
     use async_stream::stream;
     use pi_agent_core::{AgentResources, AgentTool, AgentToolOutput};
+    use pi_ai::AiClient;
     use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
     use pi_ai::registry::ApiProvider;
     use pi_ai::stream::EventStream;
@@ -2999,15 +3022,14 @@ runtime = "lua"
     async fn submitted_explicit_aborted_outcome_finishes_aborted_exactly_once() {
         let api = "coding-session-abort-control";
         let (started_tx, started_rx) = oneshot::channel();
-        let _provider_guard = crate::test_support::ProviderGuard::register(
-            api,
-            Arc::new(AbortableProvider::new(started_tx)),
-        );
+        let ai_client = AiClient::new();
+        ai_client.register_provider(api, Arc::new(AbortableProvider::new(started_tx)));
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
                 .with_session_id("sess_prompt_abort_control")
-                .with_session_log_root(temp.path()),
+                .with_session_log_root(temp.path())
+                .with_ai_client(ai_client),
         )
         .await
         .unwrap();
@@ -5218,6 +5240,37 @@ runtime = "lua"
             Some(leaf_id.as_str())
         );
         assert_eq!(session.view().session_id, "sess_prompt");
+    }
+
+    #[tokio::test]
+    async fn parallel_sessions_with_the_same_api_use_their_scoped_ai_clients() {
+        let api = "coding-session-shared-scoped-api";
+        let first_client = AiClient::new();
+        first_client.register_provider(api, Arc::new(FauxProvider::simple_text("first session")));
+        let second_client = AiClient::new();
+        second_client.register_provider(api, Arc::new(FauxProvider::simple_text("second session")));
+        let mut first = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(first_client),
+        )
+        .await
+        .unwrap();
+        let mut second = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(second_client),
+        )
+        .await
+        .unwrap();
+
+        let (first_outcome, second_outcome) = tokio::join!(
+            first.run(CodingAgentOperation::Prompt(prompt_options(api, "first"))),
+            second.run(CodingAgentOperation::Prompt(prompt_options(api, "second"))),
+        );
+
+        let final_text = |outcome| match prompt_outcome(outcome) {
+            PromptTurnOutcome::Success { final_text, .. } => final_text,
+            other => panic!("expected successful scoped prompt, got {other:?}"),
+        };
+        assert_eq!(final_text(first_outcome.unwrap()), "first session");
+        assert_eq!(final_text(second_outcome.unwrap()), "second session");
     }
 
     #[tokio::test]
