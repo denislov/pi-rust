@@ -13,7 +13,7 @@
 | Milestone | 状态 | 已落地内容 | 下一退出条件 |
 |---|---|---|---|
 | M0 | 完成 | contract inventory、session compatibility fixtures、dead-code inventory、architecture gates | 持续保持 gates 通过 |
-| M1 | 进行中 | core 强制 injected provider streamer；旧 monolithic agent loop 已删除；scoped registry 并行隔离测试已建立 | product runtime 删除 global test bridge；lower-level facade 收窄 |
+| M1 | 进行中 | WP1.1 scoped provider runtime 与 WP1.2 单一 agent loop 已完成；product global test bridge 已删除 | 完成 WP1.3 lower-level facade 收窄 |
 | M2-M7 | 未开始 | - | 按依赖顺序执行 |
 
 已提交检查点：
@@ -23,8 +23,19 @@
 - `8e36a8a`：`pi-agent-core` 强制 scoped provider streaming。
 - `465f236`：修正 product Flow 测试的显式 provider 注入。
 - `7354cae`：证明两个同名 API 的并行 scoped registry 无串扰。
+- `377d1f5`：由 `CodingAgentSession` 持有并向 operation runtime 注入 scoped `AiClient`。
+- `6554f63`：将 scoped `AiClient` 贯穿 CLI、print/JSON、RPC 和 interactive adapters。
+- `80d2b86`：删除 product global provider test bridge，并将全部 product provider fixtures 迁到 scoped client。
 
-M1 当前剩余风险是 `pi-coding-agent::RuntimeService` 在 test/debug 构建下仍可从 deprecated global registry 填充临时 `AiClient`。在 CLI、RPC、interactive 和 session owner 完成显式 `AiClient` 传递、测试夹具迁移完成之前，不得删除该桥接，也不得将 WP1.1 标记完成。
+M1 当前状态：WP1.1 和 WP1.2 已完成，WP1.3 进行中。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；`pi-coding-agent` 源码与测试不再读写 deprecated global provider registry。剩余风险集中在 lower-level compatibility facade：删除 `pi-ai` global registry helpers、旧 SSE/retry paths 和 `pi-agent-core` 过度导出前，必须先迁移所有下游调用并保持 boundary/public-API gates 通过。
+
+本阶段验证：
+
+- `cargo fmt --all --check`
+- `cargo clippy -p pi-coding-agent --all-targets --all-features`（通过，保留既有 warnings）
+- `cargo test -p pi-coding-agent --tests --no-fail-fast`
+- `git diff --check`
+- product provider registry boundary guards：源码和测试中的 global registry mutation caller 为 `0`
 
 ## 1. 项目目标
 
@@ -189,6 +200,8 @@ release/0.2-rc                  release stabilization branch
 
 ### WP1.1 Scoped provider runtime
 
+状态：完成（`8e36a8a`、`377d1f5`、`6554f63`、`80d2b86`）。
+
 - 为 `Agent`/`AgentConfig` 定义 scoped provider runtime 输入，优先复用 `AiClient`/`ProviderRegistry`。
 - 将 `ProviderStreamNode` 和 `ai_runtime` 从全局 `pi_ai::stream_model` 迁到 injected runtime。
 - 更新 `pi-coding-agent::RuntimeService`，由 product owner 构造并注入 provider runtime。
@@ -196,12 +209,16 @@ release/0.2-rc                  release stabilization branch
 
 ### WP1.2 删除旧 agent loop
 
+状态：完成（`0544b97`）。
+
 - 删除旧 monolithic `runtime::run_loop`、专用 helpers 和 `PreparedProviderRequest`。
 - 删除测试内复制的 `stream_options_for_turn`，改为 owning unit test 或 Agent observable test。
 - 将使用 `PrepareContextNode`/`DecideStopOrToolsNode` 的集成测试迁成生产 `AgentTurnFlow` vertical slices；不为测试扩大 stable API。
 - 删除 `agent_loop` wrapper 和对应只验证 legacy 隔离的测试。
 
 ### WP1.3 收窄 lower-level facade
+
+状态：进行中。
 
 - 下游全部迁移到 `pi_ai::api` 和 `pi_agent_core::api`。
 - 删除 global registry helpers、旧 SSE/retry paths 和过度 Flow node exports。
