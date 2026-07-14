@@ -3,6 +3,7 @@ use crate::protocol::version::{ProtocolFamilyVersion, RequestedProtocolVersion};
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model};
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -438,6 +439,104 @@ pub struct RpcSelfHealingEditReplacement {
 pub struct RpcSelfHealingEditModelRepair {
     #[serde(rename = "maxAttempts")]
     pub max_attempts: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpcDetachRequest {
+    pub id: Option<String>,
+}
+
+impl Serialize for RpcDetachRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("RpcDetachRequest", 2)?;
+        if let Some(id) = &self.id {
+            state.serialize_field("id", id)?;
+        }
+        state.serialize_field("type", "detach")?;
+        state.end()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RpcDetachStatus {
+    Detached,
+    AlreadyDetached,
+    StaleGeneration,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct RpcDetachResponse {
+    pub status: RpcDetachStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RpcDetachLifecycleEvent {
+    pub status: RpcDetachStatus,
+}
+
+impl Serialize for RpcDetachLifecycleEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("RpcDetachLifecycleEvent", 2)?;
+        state.serialize_field("type", "client_detached")?;
+        state.serialize_field("status", &self.status)?;
+        state.end()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpcShutdownRequest {
+    pub id: Option<String>,
+}
+
+impl Serialize for RpcShutdownRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("RpcShutdownRequest", 2)?;
+        if let Some(id) = &self.id {
+            state.serialize_field("id", id)?;
+        }
+        state.serialize_field("type", "shutdown")?;
+        state.end()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RpcShutdownStatus {
+    ShutdownRequested,
+    ShutDown,
+    AlreadyShutDown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct RpcShutdownResponse {
+    pub status: RpcShutdownStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RpcShutdownLifecycleEvent {
+    pub status: RpcShutdownStatus,
+}
+
+impl Serialize for RpcShutdownLifecycleEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("RpcShutdownLifecycleEvent", 2)?;
+        state.serialize_field("type", "runtime_shut_down")?;
+        state.serialize_field("status", &self.status)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
