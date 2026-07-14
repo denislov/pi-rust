@@ -1,3 +1,4 @@
+use super::CodingSessionError;
 use super::capability_snapshot::CapabilityGeneration;
 use super::client_projection::{ClientConnectionId, ClientDraft, UiSnapshot, UiSnapshotCursor};
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
@@ -112,6 +113,7 @@ impl ClientRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionLifecycle {
     Attached,
+    ShuttingDown,
     Detached,
 }
 
@@ -193,6 +195,77 @@ impl Default for SnapshotCoordinator {
 }
 
 impl SnapshotCoordinator {
+    pub(crate) fn ensure_runtime_running(&self) -> Result<(), CodingSessionError> {
+        let state = self.state.lock().unwrap();
+        Self::validate_runtime(&state).map_err(|error| match error {
+            ClientRegistryError::Lifecycle(reason) => CodingSessionError::Lifecycle { reason },
+            other => CodingSessionError::Input {
+                message: other.to_string(),
+            },
+        })
+    }
+
+    pub(crate) fn request_shutdown(&self) -> RuntimeLifecycle {
+        let mut state = self.state.lock().unwrap();
+        let previous = state.runtime_lifecycle;
+        if previous != RuntimeLifecycle::Running {
+            return previous;
+        }
+        state.runtime_lifecycle = RuntimeLifecycle::ShuttingDown;
+        for record in state.clients.values_mut() {
+            if record.connection == ConnectionLifecycle::Attached {
+                record.connection = ConnectionLifecycle::ShuttingDown;
+            }
+        }
+        state.lifecycle_epoch = state.lifecycle_epoch.saturating_add(1);
+        let lifecycle_epoch = state.lifecycle_epoch;
+        drop(state);
+        *self.prompt_control.lock().unwrap() = None;
+        self.lifecycle_sender.send_replace(lifecycle_epoch);
+        previous
+    }
+
+    pub(crate) async fn wait_for_active_operation_to_drain(&self) {
+        let mut receiver = self.subscribe_lifecycle();
+        loop {
+            let active = self
+                .state
+                .lock()
+                .unwrap()
+                .projection
+                .as_ref()
+                .and_then(|projection| projection.active_operation);
+            if active.is_none() {
+                return;
+            }
+            if receiver.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    pub(crate) fn finish_shutdown(&self) {
+        let mut state = self.state.lock().unwrap();
+        if state.runtime_lifecycle == RuntimeLifecycle::ShutDown {
+            return;
+        }
+        debug_assert_eq!(state.runtime_lifecycle, RuntimeLifecycle::ShuttingDown);
+        state.runtime_lifecycle = RuntimeLifecycle::ShutDown;
+        for record in state.clients.values_mut() {
+            if record.connection == ConnectionLifecycle::ShuttingDown {
+                record.connection = ConnectionLifecycle::Detached;
+            }
+        }
+        state.lifecycle_epoch = state.lifecycle_epoch.saturating_add(1);
+        let lifecycle_epoch = state.lifecycle_epoch;
+        drop(state);
+        self.lifecycle_sender.send_replace(lifecycle_epoch);
+    }
+
+    pub(crate) fn is_shut_down(&self) -> bool {
+        self.state.lock().unwrap().runtime_lifecycle == RuntimeLifecycle::ShutDown
+    }
+
     pub(crate) fn enqueue_prompt_control_draft(
         &self,
         handle: &ClientHandle,
@@ -441,6 +514,35 @@ impl SnapshotCoordinator {
         Self::validate_client(&state, handle)
     }
 
+    pub(crate) fn validate_receiver(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<(), ClientRegistryError> {
+        let state = self.state.lock().unwrap();
+        if state.runtime_lifecycle == RuntimeLifecycle::ShutDown {
+            return Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::RuntimeShutDown,
+            ));
+        }
+        let record = state
+            .clients
+            .get(&handle.id)
+            .ok_or(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::StaleGeneration,
+            ))?;
+        if record.generation != handle.generation {
+            return Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::StaleGeneration,
+            ));
+        }
+        match record.connection {
+            ConnectionLifecycle::Attached | ConnectionLifecycle::ShuttingDown => Ok(()),
+            ConnectionLifecycle::Detached => Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::Detached,
+            )),
+        }
+    }
+
     fn rebind_prompt_control(&self, handle: &ClientHandle) {
         let mut binding = self.prompt_control.lock().unwrap();
         if let Some(active) = binding.as_mut()
@@ -472,6 +574,9 @@ impl SnapshotCoordinator {
                 Ok(ClientDetachOutcome::Detached)
             }
             ConnectionLifecycle::Detached => Ok(ClientDetachOutcome::AlreadyDetached),
+            ConnectionLifecycle::ShuttingDown => {
+                unreachable!("runtime validation rejects detach while the runtime is shutting down")
+            }
         }
     }
 
@@ -528,6 +633,12 @@ impl SnapshotCoordinator {
         if let Some(projection) = state.projection.as_mut() {
             projection.revision += 1;
             projection.active_operation = active_operation;
+        }
+        if active_operation.is_none() {
+            state.lifecycle_epoch = state.lifecycle_epoch.saturating_add(1);
+            let lifecycle_epoch = state.lifecycle_epoch;
+            drop(state);
+            self.lifecycle_sender.send_replace(lifecycle_epoch);
         }
     }
 
@@ -636,10 +747,18 @@ impl SnapshotCoordinator {
                 CodingAgentLifecycleRejection::StaleGeneration,
             ));
         }
-        if record.connection == ConnectionLifecycle::Detached {
-            return Err(ClientRegistryError::Lifecycle(
-                CodingAgentLifecycleRejection::Detached,
-            ));
+        match record.connection {
+            ConnectionLifecycle::Attached => {}
+            ConnectionLifecycle::ShuttingDown => {
+                return Err(ClientRegistryError::Lifecycle(
+                    CodingAgentLifecycleRejection::RuntimeShutDown,
+                ));
+            }
+            ConnectionLifecycle::Detached => {
+                return Err(ClientRegistryError::Lifecycle(
+                    CodingAgentLifecycleRejection::Detached,
+                ));
+            }
         }
         Ok(record)
     }
@@ -669,10 +788,18 @@ impl SnapshotCoordinator {
                 CodingAgentLifecycleRejection::StaleGeneration,
             ));
         }
-        if record.connection == ConnectionLifecycle::Detached {
-            return Err(ClientRegistryError::Lifecycle(
-                CodingAgentLifecycleRejection::Detached,
-            ));
+        match record.connection {
+            ConnectionLifecycle::Attached => {}
+            ConnectionLifecycle::ShuttingDown => {
+                return Err(ClientRegistryError::Lifecycle(
+                    CodingAgentLifecycleRejection::RuntimeShutDown,
+                ));
+            }
+            ConnectionLifecycle::Detached => {
+                return Err(ClientRegistryError::Lifecycle(
+                    CodingAgentLifecycleRejection::Detached,
+                ));
+            }
         }
         Ok(())
     }

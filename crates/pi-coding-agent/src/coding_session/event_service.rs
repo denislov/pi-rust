@@ -224,6 +224,8 @@ impl EventService {
     ) -> ProductEventRecovery {
         let receiver = ProductEventReceiver {
             inner: self.product_sender.subscribe(),
+            lifecycle_receiver: self.snapshot_coordinator.subscribe_lifecycle(),
+            snapshot_coordinator: self.snapshot_coordinator.clone(),
         };
         let oldest_available = state
             .retained_product_events
@@ -831,6 +833,8 @@ impl EventService {
     pub(crate) fn subscribe_product_events(&self) -> ProductEventReceiver {
         ProductEventReceiver {
             inner: self.product_sender.subscribe(),
+            lifecycle_receiver: self.snapshot_coordinator.subscribe_lifecycle(),
+            snapshot_coordinator: self.snapshot_coordinator.clone(),
         }
     }
 }
@@ -1097,17 +1101,36 @@ fn parse_delegation_target_kind(kind: &str) -> Option<ProfileKind> {
 #[derive(Debug)]
 pub(crate) struct ProductEventReceiver {
     inner: broadcast::Receiver<ProductEvent>,
+    lifecycle_receiver: tokio::sync::watch::Receiver<u64>,
+    snapshot_coordinator: Arc<SnapshotCoordinator>,
 }
 
 impl ProductEventReceiver {
     pub(crate) async fn recv(&mut self) -> Result<ProductEvent, CodingSessionError> {
-        self.inner.recv().await.map_err(map_recv_error)
+        loop {
+            tokio::select! {
+                biased;
+                event = self.inner.recv() => return event.map_err(map_recv_error),
+                changed = self.lifecycle_receiver.changed() => {
+                    changed.map_err(|_| CodingSessionError::Cancelled)?;
+                    if self.snapshot_coordinator.is_shut_down() {
+                        return Err(CodingSessionError::Cancelled);
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn try_recv(&mut self) -> Result<Option<ProductEvent>, CodingSessionError> {
         match self.inner.try_recv() {
             Ok(event) => Ok(Some(event)),
-            Err(broadcast::error::TryRecvError::Empty) => Ok(None),
+            Err(broadcast::error::TryRecvError::Empty) => {
+                if self.snapshot_coordinator.is_shut_down() {
+                    Err(CodingSessionError::Cancelled)
+                } else {
+                    Ok(None)
+                }
+            }
             Err(broadcast::error::TryRecvError::Closed) => Err(CodingSessionError::Cancelled),
             Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
                 Err(CodingSessionError::EventStreamLag { skipped })

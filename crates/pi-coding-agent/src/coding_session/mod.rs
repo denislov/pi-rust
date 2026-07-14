@@ -94,10 +94,10 @@ pub use public_projection::{
     CodingAgentMutationRejection, CodingAgentOutcomeAcknowledgementId,
     CodingAgentProductEventReceiver, CodingAgentPromptControl, CodingAgentReconnect,
     CodingAgentReconnectDelivery, CodingAgentReconnectReceiver, CodingAgentRecoveryReason,
-    CodingAgentShutdownOutcome, CodingAgentSnapshot, CodingAgentSnapshotCursor,
-    CodingAgentSubmissionLease, CodingAgentSubmittedEventDurability, CodingAgentSubmittedOperation,
-    CodingAgentSubmittedOperationStatus, CodingAgentSubmittedTerminalAnchor,
-    CodingAgentTerminalUncertainty,
+    CodingAgentRuntimeShutdownHandle, CodingAgentShutdownOutcome, CodingAgentSnapshot,
+    CodingAgentSnapshotCursor, CodingAgentSubmissionLease, CodingAgentSubmittedEventDurability,
+    CodingAgentSubmittedOperation, CodingAgentSubmittedOperationStatus,
+    CodingAgentSubmittedTerminalAnchor, CodingAgentTerminalUncertainty,
 };
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
@@ -387,6 +387,7 @@ impl CodingAgentSession {
         &mut self,
         operation: CodingAgentOperation,
     ) -> Result<CodingAgentOperationOutcome, CodingSessionError> {
+        self.snapshot_coordinator.ensure_runtime_running()?;
         let descriptor = operation.descriptor();
         let fingerprint = operation.submission_fingerprint();
         let submission = self.consume_submission_lease(descriptor, fingerprint.as_ref());
@@ -581,6 +582,26 @@ impl CodingAgentSession {
         CodingAgentProductEventReceiver::new(self.subscribe_product_events())
     }
 
+    pub fn runtime_shutdown_handle(&self) -> CodingAgentRuntimeShutdownHandle {
+        CodingAgentRuntimeShutdownHandle {
+            coordinator: self.snapshot_coordinator.clone(),
+        }
+    }
+
+    pub async fn shutdown(&mut self) -> Result<CodingAgentShutdownOutcome, CodingSessionError> {
+        if self.snapshot_coordinator.request_shutdown()
+            == snapshot_coordinator::RuntimeLifecycle::ShutDown
+        {
+            return Ok(CodingAgentShutdownOutcome::AlreadyShutDown);
+        }
+        self.snapshot_coordinator
+            .wait_for_active_operation_to_drain()
+            .await;
+        self.event_service.emit(CodingAgentEvent::RuntimeShutDown);
+        self.snapshot_coordinator.finish_shutdown();
+        Ok(CodingAgentShutdownOutcome::ShutDown)
+    }
+
     pub(crate) fn compact_cancellation_handle(
         &self,
     ) -> operation_control::CompactCancellationHandle {
@@ -625,6 +646,9 @@ impl CodingAgentSession {
             .map_err(|error| match error {
                 snapshot_coordinator::ClientRegistryError::ClientCapacityExceeded { limit } => {
                     CodingSessionError::ClientCapacityExceeded { limit }
+                }
+                snapshot_coordinator::ClientRegistryError::Lifecycle(reason) => {
+                    CodingSessionError::Lifecycle { reason }
                 }
                 other => CodingSessionError::Input {
                     message: other.to_string(),

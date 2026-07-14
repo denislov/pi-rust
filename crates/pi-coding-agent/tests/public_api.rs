@@ -847,6 +847,9 @@ async fn shutdown_drains_admitted_work_before_lifecycle_event_and_receiver_close
         .await
         .unwrap();
     let shutdown: CodingAgentRuntimeShutdownHandle = session.runtime_shutdown_handle();
+    let connection = session
+        .connect(CodingAgentClientId::new("shutdown-client"))
+        .unwrap();
     let mut events = session.subscribe_product_events_public();
     let running = tokio::spawn(async move {
         let outcome = session.run(CodingAgentOperation::Prompt(prompt)).await;
@@ -855,12 +858,46 @@ async fn shutdown_drains_admitted_work_before_lifecycle_event_and_receiver_close
     started_rx.await.unwrap();
 
     shutdown.request_shutdown();
+    assert_eq!(
+        connection.state().unwrap_err(),
+        CodingSessionError::Lifecycle {
+            reason: CodingAgentLifecycleRejection::RuntimeShutDown
+        }
+    );
+    assert_eq!(
+        connection
+            .prompt_control("active-prompt")
+            .abort(
+                CodingAgentControlId("shutdown-abort".into()),
+                "must not abort"
+            )
+            .unwrap_err()
+            .reason,
+        CodingAgentControlRejectionReason::RuntimeShutDown
+    );
     release_tx.send(()).unwrap();
     let (mut session, outcome) = running.await.unwrap();
     assert!(matches!(
         outcome.unwrap(),
         CodingAgentOperationOutcome::Prompt(_)
     ));
+    assert_eq!(
+        session
+            .run(CodingAgentOperation::ExportCurrent)
+            .await
+            .unwrap_err(),
+        CodingSessionError::Lifecycle {
+            reason: CodingAgentLifecycleRejection::RuntimeShutDown
+        }
+    );
+    assert_eq!(
+        session
+            .connect(CodingAgentClientId::new("late-shutdown-client"))
+            .unwrap_err(),
+        CodingSessionError::Lifecycle {
+            reason: CodingAgentLifecycleRejection::RuntimeShutDown
+        }
+    );
     assert_eq!(
         session.shutdown().await.unwrap(),
         CodingAgentShutdownOutcome::ShutDown

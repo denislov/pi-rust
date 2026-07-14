@@ -81,6 +81,19 @@ pub enum CodingAgentShutdownOutcome {
     AlreadyShutDown,
 }
 
+/// Cloneable Phase A authority that can stop new work while the unique owner is moved.
+#[derive(Debug, Clone)]
+pub struct CodingAgentRuntimeShutdownHandle {
+    pub(crate) coordinator: Arc<SnapshotCoordinator>,
+}
+
+impl CodingAgentRuntimeShutdownHandle {
+    /// Idempotently close admission and control without waiting, aborting, or publishing events.
+    pub fn request_shutdown(&self) {
+        self.coordinator.request_shutdown();
+    }
+}
+
 /// Public durability evidence for a root terminal event.
 ///
 /// This deliberately omits session identifiers and pending-write internals.
@@ -558,33 +571,37 @@ impl CodingAgentReconnectReceiver {
         loop {
             tokio::select! {
                 biased;
-                changed = self.lifecycle_receiver.changed() => {
-                    changed.map_err(|_| CodingSessionError::Cancelled)?;
-                    self.lifecycle_epoch = *self.lifecycle_receiver.borrow_and_update();
-                    self.ensure_live()?;
-                }
                 event = self.inner.recv() => {
                     let delivery = match event {
                         Ok(event) => self.project_event(event),
                         Err(CodingSessionError::EventStreamLag { .. }) => self.project_live_lag()?,
                         Err(error) => return Err(error),
                     };
-                    self.ensure_live()?;
+                    self.ensure_delivery_live(&delivery)?;
                     return Ok(delivery);
+                }
+                changed = self.lifecycle_receiver.changed() => {
+                    changed.map_err(|_| CodingSessionError::Cancelled)?;
+                    self.lifecycle_epoch = *self.lifecycle_receiver.borrow_and_update();
+                    self.ensure_live()?;
                 }
             }
         }
     }
 
     pub fn try_recv(&mut self) -> Result<Option<CodingAgentReconnectDelivery>, CodingSessionError> {
-        self.observe_lifecycle()?;
         let delivery = match self.inner.try_recv() {
             Ok(Some(event)) => Ok(Some(self.project_event(event))),
-            Ok(None) => Ok(None),
+            Ok(None) => {
+                self.observe_lifecycle()?;
+                Ok(None)
+            }
             Err(CodingSessionError::EventStreamLag { .. }) => self.project_live_lag().map(Some),
             Err(error) => Err(error),
         }?;
-        self.ensure_live()?;
+        if let Some(delivery) = delivery.as_ref() {
+            self.ensure_delivery_live(delivery)?;
+        }
         Ok(delivery)
     }
 
@@ -598,8 +615,33 @@ impl CodingAgentReconnectReceiver {
     fn ensure_live(&self) -> Result<(), CodingSessionError> {
         let _ = self.lifecycle_epoch;
         self.coordinator
-            .validate_handle(&self.handle)
+            .validate_receiver(&self.handle)
             .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    fn ensure_delivery_live(
+        &self,
+        delivery: &CodingAgentReconnectDelivery,
+    ) -> Result<(), CodingSessionError> {
+        match self.ensure_live() {
+            Ok(()) => Ok(()),
+            Err(CodingSessionError::Lifecycle {
+                reason: super::error::CodingAgentLifecycleRejection::RuntimeShutDown,
+            }) if matches!(
+                delivery,
+                CodingAgentReconnectDelivery::Event(event)
+                    if matches!(
+                        event.event(),
+                        super::public_event::CodingAgentProductEventKind::Runtime(
+                            super::public_event::CodingAgentRuntimeProductEvent::ShutDown
+                        )
+                    )
+            ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn project_event(&mut self, event: super::ProductEvent) -> CodingAgentReconnectDelivery {
