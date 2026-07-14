@@ -1415,6 +1415,8 @@ mod tests {
     fn prompt_descriptor() -> OperationDescriptor {
         OperationDescriptor {
             submitted_kind: OperationKind::Prompt,
+            admission_class: super::super::operation::OperationClass::SessionWriteRoot,
+            dispatch_mode: super::super::operation::OperationDispatchMode::Async,
             outcome_family: super::super::public_operation::OperationOutcomeFamily::Prompt,
             association:
                 super::super::public_operation::OperationAssociationClass::TerminalAssociated,

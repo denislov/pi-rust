@@ -4,7 +4,7 @@ use super::agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcom
 use super::agent_team_flow::{AgentTeamOptions, AgentTeamOutcome};
 use super::export::CodingAgentSessionExport;
 use super::export_flow::ExportOptions;
-use super::operation::{Operation, OperationOutcome};
+use super::operation::{Operation, OperationClass, OperationDispatchMode, OperationOutcome};
 use super::operation_control::OperationKind;
 use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
 use super::profiles::ProfileId;
@@ -155,6 +155,8 @@ pub(crate) enum OperationRootTerminalEvidence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OperationDescriptor {
     pub(crate) submitted_kind: OperationKind,
+    pub(crate) admission_class: OperationClass,
+    pub(crate) dispatch_mode: OperationDispatchMode,
     pub(crate) outcome_family: OperationOutcomeFamily,
     pub(crate) association: OperationAssociationClass,
     pub(crate) permitted_root_evidence: &'static [OperationRootTerminalEvidence],
@@ -186,79 +188,115 @@ const AGENT_TEAM_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
 
 impl CodingAgentOperation {
     pub(crate) fn descriptor(&self) -> OperationDescriptor {
-        let (submitted_kind, outcome_family, permitted_root_evidence) = match self {
+        let (
+            submitted_kind,
+            admission_class,
+            dispatch_mode,
+            outcome_family,
+            permitted_root_evidence,
+        ) = match self {
             Self::Prompt(_) => (
                 OperationKind::Prompt,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::Prompt,
                 PROMPT_ROOT_EVIDENCE,
             ),
             Self::Compact(_) => (
                 OperationKind::Compact,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::Compact,
                 COMPACT_ROOT_EVIDENCE,
             ),
             Self::BranchSummary { .. } => (
                 OperationKind::BranchSummary,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::BranchSummary,
                 &[][..],
             ),
             Self::SelfHealingEdit(_) => (
                 OperationKind::SelfHealingEdit,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::SelfHealingEdit,
                 SELF_HEALING_EDIT_ROOT_EVIDENCE,
             ),
             Self::InvokeAgent(_) => (
                 OperationKind::AgentInvocation,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::AgentInvocation,
                 AGENT_INVOCATION_ROOT_EVIDENCE,
             ),
             Self::InvokeTeam(_) => (
                 OperationKind::AgentTeam,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::AgentTeam,
                 AGENT_TEAM_ROOT_EVIDENCE,
             ),
             Self::PluginLoad => (
                 OperationKind::PluginLoad,
+                OperationClass::RuntimeWrite,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::PluginLoad,
                 &[][..],
             ),
             Self::PluginCommand { .. } => (
                 OperationKind::PluginCommand,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::SyncReadOnly,
                 OperationOutcomeFamily::PluginCommand,
                 &[][..],
             ),
             Self::SetDefaultAgentProfile { .. } => (
                 OperationKind::SetDefaultAgentProfile,
+                OperationClass::RuntimeWrite,
+                OperationDispatchMode::SyncMutable,
                 OperationOutcomeFamily::DefaultAgentProfileChanged,
                 &[][..],
             ),
             Self::ApproveDelegation { .. } => (
                 OperationKind::DelegationConfirmation,
+                OperationClass::NonSessionRoot,
+                OperationDispatchMode::Async,
                 OperationOutcomeFamily::DelegationApproved,
                 &[][..],
             ),
             Self::RejectDelegation { .. } => (
                 OperationKind::DelegationConfirmation,
+                OperationClass::Control,
+                OperationDispatchMode::SyncMutable,
                 OperationOutcomeFamily::DelegationRejected,
                 &[][..],
             ),
             Self::ForkSession { .. } => (
                 OperationKind::ForkSession,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::SyncMutable,
                 OperationOutcomeFamily::SessionForked,
                 &[][..],
             ),
             Self::SwitchActiveLeaf { .. } => (
                 OperationKind::SwitchActiveLeaf,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::SyncMutable,
                 OperationOutcomeFamily::ActiveLeafSwitched,
                 &[][..],
             ),
             Self::ExportCurrent => (
                 OperationKind::Export,
+                OperationClass::ReadOnly,
+                OperationDispatchMode::SyncReadOnly,
                 OperationOutcomeFamily::Export,
                 &[][..],
             ),
             Self::ExportCurrentHtml(_) => (
                 OperationKind::Export,
+                OperationClass::ReadOnly,
+                OperationDispatchMode::SyncReadOnly,
                 OperationOutcomeFamily::ExportHtml,
                 &[][..],
             ),
@@ -270,6 +308,8 @@ impl CodingAgentOperation {
         };
         OperationDescriptor {
             submitted_kind,
+            admission_class,
+            dispatch_mode,
             outcome_family,
             association,
             permitted_root_evidence,
@@ -973,6 +1013,7 @@ mod tests {
         );
         for case in &cases {
             let operation = (case.build_operation)().into_internal(PluginLoadOptions::new());
+            let metadata = operation.metadata();
             assert_eq!(
                 internal_operation_variant(&operation),
                 case.expected_internal,
@@ -980,11 +1021,23 @@ mod tests {
                 case.public_variant
             );
             assert_eq!(
-                operation.metadata().dispatch_mode,
-                case.expected_dispatch,
+                metadata.dispatch_mode, case.expected_dispatch,
                 "{} dispatch mode",
                 case.public_variant
             );
+            let descriptor = (case.build_operation)().descriptor();
+            assert_eq!(descriptor.dispatch_mode, metadata.dispatch_mode);
+            assert_eq!(descriptor.admission_class, metadata.class);
+            if let Some(static_kind) = metadata.static_kind {
+                assert_eq!(descriptor.submitted_kind, static_kind);
+            } else {
+                assert_eq!(
+                    descriptor.submitted_kind,
+                    OperationKind::DelegationConfirmation,
+                    "{} dynamic kind",
+                    case.public_variant
+                );
+            }
         }
     }
 
