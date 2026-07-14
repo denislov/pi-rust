@@ -18,7 +18,7 @@
 | M1 | 完成 | WP1.1/WP1.2 已完成；scoped provider runtime、单一 agent loop、lower-level facade 收窄、`pi-coding-agent` root deprecated re-export 删除 | 保持 facade boundary 不回退 |
 | M2 | 进行中 | WP2.1 admission descriptor 已统一 class/dispatch/kind 合同（`c3df909`），admission record 已保存 operation identity、capability generation 和 root/child lineage（`e4c8b2a`）；WP2.2 scheduler core 已接入 canonical dispatchers，提供 typed rejection（`68cc0dc`、`788238d`）；prompt/compact/async vertical slice 已迁移（`4e8515b`）；invocation/delegation 与 profile/runtime slice 已由 canonical operation 集成测试覆盖，delegated child operation 已进入 scheduler lineage admission（`60b61c1`） | 完成 workflow/control 与 session-navigation slices，扩展 child permit 到 cancellation/terminal association |
 | M3 | 进行中 | WP3.1 event/manifest decoder 已改为 explicit schema/version dispatch；v2 event 缺失 `session_sequence` 仍可兼容 replay，unknown decoder fail closed 并提供恢复建议（`88ddab4`）；WP3.2 已强制 durable sequence 从 1 连续递增，legacy 无 sequence 行按逻辑行号归一化（`b6e1218`） | 定义 append CAS/idempotency 与 partial commit 合同，扩展故障注入矩阵 |
-| M4 | 进行中 | WP4.3 已移除 `capability_snapshot.rs` 文件级 dead-code suppression，删除无 production consumer 的 plugin actor、tool-name enumeration、filesystem/shell require helpers 及测试 helper（`e2f3265`） | 审计 raw service capability escape，完成 generation/revocation 与 snapshot audit 统一 |
+| M4 | 进行中 | WP4.3 已移除 `capability_snapshot.rs` 文件级 dead-code suppression，删除无 production consumer 的 plugin actor、tool-name enumeration、filesystem/shell require helpers 及测试 helper（`e2f3265`）；WP4.2 删除未实现的 `CancelMatchingOperations` revocation mode，public event/protocol 只保留真实支持的 `FutureOnly`（`0730e44`） | 审计 raw service capability escape，完成 generation/revocation 与 snapshot audit 统一 |
 | M5-M7 | 未开始 | - | 按依赖顺序执行 |
 
 已提交检查点：
@@ -53,6 +53,7 @@
 - `88ddab4`：将 manifest/event 读取改为显式 schema/version decoder dispatch；保留 v1 manifest 与 v2 event（含无 `session_sequence`）兼容，unknown decoder fail closed 并输出 schema/version/event id/recovery context。
 - `b6e1218`：在 durable event read 和 append preflight 中共享连续 sequence validator；旧日志无 sequence 时按行号兼容归一化，显式跳号或重复 event sequence fail closed。
 - `e2f3265`：移除 `capability_snapshot.rs` 文件级 dead-code suppression，删除无生产消费者的 plugin actor、tool-name enumeration、filesystem/shell require helpers 及其仅验证死表面的测试。
+- `0730e44`：删除无生产实现的 `CancelMatchingOperations` revocation mode 及其 public event/protocol 映射，避免暴露不会实际取消 active operation 的能力声明。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -82,6 +83,9 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --test product_runtime_boundary_guards delegated_child_flows_require_scheduler_lineage_admission -- --exact`：child scheduler lineage boundary guard 通过。
 - `cargo test -p pi-coding-agent --lib session_log::store --no-fail-fast`：16 个 manifest/event decoder、durable sequence 与 store 测试通过。
 - `cargo test -p pi-coding-agent --lib capability_snapshot --no-fail-fast`：10 个 capability snapshot/runtime filter 测试通过。
+- `cargo test -p pi-coding-agent --test protocol_events --no-fail-fast`：13 个 typed protocol event 测试通过。
+- `cargo test -p pi-coding-agent --lib public_event --no-fail-fast`：3 个 public event contract 测试通过。
+- `cargo test -p pi-coding-agent --lib event_service --no-fail-fast`：27 个 event/generation 测试通过。
 
 ## 激进方案决策
 
