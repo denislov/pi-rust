@@ -559,10 +559,10 @@ pub enum RpcCommand {
         #[serde(rename = "streamingBehavior")]
         streaming_behavior: Option<StreamingBehavior>,
         #[serde(
-            rename = "afterSnapshotSequence",
+            rename = "afterSnapshotCursor",
             skip_serializing_if = "Option::is_none"
         )]
-        after_snapshot_sequence: Option<u64>,
+        after_snapshot_cursor: Option<crate::coding_session::CodingAgentSnapshotCursor>,
         #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
     },

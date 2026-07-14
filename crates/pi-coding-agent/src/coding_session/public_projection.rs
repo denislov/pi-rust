@@ -341,6 +341,7 @@ impl CodingAgentSubmissionLease {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodingAgentSnapshotCursor {
     pub stream_id: String,
     pub snapshot_protocol_major: u32,

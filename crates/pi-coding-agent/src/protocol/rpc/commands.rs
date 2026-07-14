@@ -2,8 +2,8 @@ use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentP
 use crate::coding_session::{
     AgentProfile, CodingAgentControlId, CodingAgentSession, CodingAgentSessionOptions,
     CodingAgentShutdownOutcome, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
-    OperationKind, PendingDelegationConfirmation, ProductEventReceiver, ProductEventSequence,
-    ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
+    OperationKind, PendingDelegationConfirmation, ProductEventReceiver, ProfileDiagnostic,
+    ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
     SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
     SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
     SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
@@ -169,7 +169,7 @@ impl RpcState {
                 message,
                 images,
                 streaming_behavior,
-                after_snapshot_sequence,
+                after_snapshot_cursor,
                 idempotency_key,
             } => {
                 self.handle_prompt(
@@ -177,7 +177,7 @@ impl RpcState {
                     message,
                     images,
                     streaming_behavior,
-                    after_snapshot_sequence.map(ProductEventSequence::new),
+                    after_snapshot_cursor,
                     idempotency_key,
                     writer,
                 )
@@ -1723,6 +1723,35 @@ pub(super) fn has_images(images: &Option<Vec<pi_ai::api::ContentBlock>>) -> bool
 mod tests {
     use super::*;
     use crate::coding_session::{CodingAgentEvent, CodingAgentSession, CodingAgentSessionOptions};
+    use serde_json::json;
+
+    #[test]
+    fn rpc_prompt_uses_versioned_snapshot_cursor_wire_shape() {
+        let command: RpcCommand = serde_json::from_value(json!({
+            "type": "prompt",
+            "message": "resume",
+            "afterSnapshotCursor": {
+                "streamId": "session-1",
+                "snapshotProtocolMajor": 1,
+                "lastEventSequence": 7,
+                "capabilityGeneration": 3
+            }
+        }))
+        .unwrap();
+
+        let RpcCommand::Prompt {
+            after_snapshot_cursor,
+            ..
+        } = command
+        else {
+            panic!("expected prompt command");
+        };
+        let cursor = after_snapshot_cursor.expect("cursor must be decoded");
+        assert_eq!(cursor.stream_id, "session-1");
+        assert_eq!(cursor.snapshot_protocol_major, 1);
+        assert_eq!(cursor.last_event_sequence, 7);
+        assert_eq!(cursor.capability_generation, 3);
+    }
 
     #[tokio::test]
     async fn rpc_sync_product_event_drain_reports_receiver_lag() {

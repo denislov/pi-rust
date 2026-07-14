@@ -2,8 +2,8 @@ use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, CodingAgentControlId, CodingAgentDraft,
     CodingAgentDraftId, CodingAgentDraftKind, CodingAgentReconnect, CodingAgentSession,
-    CodingAgentSessionOptions, CodingAgentShutdownOutcome, CodingSessionError,
-    OperationIdempotencyKey, OperationKind, ProductEvent, ProductEventReceiver,
+    CodingAgentSessionOptions, CodingAgentShutdownOutcome, CodingAgentSnapshotCursor,
+    CodingSessionError, OperationIdempotencyKey, OperationKind, ProductEvent, ProductEventReceiver,
     ProductEventSequence, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
 };
 use crate::error::CliError;
@@ -33,7 +33,7 @@ impl RpcState {
         message: String,
         images: Option<Vec<pi_ai::api::ContentBlock>>,
         streaming_behavior: Option<StreamingBehavior>,
-        after_snapshot_sequence: Option<ProductEventSequence>,
+        after_snapshot_cursor: Option<CodingAgentSnapshotCursor>,
         idempotency_key: Option<String>,
         writer: &mut W,
     ) -> Result<(), CliError>
@@ -48,12 +48,12 @@ impl RpcState {
                 return Ok(());
             }
         };
-        if self.is_streaming() && after_snapshot_sequence.is_some() {
+        if self.is_streaming() && after_snapshot_cursor.is_some() {
             self.handle_streaming_prompt(
                 id,
                 message,
                 streaming_behavior,
-                after_snapshot_sequence,
+                after_snapshot_cursor,
                 writer,
             )
             .await?;
@@ -90,7 +90,7 @@ impl RpcState {
                 id,
                 message,
                 streaming_behavior,
-                after_snapshot_sequence,
+                after_snapshot_cursor,
                 writer,
             )
             .await?;
@@ -106,14 +106,14 @@ impl RpcState {
         id: Option<String>,
         message: String,
         streaming_behavior: Option<StreamingBehavior>,
-        after_snapshot_sequence: Option<ProductEventSequence>,
+        after_snapshot_cursor: Option<CodingAgentSnapshotCursor>,
         writer: &mut W,
     ) -> Result<(), CliError>
     where
         W: AsyncWrite + Unpin,
     {
-        if let Some(cursor) = after_snapshot_sequence {
-            let replayed = match reconnect_running_prompt_after(self, cursor).await {
+        if let Some(cursor) = after_snapshot_cursor {
+            let replayed = match reconnect_running_prompt_after(self, &cursor).await {
                 Ok(replayed) => replayed,
                 Err(error @ CodingSessionError::EventStreamGap { .. }) => {
                     write_rpc_response(
@@ -1194,7 +1194,7 @@ async fn drain_product_events_to_rpc_queue(
 
 pub(super) async fn reconnect_running_prompt_after(
     state: &mut RpcState,
-    cursor: ProductEventSequence,
+    cursor: &CodingAgentSnapshotCursor,
 ) -> Result<Vec<ProtocolEvent>, CodingSessionError> {
     let Some(RunningPrompt::Coding(mut running)) = state.running.take() else {
         return Ok(Vec::new());
@@ -1203,7 +1203,7 @@ pub(super) async fn reconnect_running_prompt_after(
         state.running = Some(RunningPrompt::Coding(running));
         return Ok(Vec::new());
     };
-    let recovery = match connection.reconnect(cursor.get()) {
+    let recovery = match connection.reconnect_from_cursor(cursor) {
         Ok(recovery) => recovery,
         Err(error) => {
             state.running = Some(RunningPrompt::Coding(running));
@@ -1777,5 +1777,7 @@ mod tests {
         assert!(state_source.contains("Receiver<RpcQueuedProductEvent>"));
         assert!(rpc_source.contains("CodingEvent(Option<RpcQueuedProductEvent>)"));
         assert!(prompt_source.contains(&product_adapter));
+        assert!(prompt_source.contains("connection.reconnect_from_cursor(cursor)"));
+        assert!(!prompt_source.contains("connection.reconnect(cursor.get())"));
     }
 }
