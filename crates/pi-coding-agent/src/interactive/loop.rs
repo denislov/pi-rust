@@ -2923,12 +2923,11 @@ mod tests {
         let log_path = event_log_path(temp.path(), session_id);
         let previous_line_count = event_log_line_count(&log_path);
         session.arm_update_manifest_failure_for_tests(0);
-        let task = PromptTask::spawn_prompt(
-            prompt_run_options(api, "hello"),
-            Some(session),
-            ProfileId::from("default"),
-        )
-        .unwrap();
+        let mut prompt_options = prompt_run_options(api, "hello");
+        prompt_options.ai_client = Some(_provider_guard.ai_client());
+        let task =
+            PromptTask::spawn_prompt(prompt_options, Some(session), ProfileId::from("default"))
+                .unwrap();
         let (completion, events) = await_prompt_task(task).await;
         let (outcome_operation_id, partial_commit_operation_id, expected_error) = match &completion
         {
@@ -3016,12 +3015,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let session_id = "sess_real_fork_failure";
         let mut session = persistent_session(temp.path(), session_id).await;
+        let mut source_options = prompt_run_options(api, "create source leaf");
+        source_options.ai_client = Some(_provider_guard.ai_client());
         let source_prompt = session
             .run(CodingAgentOperation::Prompt(
-                PromptTurnOptions::from_prompt_run_options(prompt_run_options(
-                    api,
-                    "create source leaf",
-                )),
+                PromptTurnOptions::from_prompt_run_options(source_options),
             ))
             .await
             .unwrap();
@@ -3035,8 +3033,10 @@ mod tests {
         assert_eq!(initial_session_count, 1);
         let mut source_receiver = session.subscribe_product_events();
         session.arm_append_events_failure_for_tests(0);
+        let mut fork_options = prompt_run_options(api, "unused fork prompt");
+        fork_options.ai_client = Some(_provider_guard.ai_client());
         let task = PromptTask::spawn_fork_session(
-            prompt_run_options(api, "unused fork prompt"),
+            fork_options,
             Some(session),
             None,
             None,

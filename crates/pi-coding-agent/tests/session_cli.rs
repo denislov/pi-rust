@@ -38,12 +38,17 @@ fn text_response(text: &str) -> FauxResponse {
     }
 }
 
-fn test_options(api: &str, cwd: &std::path::Path, sessions: &std::path::Path) -> CliRunOptions {
+fn test_options(
+    api: &str,
+    cwd: &std::path::Path,
+    sessions: &std::path::Path,
+    ai_client: pi_ai::AiClient,
+) -> CliRunOptions {
     CliRunOptions {
         model_override: Some(faux_model(api)),
         tools: Vec::new(),
         register_builtins: false,
-        ai_client: None,
+        ai_client: Some(ai_client),
         session: SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: cwd.to_path_buf(),
@@ -74,12 +79,12 @@ async fn continue_uses_previous_session_context() {
             }])),
         ),
     ]);
-    let options1 = test_options(api1, &cwd, &sessions);
+    let options1 = test_options(api1, &cwd, &sessions, _provider_guard.ai_client());
     let first = run_cli_with_options(vec!["-p".into(), "first".into()], options1).await;
     assert_eq!(first.exit_code, 0);
     assert_eq!(first.stdout, "first answer\n");
 
-    let options2 = test_options(api2, &cwd, &sessions);
+    let options2 = test_options(api2, &cwd, &sessions, _provider_guard.ai_client());
     let second = run_cli_with_options(
         vec!["--continue".into(), "-p".into(), "second".into()],
         options2,
@@ -104,7 +109,7 @@ async fn no_session_does_not_write_files() {
         model_override: Some(faux_model(api)),
         tools: Vec::new(),
         register_builtins: false,
-        ai_client: None,
+        ai_client: Some(_provider_guard.ai_client()),
         session: SessionRunOptions {
             mode: SessionMode::Disabled,
             cwd: cwd.clone(),
@@ -144,7 +149,7 @@ async fn session_path_target_opens_rust_native_session_directory() {
             Arc::new(FauxProvider::simple_text("second")),
         ),
     ]);
-    let options1 = test_options(api1, &cwd, &sessions);
+    let options1 = test_options(api1, &cwd, &sessions, _provider_guard.ai_client());
 
     let result = run_cli_with_options(
         vec![
@@ -160,7 +165,7 @@ async fn session_path_target_opens_rust_native_session_directory() {
 
     assert!(sessions.join("path-test-id").join("session.json").is_file());
 
-    let options2 = test_options(api2, &cwd, &sessions);
+    let options2 = test_options(api2, &cwd, &sessions, _provider_guard.ai_client());
     let session_path = sessions.join("path-test-id").display().to_string();
 
     let result = run_cli_with_options(
@@ -201,7 +206,7 @@ async fn session_id_creates_and_reopens() {
             Arc::new(FauxProvider::simple_text("second")),
         ),
     ]);
-    let options1 = test_options(api1, &cwd, &sessions);
+    let options1 = test_options(api1, &cwd, &sessions, _provider_guard.ai_client());
 
     let result = run_cli_with_options(
         vec![
@@ -215,7 +220,7 @@ async fn session_id_creates_and_reopens() {
     .await;
     assert_eq!(result.exit_code, 0);
 
-    let options2 = test_options(api2, &cwd, &sessions);
+    let options2 = test_options(api2, &cwd, &sessions, _provider_guard.ai_client());
 
     let result = run_cli_with_options(
         vec![
@@ -250,7 +255,7 @@ async fn fork_target_routes_through_rust_native_print_session_cli() {
             Arc::new(FauxProvider::simple_text("fork")),
         ),
     ]);
-    let options1 = test_options(api1, &cwd, &sessions);
+    let options1 = test_options(api1, &cwd, &sessions, _provider_guard.ai_client());
 
     let result = run_cli_with_options(
         vec![
@@ -264,7 +269,7 @@ async fn fork_target_routes_through_rust_native_print_session_cli() {
     .await;
     assert_eq!(result.exit_code, 0);
 
-    let options2 = test_options(api2, &cwd, &sessions);
+    let options2 = test_options(api2, &cwd, &sessions, _provider_guard.ai_client());
     let result = run_cli_with_options(
         vec![
             "--fork".into(),
@@ -304,7 +309,7 @@ async fn name_does_not_write_legacy_session_info_entry() {
     let api = "session-cli-name";
     let _provider_guard =
         ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("answer")));
-    let options = test_options(api, &cwd, &sessions);
+    let options = test_options(api, &cwd, &sessions, _provider_guard.ai_client());
 
     let result = run_cli_with_options(
         vec![
@@ -359,7 +364,7 @@ async fn continue_maintains_parent_chain() {
             Arc::new(FauxProvider::simple_text("second response")),
         ),
     ]);
-    let options1 = test_options(api1, &cwd, &sessions);
+    let options1 = test_options(api1, &cwd, &sessions, _provider_guard.ai_client());
     let result = run_cli_with_options(
         vec![
             "--session-id".into(),
@@ -372,7 +377,7 @@ async fn continue_maintains_parent_chain() {
     .await;
     assert_eq!(result.exit_code, 0);
 
-    let options2 = test_options(api2, &cwd, &sessions);
+    let options2 = test_options(api2, &cwd, &sessions, _provider_guard.ai_client());
     let result = run_cli_with_options(
         vec![
             "--session-id".into(),
@@ -407,7 +412,7 @@ async fn session_dir_flag_writes_to_custom_path() {
         model_override: Some(faux_model(api)),
         tools: Vec::new(),
         register_builtins: false,
-        ai_client: None,
+        ai_client: Some(_provider_guard.ai_client()),
         session: SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: cwd.clone(),

@@ -1370,7 +1370,7 @@ impl CodingAgentSession {
         now: String,
     ) -> Result<(), CodingSessionError> {
         let mut ids = SystemIdGenerator;
-        let pending = self.delegation_confirmation_service.approve_pending(
+        let mut pending = self.delegation_confirmation_service.approve_pending(
             &mut self.persistence,
             &mut self.pending_delegation_confirmations,
             &self.event_service,
@@ -1379,6 +1379,9 @@ impl CodingAgentSession {
             &now,
             ids.next_operation_id(),
         )?;
+        if let Some(runtime) = pending.prompt_options.runtime_mut() {
+            self.runtime_service.install_provider_runtime(runtime);
+        }
         let outcome = match pending.request.target_kind {
             ProfileKind::Agent => {
                 self.delegation_execution_service
@@ -2791,6 +2794,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_plugin_load_owner")
                 .with_session_log_root(temp.path()),
         )
@@ -3290,9 +3294,11 @@ runtime = "lua"
                 FauxProvider::text_call("replacement answer", StopReason::Stop),
             ])),
         );
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider.ai_client()),
+        )
+        .await
+        .unwrap();
         let connection = session
             .connect(public_projection::CodingAgentClientId::new(
                 "prepared-prompt-exact-client",
@@ -3725,9 +3731,11 @@ runtime = "lua"
                 contexts, started_tx, release_rx,
             )),
         );
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
         let client_id = public_projection::CodingAgentClientId::new("public-prompt-drop-client");
         let connection = session.connect(client_id.clone()).unwrap();
         let draft_id = public_projection::CodingAgentDraftId("public-prompt-drop-draft".into());
@@ -3811,9 +3819,11 @@ runtime = "lua"
                 )),
             ),
         ]);
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
         let connection_a = session
             .connect(public_projection::CodingAgentClientId::new(
                 "public-prompt-a-client",
@@ -3939,9 +3949,11 @@ runtime = "lua"
             api,
             Arc::new(FauxProvider::simple_text("completed")),
         );
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
         let connection = session
             .connect(public_projection::CodingAgentClientId::new(
                 "public-prompt-completed-client",
@@ -4002,9 +4014,11 @@ runtime = "lua"
                 contexts, started_tx, release_rx,
             )),
         );
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
         let client_id = public_projection::CodingAgentClientId::new("public-prompt-detach-client");
         let connection = session.connect(client_id.clone()).unwrap();
         let draft_id = public_projection::CodingAgentDraftId("detach-drop-draft".into());
@@ -4232,9 +4246,11 @@ runtime = "lua"
                 release_rx,
             )),
         );
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
         let handle = session.prompt_control_handle().unwrap();
 
         let mut prompt =
@@ -4348,6 +4364,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_canonical_dispatch_families")
                 .with_session_log_root(temp.path()),
         )
@@ -4472,6 +4489,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_canonical_switch_active_leaf")
                 .with_session_log_root(temp.path()),
         )
@@ -4542,6 +4560,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_canonical_fork_source")
                 .with_session_log_root(temp.path()),
         )
@@ -4625,6 +4644,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_canonical_fork_owner_continuity")
                 .with_session_log_root(temp.path()),
         )
@@ -4742,6 +4762,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_canonical_switch_partial_commit")
                 .with_session_log_root(temp.path()),
         )
@@ -5140,6 +5161,7 @@ runtime = "lua"
         );
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_prompt")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
@@ -5336,9 +5358,11 @@ runtime = "lua"
             api,
             Arc::new(FauxProvider::simple_text("transient answer")),
         );
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
         let mut events = session.subscribe_product_events();
 
         let outcome = prompt_outcome(
@@ -5388,9 +5412,11 @@ runtime = "lua"
                 )),
             ),
         ]);
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
 
         prompt_outcome(
             session
@@ -5453,6 +5479,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_prompt_error")
                 .with_session_log_root(temp.path()),
         )
@@ -5515,6 +5542,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_branch_summary_owner")
                 .with_session_log_root(temp.path()),
         )
@@ -5613,6 +5641,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_branch_summary_navigation_reuse")
                 .with_session_log_root(temp.path()),
         )
@@ -5722,6 +5751,7 @@ runtime = "lua"
         );
         let temp = tempfile::tempdir().unwrap();
         let source_options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_canonical_navigation_durability")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(source_options.clone())
@@ -5892,6 +5922,7 @@ runtime = "lua"
         );
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_canonical_mutation_boundaries")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
@@ -6003,6 +6034,7 @@ runtime = "lua"
         );
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_canonical_plugin_profile_delegation")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
@@ -6270,6 +6302,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_compact")
                 .with_session_log_root(temp.path()),
         )
@@ -6552,15 +6585,14 @@ runtime = "lua"
     #[tokio::test]
     async fn compact_cancellation_reaches_canonical_run_and_preserves_operation_id() {
         let seed_api = "coding-session-compact-cancellation-seed";
-        let seed_provider = crate::test_support::ProviderGuard::register(
-            seed_api,
-            Arc::new(FauxProvider::simple_text("seed answer")),
-        );
+        let ai_client = AiClient::new();
+        ai_client.register_provider(seed_api, Arc::new(FauxProvider::simple_text("seed answer")));
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
                 .with_session_id("sess_compact_cancellation")
-                .with_session_log_root(temp.path()),
+                .with_session_log_root(temp.path())
+                .with_ai_client(ai_client.clone()),
         )
         .await
         .unwrap();
@@ -6573,13 +6605,13 @@ runtime = "lua"
                 .await
                 .unwrap(),
         );
-        drop(seed_provider);
+        ai_client.unregister_provider(seed_api);
 
         let compact_api = "coding-session-compact-cancellation";
         let contexts = Arc::new(Mutex::new(Vec::new()));
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
-        let _provider = crate::test_support::ProviderGuard::register(
+        ai_client.register_provider(
             compact_api,
             Arc::new(BlockingTwoTurnProvider::new(
                 contexts, started_tx, release_rx,
@@ -6660,6 +6692,7 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
             CodingAgentSessionOptions::new()
+                .with_ai_client(_provider_guard.ai_client())
                 .with_session_id("sess_compact_failure")
                 .with_session_log_root(temp.path()),
         )
@@ -6754,6 +6787,7 @@ runtime = "lua"
         ]);
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_hydrate")
             .with_session_log_root(temp.path());
         let mut created = CodingAgentSession::create(options.clone()).await.unwrap();
@@ -6846,6 +6880,7 @@ runtime = "lua"
         ]);
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_tool_hydrate")
             .with_session_log_root(temp.path());
         let mut created = CodingAgentSession::create(options.clone()).await.unwrap();
@@ -6957,6 +6992,7 @@ runtime = "lua"
         );
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_export_html")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(options).await.unwrap();

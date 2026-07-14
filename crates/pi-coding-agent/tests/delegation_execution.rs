@@ -73,6 +73,7 @@ system_prompt = "Coder child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -134,10 +135,13 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
         ],
     );
 
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd),
+    )
+    .await
+    .unwrap();
     let mut events = session.subscribe_product_events_public();
 
     let outcome = session
@@ -221,6 +225,7 @@ async fn delegated_helper_receives_minimal_context_without_parent_transcript() {
 
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_session_log_root(&sessions)
             .with_session_id("sess_default_helper_minimal_context"),
@@ -318,6 +323,7 @@ async fn persistent_default_helper_delegation_exports_folded_block() {
 
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_session_log_root(&sessions)
             .with_session_id("sess_default_helper_export"),
@@ -428,6 +434,7 @@ system_prompt = "Coder child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -534,6 +541,7 @@ system_prompt = "Reviewer child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -638,6 +646,7 @@ system_prompt = "Reviewer child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -749,6 +758,7 @@ system_prompt = "Reviewer child instructions."
         &cwd,
         &sessions,
         "sess_nested_delegation_pending_approve",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -774,6 +784,7 @@ system_prompt = "Reviewer child instructions."
         &cwd,
         &sessions,
         "sess_nested_delegation_pending_approve",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -818,6 +829,7 @@ system_prompt = "Reviewer child instructions."
         &cwd,
         &sessions,
         "sess_nested_delegation_pending_approve",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -918,6 +930,7 @@ system_prompt = "QA child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -1016,6 +1029,7 @@ allowed_agents = ["delegating-planner"]
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -1111,6 +1125,7 @@ members = ["coder"]
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -1195,6 +1210,7 @@ system_prompt = "Coder child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -1284,6 +1300,7 @@ system_prompt = "Coder child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -1383,6 +1400,7 @@ system_prompt = "Coder child instructions."
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -1459,6 +1477,7 @@ async fn persistent_session_reopens_pending_delegation_confirmation() {
         &cwd,
         &sessions,
         "sess_delegation_pending_restore",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1481,6 +1500,7 @@ async fn persistent_session_reopens_pending_delegation_confirmation() {
         &cwd,
         &sessions,
         "sess_delegation_pending_restore",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1529,6 +1549,7 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
         &cwd,
         &sessions,
         "sess_delegation_pending_approve",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1551,6 +1572,7 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
         &cwd,
         &sessions,
         "sess_delegation_pending_approve",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1594,6 +1616,7 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
         &cwd,
         &sessions,
         "sess_delegation_pending_approve",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1629,6 +1652,7 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
         &cwd,
         &sessions,
         "sess_delegation_pending_reject",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1651,6 +1675,7 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
         &cwd,
         &sessions,
         "sess_delegation_pending_reject",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1691,6 +1716,7 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
         &cwd,
         &sessions,
         "sess_delegation_pending_reject",
+        _provider_guard.ai_client(),
     ))
     .await
     .unwrap();
@@ -1737,6 +1763,7 @@ allowed_agents = ["missing-coder"]
 
     let mut session = CodingAgentSession::non_persistent(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_default_agent_profile_id("delegating-planner"),
     )
@@ -1806,8 +1833,10 @@ fn persistent_confirmation_session_options(
     cwd: &Path,
     sessions: &Path,
     session_id: &str,
+    ai_client: pi_ai::AiClient,
 ) -> CodingAgentSessionOptions {
     CodingAgentSessionOptions::new()
+        .with_ai_client(ai_client)
         .with_cwd(cwd)
         .with_session_id(session_id)
         .with_session_log_root(sessions)
@@ -2039,10 +2068,14 @@ impl ApiProvider for ScriptedProvider {
 }
 
 struct ProviderGuard {
-    _guard: RegistryProviderGuard<'static>,
+    _guard: RegistryProviderGuard,
 }
 
 impl ProviderGuard {
+    fn ai_client(&self) -> pi_ai::AiClient {
+        self._guard.ai_client()
+    }
+
     fn register(
         api: &str,
         calls: Arc<Mutex<Vec<RecordedCall>>>,

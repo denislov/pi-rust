@@ -14,8 +14,9 @@ use pi_ai::types::{
 };
 use pi_coding_agent::interactive::test_harness::{
     ScriptedInputDriver, ScriptedInteractiveOutput, run_scripted_idle_interactive,
-    run_scripted_idle_interactive_with_delays, run_scripted_idle_interactive_with_size,
-    run_scripted_interactive, run_scripted_interactive_with_observed_provider_driver,
+    run_scripted_idle_interactive_with_ai_client, run_scripted_idle_interactive_with_delays,
+    run_scripted_idle_interactive_with_size, run_scripted_interactive,
+    run_scripted_interactive_with_observed_provider_driver,
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
@@ -1094,7 +1095,11 @@ async fn scripted_interactive_model_command_changes_next_prompt_model() {
         }),
     );
 
-    let output = run_scripted_idle_interactive("/model claude-haiku-4-5\rhi\r").await;
+    let output = run_scripted_idle_interactive_with_ai_client(
+        "/model claude-haiku-4-5\rhi\r",
+        _provider_guard.ai_client(),
+    )
+    .await;
 
     output.unwrap();
     assert_eq!(
@@ -1218,7 +1223,11 @@ async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider()
     env.remove("OPENAI_API_KEY");
     env.remove("ANTHROPIC_API_KEY");
 
-    let output = run_scripted_idle_interactive("/model gpt-5\rhi\r").await;
+    let output = run_scripted_idle_interactive_with_ai_client(
+        "/model gpt-5\rhi\r",
+        _provider_guard.ai_client(),
+    )
+    .await;
 
     output.unwrap();
     assert_eq!(model_ids.lock().unwrap().as_slice(), &["gpt-5".to_string()]);

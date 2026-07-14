@@ -121,6 +121,7 @@ async fn run_contract_fixture() -> ContractFixture {
 
     let mut persistent_session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider.ai_client())
             .with_cwd(&cwd)
             .with_session_id("sess_product_event_contract")
             .with_session_log_root(temp.path().join("sessions")),
@@ -134,10 +135,13 @@ async fn run_contract_fixture() -> ContractFixture {
         .unwrap();
     let persistent = drain(&mut persistent_receiver);
 
-    let mut non_persistent_session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
-            .await
-            .unwrap();
+    let mut non_persistent_session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider.ai_client())
+            .with_cwd(&cwd),
+    )
+    .await
+    .unwrap();
     let mut non_persistent_receiver = non_persistent_session.subscribe_product_events_public();
     non_persistent_session
         .run(CodingAgentOperation::Prompt(prompt_options(api, &cwd)))

@@ -145,10 +145,9 @@ pub(crate) mod test_support {
     use std::sync::{Arc, Mutex, MutexGuard};
 
     use pi_ai::AiClient;
-    use pi_ai::registry::{self, ApiProvider};
+    use pi_ai::registry::ApiProvider;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-    static PROVIDER_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
     pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
         ENV_LOCK
@@ -205,50 +204,26 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) struct ProviderGuard<'a> {
-        _lock: MutexGuard<'a, ()>,
-        previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+    pub(crate) struct ProviderGuard {
         ai_client: AiClient,
     }
 
     #[allow(dead_code)]
-    impl ProviderGuard<'static> {
+    impl ProviderGuard {
         pub(crate) fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
             Self::register_many(vec![(api.into(), provider)])
         }
 
         pub(crate) fn register_many(providers: Vec<(String, Arc<dyn ApiProvider>)>) -> Self {
-            let lock = PROVIDER_REGISTRY_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let mut previous = Vec::with_capacity(providers.len());
             let ai_client = AiClient::new();
             for (api, provider) in providers {
-                let prior = registry::lookup(&api);
-                registry::register(&api, provider.clone());
-                ai_client.register_provider(api.clone(), provider);
-                previous.push((api, prior));
+                ai_client.register_provider(api, provider);
             }
-            Self {
-                _lock: lock,
-                previous,
-                ai_client,
-            }
+            Self { ai_client }
         }
 
         pub(crate) fn ai_client(&self) -> AiClient {
             self.ai_client.clone()
-        }
-    }
-
-    impl Drop for ProviderGuard<'_> {
-        fn drop(&mut self) {
-            for (api, previous) in self.previous.drain(..).rev() {
-                match previous {
-                    Some(provider) => registry::register(&api, provider),
-                    None => registry::unregister(&api),
-                }
-            }
         }
     }
 }

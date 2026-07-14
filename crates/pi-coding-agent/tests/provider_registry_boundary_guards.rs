@@ -1,12 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const ALLOWED_DIRECT_MUTATION_FILES: &[&str] = &[
-    "crates/pi-coding-agent/src/lib.rs",
-    "crates/pi-coding-agent/tests/support/mod.rs",
-    "crates/pi-coding-agent/tests/support_guards.rs",
-    "crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs",
-];
+const ALLOWED_DIRECT_MUTATION_FILES: &[&str] =
+    &["crates/pi-coding-agent/tests/provider_registry_boundary_guards.rs"];
 
 const ALLOWED_GLOBAL_BUILTIN_REGISTRATION_FILES: &[&str] = &[
     "crates/pi-coding-agent/src/coding_session/runtime_service.rs",
@@ -21,7 +17,7 @@ const ALLOWED_GLOBAL_STREAM_MODEL_FILES: &[&str] = &[
 const GLOBAL_PROVIDER_COMPATIBILITY_MARKER: &str = "global provider runtime compatibility example";
 
 #[test]
-fn pi_coding_agent_tests_use_provider_guard_for_global_registry_mutation() {
+fn pi_coding_agent_sources_do_not_mutate_the_global_provider_registry() {
     let scan = SourceScan::new();
     let mut violations = Vec::new();
 
@@ -31,7 +27,7 @@ fn pi_coding_agent_tests_use_provider_guard_for_global_registry_mutation() {
 
     assert!(
         violations.is_empty(),
-        "direct pi_ai::registry mutation must stay behind ProviderGuard:\n{}",
+        "pi-coding-agent must use scoped AiClient registration, not global registry mutation:\n{}",
         violations.join("\n")
     );
 }

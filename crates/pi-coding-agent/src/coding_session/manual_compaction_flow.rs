@@ -590,7 +590,8 @@ mod tests {
         let cancellation = CancellationToken::new();
         cancellation.cancel();
         let mut context = ManualCompactionContext::new(
-            ManualCompactionOptions::new(compact_runtime(api)).with_cancellation(cancellation),
+            ManualCompactionOptions::new(compact_runtime(api, _provider_guard.ai_client()))
+                .with_cancellation(cancellation),
             replay,
             transaction,
             snapshot,
@@ -624,7 +625,10 @@ mod tests {
         }
     }
 
-    fn compact_runtime(api: &str) -> super::super::prompt::RuntimeSnapshot {
+    fn compact_runtime(
+        api: &str,
+        ai_client: pi_ai::AiClient,
+    ) -> super::super::prompt::RuntimeSnapshot {
         PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: String::new(),
             model: model(api),
@@ -634,7 +638,7 @@ mod tests {
             max_turns: Some(2),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(ai_client),
             session: Some(SessionRunOptions::disabled(".".into())),
             session_target: None,
             session_name: None,
@@ -715,7 +719,7 @@ mod tests {
         let snapshot = OperationCapabilitySnapshot::permissive("op_test");
         let transaction = service.begin_manual_compaction_transaction(&snapshot);
         let mut context = ManualCompactionContext::new(
-            ManualCompactionOptions::new(compact_runtime(api))
+            ManualCompactionOptions::new(compact_runtime(api, _provider_guard.ai_client()))
                 .with_custom_instructions("keep decisions"),
             replay,
             transaction,

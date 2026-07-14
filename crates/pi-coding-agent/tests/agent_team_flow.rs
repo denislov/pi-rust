@@ -50,6 +50,7 @@ members = ["coder", "reviewer"]
         ProviderGuard::register(api, calls.clone(), vec!["coder result", "reviewer result"]);
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_session_id("sess_agent_team")
             .with_session_log_root(temp.path().join("sessions")),
@@ -141,10 +142,13 @@ members = ["coder"]
     let calls = Arc::new(Mutex::new(Vec::new()));
     let _provider_guard =
         ProviderGuard::register(api, calls.clone(), vec!["coder draft", "lead final"]);
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd),
+    )
+    .await
+    .unwrap();
 
     let outcome = session
         .run(CodingAgentOperation::InvokeTeam(AgentTeamOptions::new(
@@ -199,10 +203,13 @@ members = ["missing"]
 
     let api = "agent-team-missing-member-api";
     let _provider_guard = ProviderGuard::register(api, Arc::new(Mutex::new(Vec::new())), vec![]);
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd),
+    )
+    .await
+    .unwrap();
     let mut events = session.subscribe_product_events_public();
 
     let error = session
@@ -246,10 +253,13 @@ members = ["coder"]
 
     let api = "agent-team-missing-supervisor-api";
     let _provider_guard = ProviderGuard::register(api, Arc::new(Mutex::new(Vec::new())), vec![]);
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd),
+    )
+    .await
+    .unwrap();
     let mut events = session.subscribe_product_events_public();
 
     let error = session
@@ -293,10 +303,13 @@ members = ["coder"]
 
     let api = "agent-team-child-failure-api";
     let _provider_guard = ProviderGuard::register_failing(api);
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(&cwd))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd),
+    )
+    .await
+    .unwrap();
     let mut events = session.subscribe_product_events_public();
 
     let error = session
@@ -477,10 +490,14 @@ impl ApiProvider for FailingProvider {
 }
 
 struct ProviderGuard {
-    _guard: RegistryProviderGuard<'static>,
+    _guard: RegistryProviderGuard,
 }
 
 impl ProviderGuard {
+    fn ai_client(&self) -> pi_ai::AiClient {
+        self._guard.ai_client()
+    }
+
     fn register(api: &str, calls: Arc<Mutex<Vec<RecordedCall>>>, responses: Vec<&str>) -> Self {
         let guard = RegistryProviderGuard::register(
             api,

@@ -742,7 +742,10 @@ mod tests {
         }
     }
 
-    fn branch_runtime(api: &str) -> crate::coding_session::prompt::RuntimeSnapshot {
+    fn branch_runtime(
+        api: &str,
+        ai_client: pi_ai::AiClient,
+    ) -> crate::coding_session::prompt::RuntimeSnapshot {
         PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: String::new(),
             model: model(api),
@@ -752,7 +755,7 @@ mod tests {
             max_turns: Some(2),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(ai_client),
             session: Some(SessionRunOptions::disabled(".".into())),
             session_target: None,
             session_name: None,
@@ -939,7 +942,7 @@ mod tests {
             BranchSummaryOptions::new()
                 .with_source_leaf_id("leaf_branch")
                 .with_target_leaf_id("leaf_root")
-                .with_runtime(branch_runtime(api))
+                .with_runtime(branch_runtime(api, _provider_guard.ai_client()))
                 .with_custom_instructions("keep branch decisions"),
             branch_replay("sess_branch_summary_model"),
             transaction,

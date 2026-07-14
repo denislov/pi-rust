@@ -50,6 +50,7 @@ skills = ["missing_skill"]
 
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_session_id("sess_profile_runtime")
             .with_session_log_root(temp.path().join("sessions"))
@@ -135,6 +136,7 @@ allowed_teams = ["implementation"]
 
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_session_id("sess_profile_delegation_runtime")
             .with_session_log_root(temp.path().join("sessions"))
@@ -275,10 +277,14 @@ impl ApiProvider for RecordingProvider {
 }
 
 struct ProviderGuard {
-    _guard: RegistryProviderGuard<'static>,
+    _guard: RegistryProviderGuard,
 }
 
 impl ProviderGuard {
+    fn ai_client(&self) -> pi_ai::AiClient {
+        self._guard.ai_client()
+    }
+
     fn register(apis: Vec<String>, calls: Arc<Mutex<Vec<RecordedCall>>>) -> Self {
         let providers = apis
             .into_iter()

@@ -60,10 +60,7 @@ pub(crate) fn scoped_provider_streamer_for_runtime(runtime: &RuntimeSnapshot) ->
         return provider_streamer.clone();
     }
     let ai_client = scoped_ai_client_for_runtime(runtime);
-    Arc::new(move |model, context, opts| {
-        seed_scoped_ai_client_from_global_test_provider(ai_client.as_ref(), &model.api);
-        ai_client.stream_model(model, context, opts)
-    })
+    Arc::new(move |model, context, opts| ai_client.stream_model(model, context, opts))
 }
 
 fn scoped_ai_client_for_runtime(runtime: &RuntimeSnapshot) -> Arc<AiClient> {
@@ -73,19 +70,6 @@ fn scoped_ai_client_for_runtime(runtime: &RuntimeSnapshot) -> Arc<AiClient> {
     }
     Arc::new(ai_client)
 }
-
-#[cfg(any(test, feature = "test-harness", debug_assertions))]
-#[allow(deprecated)]
-fn seed_scoped_ai_client_from_global_test_provider(ai_client: &AiClient, api: &str) {
-    if ai_client.lookup_provider(api).is_none()
-        && let Some(provider) = pi_ai::registry::lookup(api)
-    {
-        ai_client.register_provider(api.to_string(), provider);
-    }
-}
-
-#[cfg(not(any(test, feature = "test-harness", debug_assertions)))]
-fn seed_scoped_ai_client_from_global_test_provider(_ai_client: &AiClient, _api: &str) {}
 
 impl RuntimeService {
     pub(crate) fn new() -> Self {

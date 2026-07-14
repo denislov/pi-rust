@@ -67,6 +67,7 @@ async fn rpc_prompt_persists_session_messages() {
     let api = "pi-coding-rpc-session";
     let _provider_guard =
         ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let ai_client = _provider_guard.ai_client();
     let mut session_options = SessionRunOptions::enabled(cwd);
     session_options.session_dir = Some(sessions.clone());
 
@@ -80,7 +81,7 @@ async fn rpc_prompt_persists_session_messages() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(ai_client),
             session: session_options,
         },
     )
@@ -105,6 +106,7 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
     let api = "pi-coding-rpc-session-state";
     let _provider_guard =
         ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("Hello")));
+    let ai_client = _provider_guard.ai_client();
     let mut session_options = SessionRunOptions::enabled(cwd);
     session_options.session_dir = Some(sessions.clone());
 
@@ -119,7 +121,7 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
-                ai_client: None,
+                ai_client: Some(ai_client),
                 session: session_options,
             },
         )
@@ -189,7 +191,7 @@ async fn rpc_disabled_session_prompt_uses_non_persistent_runtime_without_session
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: session_options,
         },
     )

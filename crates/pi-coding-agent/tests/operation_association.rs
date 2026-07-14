@@ -66,9 +66,11 @@ async fn seeded_compaction_session(
     api: &str,
     session_id: &str,
     root: &std::path::Path,
+    ai_client: pi_ai::AiClient,
 ) -> CodingAgentSession {
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(ai_client)
             .with_session_id(session_id)
             .with_session_log_root(root),
     )
@@ -96,7 +98,9 @@ async fn terminal_association_uses_the_exact_compact_root_event() {
         ])),
     );
     let temp = tempfile::tempdir().unwrap();
-    let mut session = seeded_compaction_session(api, "sess_association", temp.path()).await;
+    let mut session =
+        seeded_compaction_session(api, "sess_association", temp.path(), _provider.ai_client())
+            .await;
     let connection = session
         .connect(CodingAgentClientId::new("association-client"))
         .unwrap();

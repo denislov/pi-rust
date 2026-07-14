@@ -811,7 +811,7 @@ mod product_event_projection_tests {
         }
     }
 
-    fn prompt_options(api: &str) -> PromptTurnOptions {
+    fn prompt_options(api: &str, ai_client: pi_ai::AiClient) -> PromptTurnOptions {
         PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: "force real reconnect lag".into(),
             model: model(api),
@@ -821,7 +821,7 @@ mod product_event_projection_tests {
             max_turns: Some(1),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(ai_client),
             session: Some(SessionRunOptions::disabled(".".into())),
             session_target: None,
             session_name: None,
@@ -876,7 +876,10 @@ mod product_event_projection_tests {
         };
 
         session
-            .run(CodingAgentOperation::Prompt(prompt_options(api)))
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                api,
+                _provider.ai_client(),
+            )))
             .await
             .unwrap();
         assert_eq!(

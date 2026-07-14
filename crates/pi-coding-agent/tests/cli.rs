@@ -205,6 +205,7 @@ async fn print_mode_uses_injected_model_and_returns_stdout() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -231,6 +232,7 @@ async fn json_mode_uses_injected_model_and_returns_jsonl() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )

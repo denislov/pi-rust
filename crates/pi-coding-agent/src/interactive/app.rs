@@ -4725,7 +4725,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: SessionRunOptions::disabled(PathBuf::from(".")),
         };
 
@@ -4758,7 +4758,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: SessionRunOptions::disabled(PathBuf::from(".")),
         };
         let input_driver = ScriptedInputDriver {
@@ -4777,6 +4777,22 @@ pub mod test_harness {
         input: &str,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         run_scripted_idle_interactive_with_size(input, 80, 24).await
+    }
+
+    pub async fn run_scripted_idle_interactive_with_ai_client(
+        input: &str,
+        ai_client: pi_ai::AiClient,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        let mut input = InputPump::from_chunks(vec![input.to_string()]);
+        let parsed = CliArgs::default();
+        let options = CliRunOptions {
+            register_builtins: false,
+            ai_client: Some(ai_client),
+            ..CliRunOptions::default()
+        };
+        let result =
+            run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input).await;
+        Ok(scripted_output(result?, None))
     }
 
     pub async fn run_scripted_idle_interactive_with_size(
@@ -4916,7 +4932,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session,
         };
 
@@ -4956,7 +4972,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session,
         };
 

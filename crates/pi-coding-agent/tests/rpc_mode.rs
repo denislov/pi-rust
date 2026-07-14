@@ -305,6 +305,7 @@ async fn rpc_processes_command_before_stdin_eof() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -350,6 +351,7 @@ async fn rpc_lifecycle_detach_returns_typed_idempotent_status() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -401,6 +403,7 @@ async fn rpc_lifecycle_detach_during_prompt_is_observable_without_cancelling_wor
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -467,6 +470,7 @@ async fn rpc_lifecycle_shutdown_waits_for_owner_restoration_and_uses_stable_reje
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -538,6 +542,7 @@ async fn rpc_state_reports_capabilities_when_idle() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -906,7 +911,7 @@ async fn rpc_self_healing_edit_uses_model_repair_policy() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: session_options,
         },
     )
@@ -1117,7 +1122,7 @@ display_name = "Coder"
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: SessionRunOptions::disabled(cwd),
         },
     )
@@ -1233,7 +1238,7 @@ system_prompt = "Coder child instructions."
                 model_override: Some(large_context_faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
-                ai_client: None,
+                ai_client: Some(_provider_guard.ai_client()),
                 session: SessionRunOptions::disabled(cwd),
             },
         )
@@ -1454,7 +1459,7 @@ display_name = "Coder"
                 model_override: Some(large_context_faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
-                ai_client: None,
+                ai_client: Some(_provider_guard.ai_client()),
                 session: SessionRunOptions::disabled(cwd),
             },
         )
@@ -1574,6 +1579,7 @@ async fn rpc_state_reports_agent_invocation_busy_while_running() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -1673,7 +1679,7 @@ members = ["coder"]
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: SessionRunOptions::disabled(cwd),
         },
     )
@@ -1764,7 +1770,7 @@ members = ["default"]
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
-                ai_client: None,
+                ai_client: Some(_provider_guard.ai_client()),
                 session: SessionRunOptions::disabled(cwd),
             },
         )
@@ -1935,6 +1941,7 @@ async fn rpc_set_default_agent_profile_rejects_while_prompt_running() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2001,6 +2008,7 @@ async fn rpc_list_agent_profiles_rejects_while_prompt_running() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2065,6 +2073,7 @@ async fn rpc_state_reports_prompt_busy_while_running() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2131,6 +2140,7 @@ async fn rpc_parse_error_keeps_process_alive_for_next_command() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -2191,6 +2201,7 @@ async fn rpc_unsupported_command_returns_error_response() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -2240,7 +2251,7 @@ runtime = "lua"
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: session_options,
         },
     )
@@ -2308,7 +2319,7 @@ end
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
-            ai_client: None,
+            ai_client: Some(_provider_guard.ai_client()),
             session: session_options,
         },
     )
@@ -2341,6 +2352,7 @@ async fn rpc_prompt_returns_response_then_agent_events() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -2378,6 +2390,7 @@ async fn rpc_streams_agent_events_before_prompt_finishes() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2428,6 +2441,7 @@ async fn rpc_abort_cancels_running_prompt() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2489,6 +2503,7 @@ async fn rpc_steer_while_coding_prompt_running_sends_control() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2554,6 +2569,7 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2634,6 +2650,7 @@ async fn rpc_plain_prompt_while_running_returns_error() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2696,6 +2713,7 @@ async fn rpc_prompt_idempotency_key_deduplicates_running_retry() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
                 ..Default::default()
             },
         )
@@ -2750,6 +2768,7 @@ async fn rpc_state_commands_update_get_state() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )

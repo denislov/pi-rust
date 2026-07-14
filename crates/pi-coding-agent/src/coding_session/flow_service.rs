@@ -493,7 +493,7 @@ mod tests {
                 max_turns: Some(2),
                 tools: Vec::new(),
                 register_builtins: false,
-                ai_client: None,
+                ai_client: Some(_provider_guard.ai_client()),
                 session: None,
                 session_target: None,
                 session_name: None,

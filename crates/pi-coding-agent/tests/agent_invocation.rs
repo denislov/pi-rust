@@ -52,6 +52,7 @@ tools = ["echo"]
 
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_cwd(&cwd)
             .with_session_id("sess_agent_invocation")
             .with_session_log_root(temp.path().join("sessions")),
@@ -105,10 +106,13 @@ async fn one_off_agent_invocation_uses_task_over_prompt_options_invocation() {
     let api = "agent-invocation-task-api";
     let calls = Arc::new(Mutex::new(Vec::new()));
     let _provider_guard = ProviderGuard::register(vec![api.into()], calls.clone());
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(temp.path()))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(temp.path()),
+    )
+    .await
+    .unwrap();
 
     session
         .run(CodingAgentOperation::InvokeAgent(
@@ -134,6 +138,7 @@ async fn one_off_agent_invocation_does_not_commit_parent_session_transcript() {
         ProviderGuard::register(vec![api.into()], Arc::new(Mutex::new(Vec::new())));
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
             .with_session_id("sess_agent_invocation_no_commit")
             .with_session_log_root(temp.path().join("sessions")),
     )
@@ -170,10 +175,13 @@ async fn one_off_agent_invocation_emits_single_failed_event_for_child_failure() 
     let temp = tempdir().unwrap();
     let api = "agent-invocation-child-failure-api";
     let _provider_guard = ProviderGuard::register_failing(vec![api.into()]);
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(temp.path()))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(temp.path()),
+    )
+    .await
+    .unwrap();
     let mut events = session.subscribe_product_events_public();
 
     let error = session
@@ -205,10 +213,13 @@ async fn one_off_agent_invocation_rejects_unknown_profile_with_product_event() {
     let api = "agent-invocation-missing-profile-api";
     let _provider_guard =
         ProviderGuard::register(vec![api.into()], Arc::new(Mutex::new(Vec::new())));
-    let mut session =
-        CodingAgentSession::non_persistent(CodingAgentSessionOptions::new().with_cwd(temp.path()))
-            .await
-            .unwrap();
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(temp.path()),
+    )
+    .await
+    .unwrap();
     let mut events = session.subscribe_product_events_public();
 
     let error = session
@@ -394,10 +405,14 @@ impl ApiProvider for RecordingProvider {
 }
 
 struct ProviderGuard {
-    _guard: RegistryProviderGuard<'static>,
+    _guard: RegistryProviderGuard,
 }
 
 impl ProviderGuard {
+    fn ai_client(&self) -> pi_ai::AiClient {
+        self._guard.ai_client()
+    }
+
     fn register(apis: Vec<String>, calls: Arc<Mutex<Vec<RecordedCall>>>) -> Self {
         let providers = apis
             .into_iter()
