@@ -733,6 +733,14 @@ pub(crate) enum ClientRegistryError {
 mod tests {
     use super::*;
 
+    fn draft(id: &str, kind: super::super::client_projection::ClientDraftKind) -> DraftRecord {
+        DraftRecord {
+            id: id.into(),
+            kind,
+            text: format!("{id}-text"),
+        }
+    }
+
     #[test]
     fn snapshot_coordinator_owns_client_and_event_authority() {
         let coordinator = SnapshotCoordinator::new();
@@ -760,6 +768,106 @@ mod tests {
         assert_eq!(
             coordinator.current_capability_generation(),
             CapabilityGeneration::new(2)
+        );
+    }
+
+    #[test]
+    fn detach_is_idempotent_generation_scoped_and_preserves_reconnectable_facts() {
+        let coordinator = SnapshotCoordinator::new();
+        let id = ClientConnectionId::new("detach-client");
+        let first = coordinator.connect_or_takeover(id.clone()).unwrap();
+        coordinator.acknowledge(&first, 7).unwrap();
+        coordinator
+            .set_prompt_draft(
+                &first,
+                Some(draft(
+                    "prompt",
+                    super::super::client_projection::ClientDraftKind::Prompt,
+                )),
+            )
+            .unwrap();
+        coordinator
+            .enqueue_draft(
+                &first,
+                draft(
+                    "steer",
+                    super::super::client_projection::ClientDraftKind::Steer,
+                ),
+            )
+            .unwrap();
+        coordinator
+            .mark_submitted(&first, "op-1".into(), OperationKind::Prompt)
+            .unwrap();
+
+        assert_eq!(coordinator.detach(&first), Ok(ClientDetachOutcome::Detached));
+        assert_eq!(
+            coordinator.detach(&first),
+            Ok(ClientDetachOutcome::AlreadyDetached)
+        );
+        assert_eq!(
+            coordinator.acknowledge(&first, 8),
+            Err(ClientRegistryError::Lifecycle(
+                super::super::error::CodingAgentLifecycleRejection::Detached
+            ))
+        );
+
+        let second = coordinator.connect_or_takeover(id).unwrap();
+        assert_eq!(
+            coordinator.detach(&first),
+            Ok(ClientDetachOutcome::StaleGeneration)
+        );
+        let state = coordinator.client_state(&second).unwrap();
+        assert_eq!(state.acknowledged_sequence, 7);
+        assert_eq!(state.drafts.len(), 2);
+        assert!(matches!(
+            state.submitted_operation,
+            Some(SubmittedOperationStatus::Accepted { ref operation_id, .. })
+                if operation_id == "op-1"
+        ));
+    }
+
+    #[test]
+    fn detached_lifecycle_gate_rejects_state_draft_submission_replay_and_control() {
+        let coordinator = SnapshotCoordinator::new();
+        let handle = coordinator
+            .connect_or_takeover(ClientConnectionId::new("lifecycle-client"))
+            .unwrap();
+        coordinator.detach(&handle).unwrap();
+        let detached = ClientRegistryError::Lifecycle(
+            super::super::error::CodingAgentLifecycleRejection::Detached,
+        );
+
+        assert_eq!(coordinator.client_state(&handle).unwrap_err(), detached);
+        assert_eq!(
+            coordinator.set_prompt_draft(&handle, None),
+            Err(detached.clone())
+        );
+        assert_eq!(
+            coordinator.validate_prompt_draft(&handle, "missing", "missing"),
+            Err(detached.clone())
+        );
+        assert_eq!(
+            coordinator.mark_submitted(&handle, "op".into(), OperationKind::Prompt),
+            Err(detached.clone())
+        );
+        let state = coordinator.state.lock().unwrap();
+        assert_eq!(
+            SnapshotCoordinator::validate_client(&state, &handle),
+            Err(detached)
+        );
+        drop(state);
+        let rejection = coordinator
+            .enqueue_prompt_control(
+                &handle,
+                "op",
+                super::super::public_projection::CodingAgentControlId("abort".into()),
+                super::super::public_projection::CodingAgentControlKind::Abort,
+                "stop".into(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            rejection.reason,
+            super::super::public_projection::CodingAgentControlRejectionReason::StaleConnection
         );
     }
 }
