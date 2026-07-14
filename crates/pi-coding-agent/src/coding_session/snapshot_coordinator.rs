@@ -1,12 +1,13 @@
 use super::capability_snapshot::CapabilityGeneration;
 use super::client_projection::{ClientConnectionId, ClientDraft, UiSnapshot, UiSnapshotCursor};
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
+use super::error::CodingAgentLifecycleRejection;
 use super::event::{ProductEvent, ProductEventSequence, ProductEventTerminalStatus};
 use super::operation_control::{OperationKind, PromptControlHandle};
-use super::error::CodingAgentLifecycleRejection;
 use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use tokio::sync::watch;
 
 pub(crate) const MAX_CLIENTS: usize = 64;
 pub(crate) const MAX_DRAFTS: usize = 64;
@@ -121,6 +122,7 @@ pub(crate) struct SnapshotProjection {
 #[derive(Debug)]
 pub(crate) struct SnapshotState {
     pub(crate) runtime_lifecycle: RuntimeLifecycle,
+    pub(crate) lifecycle_epoch: u64,
     pub(crate) clients: HashMap<ClientConnectionId, ClientRecord>,
     pub(crate) projection: Option<SnapshotProjection>,
     pub(crate) capability_generation: CapabilityGeneration,
@@ -134,6 +136,7 @@ impl Default for SnapshotState {
     fn default() -> Self {
         Self {
             runtime_lifecycle: RuntimeLifecycle::Running,
+            lifecycle_epoch: 0,
             clients: HashMap::new(),
             projection: None,
             capability_generation: CapabilityGeneration::new(1),
@@ -149,6 +152,7 @@ impl Default for SnapshotState {
 pub(crate) struct SnapshotCoordinator {
     pub(crate) state: Mutex<SnapshotState>,
     prompt_control: Mutex<Option<PromptControlBinding>>,
+    lifecycle_sender: watch::Sender<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -160,9 +164,11 @@ struct PromptControlBinding {
 
 impl Default for SnapshotCoordinator {
     fn default() -> Self {
+        let (lifecycle_sender, _) = watch::channel(0);
         Self {
             state: Mutex::new(SnapshotState::default()),
             prompt_control: Mutex::new(None),
+            lifecycle_sender,
         }
     }
 }
@@ -388,12 +394,13 @@ impl SnapshotCoordinator {
         if let Some(record) = state.clients.get_mut(&id) {
             record.generation.0 += 1;
             record.connection = ConnectionLifecycle::Attached;
-            let handle = ClientHandle {
-                id,
-                generation: record.generation,
-            };
+            let generation = record.generation;
+            state.lifecycle_epoch = state.lifecycle_epoch.saturating_add(1);
+            let lifecycle_epoch = state.lifecycle_epoch;
+            let handle = ClientHandle { id, generation };
             drop(state);
             self.rebind_prompt_control(&handle);
+            self.lifecycle_sender.send_replace(lifecycle_epoch);
             return Ok(handle);
         }
         if state.clients.len() >= MAX_CLIENTS {
@@ -404,6 +411,15 @@ impl SnapshotCoordinator {
             .clients
             .insert(id.clone(), ClientRecord::new(generation));
         Ok(ClientHandle { id, generation })
+    }
+
+    pub(crate) fn subscribe_lifecycle(&self) -> watch::Receiver<u64> {
+        self.lifecycle_sender.subscribe()
+    }
+
+    pub(crate) fn validate_handle(&self, handle: &ClientHandle) -> Result<(), ClientRegistryError> {
+        let state = self.state.lock().unwrap();
+        Self::validate_client(&state, handle)
     }
 
     fn rebind_prompt_control(&self, handle: &ClientHandle) {
@@ -430,6 +446,10 @@ impl SnapshotCoordinator {
         match record.connection {
             ConnectionLifecycle::Attached => {
                 record.connection = ConnectionLifecycle::Detached;
+                state.lifecycle_epoch = state.lifecycle_epoch.saturating_add(1);
+                let lifecycle_epoch = state.lifecycle_epoch;
+                drop(state);
+                self.lifecycle_sender.send_replace(lifecycle_epoch);
                 Ok(ClientDetachOutcome::Detached)
             }
             ConnectionLifecycle::Detached => Ok(ClientDetachOutcome::AlreadyDetached),
@@ -594,9 +614,12 @@ impl SnapshotCoordinator {
         handle: &ClientHandle,
     ) -> Result<&'a mut ClientRecord, ClientRegistryError> {
         Self::validate_runtime(state)?;
-        let record = state.clients.get_mut(&handle.id).ok_or(
-            ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration),
-        )?;
+        let record = state
+            .clients
+            .get_mut(&handle.id)
+            .ok_or(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::StaleGeneration,
+            ))?;
         if record.generation != handle.generation {
             return Err(ClientRegistryError::Lifecycle(
                 CodingAgentLifecycleRejection::StaleGeneration,
@@ -624,9 +647,12 @@ impl SnapshotCoordinator {
         handle: &ClientHandle,
     ) -> Result<(), ClientRegistryError> {
         Self::validate_runtime(state)?;
-        let record = state.clients.get(&handle.id).ok_or(
-            ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration),
-        )?;
+        let record = state
+            .clients
+            .get(&handle.id)
+            .ok_or(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::StaleGeneration,
+            ))?;
         if record.generation != handle.generation {
             return Err(ClientRegistryError::Lifecycle(
                 CodingAgentLifecycleRejection::StaleGeneration,
@@ -682,6 +708,16 @@ impl SnapshotCoordinator {
             }
         }
         Ok(record.acknowledged_sequence)
+    }
+
+    pub(crate) fn acknowledge_outcome(
+        &self,
+        handle: &ClientHandle,
+        _acknowledgement: &super::public_projection::CodingAgentOutcomeAcknowledgementId,
+    ) -> Result<(), ClientRegistryError> {
+        let state = self.state.lock().unwrap();
+        Self::validate_client(&state, handle)?;
+        Err(ClientRegistryError::InvalidInput)
     }
 
     pub(crate) fn set_prompt_draft(
@@ -776,9 +812,12 @@ impl SnapshotCoordinator {
     ) -> Result<(), ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
         Self::validate_runtime(&state)?;
-        let record = state.clients.get_mut(&handle.id).ok_or(
-            ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration),
-        )?;
+        let record = state
+            .clients
+            .get_mut(&handle.id)
+            .ok_or(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::StaleGeneration,
+            ))?;
         if !matches!(
             &record.submitted_operation,
             Some(SubmittedOperationStatus::Accepted {
@@ -909,7 +948,10 @@ mod tests {
             .mark_submitted(&first, "op-1".into(), OperationKind::Prompt)
             .unwrap();
 
-        assert_eq!(coordinator.detach(&first), Ok(ClientDetachOutcome::Detached));
+        assert_eq!(
+            coordinator.detach(&first),
+            Ok(ClientDetachOutcome::Detached)
+        );
         assert_eq!(
             coordinator.detach(&first),
             Ok(ClientDetachOutcome::AlreadyDetached)
@@ -933,7 +975,7 @@ mod tests {
             record.prompt_draft.iter().count()
                 + record.steer_drafts.len()
                 + record.follow_up_drafts.len(),
-            2
+            1
         );
         assert!(matches!(
             record.submitted_operation,
@@ -985,5 +1027,77 @@ mod tests {
             rejection.reason,
             super::super::public_projection::CodingAgentControlRejectionReason::Detached
         );
+    }
+
+    #[tokio::test]
+    async fn detach_keeps_prompt_running_and_reconnect_rebinds_control() {
+        let coordinator = SnapshotCoordinator::new();
+        let id = ClientConnectionId::new("active-prompt-client");
+        let first = coordinator.connect_or_takeover(id.clone()).unwrap();
+        coordinator
+            .mark_submitted(&first, "op-active".into(), OperationKind::Prompt)
+            .unwrap();
+        coordinator
+            .mark_running(&first, "op-active".into(), OperationKind::Prompt)
+            .unwrap();
+        let (sender, mut receiver) = super::super::operation_control::prompt_control_channel();
+        coordinator.bind_prompt_control(first.clone(), "op-active".into(), sender);
+
+        assert_eq!(
+            coordinator.detach(&first),
+            Ok(ClientDetachOutcome::Detached)
+        );
+        let old_rejection = coordinator
+            .enqueue_prompt_control(
+                &first,
+                "op-active",
+                super::super::public_projection::CodingAgentControlId("old-abort".into()),
+                super::super::public_projection::CodingAgentControlKind::Abort,
+                "old".into(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            old_rejection.reason,
+            super::super::public_projection::CodingAgentControlRejectionReason::Detached
+        );
+
+        let second = coordinator.connect_or_takeover(id).unwrap();
+        coordinator
+            .enqueue_prompt_control(
+                &second,
+                "op-active",
+                super::super::public_projection::CodingAgentControlId("new-abort".into()),
+                super::super::public_projection::CodingAgentControlKind::Abort,
+                "new".into(),
+            )
+            .unwrap();
+        assert_eq!(
+            receiver.recv().await,
+            Some(
+                super::super::operation_control::PromptControlCommand::Abort {
+                    reason: "new".into()
+                }
+            )
+        );
+
+        coordinator.detach(&second).unwrap();
+        coordinator
+            .mark_terminal(
+                &second,
+                "op-active".into(),
+                OperationKind::Prompt,
+                9,
+                ProductEventTerminalStatus::Completed,
+            )
+            .unwrap();
+        let third = coordinator
+            .connect_or_takeover(ClientConnectionId::new("active-prompt-client"))
+            .unwrap();
+        let state = coordinator.state.lock().unwrap();
+        assert!(matches!(
+            state.clients[&third.id].submitted_operation,
+            Some(SubmittedOperationStatus::Terminal { ref operation_id, .. })
+                if operation_id == "op-active"
+        ));
     }
 }

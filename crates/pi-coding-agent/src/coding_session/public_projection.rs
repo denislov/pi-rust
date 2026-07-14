@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 use super::snapshot_coordinator::{
-    ClientGeneration, ClientHandle, ClientRegistryError, ClientSnapshotState, DraftRecord,
-    SnapshotCoordinator, SubmittedOperationStatus,
+    ClientDetachOutcome, ClientGeneration, ClientHandle, ClientRegistryError, ClientSnapshotState,
+    DraftRecord, SnapshotCoordinator, SubmittedOperationStatus,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -382,6 +382,26 @@ impl CodingAgentClientConnection {
             .map_err(|error| registry_error(&self.client_id, error))
     }
 
+    pub fn acknowledge_outcome(
+        &self,
+        acknowledgement: CodingAgentOutcomeAcknowledgementId,
+    ) -> Result<(), CodingSessionError> {
+        self.coordinator
+            .acknowledge_outcome(&self.handle(), &acknowledgement)
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub fn detach(&self) -> Result<CodingAgentDetachOutcome, CodingSessionError> {
+        self.coordinator
+            .detach(&self.handle())
+            .map(|outcome| match outcome {
+                ClientDetachOutcome::Detached => CodingAgentDetachOutcome::Detached,
+                ClientDetachOutcome::AlreadyDetached => CodingAgentDetachOutcome::AlreadyDetached,
+                ClientDetachOutcome::StaleGeneration => CodingAgentDetachOutcome::StaleGeneration,
+            })
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
     pub fn reconnect(
         &self,
         requested_after: u64,
@@ -406,6 +426,8 @@ impl CodingAgentClientConnection {
                 },
                 receiver: CodingAgentReconnectReceiver {
                     inner: boundary.receiver,
+                    lifecycle_receiver: boundary.lifecycle_receiver,
+                    lifecycle_epoch: boundary.lifecycle_epoch,
                     coordinator: self.coordinator.clone(),
                     client_id: self.client_id.clone(),
                     handle: self.handle(),
@@ -475,9 +497,7 @@ impl CodingAgentClientConnection {
                 ClientRegistryError::Lifecycle(
                     super::error::CodingAgentLifecycleRejection::StaleGeneration,
                 )
-                | ClientRegistryError::StaleClient => {
-                    CodingAgentMutationRejection::StaleGeneration
-                }
+                | ClientRegistryError::StaleClient => CodingAgentMutationRejection::StaleGeneration,
                 ClientRegistryError::Lifecycle(
                     super::error::CodingAgentLifecycleRejection::RuntimeShutDown,
                 ) => CodingAgentMutationRejection::RuntimeShutDown,
@@ -513,6 +533,8 @@ impl CodingAgentClientConnection {
 #[derive(Debug)]
 pub struct CodingAgentReconnectReceiver {
     inner: ProductEventReceiver,
+    lifecycle_receiver: tokio::sync::watch::Receiver<u64>,
+    lifecycle_epoch: u64,
     coordinator: Arc<SnapshotCoordinator>,
     client_id: CodingAgentClientId,
     handle: ClientHandle,
@@ -527,20 +549,52 @@ pub enum CodingAgentReconnectDelivery {
 
 impl CodingAgentReconnectReceiver {
     pub async fn recv(&mut self) -> Result<CodingAgentReconnectDelivery, CodingSessionError> {
-        match self.inner.recv().await {
-            Ok(event) => Ok(self.project_event(event)),
-            Err(CodingSessionError::EventStreamLag { .. }) => self.project_live_lag(),
-            Err(error) => Err(error),
+        self.ensure_live()?;
+        loop {
+            tokio::select! {
+                biased;
+                changed = self.lifecycle_receiver.changed() => {
+                    changed.map_err(|_| CodingSessionError::Cancelled)?;
+                    self.lifecycle_epoch = *self.lifecycle_receiver.borrow_and_update();
+                    self.ensure_live()?;
+                }
+                event = self.inner.recv() => {
+                    let delivery = match event {
+                        Ok(event) => self.project_event(event),
+                        Err(CodingSessionError::EventStreamLag { .. }) => self.project_live_lag()?,
+                        Err(error) => return Err(error),
+                    };
+                    self.ensure_live()?;
+                    return Ok(delivery);
+                }
+            }
         }
     }
 
     pub fn try_recv(&mut self) -> Result<Option<CodingAgentReconnectDelivery>, CodingSessionError> {
-        match self.inner.try_recv() {
+        self.observe_lifecycle()?;
+        let delivery = match self.inner.try_recv() {
             Ok(Some(event)) => Ok(Some(self.project_event(event))),
             Ok(None) => Ok(None),
             Err(CodingSessionError::EventStreamLag { .. }) => self.project_live_lag().map(Some),
             Err(error) => Err(error),
+        }?;
+        self.ensure_live()?;
+        Ok(delivery)
+    }
+
+    fn observe_lifecycle(&mut self) -> Result<(), CodingSessionError> {
+        if self.lifecycle_receiver.has_changed().unwrap_or(true) {
+            self.lifecycle_epoch = *self.lifecycle_receiver.borrow_and_update();
         }
+        self.ensure_live()
+    }
+
+    fn ensure_live(&self) -> Result<(), CodingSessionError> {
+        let _ = self.lifecycle_epoch;
+        self.coordinator
+            .validate_handle(&self.handle)
+            .map_err(|error| registry_error(&self.client_id, error))
     }
 
     fn project_event(&mut self, event: super::ProductEvent) -> CodingAgentReconnectDelivery {

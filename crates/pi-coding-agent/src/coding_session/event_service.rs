@@ -53,6 +53,8 @@ pub(crate) struct ProductEventRecoveryBoundary {
     pub(crate) oldest_available: Option<ProductEventSequence>,
     pub(crate) replay: Vec<ProductEvent>,
     pub(crate) receiver: ProductEventReceiver,
+    pub(crate) lifecycle_receiver: tokio::sync::watch::Receiver<u64>,
+    pub(crate) lifecycle_epoch: u64,
     pub(crate) capability_generation: u64,
 }
 
@@ -249,6 +251,8 @@ impl EventService {
             oldest_available,
             replay,
             receiver,
+            lifecycle_receiver: self.snapshot_coordinator.subscribe_lifecycle(),
+            lifecycle_epoch: state.lifecycle_epoch,
             capability_generation: state.capability_generation.get(),
         })
     }

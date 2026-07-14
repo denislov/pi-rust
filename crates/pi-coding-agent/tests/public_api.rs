@@ -522,11 +522,8 @@ async fn client_connection_state_takeover_ack_and_drafts_are_generation_scoped()
         .unwrap();
     assert!(second.generation.0 > first.generation.0);
     assert_eq!(second.state().unwrap().drafts[0].text, "hello");
-    assert_eq!(first.state().unwrap_err().code(), "stale_client_connection");
-    assert_eq!(
-        first.acknowledge(1).unwrap_err().code(),
-        "stale_client_connection"
-    );
+    assert_eq!(first.state().unwrap_err().code(), "stale_generation");
+    assert_eq!(first.acknowledge(1).unwrap_err().code(), "stale_generation");
 }
 
 #[tokio::test]
@@ -600,7 +597,10 @@ async fn detach_outcomes_and_lifecycle_rejection_paths_are_typed_and_preserve_st
     );
 
     let second = session.connect(id).unwrap();
-    assert_eq!(first.detach().unwrap(), CodingAgentDetachOutcome::StaleGeneration);
+    assert_eq!(
+        first.detach().unwrap(),
+        CodingAgentDetachOutcome::StaleGeneration
+    );
     assert_eq!(second.state().unwrap().drafts[0].text, "hello");
     assert_eq!(second.acknowledge(3).unwrap(), 7);
     assert_eq!(
@@ -631,7 +631,10 @@ async fn detach_wakes_a_blocked_reconnect_receiver_without_leaking_an_event() {
     });
     ready_rx.await.unwrap();
 
-    assert_eq!(connection.detach().unwrap(), CodingAgentDetachOutcome::Detached);
+    assert_eq!(
+        connection.detach().unwrap(),
+        CodingAgentDetachOutcome::Detached
+    );
     let error = tokio::time::timeout(std::time::Duration::from_secs(2), blocked)
         .await
         .expect("detach must wake a blocked receiver")
@@ -693,7 +696,7 @@ async fn scoped_control_authorization_and_rejected_drafts_are_typed_and_preserve
             .abort(CodingAgentControlId("abort-stale".into()), "cancel")
             .unwrap_err()
             .reason,
-        CodingAgentControlRejectionReason::StaleConnection
+        CodingAgentControlRejectionReason::StaleGeneration
     );
     assert_eq!(takeover.state().unwrap().drafts[0].text, "steer me");
     let _ = CodingAgentControlKind::Abort;

@@ -517,10 +517,12 @@ fn public_lifecycle_connection_derives_detach_authority_from_self() {
         .next()
         .unwrap();
 
-    assert!(connection.contains(
-        "pub fn detach(&self) -> Result<CodingAgentDetachOutcome, CodingSessionError>"
-    ));
-    assert!(connection.contains("self.coordinator.detach(&self.handle())"));
+    assert!(
+        connection.contains(
+            "pub fn detach(&self) -> Result<CodingAgentDetachOutcome, CodingSessionError>"
+        )
+    );
+    assert!(connection.contains(".detach(&self.handle())"));
     assert!(!connection.contains("pub fn detach_client("));
     assert!(!connection.contains("pub fn detach_generation("));
 }
