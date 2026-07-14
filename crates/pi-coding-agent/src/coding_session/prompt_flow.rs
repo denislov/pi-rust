@@ -496,6 +496,7 @@ mod tests {
 
     use pi_agent_core::flow::{FlowEvent, NodeId};
     use pi_agent_core::{Agent, AgentConfig, AgentResources, AgentTool, AgentToolOutput};
+    use pi_ai::AiClient;
     use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
     use pi_ai::registry::ApiProvider;
     use pi_ai::stream::EventStream;
@@ -546,6 +547,18 @@ mod tests {
         }
     }
 
+    fn agent_with_provider(api: &str, provider: Arc<dyn ApiProvider>) -> Agent {
+        let ai_client = Arc::new(AiClient::new());
+        ai_client.register_provider(api, provider);
+        let provider_streamer: pi_agent_core::ProviderStreamer =
+            Arc::new(move |model, context, options| {
+                ai_client.stream_model(model, context, options)
+            });
+        let mut config = AgentConfig::new(model(api));
+        config.provider_streamer = Some(provider_streamer);
+        Agent::new(config)
+    }
+
     fn context() -> PromptTurnContext {
         PromptTurnContext::new(
             PromptTurnIds::new("op_1", "turn_1"),
@@ -577,7 +590,7 @@ mod tests {
             api,
             Arc::new(FauxProvider::simple_text(response)),
         );
-        let agent = Agent::new(AgentConfig::new(model(api)));
+        let agent = agent_with_provider(api, Arc::new(FauxProvider::simple_text(response)));
         let mut context = context();
         context.set_agent(agent);
         PromptTurnFixture {
@@ -1299,7 +1312,7 @@ mod tests {
         let contexts = Arc::new(Mutex::new(Vec::new()));
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
-        let _provider_guard = crate::test_support::ProviderGuard::register(
+        let agent = agent_with_provider(
             api,
             Arc::new(BlockingTwoTurnProvider::new(
                 contexts.clone(),
@@ -1307,7 +1320,6 @@ mod tests {
                 release_rx,
             )),
         );
-        let agent = Agent::new(AgentConfig::new(model(api)));
         let (handle, receiver) = crate::coding_session::operation_control::prompt_control_channel();
         let flow = run_agent_turn_only_flow();
         let mut context = context();
@@ -1561,7 +1573,7 @@ mod tests {
     #[tokio::test]
     async fn run_agent_turn_records_tool_lifecycle_session_events() {
         let api = "prompt-flow-session-tool-events";
-        let _provider_guard = crate::test_support::ProviderGuard::register(
+        let agent = agent_with_provider(
             api,
             Arc::new(FauxProvider::with_call_queue(vec![
                 FauxProvider::single_call(
@@ -1580,7 +1592,6 @@ mod tests {
                 FauxProvider::text_call("done", StopReason::Stop),
             ])),
         );
-        let agent = Agent::new(AgentConfig::new(model(api)));
         agent.add_tool(AgentTool {
             name: "echo".into(),
             description: "echoes input".into(),
