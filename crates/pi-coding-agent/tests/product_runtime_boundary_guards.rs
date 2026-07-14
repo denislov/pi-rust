@@ -1458,16 +1458,96 @@ fn event_receiver_lag_maps_to_snapshot_recovery_error() {
     );
 }
 
-#[derive(Debug, Clone, Copy)]
-enum AdapterRoot {
-    Recursive(&'static str),
-    File(&'static str),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdapterOwnership {
+    CanonicalOperationCaller,
+    StateReplayControlConsumer,
+    ApprovedNonRuntimeAdapter,
 }
 
-const FIRST_PARTY_ADAPTERS: &[AdapterRoot] = &[
-    AdapterRoot::Recursive("crates/pi-coding-agent/src/interactive"),
-    AdapterRoot::Recursive("crates/pi-coding-agent/src/protocol"),
-    AdapterRoot::File("crates/pi-coding-agent/src/print_mode.rs"),
+#[derive(Debug, Clone, Copy)]
+struct AdapterClassification {
+    path: &'static str,
+    ownership: AdapterOwnership,
+    rationale: &'static str,
+}
+
+const ADAPTER_CLASSIFICATIONS: &[AdapterClassification] = &[
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/coding_session/client_service.rs",
+        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+        rationale: "runtime-owned client state service, not a product adapter",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/coding_session/mod.rs",
+        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+        rationale: "canonical runtime owner and sole ordinary dispatcher",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/coding_session/public_projection.rs",
+        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+        rationale: "stable state/replay/control contract implementation",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/interactive/app.rs",
+        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+        rationale: "process-facing interactive mode and output owner",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/interactive/event_bridge.rs",
+        ownership: AdapterOwnership::StateReplayControlConsumer,
+        rationale: "typed product-event to UI projection",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/interactive/loop.rs",
+        ownership: AdapterOwnership::StateReplayControlConsumer,
+        rationale: "interactive connection, replay, and scoped-control owner",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/interactive/prompt_task.rs",
+        ownership: AdapterOwnership::CanonicalOperationCaller,
+        rationale: "interactive ordinary-operation task runners",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/lib.rs",
+        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+        rationale: "stable facade plus top-level mode/output router",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/print_mode.rs",
+        ownership: AdapterOwnership::CanonicalOperationCaller,
+        rationale: "print-mode Prompt operation adapter",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/protocol/events.rs",
+        ownership: AdapterOwnership::StateReplayControlConsumer,
+        rationale: "typed product-event to protocol projection",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/protocol/json_mode.rs",
+        ownership: AdapterOwnership::CanonicalOperationCaller,
+        rationale: "JSON-mode Prompt operation and event adapter",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/protocol/rpc/commands.rs",
+        ownership: AdapterOwnership::CanonicalOperationCaller,
+        rationale: "short-lived RPC ordinary-operation commands",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/protocol/rpc/events.rs",
+        ownership: AdapterOwnership::StateReplayControlConsumer,
+        rationale: "RPC product-event projection wrapper",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/protocol/rpc/prompt.rs",
+        ownership: AdapterOwnership::CanonicalOperationCaller,
+        rationale: "select-driven RPC ordinary-operation runners",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/protocol/rpc/state.rs",
+        ownership: AdapterOwnership::StateReplayControlConsumer,
+        rationale: "RPC client connection, replay, and output state",
+    },
 ];
 
 const PROHIBITED_SESSION_METHODS: &[&str] = &[
@@ -1490,40 +1570,14 @@ const PROHIBITED_SESSION_METHODS: &[&str] = &[
 #[test]
 fn adapter_inventory_is_recursive_and_receiver_aware() {
     let scan = SourceScan::new();
-    let mut discovered = HashSet::new();
-    for root in FIRST_PARTY_ADAPTERS {
-        let path = match root {
-            AdapterRoot::Recursive(relative) | AdapterRoot::File(relative) => {
-                scan.repo_root.join(relative)
-            }
-        };
-        assert!(
-            path.exists(),
-            "adapter inventory path is missing: {}",
-            path.display()
-        );
-        let files = match root {
-            AdapterRoot::Recursive(_) => rust_files_under(&path),
-            AdapterRoot::File(_) => vec![path.clone()],
-        };
-        assert!(
-            !files.is_empty(),
-            "adapter inventory path is empty: {}",
-            path.display()
-        );
-        for file in files {
-            assert!(
-                file.is_file(),
-                "adapter inventory entry is unreadable: {}",
-                file.display()
-            );
-            let relative = relative_path(&scan.repo_root, &file);
-            assert!(
-                discovered.insert(relative.clone()),
-                "adapter file has duplicate ownership: {relative}"
-            );
-        }
-    }
+    let discovered = discover_adapter_candidates(&scan);
+    let classification_violations =
+        validate_adapter_classifications(&discovered, ADAPTER_CLASSIFICATIONS);
+    assert!(
+        classification_violations.is_empty(),
+        "adapter discovery/classification ledger drifted:\n{}",
+        classification_violations.join("\n")
+    );
     assert!(
         discovered.contains("crates/pi-coding-agent/src/interactive/loop.rs"),
         "known interactive adapter is not owned by inventory"
@@ -1533,11 +1587,13 @@ fn adapter_inventory_is_recursive_and_receiver_aware() {
         "known RPC adapter is not owned by inventory"
     );
 
-    for relative in discovered {
+    for classification in ADAPTER_CLASSIFICATIONS {
+        let relative = classification.path;
         let path = scan.repo_root.join(&relative);
         let raw = fs::read_to_string(&path).expect("read adapter source");
         let sanitized = sanitize_rust_source(&raw);
-        for (line_no, line) in production_lines(&sanitized).enumerate() {
+        let production = production_source(&sanitized);
+        for (line_no, line) in production.lines().enumerate() {
             for method in PROHIBITED_SESSION_METHODS {
                 let needle = format!(".{method}(");
                 if line.contains(&needle) {
@@ -1549,7 +1605,115 @@ fn adapter_inventory_is_recursive_and_receiver_aware() {
                 }
             }
         }
+
+        if classification.ownership == AdapterOwnership::CanonicalOperationCaller {
+            assert!(
+                production_source(&sanitized).contains(".run("),
+                "canonical operation caller lacks a production .run( call: {relative}"
+            );
+        }
     }
+}
+
+fn discover_adapter_candidates(scan: &SourceScan) -> HashSet<String> {
+    let sources = rust_files_under(&scan.crate_root.join("src"))
+        .into_iter()
+        .map(|path| {
+            let relative = relative_path(&scan.repo_root, &path);
+            let source = fs::read_to_string(path).expect("read production source");
+            (relative, source)
+        })
+        .collect::<Vec<_>>();
+    let borrowed = sources
+        .iter()
+        .map(|(path, source)| (path.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    discover_adapter_candidates_from_sources(&borrowed)
+}
+
+fn discover_adapter_candidates_from_sources(sources: &[(&str, &str)]) -> HashSet<String> {
+    sources
+        .iter()
+        .filter_map(|(path, source)| {
+            let sanitized = sanitize_rust_source(source);
+            let production = production_source(&sanitized);
+            let is_operation_boundary = production.contains("CodingAgentOperation")
+                && (production.contains(".run(") || production.contains("session.run("));
+            let is_connection_boundary = production.contains("CodingAgentClientConnection")
+                || production.contains(".prepare_submission(")
+                || production.contains(".reconnect(")
+                || production.contains(".acknowledge(");
+            let is_event_boundary = (production.contains("ProductEvent")
+                || production.contains("CodingAgentProductEvent"))
+                && (production.contains("ProtocolEvent")
+                    || production.contains("UiEvent")
+                    || production.contains("EventAdapter")
+                    || production.contains("EventBridge"));
+            let is_mode_or_output_boundary = production.contains("CliOutput")
+                && (production.contains("run_") && production.contains("mode"));
+            (is_operation_boundary
+                || is_connection_boundary
+                || is_event_boundary
+                || is_mode_or_output_boundary)
+                .then(|| (*path).to_owned())
+        })
+        .collect()
+}
+
+fn production_source(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut depth = 0isize;
+    let mut test_item_depths = Vec::new();
+    let mut pending_test_cfg = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed == "#[cfg(test)]" {
+            pending_test_cfg = true;
+        } else if pending_test_cfg && trimmed.contains('{') {
+            test_item_depths.push(depth + 1);
+            pending_test_cfg = false;
+        } else if pending_test_cfg && trimmed.ends_with(';') {
+            pending_test_cfg = false;
+        }
+        let gated = pending_test_cfg || !test_item_depths.is_empty();
+        if !gated {
+            output.push_str(line);
+        }
+        output.push('\n');
+        depth += brace_delta(line);
+        test_item_depths.retain(|item_depth| depth >= *item_depth);
+    }
+    output
+}
+
+fn validate_adapter_classifications(
+    discovered: &HashSet<String>,
+    classifications: &[AdapterClassification],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut classified = HashSet::new();
+    for classification in classifications {
+        if classification.rationale.trim().is_empty() {
+            violations.push(format!(
+                "classification has empty rationale: {}",
+                classification.path
+            ));
+        }
+        if !classified.insert(classification.path.to_owned()) {
+            violations.push(format!(
+                "candidate classified more than once: {}",
+                classification.path
+            ));
+        }
+    }
+    for path in discovered.difference(&classified) {
+        violations.push(format!("unclassified adapter candidate: {path}"));
+    }
+    for path in classified.difference(discovered) {
+        violations.push(format!("stale adapter classification: {path}"));
+    }
+    violations.sort();
+    violations
 }
 
 #[test]
@@ -1567,7 +1731,7 @@ fn adapter_scanner_fixture_matrix_is_sanitized_and_structural() {
         other.prompt("legitimate");
     "#;
     let sanitized = sanitize_rust_source(fixture);
-    let production = production_lines(&sanitized).collect::<Vec<_>>().join("\n");
+    let production = production_source(&sanitized);
     assert_eq!(production.matches(".prompt(").count(), 3);
     assert!(production.contains("session\n            .prompt("));
     assert!(production.contains("(session).prompt("));
@@ -1603,7 +1767,11 @@ fn adapter_discovery_fixture_rejects_unclassified_and_stale_ownership() {
     );
 
     let unclassified = validate_adapter_classifications(&discovered, &[]);
-    assert!(unclassified.iter().any(|violation| violation.contains("unclassified")));
+    assert!(
+        unclassified
+            .iter()
+            .any(|violation| violation.contains("unclassified"))
+    );
 
     let stale = validate_adapter_classifications(
         &HashSet::new(),
@@ -1641,11 +1809,4 @@ fn session_method_inventory_accepts_multiline_impl_and_signature() {
     assert_eq!(methods.len(), 1);
     assert_eq!(methods[0].name, "prompt");
     assert_eq!(methods[0].visibility, "pub");
-}
-
-fn production_lines(source: &str) -> impl Iterator<Item = &str> {
-    source
-        .lines()
-        .enumerate()
-        .filter_map(|(index, line)| (!line_is_cfg_test_gated(source, index)).then_some(line))
 }
