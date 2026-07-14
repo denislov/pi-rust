@@ -2,9 +2,9 @@ use crate::CliError;
 use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome};
 use crate::coding_session::{
     AgentProfile, CodingAgentControlId, CodingAgentSession, CodingAgentSessionOptions,
-    CodingSessionError, DelegationConfirmationMode, DelegationPolicy, OperationKind,
-    PendingDelegationConfirmation, ProductEventReceiver, ProductEventSequence, ProfileDiagnostic,
-    ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
+    CodingAgentShutdownOutcome, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
+    OperationKind, PendingDelegationConfirmation, ProductEventReceiver, ProductEventSequence,
+    ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
     SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
     SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
     SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
@@ -15,8 +15,9 @@ use crate::protocol::rpc::state::RpcState;
 use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
 use crate::protocol::types::{
-    ProtocolEvent, RpcCommand, RpcHelloResponse, RpcResponse, RpcSelfHealingEditModelRepair,
-    RpcSelfHealingEditReplacement,
+    ProtocolEvent, RpcCommand, RpcDetachLifecycleEvent, RpcDetachResponse, RpcDetachStatus,
+    RpcHelloResponse, RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement,
+    RpcShutdownLifecycleEvent, RpcShutdownResponse, RpcShutdownStatus,
 };
 use crate::protocol::version::{
     PRODUCT_EVENT_PROTOCOL_VERSION, RPC_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION,
@@ -81,6 +82,87 @@ impl RpcState {
                     ),
                 )
                 .await
+            }
+            RpcCommand::Detach { id } => match self.detach_client().await {
+                Ok(status) => {
+                    if status == RpcDetachStatus::Detached {
+                        write_json_line(writer, &RpcDetachLifecycleEvent { status }).await?;
+                    }
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::success(
+                            id,
+                            "detach",
+                            Some(
+                                serde_json::to_value(RpcDetachResponse { status })
+                                    .expect("detach response serializes"),
+                            ),
+                        ),
+                    )
+                    .await
+                }
+                Err(CodingSessionError::Lifecycle { reason }) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error_with_data(
+                            id,
+                            "detach",
+                            reason.to_string(),
+                            serde_json::json!({"code": reason.code()}),
+                        ),
+                    )
+                    .await
+                }
+                Err(error) => Err(CliError::from(error)),
+            },
+            RpcCommand::Shutdown { id } => {
+                if let Some(RunningPrompt::Coding(running)) = self.running.as_mut() {
+                    if running.pending_shutdown_response.is_some() {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error_with_data(
+                                id,
+                                "shutdown",
+                                "runtime shutdown is already pending",
+                                serde_json::json!({"code": "shutdown_in_progress"}),
+                            ),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    running.shutdown_handle.request_shutdown();
+                    running.pending_shutdown_response = Some(id);
+                    return Ok(());
+                }
+
+                let mut session = match self.coding_session.take() {
+                    Some(session) => session,
+                    None => self.open_reload_session().await?,
+                };
+                let outcome = session.shutdown().await?;
+                let status = match outcome {
+                    CodingAgentShutdownOutcome::ShutDown => RpcShutdownStatus::ShutDown,
+                    CodingAgentShutdownOutcome::AlreadyShutDown => {
+                        RpcShutdownStatus::AlreadyShutDown
+                    }
+                };
+                if status == RpcShutdownStatus::ShutDown {
+                    write_json_line(writer, &RpcShutdownLifecycleEvent { status }).await?;
+                }
+                let response = write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "shutdown",
+                        Some(
+                            serde_json::to_value(RpcShutdownResponse { status })
+                                .expect("shutdown response serializes"),
+                        ),
+                    ),
+                )
+                .await;
+                self.coding_session = Some(session);
+                response
             }
             RpcCommand::Prompt {
                 id,
@@ -301,7 +383,7 @@ impl RpcState {
                 self.messages.clear();
                 self.steering.clear();
                 self.follow_up.clear();
-                self.clear_client_state();
+                let _ = self.detach_client().await;
                 self.session_name = None;
                 self.active_session_path = None;
                 self.active_leaf_id = None;

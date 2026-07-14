@@ -47,6 +47,8 @@ pub(super) fn is_supported_m5_command(command: &str) -> bool {
     matches!(
         command,
         "hello"
+            | "detach"
+            | "shutdown"
             | "prompt"
             | "steer"
             | "follow_up"

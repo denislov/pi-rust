@@ -28,6 +28,20 @@ where
 {
     let mut state = RpcState::new(options)?;
     let mut lines = JsonlLineReader::new(reader);
+    let result = run_rpc_loop(&mut state, &mut lines, writer).await;
+    let _ = state.detach_client().await;
+    result
+}
+
+async fn run_rpc_loop<R, W>(
+    state: &mut RpcState,
+    lines: &mut JsonlLineReader<R>,
+    writer: &mut W,
+) -> Result<(), CliError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut input_closed = false;
 
     loop {
@@ -68,7 +82,7 @@ where
                     input_closed = true;
                     continue;
                 };
-                handle_input_line(&mut state, &line, writer).await?;
+                handle_input_line(state, &line, writer).await?;
             }
             RpcLoopEvent::CodingEvent(Some(RpcQueuedProductEvent::Overflow { skipped })) => {
                 write_rpc_response(

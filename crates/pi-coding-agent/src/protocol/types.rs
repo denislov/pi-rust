@@ -547,6 +547,10 @@ pub enum RpcCommand {
         id: Option<String>,
         protocol: RequestedProtocolVersion,
     },
+    #[serde(rename = "detach")]
+    Detach { id: Option<String> },
+    #[serde(rename = "shutdown")]
+    Shutdown { id: Option<String> },
     #[serde(rename = "prompt")]
     Prompt {
         id: Option<String>,

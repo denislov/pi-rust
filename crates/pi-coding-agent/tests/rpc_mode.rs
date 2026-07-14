@@ -340,7 +340,8 @@ async fn rpc_lifecycle_detach_returns_typed_idempotent_status() {
     let _provider_guard =
         ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
 
-    let input = b"{\"id\":\"detach-1\",\"type\":\"detach\"}\n{\"id\":\"detach-2\",\"type\":\"detach\"}\n";
+    let input =
+        b"{\"id\":\"detach-1\",\"type\":\"detach\"}\n{\"id\":\"detach-2\",\"type\":\"detach\"}\n";
     let mut output = Vec::new();
     run_rpc_mode_for_io(
         &input[..],
@@ -374,6 +375,72 @@ async fn rpc_lifecycle_detach_returns_typed_idempotent_status() {
             })
         ]
     );
+}
+
+#[tokio::test]
+async fn rpc_lifecycle_detach_during_prompt_is_observable_without_cancelling_work() {
+    let api = "pi-coding-rpc-lifecycle-active-detach";
+    let release = Arc::new(Notify::new());
+    let opened = Arc::new(AtomicBool::new(false));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(PausingProvider {
+            release: Arc::clone(&release),
+            opened,
+        }),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(64 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"prompt-1\",\"type\":\"prompt\",\"message\":\"continue\"}\n")
+        .await
+        .unwrap();
+    let _admitted = read_rpc_json_matching(&mut lines, "admitted prompt event", |value| {
+        value["type"] == "message_update"
+    })
+    .await;
+    input_writer
+        .write_all(b"{\"id\":\"detach-1\",\"type\":\"detach\"}\n")
+        .await
+        .unwrap();
+
+    let lifecycle = read_rpc_json_matching(&mut lines, "detach lifecycle event", |value| {
+        value["type"] == "client_detached"
+    })
+    .await;
+    assert_eq!(lifecycle["status"], "detached");
+    let detached = read_rpc_json_matching(&mut lines, "detach response", |value| {
+        value["id"] == "detach-1"
+    })
+    .await;
+    assert_eq!(detached["success"], true);
+    assert_eq!(detached["data"], serde_json::json!({"status": "detached"}));
+
+    release.notify_one();
+    let _completed = read_rpc_json_matching(&mut lines, "detached prompt completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    drop(input_writer);
+    task.await.unwrap();
 }
 
 #[tokio::test]

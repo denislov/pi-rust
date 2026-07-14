@@ -772,6 +772,15 @@ impl SnapshotCoordinator {
         }
     }
 
+    fn validate_terminal_runtime(state: &SnapshotState) -> Result<(), ClientRegistryError> {
+        match state.runtime_lifecycle {
+            RuntimeLifecycle::Running | RuntimeLifecycle::ShuttingDown => Ok(()),
+            RuntimeLifecycle::ShutDown => Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::RuntimeShutDown,
+            )),
+        }
+    }
+
     pub(crate) fn validate_client(
         state: &SnapshotState,
         handle: &ClientHandle,
@@ -974,7 +983,7 @@ impl SnapshotCoordinator {
         status: ProductEventTerminalStatus,
     ) -> Result<(), ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
-        Self::validate_runtime(&state)?;
+        Self::validate_terminal_runtime(&state)?;
         let record = state
             .clients
             .get_mut(&handle.id)
@@ -1083,7 +1092,7 @@ impl SnapshotCoordinator {
         fallback_status: ProductEventTerminalStatus,
     ) -> Result<(), ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
-        Self::validate_runtime(&state)?;
+        Self::validate_terminal_runtime(&state)?;
         let record = state
             .clients
             .get_mut(&handle.id)

@@ -1,16 +1,16 @@
 use crate::protocol::rpc::event_queue::RpcQueuedProductEvent;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
-use crate::protocol::types::RpcNegotiatedProtocolState;
+use crate::protocol::types::{RpcDetachStatus, RpcNegotiatedProtocolState};
 use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION};
 use crate::{
     CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
     coding_session::AgentTeamOutcome, coding_session::CodingAgentClientConnection,
-    coding_session::CodingAgentClientId, coding_session::CodingAgentDraft,
-    coding_session::CodingAgentDraftId, coding_session::CodingAgentDraftKind,
-    coding_session::CodingAgentPromptControl, coding_session::CodingAgentSession,
-    coding_session::CodingSessionError, coding_session::OperationIdempotencyKey,
-    coding_session::OperationKind, coding_session::ProductEventSequence,
-    coding_session::PromptTurnOutcome, config, select_model,
+    coding_session::CodingAgentClientId, coding_session::CodingAgentDetachOutcome,
+    coding_session::CodingAgentDraft, coding_session::CodingAgentDraftId,
+    coding_session::CodingAgentDraftKind, coding_session::CodingAgentPromptControl,
+    coding_session::CodingAgentSession, coding_session::CodingSessionError,
+    coding_session::OperationIdempotencyKey, coding_session::OperationKind,
+    coding_session::ProductEventSequence, coding_session::PromptTurnOutcome, config, select_model,
 };
 use pi_agent_core::transcript::StoredAgentMessage;
 use pi_agent_core::{QueueMode, ThinkingLevel};
@@ -64,6 +64,8 @@ pub(super) struct CodingRunningPrompt {
     pub(super) adapter_applied_sequence: ProductEventSequence,
     pub(super) events_closed: bool,
     pub(super) idempotency_key: Option<OperationIdempotencyKey>,
+    pub(super) shutdown_handle: crate::coding_session::CodingAgentRuntimeShutdownHandle,
+    pub(super) pending_shutdown_response: Option<Option<String>>,
 }
 
 pub(super) struct CodingOperationTaskResult {
@@ -146,8 +148,21 @@ impl RpcState {
         self.running.is_some()
     }
 
-    pub(super) fn clear_client_state(&mut self) {
-        self.client_connection = None;
+    pub(super) async fn detach_client(&mut self) -> Result<RpcDetachStatus, CodingSessionError> {
+        let Some(connection) = self.client_connection.take() else {
+            return Ok(RpcDetachStatus::AlreadyDetached);
+        };
+        match connection.detach() {
+            Ok(outcome) => Ok(match outcome {
+                CodingAgentDetachOutcome::Detached => RpcDetachStatus::Detached,
+                CodingAgentDetachOutcome::AlreadyDetached => RpcDetachStatus::AlreadyDetached,
+                CodingAgentDetachOutcome::StaleGeneration => RpcDetachStatus::StaleGeneration,
+            }),
+            Err(error) => {
+                self.client_connection = Some(connection);
+                Err(error)
+            }
+        }
     }
 
     pub(super) fn ensure_client_connection(

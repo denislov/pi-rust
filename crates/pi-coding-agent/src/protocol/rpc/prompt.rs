@@ -3,9 +3,9 @@ use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, CodingAgentControlId, CodingAgentDraft,
     CodingAgentDraftId, CodingAgentDraftKind, CodingAgentReconnect, CodingAgentSession,
-    CodingAgentSessionOptions, CodingSessionError, OperationIdempotencyKey, OperationKind,
-    ProductEvent, ProductEventReceiver, ProductEventSequence, ProfileId, ProfileKind,
-    PromptTurnMode, PromptTurnOptions,
+    CodingAgentSessionOptions, CodingAgentShutdownOutcome, CodingSessionError,
+    OperationIdempotencyKey, OperationKind, ProductEvent, ProductEventReceiver,
+    ProductEventSequence, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
 };
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
@@ -15,7 +15,10 @@ use crate::protocol::rpc::state::{
     CodingOperationOutcome, CodingOperationTaskResult, CodingRunningPrompt, RpcState, RunningPrompt,
 };
 use crate::protocol::rpc::wire::{write_json_line, write_rpc_response};
-use crate::protocol::types::{ProtocolEvent, RpcResponse, StreamingBehavior};
+use crate::protocol::types::{
+    ProtocolEvent, RpcResponse, RpcShutdownLifecycleEvent, RpcShutdownResponse, RpcShutdownStatus,
+    StreamingBehavior,
+};
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::resolve_session_dir;
 use pi_agent_core::AgentResources;
@@ -395,6 +398,7 @@ impl RpcState {
             OperationKind::AgentInvocation,
         );
 
+        let shutdown_handle = session.runtime_shutdown_handle();
         tokio::spawn(async move {
             let outcome = {
                 let mut invocation =
@@ -453,6 +457,8 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             events_closed: false,
             idempotency_key: running_idempotency_key,
+            shutdown_handle,
+            pending_shutdown_response: None,
         }));
 
         Ok(())
@@ -615,6 +621,7 @@ impl RpcState {
         let running_idempotency_key = idempotency_key.clone();
         self.remember_idempotency_key(idempotency_key, "invoke_team", OperationKind::AgentTeam);
 
+        let shutdown_handle = session.runtime_shutdown_handle();
         tokio::spawn(async move {
             let outcome = {
                 let mut invocation =
@@ -673,6 +680,8 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             events_closed: false,
             idempotency_key: running_idempotency_key,
+            shutdown_handle,
+            pending_shutdown_response: None,
         }));
 
         Ok(())
@@ -794,6 +803,7 @@ impl RpcState {
         let running_idempotency_key = idempotency_key.clone();
         self.remember_idempotency_key(idempotency_key, "approve_delegation", operation_kind);
 
+        let shutdown_handle = session.runtime_shutdown_handle();
         tokio::spawn(async move {
             let outcome = {
                 let mut approval = Box::pin(session.run(CodingAgentOperation::ApproveDelegation {
@@ -854,6 +864,8 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             events_closed: false,
             idempotency_key: running_idempotency_key,
+            shutdown_handle,
+            pending_shutdown_response: None,
         }));
 
         Ok(())
@@ -927,6 +939,7 @@ impl RpcState {
         let running_idempotency_key = idempotency_key.clone();
         self.remember_idempotency_key(idempotency_key, "prompt", OperationKind::Prompt);
 
+        let shutdown_handle = session.runtime_shutdown_handle();
         tokio::spawn(async move {
             let outcome = {
                 let mut prompt = Box::pin(session.run(operation));
@@ -985,6 +998,8 @@ impl RpcState {
             adapter_applied_sequence: ProductEventSequence::default(),
             events_closed: false,
             idempotency_key: running_idempotency_key,
+            shutdown_handle,
+            pending_shutdown_response: None,
         }));
 
         Ok(())
@@ -1043,6 +1058,7 @@ impl RpcState {
         let Some(RunningPrompt::Coding(mut running)) = self.running.take() else {
             return Ok(());
         };
+        let pending_shutdown_response = running.pending_shutdown_response.take();
         self.mark_idempotency_complete(running.idempotency_key.as_ref());
 
         while let Ok(item) = running.events.try_recv() {
@@ -1109,7 +1125,29 @@ impl RpcState {
             }
         };
 
-        self.coding_session = Some(result.session);
+        let mut session = result.session;
+        if let Some(id) = pending_shutdown_response {
+            let status = match session.shutdown().await? {
+                CodingAgentShutdownOutcome::ShutDown => RpcShutdownStatus::ShutDown,
+                CodingAgentShutdownOutcome::AlreadyShutDown => RpcShutdownStatus::AlreadyShutDown,
+            };
+            if status == RpcShutdownStatus::ShutDown {
+                write_json_line(writer, &RpcShutdownLifecycleEvent { status }).await?;
+            }
+            write_rpc_response(
+                writer,
+                RpcResponse::success(
+                    id,
+                    "shutdown",
+                    Some(
+                        serde_json::to_value(RpcShutdownResponse { status })
+                            .expect("shutdown response serializes"),
+                    ),
+                ),
+            )
+            .await?;
+        }
+        self.coding_session = Some(session);
         self.steering.clear();
         self.follow_up.clear();
         outcome

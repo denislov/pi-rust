@@ -14,9 +14,9 @@ use pi_coding_agent::api::{
 };
 use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
 use pi_coding_agent::protocol::types::{
-    CompactionReason, ProtocolEvent, RpcDetachLifecycleEvent, RpcDetachRequest,
-    RpcDetachResponse, RpcDetachStatus, RpcShutdownLifecycleEvent, RpcShutdownRequest,
-    RpcShutdownResponse, RpcShutdownStatus,
+    CompactionReason, ProtocolEvent, RpcDetachLifecycleEvent, RpcDetachRequest, RpcDetachResponse,
+    RpcDetachStatus, RpcShutdownLifecycleEvent, RpcShutdownRequest, RpcShutdownResponse,
+    RpcShutdownStatus,
 };
 use serde_json::{Value, json};
 use support::{
