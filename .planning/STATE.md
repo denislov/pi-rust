@@ -5,16 +5,16 @@ milestone_name: Typed Product Events and Client Lifecycle Contract
 current_phase: 09
 current_phase_name: lifecycle-association-guards-and-closure
 status: executing
-stopped_at: Completed 09-05-PLAN.md
-last_updated: "2026-07-14T07:55:04.516Z"
+stopped_at: Completed 09-06-PLAN.md
+last_updated: "2026-07-14T08:17:41.337Z"
 last_activity: 2026-07-14
-last_activity_desc: Completed Phase 09 Plan 05 two-phase runtime shutdown and lifecycle event
+last_activity_desc: Completed Phase 09 Plan 06 RPC lifecycle projection
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 23
-  completed_plans: 20
-  percent: 87
+  completed_plans: 21
+  percent: 75
 ---
 
 # Project State
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 09 (lifecycle-association-guards-and-closure) — EXECUTING
-Plan: 6 of 8
+Plan: 7 of 8
 Status: Ready to execute
-Last activity: 2026-07-14 — Completed Phase 09 Plan 05 two-phase runtime shutdown and lifecycle event
+Last activity: 2026-07-14 — Completed Phase 09 Plan 06 RPC lifecycle projection
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ Last activity: 2026-07-14 — Completed Phase 09 Plan 05 two-phase runtime shutd
 | Phase 09 P03 | 17min | 2 tasks | 6 files |
 | Phase 09 P04 | 1h 32m | 2 tasks | 18 files |
 | Phase 09 P05 | 29min | 2 tasks | 12 files |
+| Phase 09 P06 | 16min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -146,6 +147,9 @@ Recent decisions affecting current work:
 - [Phase 09]: Keep Compact cancellation crate-private and exact-id scoped; preserve PromptFailed compatibility while CodingSessionError::Cancelled distinguishes the typed failure. — This reaches canonical flow cancellation without expanding the stable public API or weakening event compatibility.
 - [Phase 09]: Keep shutdown as two explicit phases: a cloneable coordinator-only request handle closes authority, while the restored unique session owner drains and finalizes. — This prevents owner duplication, cancellation of admitted work, and lifecycle publication from shared request handles.
 - [Phase 09]: Close product receivers from coordinator lifecycle state after publishing Runtime.ShutDown. — Cloned EventService and client handles must not keep delivery alive or truncate the final lifecycle event.
+- [Phase 09]: Keep lifecycle wire values additive and independently typed; do not add lifecycle fields to existing protocol or response envelopes. — Dedicated payloads preserve every existing external RPC and protocol shape while making lifecycle behavior explicit.
+- [Phase 09]: Capture the opaque runtime shutdown handle before every asynchronous RPC owner move and retain only pending response correlation in adapter state. — The handle requests Phase A without duplicating the unique owner or storing adapter-local lifecycle truth.
+- [Phase 09]: Allow exact submitted terminal finalization during ShuttingDown while continuing to reject ordinary client mutation and all post-ShutDown mutation. — Admitted work must publish exact terminal evidence during drain, while completed shutdown must remain closed to mutation.
 
 ### Pending Todos
 
@@ -165,8 +169,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-14T07:54:16.163Z
-Stopped at: Completed 09-05-PLAN.md
+Last session: 2026-07-14T08:17:15.707Z
+Stopped at: Completed 09-06-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
