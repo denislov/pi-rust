@@ -13,6 +13,19 @@ struct CompileFixture {
     category: &'static str,
     access_path: &'static str,
     source: &'static str,
+    expected: ExpectedDiagnostic,
+}
+
+#[derive(Clone, Copy)]
+struct ExpectedDiagnostic {
+    code: &'static str,
+    line: u64,
+    column_start: u64,
+    column_end: u64,
+    forbidden: &'static str,
+    forbidden_path: &'static str,
+    symbol: &'static str,
+    fragments: &'static [&'static str],
 }
 
 #[test]
@@ -41,11 +54,16 @@ fn external_diagnostic_matcher_requires_code_primary_span_and_forbidden_surface(
         column_start: 30,
         column_end: 39,
         forbidden: "Operation",
+        forbidden_path: "pi_coding_agent::api",
+        symbol: "Operation",
         fragments: &["unresolved import", "pi_coding_agent::api::Operation"],
     };
 
     assert!(diagnostic_matches(&diagnostic, &expected).is_ok());
-    let wrong_code = ExpectedDiagnostic { code: "E0603", ..expected };
+    let wrong_code = ExpectedDiagnostic {
+        code: "E0603",
+        ..expected
+    };
     assert!(diagnostic_matches(&diagnostic, &wrong_code).is_err());
 }
 
@@ -54,63 +72,106 @@ const FAIL_FIXTURES: [CompileFixture; 12] = [
         category: "operation-dispatch",
         access_path: "api",
         source: "operation_dispatch_api.rs",
+        expected: unresolved(28, 37, "Operation", "pi_coding_agent::api"),
     },
     CompileFixture {
         category: "operation-dispatch",
         access_path: "root",
         source: "operation_dispatch_root.rs",
+        expected: unresolved(23, 32, "Operation", "pi_coding_agent"),
     },
     CompileFixture {
         category: "operation-dispatch",
         access_path: "doc-hidden",
         source: "operation_dispatch_hidden.rs",
+        expected: private(22, 36, "operation"),
     },
     CompileFixture {
         category: "services",
         access_path: "api",
         source: "services_api.rs",
+        expected: unresolved(28, 40, "EventService", "pi_coding_agent::api"),
     },
     CompileFixture {
         category: "services",
         access_path: "root",
         source: "services_root.rs",
+        expected: unresolved(23, 35, "EventService", "pi_coding_agent"),
     },
     CompileFixture {
         category: "services",
         access_path: "doc-hidden",
         source: "services_hidden.rs",
+        expected: private(22, 36, "event_service"),
     },
     CompileFixture {
         category: "plugin-options-registries",
         access_path: "api",
         source: "plugins_api.rs",
+        expected: unresolved(28, 45, "PluginLoadOptions", "pi_coding_agent::api"),
     },
     CompileFixture {
         category: "plugin-options-registries",
         access_path: "root",
         source: "plugins_root.rs",
+        expected: unresolved(23, 40, "PluginLoadOptions", "pi_coding_agent"),
     },
     CompileFixture {
         category: "plugin-options-registries",
         access_path: "doc-hidden",
         source: "plugins_hidden.rs",
+        expected: private(23, 37, "plugin_load_flow"),
     },
     CompileFixture {
         category: "flow-contracts",
         access_path: "api",
         source: "flow_api.rs",
+        expected: unresolved(28, 32, "Flow", "pi_coding_agent::api"),
     },
     CompileFixture {
         category: "flow-contracts",
         access_path: "root",
         source: "flow_root.rs",
+        expected: unresolved(23, 27, "Flow", "pi_coding_agent"),
     },
     CompileFixture {
         category: "flow-contracts",
         access_path: "doc-hidden",
         source: "flow_hidden.rs",
+        expected: private(22, 36, "export_flow"),
     },
 ];
+
+const fn unresolved(
+    column_start: u64,
+    column_end: u64,
+    forbidden: &'static str,
+    forbidden_path: &'static str,
+) -> ExpectedDiagnostic {
+    ExpectedDiagnostic {
+        code: "E0432",
+        line: 1,
+        column_start,
+        column_end,
+        forbidden,
+        forbidden_path,
+        symbol: forbidden,
+        fragments: &["unresolved import"],
+    }
+}
+
+const fn private(column_start: u64, column_end: u64, symbol: &'static str) -> ExpectedDiagnostic {
+    ExpectedDiagnostic {
+        code: "E0603",
+        line: 1,
+        column_start,
+        column_end,
+        forbidden: "coding_session",
+        forbidden_path: "pi_coding_agent",
+        symbol,
+        fragments: &["is private"],
+    }
+}
 
 fn run_external_consumer_fixtures() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -154,10 +215,9 @@ fn run_external_consumer_fixtures() {
     );
 
     for fixture in FAIL_FIXTURES {
-        let output = compile_fixture(
-            consumer.path(),
-            &fixture_root.join("fail").join(fixture.source),
-        );
+        let fixture_path = fixture_root.join("fail").join(fixture.source);
+        validate_declared_source_span(&fixture_path, &fixture.expected);
+        let output = compile_fixture(consumer.path(), &fixture_path);
         let diagnostics = command_diagnostics(&output);
         assert!(
             !output.status.success(),
@@ -165,13 +225,17 @@ fn run_external_consumer_fixtures() {
             fixture.category,
             fixture.access_path
         );
+        let errors = compiler_error_diagnostics(&output);
         assert!(
-            diagnostics.contains("error[E0432]") || diagnostics.contains("error[E0603]"),
-            "{} through {} should fail because an import is unresolved or private, not for an unrelated compiler reason:\n{}",
-            fixture.category,
-            fixture.access_path,
-            diagnostics
+            !errors.is_empty(),
+            "Cargo emitted no rustc error diagnostic:\n{diagnostics}"
         );
+        diagnostic_matches(&errors[0], &fixture.expected).unwrap_or_else(|mismatch| {
+            panic!(
+                "{} through {} failed for an unrelated first compiler error: {mismatch}\n{}",
+                fixture.category, fixture.access_path, diagnostics
+            )
+        });
     }
 }
 
@@ -180,11 +244,128 @@ fn compile_fixture(consumer_root: &Path, fixture: &Path) -> Output {
         panic!("copy fixture {}: {error}", fixture.display());
     });
     Command::new(env!("CARGO"))
-        .args(["check", "--offline", "--quiet"])
+        .args(["check", "--offline", "--quiet", "--message-format=json"])
         .current_dir(consumer_root)
         .env("CARGO_TARGET_DIR", consumer_root.join("target"))
         .output()
         .unwrap_or_else(|error| panic!("run Cargo for fixture {}: {error}", fixture.display()))
+}
+
+fn validate_declared_source_span(fixture: &Path, expected: &ExpectedDiagnostic) {
+    let source = fs::read_to_string(fixture)
+        .unwrap_or_else(|error| panic!("read fixture {}: {error}", fixture.display()));
+    let line = source
+        .lines()
+        .nth(expected.line.saturating_sub(1) as usize)
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture {} omitted line {}",
+                fixture.display(),
+                expected.line
+            )
+        });
+    let start = expected.column_start.saturating_sub(1) as usize;
+    let end = expected.column_end.saturating_sub(1) as usize;
+    assert_eq!(
+        line.get(start..end),
+        Some(expected.forbidden),
+        "declared forbidden span drifted in {}",
+        fixture.display()
+    );
+    assert!(
+        line.contains(expected.forbidden_path),
+        "declared forbidden path `{}` is absent from {}",
+        expected.forbidden_path,
+        fixture.display()
+    );
+}
+
+fn compiler_error_diagnostics(output: &Output) -> Vec<serde_json::Value> {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|message| {
+            message.get("reason").and_then(|value| value.as_str()) == Some("compiler-message")
+                && message
+                    .pointer("/message/level")
+                    .and_then(|value| value.as_str())
+                    == Some("error")
+        })
+        .collect()
+}
+
+fn diagnostic_matches(
+    diagnostic: &serde_json::Value,
+    expected: &ExpectedDiagnostic,
+) -> Result<(), String> {
+    let actual_code = diagnostic
+        .pointer("/message/code/code")
+        .and_then(|value| value.as_str());
+    if actual_code != Some(expected.code) {
+        return Err(format!(
+            "expected {}, found {:?}",
+            expected.code, actual_code
+        ));
+    }
+
+    let primary = diagnostic
+        .pointer("/message/spans")
+        .and_then(|value| value.as_array())
+        .and_then(|spans| {
+            spans.iter().find(|span| {
+                span.get("is_primary").and_then(|value| value.as_bool()) == Some(true)
+                    && span
+                        .get("file_name")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|file| file == "src/main.rs" || file.ends_with("/src/main.rs"))
+                    && span.get("line_start").and_then(|value| value.as_u64())
+                        == Some(expected.line)
+                    && span.get("column_start").and_then(|value| value.as_u64())
+                        == Some(expected.column_start)
+                    && span.get("column_end").and_then(|value| value.as_u64())
+                        == Some(expected.column_end)
+            })
+        })
+        .ok_or_else(|| {
+            format!(
+                "missing primary src/main.rs span {}:{}-{}",
+                expected.line, expected.column_start, expected.column_end
+            )
+        })?;
+
+    let mut text = diagnostic
+        .pointer("/message/message")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_owned();
+    if let Some(rendered) = diagnostic
+        .pointer("/message/rendered")
+        .and_then(|value| value.as_str())
+    {
+        text.push_str(rendered);
+    }
+    if let Some(label) = primary.get("label").and_then(|value| value.as_str()) {
+        text.push_str(label);
+    }
+    if let Some(children) = diagnostic
+        .pointer("/message/children")
+        .and_then(|value| value.as_array())
+    {
+        for child in children {
+            if let Some(message) = child.get("message").and_then(|value| value.as_str()) {
+                text.push_str(message);
+            }
+        }
+    }
+    for fragment in std::iter::once(&expected.symbol)
+        .chain(std::iter::once(&expected.forbidden))
+        .chain(expected.fragments.iter())
+    {
+        if !text.contains(fragment) {
+            return Err(format!("diagnostic omitted fragment `{fragment}`"));
+        }
+    }
+    Ok(())
 }
 
 fn command_diagnostics(output: &Output) -> String {
