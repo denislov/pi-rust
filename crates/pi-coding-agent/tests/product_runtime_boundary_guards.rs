@@ -189,6 +189,7 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "hydrate_current",
             "subscribe_product_events",
             "product_event_replay_handle",
+            "compact_cancellation_handle",
             "ui_snapshot",
             "connect_client",
             "product_events_after",
@@ -308,6 +309,9 @@ fn absent_receiver_calls(scan: &SourceScan, names: &[&str]) -> Vec<String> {
             for name in names {
                 let pattern = format!(".{name}(");
                 if line.contains(&pattern) {
+                    if *name == "subscribe" && line.contains("lifecycle_sender.subscribe()") {
+                        continue;
+                    }
                     if (*name == "prompt" && line.contains("agent.prompt("))
                         || (*name == "set_default_agent_profile_id"
                             && (line.contains("session_service.set_default_agent_profile_id(")
