@@ -1,6 +1,6 @@
 use super::agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
 use super::agent_team_flow::{AgentTeamOptions, AgentTeamOutcome};
-use super::capability_snapshot::OperationCapabilitySnapshot;
+use super::capability_snapshot::{CapabilityGeneration, OperationCapabilitySnapshot};
 use super::export_flow::{ExportOptions, ExportOutcome};
 use super::operation_control::OperationKind;
 use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
@@ -208,8 +208,12 @@ pub(crate) struct OperationAdmission {
     pub(crate) kind: OperationKind,
     pub(crate) metadata: OperationMetadata,
     pub(crate) admitted_at: Option<String>,
-    #[allow(dead_code)]
     pub(crate) capability_snapshot: OperationCapabilitySnapshot,
+    pub(crate) operation_id: String,
+    pub(crate) capability_generation: CapabilityGeneration,
+    pub(crate) parent_operation_id: Option<String>,
+    pub(crate) root_operation_id: Option<String>,
+    pub(crate) idempotency_key: Option<OperationIdempotencyKey>,
 }
 
 impl OperationAdmission {
@@ -219,12 +223,31 @@ impl OperationAdmission {
         admitted_at: Option<String>,
         capability_snapshot: OperationCapabilitySnapshot,
     ) -> Self {
+        let operation_id = capability_snapshot.operation_id.clone();
+        let capability_generation = capability_snapshot.generation;
+        let (parent_operation_id, root_operation_id) = match &capability_snapshot.actor {
+            super::capability_snapshot::ActorId::Client
+            | super::capability_snapshot::ActorId::Plugin(_) => (None, Some(operation_id.clone())),
+            super::capability_snapshot::ActorId::ChildOperation(parent_id) => {
+                (Some(parent_id.clone()), None)
+            }
+        };
         Self {
             kind,
             metadata,
             admitted_at,
             capability_snapshot,
+            operation_id,
+            capability_generation,
+            parent_operation_id,
+            root_operation_id,
+            idempotency_key: None,
         }
+    }
+
+    pub(crate) fn with_idempotency_key(mut self, key: OperationIdempotencyKey) -> Self {
+        self.idempotency_key = Some(key);
+        self
     }
 }
 
@@ -338,6 +361,54 @@ mod tests {
         assert_eq!(operation.kind(), OperationKind::Prompt);
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
+    }
+
+    #[test]
+    fn admission_carries_root_identity_and_capability_generation() {
+        let snapshot = OperationCapabilitySnapshot::permissive("op-root");
+        let admission = OperationAdmission::new(
+            OperationKind::Prompt,
+            Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+                "hello".into(),
+            )))
+            .metadata(),
+            None,
+            snapshot,
+        )
+        .with_idempotency_key(OperationIdempotencyKey::parse("client-root:prompt-1").unwrap());
+
+        assert_eq!(admission.operation_id, "op-root");
+        assert_eq!(admission.capability_generation.get(), 1);
+        assert_eq!(admission.parent_operation_id, None);
+        assert_eq!(admission.root_operation_id.as_deref(), Some("op-root"));
+        assert_eq!(
+            admission
+                .idempotency_key
+                .as_ref()
+                .map(OperationIdempotencyKey::as_str),
+            Some("client-root:prompt-1")
+        );
+    }
+
+    #[test]
+    fn child_actor_admission_preserves_parent_lineage() {
+        let mut snapshot = OperationCapabilitySnapshot::permissive("op-child");
+        snapshot.actor =
+            super::super::capability_snapshot::ActorId::ChildOperation("op-parent".into());
+        let admission = OperationAdmission::new(
+            OperationKind::AgentInvocation,
+            OperationMetadata::new(
+                Some(OperationKind::AgentInvocation),
+                OperationOrigin::ParentChild,
+                OperationClass::Child,
+                OperationDispatchMode::Async,
+            ),
+            None,
+            snapshot,
+        );
+
+        assert_eq!(admission.parent_operation_id.as_deref(), Some("op-parent"));
+        assert_eq!(admission.root_operation_id, None);
     }
 
     #[test]
