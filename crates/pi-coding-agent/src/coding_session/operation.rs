@@ -226,8 +226,7 @@ impl OperationAdmission {
         let operation_id = capability_snapshot.operation_id.clone();
         let capability_generation = capability_snapshot.generation;
         let (parent_operation_id, root_operation_id) = match &capability_snapshot.actor {
-            super::capability_snapshot::ActorId::Client
-            | super::capability_snapshot::ActorId::Plugin(_) => (None, Some(operation_id.clone())),
+            super::capability_snapshot::ActorId::Client => (None, Some(operation_id.clone())),
             super::capability_snapshot::ActorId::ChildOperation(parent_id) => {
                 (Some(parent_id.clone()), None)
             }

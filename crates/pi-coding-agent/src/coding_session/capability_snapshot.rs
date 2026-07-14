@@ -1,6 +1,3 @@
-// TODO(stage-5): remove this allow once Task 2+ consumes these snapshot types.
-#![allow(dead_code)]
-
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
@@ -32,7 +29,6 @@ impl CapabilityGeneration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ActorId {
     Client,
-    Plugin(String),
     ChildOperation(String),
 }
 
@@ -57,10 +53,6 @@ impl ToolCapabilitySet {
 
     pub(crate) fn allows(&self, name: &str) -> bool {
         self.allow_all || self.allowed.contains(name)
-    }
-
-    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
-        self.allowed.iter().map(String::as_str)
     }
 }
 
@@ -133,27 +125,11 @@ impl FilesystemCapability {
         }
         Ok(resolved)
     }
-
-    pub(crate) fn require(
-        value: Option<&FilesystemCapability>,
-    ) -> Result<&FilesystemCapability, CodingSessionError> {
-        value.ok_or_else(|| CodingSessionError::UnsupportedCapability {
-            capability: "filesystem capability is not granted".into(),
-        })
-    }
 }
 
 impl ShellCapability {
     pub fn new(cwd: PathBuf) -> Self {
         Self { cwd }
-    }
-
-    pub(crate) fn require(
-        value: Option<&ShellCapability>,
-    ) -> Result<&ShellCapability, CodingSessionError> {
-        value.ok_or_else(|| CodingSessionError::UnsupportedCapability {
-            capability: "shell capability is not granted".into(),
-        })
     }
 }
 
@@ -274,12 +250,6 @@ impl OperationCapabilitySnapshot {
 
 #[cfg(test)]
 impl OperationCapabilitySnapshot {
-    pub(crate) fn test_without_shell(operation_id: impl Into<String>) -> Self {
-        let mut snapshot = Self::permissive(operation_id);
-        snapshot.shell = None;
-        snapshot
-    }
-
     pub(crate) fn test_without_session_write(operation_id: impl Into<String>) -> Self {
         let mut snapshot = Self::permissive(operation_id);
         snapshot.session_write = None;
@@ -570,20 +540,5 @@ mod tests {
             resolved,
             std::path::PathBuf::from("/workspace/project/src/main.rs")
         );
-    }
-
-    #[test]
-    fn shell_capability_require_rejects_missing_capability() {
-        let snapshot = OperationCapabilitySnapshot::test_without_shell("op_shell");
-        let error = ShellCapability::require(snapshot.shell.as_ref()).unwrap_err();
-        assert_eq!(error.code(), "unsupported_capability");
-    }
-
-    #[test]
-    fn filesystem_capability_require_rejects_missing_capability() {
-        let mut snapshot = OperationCapabilitySnapshot::permissive("op_fs");
-        snapshot.filesystem = None;
-        let error = FilesystemCapability::require(snapshot.filesystem.as_ref()).unwrap_err();
-        assert_eq!(error.code(), "unsupported_capability");
     }
 }
