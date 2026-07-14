@@ -46,16 +46,16 @@ error/outcome carrying its operation ID; it is not a product-event terminal or d
 | Team | `Started`, `MemberStarted`, `MemberCompleted`, `Completed`, `Failed`, `Aborted` | operation/child IDs, team/profile IDs, task/result/error/reason |
 | Message | `Started`, `Delta`, `ThinkingDelta`, `Completed` | operation/turn IDs, optional message ID, text/final text, usage and cost |
 | Tool | `Started`, `Updated`, `Completed`, `Failed` | operation/turn/tool-call IDs, name, arguments/update/summary/error message |
-| Runtime | `CompactionCompleted` | operation/turn IDs, summary, first-kept message, tokens before |
+| Runtime | `CompactionCompleted`, `ShutDown` | compaction operation/turn IDs, summary, first-kept message, tokens before; shutdown has no operation ID |
 | Delegation | `Requested`, `Rejected`, `Approved`, `ConfirmationRequired`, `Started`, `Completed`, `Failed` | operation/turn/tool-call/child IDs, requester/target, target kind, task/reason/result/error |
 | Workflow | `SelfHealingEditStarted`, `SelfHealingEditRepairAttempted`, `SelfHealingEditCompleted`, `SelfHealingEditFailed`, `PromptStarted`, `PromptCompleted`, `PromptFailed`, `PromptAborted`, `OperationRecovered` | operation/turn/recovery IDs, edit/check payload, result/error/reason |
 | Diagnostic | `Diagnostic` | optional operation ID and message |
 | Capability | `Changed` | generation and revocation policy; operation ID absent |
 
-The inventory is exactly 45 variants with the source-order family distribution
-`5/1/6/6/4/4/1/7/9/1/1`. `SessionOpened`, `DefaultChanged`, and `CapabilityChanged` have no
-operation identity. `Diagnostic` may or may not have one. Absence is valid and must not be replaced
-with a sentinel ID.
+The inventory is exactly 46 variants with the source-order family distribution
+`5/1/6/6/4/4/2/7/9/1/1`. `SessionOpened`, `DefaultChanged`, `Runtime.ShutDown`, and
+`CapabilityChanged` have no operation identity. `Diagnostic` may or may not have one. Absence is
+valid and must not be replaced with a sentinel ID.
 
 The authoritative source-order identity table is kept in sync by boundary tests:
 
@@ -88,6 +88,7 @@ The authoritative source-order identity table is kept in sync by boundary tests:
 | `ToolCallCompleted` | `tool` | `completed` |
 | `ToolCallFailed` | `tool` | `failed` |
 | `RuntimeCompactionCompleted` | `runtime` | `compaction_completed` |
+| `RuntimeShutDown` | `runtime` | `shut_down` |
 | `DelegationRequested` | `delegation` | `requested` |
 | `DelegationRejected` | `delegation` | `rejected` |
 | `DelegationApproved` | `delegation` | `approved` |
@@ -118,8 +119,8 @@ The current five mappings are:
 - `Agent.InvocationCompleted`, `Agent.InvocationFailed`, `Agent.InvocationAborted` -> `AgentInvocation`.
 - `Team.Completed`, `Team.Failed`, `Team.Aborted` -> `AgentTeam`.
 
-`Runtime.CompactionCompleted`, message/tool/delegation terminal events, session write completion,
-and `OperationRecovered` deliberately have no root-operation association today.
+`Runtime.CompactionCompleted`, `Runtime.ShutDown`, message/tool/delegation terminal events, session
+write completion, and `OperationRecovered` deliberately have no root-operation association today.
 
 ## Operation And Outcome Matrix
 

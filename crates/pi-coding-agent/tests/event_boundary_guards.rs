@@ -33,8 +33,8 @@ fn typed_public_event_boundary_is_fail_closed() {
             .lines()
             .filter(|line| line.starts_with("| `"))
             .count(),
-        45,
-        "the authoritative product-event inventory must contain 45 rows"
+        46,
+        "the authoritative product-event inventory must contain 46 rows"
     );
     for forbidden in ["format!(\"{:?}\"", "format!(\"{:#?}\""] {
         assert!(
@@ -103,15 +103,15 @@ fn full_event_inventory_is_source_fixture_and_document_complete() {
 
     assert_eq!(
         source.len(),
-        45,
-        "internal event enum must contain 45 variants"
+        46,
+        "internal event enum must contain 46 variants"
     );
-    assert_eq!(fixture.len(), 45, "fixture must construct 45 variants");
-    assert_eq!(expected.len(), 45, "test inventory must contain 45 rows");
+    assert_eq!(fixture.len(), 46, "fixture must construct 46 variants");
+    assert_eq!(expected.len(), 46, "test inventory must contain 46 rows");
     assert_eq!(
         documented.len(),
-        45,
-        "document inventory must contain 45 rows"
+        46,
+        "document inventory must contain 46 rows"
     );
     assert_eq!(source, fixture, "fixture drifted from CodingAgentEvent");
     assert_eq!(
