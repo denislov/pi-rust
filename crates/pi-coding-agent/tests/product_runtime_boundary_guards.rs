@@ -1458,6 +1458,113 @@ fn event_receiver_lag_maps_to_snapshot_recovery_error() {
     );
 }
 
+#[test]
+fn lifecycle_and_compact_control_authority_remain_narrow_and_private() {
+    let scan = SourceScan::new();
+    let projection = sanitize_rust_source(
+        &fs::read_to_string(
+            scan.crate_root
+                .join("src/coding_session/public_projection.rs"),
+        )
+        .expect("read public projection"),
+    );
+    let shutdown_handle = projection
+        .split("pub struct CodingAgentRuntimeShutdownHandle")
+        .nth(1)
+        .expect("shutdown request handle exists")
+        .split("pub enum CodingAgentSubmittedEventDurability")
+        .next()
+        .expect("durability projection follows shutdown handle");
+    assert_eq!(shutdown_handle.matches("pub fn ").count(), 1);
+    assert!(shutdown_handle.contains("pub fn request_shutdown(&self)"));
+    assert!(shutdown_handle.contains("self.coordinator.request_shutdown();"));
+    for forbidden in [
+        "pub coordinator",
+        "client_id",
+        "generation",
+        "finish_shutdown",
+        "wait_for_active_operation",
+        "event_service",
+        "emit(",
+        "connect",
+        "detach",
+    ] {
+        assert!(
+            !shutdown_handle.contains(forbidden),
+            "Phase A shutdown handle leaked `{forbidden}` authority"
+        );
+    }
+
+    let control_path = scan
+        .crate_root
+        .join("src/coding_session/operation_control.rs");
+    let control = fs::read_to_string(&control_path).expect("read operation control source");
+    for required in [
+        "pub(crate) enum CompactCancellationRejection",
+        "NoActiveOperation",
+        "ActiveOperationNotCompact",
+        "OperationMismatch",
+        "pub(crate) struct CompactCancellationHandle",
+        "pub(crate) fn cancel(&self, operation_id: &str)",
+        "let shared = self.shared.lock()",
+        "active.kind != OperationKind::Compact",
+        "active.operation_id != operation_id",
+        ".cancellation",
+        ".cancel();",
+    ] {
+        assert!(
+            control.contains(required),
+            "Compact cancellation omitted `{required}`"
+        );
+    }
+    for forbidden in [
+        "pub enum CompactCancellationRejection",
+        "pub struct CompactCancellationHandle",
+        "pub fn cancel(&self",
+        "fn cancel(&self, kind:",
+        "fn cancel(&self, generation:",
+        "fn cancel(&self, operation:",
+    ] {
+        assert!(
+            !control.contains(forbidden),
+            "Compact cancellation widened through `{forbidden}`"
+        );
+    }
+
+    let intent_router = sanitize_rust_source(
+        &fs::read_to_string(scan.crate_root.join("src/coding_session/intent_router.rs"))
+            .expect("read intent router"),
+    );
+    assert_eq!(intent_router.matches("enum ControlIntent").count(), 1);
+    assert_eq!(intent_router.matches("PromptControl,").count(), 1);
+    assert!(!intent_router.contains("CompactControl"));
+
+    let mut escaped = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src")) {
+        if path == control_path || path == scan.crate_root.join("src/coding_session/mod.rs") {
+            continue;
+        }
+        let relative = relative_path(&scan.repo_root, &path);
+        let production = production_source(&sanitize_rust_source(
+            &fs::read_to_string(&path).expect("read production source"),
+        ));
+        for forbidden in [
+            "CompactCancellationHandle",
+            "CompactCancellationRejection",
+            ".compact_cancellation_handle(",
+        ] {
+            if production.contains(forbidden) {
+                escaped.push(format!("{relative}: leaked `{forbidden}`"));
+            }
+        }
+    }
+    assert!(
+        escaped.is_empty(),
+        "crate-private Compact cancellation authority escaped its owner boundary:\n{}",
+        escaped.join("\n")
+    );
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AdapterOwnership {
     CanonicalOperationCaller,

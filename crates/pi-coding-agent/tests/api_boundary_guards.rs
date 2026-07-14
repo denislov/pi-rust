@@ -578,6 +578,9 @@ fn stable_api_excludes_internal_runtime_contracts() {
         "Flow",
         "FlowNode",
         "FlowOutcome",
+        "CompactCancellationHandle",
+        "CompactCancellationRejection",
+        "CancellationToken",
     ] {
         assert!(
             !exported_identifiers.contains(forbidden),
@@ -711,6 +714,9 @@ fn public_lifecycle_values_are_curated_without_authority_leaks() {
         "pub fn dispatch(",
         "pub fn detach_client(",
         "pub fn shutdown_client(",
+        "compact_cancellation",
+        "cancel_operation",
+        "operation_generation",
     ] {
         assert!(
             !connection.contains(forbidden),
