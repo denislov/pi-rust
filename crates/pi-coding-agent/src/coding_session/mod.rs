@@ -5727,6 +5727,9 @@ runtime = "lua"
             CodingAgentProductEventKind::Runtime(
                 CodingAgentRuntimeProductEvent::CompactionCompleted { .. },
             ) => "runtime_compaction_completed",
+            CodingAgentProductEventKind::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => {
+                "runtime_shut_down"
+            }
             CodingAgentProductEventKind::Delegation(event) => match event {
                 CodingAgentDelegationProductEvent::Requested { .. } => "delegation_requested",
                 CodingAgentDelegationProductEvent::Rejected { .. } => "delegation_rejected",

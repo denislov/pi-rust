@@ -194,6 +194,9 @@ impl CodingProtocolEventAdapter {
                 first_kept_message_id,
                 *tokens_before,
             ),
+            CodingAgentProductEventKind::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => {
+                Vec::new()
+            }
             CodingAgentProductEventKind::Session(
                 CodingAgentSessionProductEvent::CompactionCompleted {
                     summary,
@@ -1020,5 +1023,24 @@ mod tests {
                 && recovery_id == "recovery_1"
                 && reason.contains("startup recovery")
         ));
+    }
+
+    #[test]
+    fn protocol_adapter_does_not_masquerade_shutdown_as_prompt_completion() {
+        let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+            "faux".into(),
+            "faux-provider".into(),
+            "faux-model".into(),
+        );
+        let product_event = ProductEvent::from_event_for_tests(
+            ProductEventSequence::new(1),
+            CodingAgentEvent::RuntimeShutDown,
+        );
+
+        assert!(
+            adapter
+                .push_internal_product_event(&product_event)
+                .is_empty()
+        );
     }
 }

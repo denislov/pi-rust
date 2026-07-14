@@ -331,6 +331,7 @@ pub enum CodingAgentRuntimeProductEvent {
         first_kept_message_id: String,
         tokens_before: u32,
     },
+    ShutDown,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -526,6 +527,7 @@ impl CodingAgentProductEventKind {
             Self::Runtime(CodingAgentRuntimeProductEvent::CompactionCompleted { .. }) => {
                 "compaction_completed"
             }
+            Self::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => "shut_down",
             Self::Delegation(CodingAgentDelegationProductEvent::Requested { .. }) => "requested",
             Self::Delegation(CodingAgentDelegationProductEvent::Rejected { .. }) => "rejected",
             Self::Delegation(CodingAgentDelegationProductEvent::Approved { .. }) => "approved",
@@ -628,6 +630,7 @@ impl CodingAgentProductEventKind {
             Self::Runtime(CodingAgentRuntimeProductEvent::CompactionCompleted { .. }) => {
                 "CompactionCompleted"
             }
+            Self::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => "ShutDown",
             Self::Delegation(CodingAgentDelegationProductEvent::Requested { .. }) => "Requested",
             Self::Delegation(CodingAgentDelegationProductEvent::Rejected { .. }) => "Rejected",
             Self::Delegation(CodingAgentDelegationProductEvent::Approved { .. }) => "Approved",
@@ -1316,6 +1319,7 @@ impl From<&CodingAgentEvent> for CodingAgentProductEventKind {
                 first_kept_message_id: first_kept_message_id.clone(),
                 tokens_before: *tokens_before,
             }),
+            E::RuntimeShutDown => Self::Runtime(CodingAgentRuntimeProductEvent::ShutDown),
             E::SessionCompactionCompleted {
                 operation_id,
                 turn_id,
@@ -1395,7 +1399,7 @@ mod tests {
     use pi_ai::types::{Cost, Usage};
 
     // product-event-inventory:start
-    const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 45] = [
+    const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 46] = [
         (
             "SessionOpened",
             CodingAgentProductEventFamily::Session,
@@ -1530,6 +1534,11 @@ mod tests {
             "RuntimeCompactionCompleted",
             CodingAgentProductEventFamily::Runtime,
             "compaction_completed",
+        ),
+        (
+            "RuntimeShutDown",
+            CodingAgentProductEventFamily::Runtime,
+            "shut_down",
         ),
         (
             "DelegationRequested",
@@ -1807,6 +1816,7 @@ mod tests {
                 first_kept_message_id: "message".into(),
                 tokens_before: 5,
             },
+            CodingAgentEvent::RuntimeShutDown,
         ];
         let (
             operation_id,
@@ -2074,7 +2084,7 @@ mod tests {
     fn exhaustive_inventory_covers_all_current_variants() {
         let projected = exhaustive_inventory_fixture();
         assert_eq!(projected.len(), EXPECTED_PUBLIC_EVENT_INVENTORY.len());
-        assert_eq!(projected.len(), 45);
+        assert_eq!(projected.len(), 46);
         for (index, (event, (_, family, kind))) in projected
             .iter()
             .zip(EXPECTED_PUBLIC_EVENT_INVENTORY.iter())
@@ -2085,7 +2095,7 @@ mod tests {
             assert_eq!(event.kind_name(), *kind, "inventory row {index}");
             assert_public_inventory_payload(index, event);
         }
-        let expected_counts = [5, 1, 6, 6, 4, 4, 1, 7, 9, 1, 1];
+        let expected_counts = [5, 1, 6, 6, 4, 4, 2, 7, 9, 1, 1];
         let families = [
             CodingAgentProductEventFamily::Session,
             CodingAgentProductEventFamily::Profile,
@@ -2126,19 +2136,20 @@ mod tests {
             projected[3].durability(),
             &CodingAgentProductEventDurability::LiveOnly
         );
-        assert_eq!(projected[43].operation_id(), None);
+        assert_eq!(projected[27].operation_id(), None);
         assert_eq!(projected[44].operation_id(), None);
+        assert_eq!(projected[45].operation_id(), None);
         assert_eq!(
-            projected[42].terminal_status(),
+            projected[43].terminal_status(),
             Some(CodingAgentProductEventTerminalStatus::Recovered)
         );
-        assert_eq!(projected[42].terminal_operation(), None);
+        assert_eq!(projected[43].terminal_operation(), None);
         assert_eq!(
             projected
                 .iter()
                 .map(CodingAgentProductEvent::sequence)
                 .collect::<Vec<_>>(),
-            (1..=45).collect::<Vec<_>>()
+            (1..=46).collect::<Vec<_>>()
         );
     }
 
@@ -2260,39 +2271,40 @@ mod tests {
                     ..
                 }),
             ) => first_kept_message_id == "message" && *tokens_before == 5,
-            (27, K::Delegation(CodingAgentDelegationProductEvent::Requested { context })) => {
+            (27, K::Runtime(CodingAgentRuntimeProductEvent::ShutDown)) => true,
+            (28, K::Delegation(CodingAgentDelegationProductEvent::Requested { context })) => {
                 context.target_kind == CodingAgentProductEventProfileKind::Agent
                     && context.task == "task"
             }
-            (28, K::Delegation(CodingAgentDelegationProductEvent::Rejected { reason, .. })) => {
+            (29, K::Delegation(CodingAgentDelegationProductEvent::Rejected { reason, .. })) => {
                 reason == "rejected"
             }
-            (29, K::Delegation(CodingAgentDelegationProductEvent::Approved { context })) => {
+            (30, K::Delegation(CodingAgentDelegationProductEvent::Approved { context })) => {
                 context.tool_call_id == "call"
             }
             (
-                30,
+                31,
                 K::Delegation(CodingAgentDelegationProductEvent::ConfirmationRequired {
                     reason,
                     ..
                 }),
             ) => reason == "confirm",
             (
-                31,
+                32,
                 K::Delegation(CodingAgentDelegationProductEvent::Started {
                     child_operation_id,
                     ..
                 }),
             ) => child_operation_id == "child",
             (
-                32,
+                33,
                 K::Delegation(CodingAgentDelegationProductEvent::Completed { final_text, .. }),
             ) => final_text == "done",
-            (33, K::Delegation(CodingAgentDelegationProductEvent::Failed { error, .. })) => {
+            (34, K::Delegation(CodingAgentDelegationProductEvent::Failed { error, .. })) => {
                 error.code == "unsupported_capability"
             }
             (
-                34,
+                35,
                 K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
                     path,
                     replacements,
@@ -2300,7 +2312,7 @@ mod tests {
                 }),
             ) => path == "file" && *replacements == 1,
             (
-                35,
+                36,
                 K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
                     attempt,
                     replacements,
@@ -2317,7 +2329,7 @@ mod tests {
                         .is_some_and(|output| output.command == "check")
             }
             (
-                36,
+                37,
                 K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditCompleted {
                     attempts,
                     first_changed_line,
@@ -2325,25 +2337,25 @@ mod tests {
                 }),
             ) => *attempts == 1 && *first_changed_line == Some(1),
             (
-                37,
+                38,
                 K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditFailed {
                     error, ..
                 }),
             ) => error.code == "unsupported_capability",
-            (38, K::Workflow(CodingAgentWorkflowProductEvent::PromptStarted { turn_id, .. })) => {
+            (39, K::Workflow(CodingAgentWorkflowProductEvent::PromptStarted { turn_id, .. })) => {
                 turn_id == "turn"
             }
-            (39, K::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted { turn_id, .. })) => {
+            (40, K::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted { turn_id, .. })) => {
                 turn_id == "turn"
             }
-            (40, K::Workflow(CodingAgentWorkflowProductEvent::PromptFailed { error, .. })) => {
+            (41, K::Workflow(CodingAgentWorkflowProductEvent::PromptFailed { error, .. })) => {
                 error.code == "unsupported_capability"
             }
-            (41, K::Workflow(CodingAgentWorkflowProductEvent::PromptAborted { reason, .. })) => {
+            (42, K::Workflow(CodingAgentWorkflowProductEvent::PromptAborted { reason, .. })) => {
                 reason == "abort"
             }
             (
-                42,
+                43,
                 K::Workflow(CodingAgentWorkflowProductEvent::OperationRecovered {
                     recovery_id,
                     reason,
@@ -2351,14 +2363,14 @@ mod tests {
                 }),
             ) => recovery_id == "recovery" && reason == "restart",
             (
-                43,
+                44,
                 K::Diagnostic(CodingAgentDiagnosticProductEvent::Diagnostic {
                     operation_id,
                     message,
                 }),
             ) => operation_id.is_none() && message == "diagnostic",
             (
-                44,
+                45,
                 K::Capability(CodingAgentCapabilityProductEvent::Changed {
                     generation,
                     revocation,

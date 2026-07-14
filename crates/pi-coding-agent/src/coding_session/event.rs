@@ -190,6 +190,7 @@ impl ProductEventDurability {
             | CodingAgentEvent::ToolCallCompleted { .. }
             | CodingAgentEvent::ToolCallFailed { .. }
             | CodingAgentEvent::RuntimeCompactionCompleted { .. }
+            | CodingAgentEvent::RuntimeShutDown
             | CodingAgentEvent::SessionCompactionCompleted { .. }
             | CodingAgentEvent::PromptCompleted { .. }
             | CodingAgentEvent::PromptFailed { .. }
@@ -447,6 +448,7 @@ pub enum CodingAgentEvent {
         first_kept_message_id: String,
         tokens_before: u32,
     },
+    RuntimeShutDown,
     SessionCompactionCompleted {
         operation_id: String,
         turn_id: String,
@@ -527,6 +529,7 @@ impl CodingAgentEvent {
             | Self::OperationRecovered { operation_id, .. } => Some(operation_id.as_str()),
             Self::Diagnostic { operation_id, .. } => operation_id.as_deref(),
             Self::SessionOpened { .. }
+            | Self::RuntimeShutDown
             | Self::DefaultAgentProfileChanged { .. }
             | Self::CapabilityChanged { .. } => None,
         }
@@ -577,6 +580,7 @@ impl CodingAgentEvent {
             | Self::ToolCallStarted { .. }
             | Self::ToolCallUpdated { .. }
             | Self::RuntimeCompactionCompleted { .. }
+            | Self::RuntimeShutDown
             | Self::Diagnostic { .. }
             | Self::CapabilityChanged { .. } => None,
         }

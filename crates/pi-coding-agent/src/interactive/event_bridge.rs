@@ -286,6 +286,9 @@ impl CodingEventBridge {
                     context_tokens: None,
                 },
             ],
+            CodingAgentProductEventKind::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => {
+                Vec::new()
+            }
             CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::PromptFailed { error, .. },
             ) => vec![UiEvent::AgentError {
@@ -641,6 +644,17 @@ mod tests {
                 text: "hello interactive".into()
             }]
         );
+    }
+
+    #[test]
+    fn runtime_shutdown_has_no_interactive_projection() {
+        let product_event = ProductEvent::from_event_for_tests(
+            ProductEventSequence::new(1),
+            CodingAgentEvent::RuntimeShutDown,
+        );
+        let mut bridge = CodingEventBridge::new();
+
+        assert!(bridge.push_product_event(&product_event).is_empty());
     }
 
     fn assistant_delta_event(sequence: u64, text: &str) -> ProductEvent {
