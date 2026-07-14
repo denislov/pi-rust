@@ -3,6 +3,7 @@ use super::client_projection::{ClientConnectionId, ClientDraft, UiSnapshot, UiSn
 use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use super::event::{ProductEvent, ProductEventSequence, ProductEventTerminalStatus};
 use super::operation_control::{OperationKind, PromptControlHandle};
+use super::error::CodingAgentLifecycleRejection;
 use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -62,6 +63,7 @@ pub(crate) struct DraftRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ClientRecord {
     pub(crate) generation: ClientGeneration,
+    connection: ConnectionLifecycle,
     pub(crate) acknowledged_sequence: u64,
     pub(crate) prompt_draft: Option<DraftRecord>,
     pub(crate) steer_drafts: VecDeque<DraftRecord>,
@@ -75,6 +77,7 @@ impl ClientRecord {
     fn new(generation: ClientGeneration) -> Self {
         Self {
             generation,
+            connection: ConnectionLifecycle::Attached,
             acknowledged_sequence: 0,
             prompt_draft: None,
             steer_drafts: VecDeque::new(),
@@ -84,6 +87,26 @@ impl ClientRecord {
             control_receipt_order: VecDeque::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionLifecycle {
+    Attached,
+    Detached,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeLifecycle {
+    Running,
+    ShuttingDown,
+    ShutDown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClientDetachOutcome {
+    Detached,
+    AlreadyDetached,
+    StaleGeneration,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +120,7 @@ pub(crate) struct SnapshotProjection {
 
 #[derive(Debug)]
 pub(crate) struct SnapshotState {
+    pub(crate) runtime_lifecycle: RuntimeLifecycle,
     pub(crate) clients: HashMap<ClientConnectionId, ClientRecord>,
     pub(crate) projection: Option<SnapshotProjection>,
     pub(crate) capability_generation: CapabilityGeneration,
@@ -109,6 +133,7 @@ pub(crate) struct SnapshotState {
 impl Default for SnapshotState {
     fn default() -> Self {
         Self {
+            runtime_lifecycle: RuntimeLifecycle::Running,
             clients: HashMap::new(),
             projection: None,
             capability_generation: CapabilityGeneration::new(1),
@@ -155,11 +180,13 @@ impl SnapshotCoordinator {
     > {
         let text = {
             let mut state = self.state.lock().unwrap();
-            let record = Self::record(&mut state, handle).map_err(|_| super::public_projection::CodingAgentControlRejection {
-                control_id: super::public_projection::CodingAgentControlId(draft_id.0.clone()),
-                operation_id: operation_id.into(),
-                kind,
-                reason: super::public_projection::CodingAgentControlRejectionReason::StaleConnection,
+            let record = Self::record(&mut state, handle).map_err(|error| {
+                super::public_projection::CodingAgentControlRejection {
+                    control_id: super::public_projection::CodingAgentControlId(draft_id.0.clone()),
+                    operation_id: operation_id.into(),
+                    kind,
+                    reason: control_rejection_reason(&error),
+                }
             })?;
             let queue = match kind {
                 super::public_projection::CodingAgentControlKind::Steer => &record.steer_drafts,
@@ -217,13 +244,13 @@ impl SnapshotCoordinator {
         let mut state = self.state.lock().unwrap();
         let record = match Self::record(&mut state, handle) {
             Ok(record) => record,
-            Err(ClientRegistryError::StaleClient) => {
+            Err(error @ ClientRegistryError::Lifecycle(_))
+            | Err(error @ ClientRegistryError::StaleClient) => {
                 return Err(super::public_projection::CodingAgentControlRejection {
                     control_id,
                     operation_id: operation_id.into(),
                     kind,
-                    reason:
-                        super::public_projection::CodingAgentControlRejectionReason::StaleConnection,
+                    reason: control_rejection_reason(&error),
                 });
             }
             Err(_) => {
@@ -357,12 +384,17 @@ impl SnapshotCoordinator {
         id: ClientConnectionId,
     ) -> Result<ClientHandle, ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
+        Self::validate_runtime(&state)?;
         if let Some(record) = state.clients.get_mut(&id) {
             record.generation.0 += 1;
-            return Ok(ClientHandle {
+            record.connection = ConnectionLifecycle::Attached;
+            let handle = ClientHandle {
                 id,
                 generation: record.generation,
-            });
+            };
+            drop(state);
+            self.rebind_prompt_control(&handle);
+            return Ok(handle);
         }
         if state.clients.len() >= MAX_CLIENTS {
             return Err(ClientRegistryError::ClientCapacityExceeded { limit: MAX_CLIENTS });
@@ -372,6 +404,36 @@ impl SnapshotCoordinator {
             .clients
             .insert(id.clone(), ClientRecord::new(generation));
         Ok(ClientHandle { id, generation })
+    }
+
+    fn rebind_prompt_control(&self, handle: &ClientHandle) {
+        let mut binding = self.prompt_control.lock().unwrap();
+        if let Some(active) = binding.as_mut()
+            && active.owner.id == handle.id
+        {
+            active.owner.generation = handle.generation;
+        }
+    }
+
+    pub(crate) fn detach(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<ClientDetachOutcome, ClientRegistryError> {
+        let mut state = self.state.lock().unwrap();
+        Self::validate_runtime(&state)?;
+        let Some(record) = state.clients.get_mut(&handle.id) else {
+            return Ok(ClientDetachOutcome::StaleGeneration);
+        };
+        if record.generation != handle.generation {
+            return Ok(ClientDetachOutcome::StaleGeneration);
+        }
+        match record.connection {
+            ConnectionLifecycle::Attached => {
+                record.connection = ConnectionLifecycle::Detached;
+                Ok(ClientDetachOutcome::Detached)
+            }
+            ConnectionLifecycle::Detached => Ok(ClientDetachOutcome::AlreadyDetached),
+        }
     }
 
     pub(crate) fn is_current(&self, handle: &ClientHandle) -> bool {
@@ -531,26 +593,49 @@ impl SnapshotCoordinator {
         state: &'a mut SnapshotState,
         handle: &ClientHandle,
     ) -> Result<&'a mut ClientRecord, ClientRegistryError> {
-        let record = state
-            .clients
-            .get_mut(&handle.id)
-            .ok_or(ClientRegistryError::StaleClient)?;
+        Self::validate_runtime(state)?;
+        let record = state.clients.get_mut(&handle.id).ok_or(
+            ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration),
+        )?;
         if record.generation != handle.generation {
-            return Err(ClientRegistryError::StaleClient);
+            return Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::StaleGeneration,
+            ));
+        }
+        if record.connection == ConnectionLifecycle::Detached {
+            return Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::Detached,
+            ));
         }
         Ok(record)
+    }
+
+    fn validate_runtime(state: &SnapshotState) -> Result<(), ClientRegistryError> {
+        match state.runtime_lifecycle {
+            RuntimeLifecycle::Running => Ok(()),
+            RuntimeLifecycle::ShuttingDown | RuntimeLifecycle::ShutDown => Err(
+                ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::RuntimeShutDown),
+            ),
+        }
     }
 
     pub(crate) fn validate_client(
         state: &SnapshotState,
         handle: &ClientHandle,
     ) -> Result<(), ClientRegistryError> {
-        let record = state
-            .clients
-            .get(&handle.id)
-            .ok_or(ClientRegistryError::StaleClient)?;
+        Self::validate_runtime(state)?;
+        let record = state.clients.get(&handle.id).ok_or(
+            ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration),
+        )?;
         if record.generation != handle.generation {
-            return Err(ClientRegistryError::StaleClient);
+            return Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::StaleGeneration,
+            ));
+        }
+        if record.connection == ConnectionLifecycle::Detached {
+            return Err(ClientRegistryError::Lifecycle(
+                CodingAgentLifecycleRejection::Detached,
+            ));
         }
         Ok(())
     }
@@ -690,13 +775,19 @@ impl SnapshotCoordinator {
         status: ProductEventTerminalStatus,
     ) -> Result<(), ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
-        let record = Self::record(&mut state, handle)?;
+        Self::validate_runtime(&state)?;
+        let record = state.clients.get_mut(&handle.id).ok_or(
+            ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration),
+        )?;
         if !matches!(
-            record.submitted_operation,
-            Some(
-                SubmittedOperationStatus::Accepted { .. }
-                    | SubmittedOperationStatus::Running { .. }
-            )
+            &record.submitted_operation,
+            Some(SubmittedOperationStatus::Accepted {
+                operation_id: stored_id,
+                kind: stored_kind,
+            } | SubmittedOperationStatus::Running {
+                operation_id: stored_id,
+                kind: stored_kind,
+            }) if stored_id == &operation_id && *stored_kind == kind
         ) {
             return Err(ClientRegistryError::SubmittedRegression);
         }
@@ -713,10 +804,29 @@ impl SnapshotCoordinator {
     }
 }
 
+fn control_rejection_reason(
+    error: &ClientRegistryError,
+) -> super::public_projection::CodingAgentControlRejectionReason {
+    use super::public_projection::CodingAgentControlRejectionReason;
+    match error {
+        ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::Detached) => {
+            CodingAgentControlRejectionReason::Detached
+        }
+        ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration)
+        | ClientRegistryError::StaleClient => CodingAgentControlRejectionReason::StaleGeneration,
+        ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::RuntimeShutDown) => {
+            CodingAgentControlRejectionReason::RuntimeShutDown
+        }
+        _ => CodingAgentControlRejectionReason::InvalidInput,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ClientRegistryError {
     #[error("stale client connection")]
     StaleClient,
+    #[error("lifecycle rejection: {0}")]
+    Lifecycle(CodingAgentLifecycleRejection),
     #[error("client capacity exceeded: {limit}")]
     ClientCapacityExceeded { limit: usize },
     #[error("draft queue capacity exceeded: {limit}")]
@@ -816,18 +926,24 @@ mod tests {
             coordinator.detach(&first),
             Ok(ClientDetachOutcome::StaleGeneration)
         );
-        let state = coordinator.client_state(&second).unwrap();
-        assert_eq!(state.acknowledged_sequence, 7);
-        assert_eq!(state.drafts.len(), 2);
+        let state = coordinator.state.lock().unwrap();
+        let record = &state.clients[&second.id];
+        assert_eq!(record.acknowledged_sequence, 7);
+        assert_eq!(
+            record.prompt_draft.iter().count()
+                + record.steer_drafts.len()
+                + record.follow_up_drafts.len(),
+            2
+        );
         assert!(matches!(
-            state.submitted_operation,
+            record.submitted_operation,
             Some(SubmittedOperationStatus::Accepted { ref operation_id, .. })
                 if operation_id == "op-1"
         ));
     }
 
     #[test]
-    fn detached_lifecycle_gate_rejects_state_draft_submission_replay_and_control() {
+    fn lifecycle_rejection_gate_rejects_state_draft_submission_replay_and_control() {
         let coordinator = SnapshotCoordinator::new();
         let handle = coordinator
             .connect_or_takeover(ClientConnectionId::new("lifecycle-client"))
@@ -867,7 +983,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             rejection.reason,
-            super::super::public_projection::CodingAgentControlRejectionReason::StaleConnection
+            super::super::public_projection::CodingAgentControlRejectionReason::Detached
         );
     }
 }

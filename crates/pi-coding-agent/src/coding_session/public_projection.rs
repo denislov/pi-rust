@@ -176,6 +176,9 @@ pub struct CodingAgentControlReceipt {
 #[serde(rename_all = "snake_case")]
 pub enum CodingAgentControlRejectionReason {
     StaleConnection,
+    Detached,
+    StaleGeneration,
+    RuntimeShutDown,
     NotOwner,
     TargetMismatch,
     TargetNotRunning,
@@ -194,6 +197,9 @@ pub enum CodingAgentMutationRejection {
     TargetNotRunning,
     PayloadConflict,
     NotOwner,
+    Detached,
+    StaleGeneration,
+    RuntimeShutDown,
     InvalidInput,
 }
 
@@ -463,7 +469,18 @@ impl CodingAgentClientConnection {
                 ClientRegistryError::QueueCapacityExceeded { .. } => {
                     CodingAgentMutationRejection::QueueCapacity
                 }
-                ClientRegistryError::StaleClient => CodingAgentMutationRejection::NotOwner,
+                ClientRegistryError::Lifecycle(
+                    super::error::CodingAgentLifecycleRejection::Detached,
+                ) => CodingAgentMutationRejection::Detached,
+                ClientRegistryError::Lifecycle(
+                    super::error::CodingAgentLifecycleRejection::StaleGeneration,
+                )
+                | ClientRegistryError::StaleClient => {
+                    CodingAgentMutationRejection::StaleGeneration
+                }
+                ClientRegistryError::Lifecycle(
+                    super::error::CodingAgentLifecycleRejection::RuntimeShutDown,
+                ) => CodingAgentMutationRejection::RuntimeShutDown,
                 _ => CodingAgentMutationRejection::InvalidInput,
             })
     }
@@ -670,6 +687,7 @@ fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
 
 fn registry_error(id: &CodingAgentClientId, error: ClientRegistryError) -> CodingSessionError {
     match error {
+        ClientRegistryError::Lifecycle(reason) => CodingSessionError::Lifecycle { reason },
         ClientRegistryError::StaleClient => CodingSessionError::StaleClientConnection {
             client_id: id.as_str().into(),
         },

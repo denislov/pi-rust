@@ -2,7 +2,7 @@ use super::client_projection::ClientConnectionId;
 use super::client_projection::UiSnapshot;
 use super::operation_control::OperationKind;
 use super::snapshot_coordinator::{
-    ClientHandle, ClientRegistryError, DraftRecord, SnapshotCoordinator,
+    ClientDetachOutcome, ClientHandle, ClientRegistryError, DraftRecord, SnapshotCoordinator,
 };
 use std::sync::Arc;
 
@@ -27,6 +27,12 @@ impl ClientService {
         sequence: u64,
     ) -> Result<u64, ClientRegistryError> {
         self.coordinator.acknowledge(handle, sequence)
+    }
+    pub(crate) fn detach(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<ClientDetachOutcome, ClientRegistryError> {
+        self.coordinator.detach(handle)
     }
     pub(crate) fn client_snapshot(
         &self,
