@@ -249,6 +249,129 @@ fn stable_api_signature_closure_is_importable() {
     let _canonical_dispatch = CodingAgentSession::run;
 }
 
+fn submission_association_operations() -> [CodingAgentOperation; 15] {
+    let prompt = || PromptTurnOptions::new(PromptInvocation::Text("test".into()));
+    [
+        CodingAgentOperation::Prompt(prompt()),
+        CodingAgentOperation::Compact(prompt()),
+        CodingAgentOperation::BranchSummary {
+            options: prompt(),
+            source_leaf_id: "source".into(),
+            target_leaf_id: "target".into(),
+            custom_instructions: None,
+            reuse: BranchSummaryReusePolicy::ReuseExisting,
+        },
+        CodingAgentOperation::SelfHealingEdit(SelfHealingEditRequest::new(
+            "src/lib.rs",
+            vec![SelfHealingEditReplacement::new("old", "new")],
+        )),
+        CodingAgentOperation::InvokeAgent(AgentInvocationOptions::new(
+            "reviewer",
+            "review",
+            prompt(),
+        )),
+        CodingAgentOperation::InvokeTeam(AgentTeamOptions::new("review", "review", prompt())),
+        CodingAgentOperation::PluginLoad,
+        CodingAgentOperation::PluginCommand {
+            command_id: "plugin.command".into(),
+            args: serde_json::Value::Null,
+        },
+        CodingAgentOperation::SetDefaultAgentProfile {
+            profile_id: ProfileId::from("reviewer"),
+        },
+        CodingAgentOperation::ApproveDelegation {
+            operation_id: "operation".into(),
+            tool_call_id: "tool".into(),
+        },
+        CodingAgentOperation::RejectDelegation {
+            operation_id: "operation".into(),
+            tool_call_id: "tool".into(),
+            reason: "rejected".into(),
+        },
+        CodingAgentOperation::ForkSession {
+            target_leaf_id: None,
+        },
+        CodingAgentOperation::SwitchActiveLeaf {
+            target_leaf_id: "leaf".into(),
+        },
+        CodingAgentOperation::ExportCurrent,
+        CodingAgentOperation::ExportCurrentHtml("session.html".into()),
+    ]
+}
+
+#[tokio::test]
+async fn submission_association_prepares_all_public_operation_classes() {
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let connection = session
+        .connect(CodingAgentClientId::new("association-client"))
+        .unwrap();
+    connection
+        .set_prompt_draft(CodingAgentDraftId("prompt-draft".into()), "test")
+        .unwrap();
+
+    for (index, operation) in submission_association_operations().iter().enumerate() {
+        let draft_id = if index == 0 {
+            CodingAgentDraftId("prompt-draft".into())
+        } else {
+            CodingAgentDraftId(format!("unused-{index}"))
+        };
+        let lease = connection
+            .prepare_submission(&mut session, draft_id, operation)
+            .unwrap_or_else(|error| panic!("operation {index} was not preparable: {error}"));
+        drop(lease);
+    }
+}
+
+#[tokio::test]
+async fn outcome_acknowledgement_is_distinct_from_event_acknowledgement() {
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let connection = session
+        .connect(CodingAgentClientId::new("outcome-ack-client"))
+        .unwrap();
+    let operation = CodingAgentOperation::ExportCurrent;
+    let lease = connection
+        .prepare_submission(
+            &mut session,
+            CodingAgentDraftId("unused-outcome-draft".into()),
+            &operation,
+        )
+        .unwrap();
+
+    assert!(matches!(
+        session.run(operation).await.unwrap(),
+        CodingAgentOperationOutcome::Export(_)
+    ));
+    drop(lease);
+
+    let submitted = connection
+        .state()
+        .unwrap()
+        .submitted_operation
+        .expect("outcome-only terminal state");
+    let acknowledgement = match submitted.status {
+        pi_coding_agent::api::CodingAgentSubmittedOperationStatus::Terminal {
+            anchor: CodingAgentSubmittedTerminalAnchor::OutcomeOnly { acknowledgement },
+            ..
+        } => acknowledgement,
+        other => panic!("unexpected outcome-only terminal state: {other:?}"),
+    };
+
+    connection.acknowledge(u64::MAX).unwrap();
+    assert!(connection.state().unwrap().submitted_operation.is_some());
+
+    let wrong: CodingAgentOutcomeAcknowledgementId =
+        serde_json::from_str(r#""wrong-acknowledgement""#).unwrap();
+    assert!(connection.acknowledge_outcome(wrong).is_err());
+    assert!(connection.state().unwrap().submitted_operation.is_some());
+
+    connection.acknowledge_outcome(acknowledgement).unwrap();
+    assert!(connection.state().unwrap().submitted_operation.is_none());
+}
+
 fn model(api: &str) -> Model {
     Model {
         id: "test-model".into(),
