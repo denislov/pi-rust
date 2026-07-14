@@ -9,8 +9,8 @@ use crate::runtime::{
 use crate::session::ResolvedSessionTarget;
 use crate::tools::{self, ToolFilter};
 use crate::{CliArgs, CliError};
+use pi_agent_core::api::DiagnosticSeverity as ResourceDiagnosticSeverity;
 use pi_agent_core::api::{AgentResources, ResourceDiagnostic};
-use pi_agent_core::types::DiagnosticSeverity as ResourceDiagnosticSeverity;
 use pi_ai::api::AiClient;
 use pi_ai::api::{Model, ProviderAuthDiagnostic};
 use std::path::PathBuf;

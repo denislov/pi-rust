@@ -1,10 +1,10 @@
 use crate::CliError;
 use crate::theme::{ResolvedColor, ThemeColor, ThemeJson};
+use pi_agent_core::api::DiagnosticSeverity;
 use pi_agent_core::api::{AgentResources, PromptTemplate, ResourceDiagnostic, Skill};
 use pi_agent_core::api::{
     load_prompt_templates as core_load_templates, load_skills as core_load_skills,
 };
-use pi_agent_core::types::DiagnosticSeverity;
 use pi_tui::{Color, ThemePalette, TuiTheme, dark_theme};
 use std::path::{Path, PathBuf};
 

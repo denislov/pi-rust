@@ -31,8 +31,7 @@ pub mod shell_output;
 mod transcript;
 #[doc(hidden)]
 pub mod truncate;
-#[doc(hidden)]
-pub mod types;
+mod types;
 
 /// Stable low-level runtime facade for `pi-agent-core`.
 ///
