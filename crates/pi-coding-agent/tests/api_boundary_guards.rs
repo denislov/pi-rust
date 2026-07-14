@@ -504,6 +504,27 @@ fn public_lifecycle_values_are_curated_without_authority_leaks() {
     }
 }
 
+#[test]
+fn public_lifecycle_connection_derives_detach_authority_from_self() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let projection = fs::read_to_string(crate_root.join("src/coding_session/public_projection.rs"))
+        .expect("public projection should be readable");
+    let connection = projection
+        .split("impl CodingAgentClientConnection")
+        .nth(1)
+        .expect("public connection implementation should exist")
+        .split("pub struct CodingAgentReconnectReceiver")
+        .next()
+        .unwrap();
+
+    assert!(connection.contains(
+        "pub fn detach(&self) -> Result<CodingAgentDetachOutcome, CodingSessionError>"
+    ));
+    assert!(connection.contains("self.coordinator.detach(&self.handle())"));
+    assert!(!connection.contains("pub fn detach_client("));
+    assert!(!connection.contains("pub fn detach_generation("));
+}
+
 fn module_body<'a>(source: &'a str, declaration: &str) -> Option<&'a str> {
     let declaration_start = source.find(declaration)?;
     let body_start = declaration_start + source[declaration_start..].find('{')?;

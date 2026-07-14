@@ -530,6 +530,122 @@ async fn client_connection_state_takeover_ack_and_drafts_are_generation_scoped()
 }
 
 #[tokio::test]
+async fn detach_outcomes_and_lifecycle_rejection_paths_are_typed_and_preserve_state() {
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let id = CodingAgentClientId::new("detach-public-client");
+    let first = session.connect(id.clone()).unwrap();
+    first
+        .set_prompt_draft(CodingAgentDraftId("preserved-prompt".into()), "hello")
+        .unwrap();
+    assert_eq!(first.acknowledge(7).unwrap(), 7);
+
+    assert_eq!(first.detach().unwrap(), CodingAgentDetachOutcome::Detached);
+    assert_eq!(
+        first.detach().unwrap(),
+        CodingAgentDetachOutcome::AlreadyDetached
+    );
+    for error in [
+        first.state().unwrap_err(),
+        first.acknowledge(8).unwrap_err(),
+        first
+            .acknowledge_outcome(serde_json::from_str(r#""outcome-detached""#).unwrap())
+            .unwrap_err(),
+        first
+            .set_prompt_draft(CodingAgentDraftId("rejected".into()), "rejected")
+            .unwrap_err(),
+        first.reconnect(7).unwrap_err(),
+    ] {
+        assert_eq!(
+            error,
+            CodingSessionError::Lifecycle {
+                reason: CodingAgentLifecycleRejection::Detached
+            }
+        );
+    }
+    assert_eq!(
+        first
+            .enqueue_control_draft(CodingAgentDraft {
+                id: CodingAgentDraftId("rejected-control".into()),
+                kind: CodingAgentDraftKind::Steer,
+                text: "rejected".into(),
+            })
+            .unwrap_err(),
+        pi_coding_agent::api::CodingAgentMutationRejection::Detached
+    );
+    assert_eq!(
+        first
+            .prompt_control("active-prompt")
+            .abort(CodingAgentControlId("abort-detached".into()), "stop")
+            .unwrap_err()
+            .reason,
+        CodingAgentControlRejectionReason::Detached
+    );
+
+    let prompt = CodingAgentOperation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+        "hello".into(),
+    )));
+    assert_eq!(
+        first
+            .prepare_submission(
+                &mut session,
+                CodingAgentDraftId("preserved-prompt".into()),
+                &prompt,
+            )
+            .unwrap_err(),
+        CodingSessionError::Lifecycle {
+            reason: CodingAgentLifecycleRejection::Detached
+        }
+    );
+
+    let second = session.connect(id).unwrap();
+    assert_eq!(first.detach().unwrap(), CodingAgentDetachOutcome::StaleGeneration);
+    assert_eq!(second.state().unwrap().drafts[0].text, "hello");
+    assert_eq!(second.acknowledge(3).unwrap(), 7);
+    assert_eq!(
+        first.state().unwrap_err(),
+        CodingSessionError::Lifecycle {
+            reason: CodingAgentLifecycleRejection::StaleGeneration
+        }
+    );
+}
+
+#[tokio::test]
+async fn detach_wakes_a_blocked_reconnect_receiver_without_leaking_an_event() {
+    let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let connection = session
+        .connect(CodingAgentClientId::new("detach-receiver-client"))
+        .unwrap();
+    let pi_coding_agent::api::CodingAgentReconnect::Replayed { mut receiver, .. } =
+        connection.reconnect(0).unwrap()
+    else {
+        panic!("empty retained stream should establish a live receiver")
+    };
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let blocked = tokio::spawn(async move {
+        ready_tx.send(()).unwrap();
+        receiver.recv().await
+    });
+    ready_rx.await.unwrap();
+
+    assert_eq!(connection.detach().unwrap(), CodingAgentDetachOutcome::Detached);
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), blocked)
+        .await
+        .expect("detach must wake a blocked receiver")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CodingSessionError::Lifecycle {
+            reason: CodingAgentLifecycleRejection::Detached
+        }
+    );
+}
+
+#[tokio::test]
 async fn scoped_control_authorization_and_rejected_drafts_are_typed_and_preserved() {
     let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
         .await
