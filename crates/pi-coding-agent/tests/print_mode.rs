@@ -8,7 +8,7 @@ use pi_ai::api::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_coding_agent::{
+use pi_coding_agent::api::{
     CliError, PrintModeOptions, PromptInvocation, ResolvedSessionTarget, SessionMode,
     SessionRunOptions, run_print_mode,
 };

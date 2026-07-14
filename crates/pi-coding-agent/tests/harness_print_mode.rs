@@ -3,7 +3,7 @@ mod support;
 use pi_agent_core::api::{AgentResources, ThinkingLevel, ToolExecutionMode};
 use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_coding_agent::{
+use pi_coding_agent::api::{
     CliRunOptions, PrintModeOptions, PromptInvocation, build_agent_config, run_cli_with_options,
     run_print_mode,
 };

@@ -1,9 +1,9 @@
 use pi_agent_core::api::AgentResources;
+use pi_coding_agent::api::{
+    CliError, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config, parse_args, select_model,
+};
 use pi_coding_agent::config::settings::{
     CompactionSettings, RetrySettings, Settings, TerminalSettings,
-};
-use pi_coding_agent::{
-    CliError, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config, parse_args, select_model,
 };
 
 fn runtime_settings() -> Settings {
