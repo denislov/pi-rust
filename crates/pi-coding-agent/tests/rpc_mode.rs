@@ -335,6 +335,128 @@ async fn rpc_processes_command_before_stdin_eof() {
 }
 
 #[tokio::test]
+async fn rpc_lifecycle_detach_returns_typed_idempotent_status() {
+    let api = "pi-coding-rpc-lifecycle-detach";
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
+
+    let input = b"{\"id\":\"detach-1\",\"type\":\"detach\"}\n{\"id\":\"detach-2\",\"type\":\"detach\"}\n";
+    let mut output = Vec::new();
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        parse_lines(&output),
+        vec![
+            serde_json::json!({
+                "type": "response",
+                "id": "detach-1",
+                "command": "detach",
+                "success": true,
+                "data": {"status": "already_detached"}
+            }),
+            serde_json::json!({
+                "type": "response",
+                "id": "detach-2",
+                "command": "detach",
+                "success": true,
+                "data": {"status": "already_detached"}
+            })
+        ]
+    );
+}
+
+#[tokio::test]
+async fn rpc_lifecycle_shutdown_waits_for_owner_restoration_and_uses_stable_rejection_code() {
+    let api = "pi-coding-rpc-lifecycle-shutdown";
+    let release = Arc::new(Notify::new());
+    let opened = Arc::new(AtomicBool::new(false));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(PausingProvider {
+            release: Arc::clone(&release),
+            opened,
+        }),
+    );
+
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(64 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"prompt-1\",\"type\":\"prompt\",\"message\":\"hold\"}\n")
+        .await
+        .unwrap();
+    let _prompt_started = read_rpc_json_matching(&mut lines, "prompt start", |value| {
+        value["type"] == "message_update"
+    })
+    .await;
+
+    input_writer
+        .write_all(b"{\"id\":\"shutdown-1\",\"type\":\"shutdown\"}\n")
+        .await
+        .unwrap();
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            read_rpc_json_matching(&mut lines, "premature shutdown response", |value| {
+                value["command"] == "shutdown"
+            })
+        )
+        .await
+        .is_err(),
+        "shutdown response must wait for the admitted operation and owner restoration"
+    );
+
+    release.notify_one();
+    let shutdown = read_rpc_json_matching(&mut lines, "shutdown response", |value| {
+        value["command"] == "shutdown"
+    })
+    .await;
+    assert_eq!(shutdown["success"], true);
+    assert_eq!(shutdown["data"], serde_json::json!({"status": "shut_down"}));
+
+    input_writer
+        .write_all(b"{\"id\":\"detach-after-shutdown\",\"type\":\"detach\"}\n")
+        .await
+        .unwrap();
+    let rejected = read_rpc_json_matching(&mut lines, "shutdown detach rejection", |value| {
+        value["id"] == "detach-after-shutdown"
+    })
+    .await;
+    assert_eq!(rejected["success"], false);
+    assert_eq!(rejected["data"]["code"], "runtime_shut_down");
+
+    drop(input_writer);
+    task.await.unwrap();
+}
+
+#[tokio::test]
 async fn rpc_state_reports_capabilities_when_idle() {
     let api = "pi-coding-rpc-capabilities-idle";
     let _provider_guard =
