@@ -2,18 +2,19 @@ mod common;
 
 use common::ProviderGuard;
 use futures::StreamExt;
-use pi_agent_core::api::{ExecutionOutput, FileSystem, InMemoryExecutionEnv, ProviderStreamer};
-use pi_agent_core::api::{SessionEntry, StoredAgentMessage, StoredUsage};
-use pi_agent_core::branch_summary::{
+use pi_agent_core::api::{
     BranchSummaryOptions, collect_entries_for_branch_summary,
     generate_branch_summary_with_provider_streamer, prepare_branch_entries,
 };
-use pi_agent_core::proxy::{
+use pi_agent_core::api::{ExecutionOutput, FileSystem, InMemoryExecutionEnv, ProviderStreamer};
+use pi_agent_core::api::{
     ProxyAssistantMessageEvent, ProxyMessageState, ProxyStreamOptions, build_proxy_request_body,
     process_proxy_event, stream_proxy_with_transport,
 };
-use pi_agent_core::shell_output::{ShellCaptureOptions, execute_shell_with_capture};
-use pi_agent_core::truncate::{TruncationLimit, truncate_head, truncate_tail};
+use pi_agent_core::api::{SessionEntry, StoredAgentMessage, StoredUsage};
+use pi_agent_core::api::{
+    ShellCaptureOptions, TruncationLimit, execute_shell_with_capture, truncate_head, truncate_tail,
+};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
