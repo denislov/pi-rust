@@ -885,54 +885,6 @@ impl CodingAgentSession {
         self.plugin_service.collect_keybindings()
     }
 
-    pub(crate) async fn load_plugins(
-        &mut self,
-        options: PluginLoadOptions,
-    ) -> Result<PluginLoadOutcome, CodingSessionError> {
-        match self
-            .run_operation(Operation::PluginLoad(options), None)
-            .await?
-        {
-            OperationOutcome::PluginLoad(outcome) => Ok(outcome),
-            OperationOutcome::PluginCommand(_) => {
-                unreachable!("plugin load operation returned plugin command outcome")
-            }
-            OperationOutcome::DelegationApproval => {
-                unreachable!("plugin load operation returned delegation approval outcome")
-            }
-            OperationOutcome::DelegationRejection => {
-                unreachable!("plugin load operation returned delegation rejection outcome")
-            }
-            OperationOutcome::Prompt(_) => {
-                unreachable!("plugin load operation returned prompt outcome")
-            }
-            OperationOutcome::ManualCompaction(_) => {
-                unreachable!("plugin load operation returned manual compaction outcome")
-            }
-            OperationOutcome::BranchSummary(_) => {
-                unreachable!("plugin load operation returned branch summary outcome")
-            }
-            OperationOutcome::SelfHealingEdit(_) => {
-                unreachable!("plugin load operation returned self-healing edit outcome")
-            }
-            OperationOutcome::AgentInvocation(_) => {
-                unreachable!("plugin load operation returned agent invocation outcome")
-            }
-            OperationOutcome::AgentTeam(_) => {
-                unreachable!("plugin load operation returned agent team outcome")
-            }
-            OperationOutcome::Export(_) => {
-                unreachable!("plugin load operation returned export outcome")
-            }
-            OperationOutcome::ForkSession | OperationOutcome::SwitchActiveLeaf => {
-                unreachable!("plugin load operation returned navigation outcome")
-            }
-            OperationOutcome::SetDefaultAgentProfile => {
-                unreachable!("plugin load operation returned set default agent profile outcome")
-            }
-        }
-    }
-
     fn from_services(
         session_service: SessionService,
         default_plugin_load_options: PluginLoadOptions,
@@ -2807,8 +2759,15 @@ mod tests {
             ));
         let mut events = session.subscribe_product_events();
 
-        // D-03: public PluginLoad cannot inject explicit candidates or registries.
-        let outcome = session.load_plugins(options).await.unwrap();
+        // D-03: explicit candidates remain behind the internal operation owner.
+        let outcome = match session
+            .run_operation(Operation::PluginLoad(options), None)
+            .await
+            .unwrap()
+        {
+            OperationOutcome::PluginLoad(outcome) => outcome,
+            other => panic!("expected plugin load outcome, got {other:?}"),
+        };
 
         assert_eq!(outcome.loaded_plugin_ids, vec!["session-plugin"]);
         assert_eq!(outcome.diagnostics.len(), 1);
@@ -2872,8 +2831,11 @@ mod tests {
                 PluginRegistry::new(),
             ));
 
-        // D-03: public PluginLoad cannot inject explicit candidates or registries.
-        session.load_plugins(options).await.unwrap();
+        // D-03: explicit candidates remain behind the internal operation owner.
+        session
+            .run_operation(Operation::PluginLoad(options), None)
+            .await
+            .unwrap();
 
         let event_log = std::fs::read_to_string(
             temp.path()
@@ -4083,7 +4045,7 @@ runtime = "lua"
         let mut guard = submission_guard_for_test(&service, handle.clone(), descriptor);
 
         assert_eq!(
-            service.detach(&handle),
+            service.coordinator.detach(&handle),
             Ok(snapshot_coordinator::ClientDetachOutcome::Detached)
         );
         assert_eq!(
@@ -4191,7 +4153,10 @@ runtime = "lua"
         let (detached_tx, detached_rx) = std::sync::mpsc::channel();
         let detach_thread = std::thread::spawn(move || {
             started_tx.send(()).unwrap();
-            let outcome = lifecycle_service.detach(&lifecycle_handle).unwrap();
+            let outcome = lifecycle_service
+                .coordinator
+                .detach(&lifecycle_handle)
+                .unwrap();
             detached_tx.send(outcome).unwrap();
         });
         started_rx.recv().unwrap();
@@ -4659,16 +4624,19 @@ runtime = "lua"
         // D-03: public PluginLoad cannot inject the command registry used to
         // verify plugin capability continuity across a fork.
         session
-            .load_plugins(
-                PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
-                    PluginLoadManifest::new(
-                        "session-plugin-command",
-                        "Session Plugin Command",
-                        "1.0.0",
-                        PluginSource::FirstParty,
+            .run_operation(
+                Operation::PluginLoad(PluginLoadOptions::new().with_candidate(
+                    PluginLoadCandidate::new(
+                        PluginLoadManifest::new(
+                            "session-plugin-command",
+                            "Session Plugin Command",
+                            "1.0.0",
+                            PluginSource::FirstParty,
+                        ),
+                        registry,
                     ),
-                    registry,
                 )),
+                None,
             )
             .await
             .unwrap();
@@ -4826,16 +4794,19 @@ runtime = "lua"
         // D-03: public PluginLoad cannot inject the command registry required
         // to exercise the private plugin-command error boundary.
         session
-            .load_plugins(
-                PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
-                    PluginLoadManifest::new(
-                        "session-plugin-command",
-                        "Session Plugin Command",
-                        "1.0.0",
-                        PluginSource::FirstParty,
+            .run_operation(
+                Operation::PluginLoad(PluginLoadOptions::new().with_candidate(
+                    PluginLoadCandidate::new(
+                        PluginLoadManifest::new(
+                            "session-plugin-command",
+                            "Session Plugin Command",
+                            "1.0.0",
+                            PluginSource::FirstParty,
+                        ),
+                        registry,
                     ),
-                    registry,
                 )),
+                None,
             )
             .await
             .unwrap();

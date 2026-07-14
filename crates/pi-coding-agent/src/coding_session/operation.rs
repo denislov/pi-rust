@@ -244,6 +244,7 @@ impl OperationAdmission {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_idempotency_key(mut self, key: OperationIdempotencyKey) -> Self {
         self.idempotency_key = Some(key);
         self

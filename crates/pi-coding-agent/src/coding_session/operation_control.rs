@@ -264,6 +264,7 @@ impl CompactCancellationHandle {
 }
 
 impl OperationState {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::with_snapshot_coordinator(SnapshotCoordinator::new())
     }
@@ -344,6 +345,7 @@ pub(crate) struct OperationControl {
 }
 
 impl OperationControl {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::with_snapshot_coordinator(SnapshotCoordinator::new())
     }
@@ -359,10 +361,6 @@ impl OperationControl {
 
     pub(crate) fn active(&self) -> Option<OperationKind> {
         self.state.active()
-    }
-
-    pub(crate) fn ensure_idle(&self) -> Result<(), CodingSessionError> {
-        self.state.ensure_idle()
     }
 
     pub(crate) fn begin(

@@ -68,6 +68,7 @@ impl OperationScheduler {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn classify(
         kind: OperationKind,
         class: OperationClass,

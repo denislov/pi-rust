@@ -1,7 +1,7 @@
 use super::client_projection::ClientConnectionId;
 use super::client_projection::UiSnapshot;
 use super::snapshot_coordinator::{
-    ClientDetachOutcome, ClientHandle, ClientRegistryError, DraftRecord, SnapshotCoordinator,
+    ClientHandle, ClientRegistryError, DraftRecord, SnapshotCoordinator,
 };
 use std::sync::Arc;
 
@@ -19,19 +19,6 @@ impl ClientService {
         id: ClientConnectionId,
     ) -> Result<ClientHandle, ClientRegistryError> {
         self.coordinator.connect_or_takeover(id)
-    }
-    pub(crate) fn acknowledge(
-        &self,
-        handle: &ClientHandle,
-        sequence: u64,
-    ) -> Result<u64, ClientRegistryError> {
-        self.coordinator.acknowledge(handle, sequence)
-    }
-    pub(crate) fn detach(
-        &self,
-        handle: &ClientHandle,
-    ) -> Result<ClientDetachOutcome, ClientRegistryError> {
-        self.coordinator.detach(handle)
     }
     pub(crate) fn client_snapshot(
         &self,
@@ -67,25 +54,6 @@ impl ClientService {
             expected_prompt_draft,
         )
     }
-    pub(crate) fn mark_terminal(
-        &self,
-        handle: &ClientHandle,
-        operation_id: String,
-        descriptor: super::public_operation::OperationDescriptor,
-        sequence: u64,
-    ) -> Result<(), ClientRegistryError> {
-        self.coordinator.mark_terminal(
-            handle,
-            operation_id,
-            descriptor.submitted_kind,
-            descriptor,
-            super::snapshot_coordinator::SubmittedTerminalAnchor::ProductEvent {
-                sequence,
-                durability: super::snapshot_coordinator::SubmittedEventDurability::Durable,
-            },
-            super::event::ProductEventTerminalStatus::Completed,
-        )
-    }
 }
 
 #[cfg(test)]
@@ -101,13 +69,6 @@ mod tests {
         let second = service.connect_or_takeover(id).unwrap();
         assert_eq!(first.generation.0, 1);
         assert_eq!(second.generation.0, 2);
-        assert_eq!(
-            service.acknowledge(&first, 1),
-            Err(ClientRegistryError::Lifecycle(
-                super::super::error::CodingAgentLifecycleRejection::StaleGeneration
-            ))
-        );
-        assert_eq!(service.acknowledge(&second, 1), Ok(1));
     }
 
     #[test]

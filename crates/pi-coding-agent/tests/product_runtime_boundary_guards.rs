@@ -127,13 +127,6 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
         false,
         &["run"],
     );
-    add_expectations(
-        &mut expected,
-        "retained owner-private custom-option path",
-        "pub(crate)",
-        false,
-        &["load_plugins"],
-    );
     let absent = [
         "invoke_agent",
         "invoke_team",
@@ -226,7 +219,6 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
     }
     violations.extend(absent_receiver_calls(&scan, &absent));
     violations.extend(local_deprecation_suppression_violations(&scan, &absent));
-    violations.extend(load_plugins_owner_call_violations(&scan));
     for expectation in &expected {
         let definitions = methods
             .iter()
@@ -358,55 +350,6 @@ fn local_deprecation_suppression_violations(scan: &SourceScan, names: &[&str]) -
                 ));
             }
         }
-    }
-    violations
-}
-
-fn load_plugins_owner_call_violations(scan: &SourceScan) -> Vec<String> {
-    let owner_path = scan.crate_root.join("src/coding_session/mod.rs");
-    let mut paths = rust_files_under(&scan.crate_root.join("src"));
-    paths.extend(rust_files_under(&scan.crate_root.join("tests")));
-    let mut violations = Vec::new();
-    let mut calls = 0;
-
-    for path in paths {
-        let relative = relative_path(&scan.repo_root, &path);
-        let raw_source = fs::read_to_string(&path).expect("read Rust source");
-        let source = sanitize_rust_source(&raw_source);
-        let raw_lines = raw_source.lines().collect::<Vec<_>>();
-        let lines = source.lines().collect::<Vec<_>>();
-        for (index, line) in lines.iter().enumerate() {
-            if !line.contains(".load_plugins(") {
-                continue;
-            }
-            calls += 1;
-            if path != owner_path {
-                violations.push(format!(
-                    "load_plugins custom-option call escaped coding_session owner tests at {relative}:{}",
-                    index + 1
-                ));
-                continue;
-            }
-            if !line_is_cfg_test_gated(&source, index) {
-                violations.push(format!(
-                    "load_plugins custom-option call is not test-gated at {relative}:{}",
-                    index + 1
-                ));
-            }
-            let prior = raw_lines[..index].iter().rev().take(4).collect::<Vec<_>>();
-            if !prior.iter().any(|candidate| candidate.contains("D-03")) {
-                violations.push(format!(
-                    "load_plugins owner exception lacks D-03 insufficiency justification at {relative}:{}",
-                    index + 1
-                ));
-            }
-        }
-    }
-
-    if calls != 4 {
-        violations.push(format!(
-            "load_plugins must have exactly four owner-test calls, found {calls}"
-        ));
     }
     violations
 }
@@ -1579,11 +1522,6 @@ struct AdapterClassification {
 }
 
 const ADAPTER_CLASSIFICATIONS: &[AdapterClassification] = &[
-    AdapterClassification {
-        path: "crates/pi-coding-agent/src/coding_session/client_service.rs",
-        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
-        rationale: "runtime-owned client state service, not a product adapter",
-    },
     AdapterClassification {
         path: "crates/pi-coding-agent/src/coding_session/mod.rs",
         ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
