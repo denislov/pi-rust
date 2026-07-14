@@ -13,12 +13,14 @@
 | `src/coding_session/public_projection.rs` | public model/facade | streaming, request-response | reconnect receiver plus scoped Prompt control | exact extension |
 | `src/coding_session/error.rs` | public error model | transform | existing typed variants plus stable `code()` mapping | exact extension |
 | `src/coding_session/mod.rs` | runtime owner/controller | event-driven, async dispatch | `SubmissionCommitGuard`, canonical `run`, prompt finalization | exact extension |
-| `src/coding_session/operation_control.rs` | admission/control service | request-response | active-operation RAII guard and Prompt control binding | role/data-flow match |
+| `src/coding_session/operation_control.rs`, `intent_router.rs` | admission/control service | request-response | active-operation RAII guard, admitted `OperationPermit`, and Prompt control binding | role/data-flow match |
+| `src/coding_session/manual_compaction_flow.rs`, `flow_service.rs`, `manual_compaction_service.rs` | Compact workflow/service | async Flow execution, transform | existing `run_with_options`, `FlowRunOptions.cancel`, failed-outcome compatibility emission | exact live-path closure |
 | `src/coding_session/event_service.rs` | event service | pub-sub, streaming | atomic replay/live boundary and commit-then-broadcast `emit` | exact extension |
 | `src/coding_session/public_operation.rs` | public operation model | transform | exhaustive 15-case operation/outcome contract table | exact extension |
 | `src/coding_session/operation.rs` | internal metadata model | transform | exhaustive `Operation::metadata()` dispatch classification | exact extension |
 | `src/coding_session/event.rs` | internal event model | event-driven, transform | `terminal_operation()` root-vs-family classification | exact extension |
 | `src/coding_session/public_event.rs` | public event projection | transform, serialization | closed typed event families and explicit Serde projection | exact extension |
+| `src/protocol/events.rs` | legacy protocol projection | transform | exhaustive `CodingProtocolEventAdapter::push_typed` event-kind match | exact additive compile update |
 | `src/lib.rs` | curated public barrel | transform | existing `api` re-export list | exact extension |
 | `src/protocol/types.rs` | wire model | serialization, request-response | tagged `RpcCommand`, `RpcResponse`, typed capability statuses | exact extension |
 | `src/protocol/rpc.rs` | transport controller | streaming, request-response | single RPC event loop and EOF drain | exact extension |
@@ -128,7 +130,9 @@ Publish the final lifecycle shutdown event through this path after the admitted 
 
 **Prompt durability/order analog** (`mod.rs:1489-1507`): transaction finalization, session-write events, then root prompt outcome event. Two-phase shutdown tests should assert this existing terminal boundary remains before the lifecycle event and receiver closure.
 
-**Ownership landmine:** `run` takes `&mut self`; RPC/interactive move the owner into a task and recover it in the task result. A concurrent shutdown request needs shared admission/lifecycle state visible to `run`, not a cloned owner or secondary dispatcher.
+**Ownership landmine:** `run` takes `&mut self`; RPC/interactive move the owner into a task and recover it in the task result. Capture an opaque `CodingAgentRuntimeShutdownHandle` before owner transfer. It clones only the existing coordinator `Arc` and may request Phase A (shared admission/control closure plus lifecycle notification), but cannot dispatch, select a client/generation, publish the final event, or perform Phase B. The restored unique owner calls `CodingAgentSession::shutdown()` to drain/finalize. `OperationGuard::drop` already clears coordinator active state and should notify drain waiters.
+
+**Compact cancellation path:** current source has `ManualCompactionFlow::run_with_options(FlowRunOptions)` and core `FlowRunOptions.cancel: Option<CancellationToken>`, but canonical `FlowService::run_manual_compaction_graph` calls `run(ctx)`, `manual_compaction_flow::flow_error` converts every `FlowError` into `CodingSessionError::Flow`, and a caller cannot borrow crate-private `OperationControl` while `run(&mut self)` owns the session. Close the real path with a cloneable crate-private `CompactCancellationHandle` obtained from `CodingAgentSession` before owner transfer. Change the active slot behind `OperationState` from kind-only to an internal identity containing the admission operation id, kind, monotonic generation, and an optional Compact-only token. `OperationGuard::drop` clears only its own generation; `CompactCancellationHandle::cancel(operation_id)` cancels only when the supplied id equals the current Compact identity and returns typed rejection for no active operation, non-Compact active operation, or stale/mismatched id. `OperationPermit` carries the token clone, canonical Compact places it in `ManualCompactionOptions`, and `FlowService` invokes `run_with_options` with that token. Match `FlowError::Cancelled` to `CodingSessionError::Cancelled` explicitly and let `ManualCompactionService` preserve the existing failed outcome/`PromptFailed` emission. This is unconditional production-shaped internal plumbing; no public connection method or first-party adapter consumes it in this phase, and shutdown never invokes it.
 
 ### Operation association: `public_operation.rs`, `operation.rs`, `event.rs`, and `public_event.rs`
 
@@ -147,9 +151,11 @@ Use exact set/cardinality assertions so a new enum variant cannot compile or pas
 
 **Typed event projection pattern:** add a lifecycle family/variant through the existing closed internal-to-public mapping and explicit Serde representation in `public_event.rs`. A runtime shutdown event has no operation id and is not a root operation terminal.
 
-**Exact evidence pattern:** `EventService::emit` returns the sequenced `ProductEvent`; propagate that evidence or record a coordinator index keyed by operation id at emission time. Do not scan bounded retained history as authority.
+**Exact evidence pattern:** `EventService::emit` returns the sequenced `ProductEvent`; make each root-emission helper return and propagate that exact evidence into finalization. Do not add a coordinator terminal index and do not scan bounded retained history as authority. Compact success emits same-id `Session::CompactionCompleted` and compatibility `Workflow::PromptCompleted`; count only `CompactionCompleted` because descriptor matching requires the operation id and admitted Compact root kind, leaving `PromptCompleted` excluded as Prompt-kind evidence. Compact failure and flow cancellation both retain `PromptTurnOutcome::Failed` plus same-id `Workflow::PromptFailed`; typed error state distinguishes cancellation, and only this failed compatibility branch normalizes to admitted Compact inside the descriptor.
 
 ### Submitted terminal anchors and PartialCommit: `snapshot_coordinator.rs`, `public_projection.rs`, and `mod.rs`
+
+For Compact, "flow cancellation" above means `CompactCancellationHandle` reaches the exact active admitted identity, whose production token is carried from `OperationPermit` into `FlowRunOptions.cancel`; `CodingSessionError::Cancelled` is the required typed discriminator. Test it in the colocated `coding_session/mod.rs` `#[cfg(test)]` module: retain a generalized submission connection plus the handle before moving the session, read the admitted id from `connection.state().submitted_operation` during a deterministic gated canonical run, then cancel that exact id. External `tests/operation_association.rs` must not import or invoke this private seam; it continues to own public success/provider-failure/cardinality/PartialCommit assertions.
 
 **Analog to replace:** current `TerminalAcknowledgementAnchor` contains only `terminal_sequence` (`snapshot_coordinator.rs:23-27`), and `acknowledge` clears terminal submitted state once the event cursor passes it (`snapshot_coordinator.rs:582-600`).
 
@@ -159,7 +165,7 @@ Follow the existing typed-enum state model, but make the anchor exhaustive:
 - outcome-only anchor: stable outcome acknowledgement identity;
 - terminal-uncertain anchor: original operation id plus typed recovery state.
 
-Add a separate generation-scoped outcome acknowledgement method. Event acknowledgement must not clear outcome-only or uncertain state.
+Add a separate generation-scoped outcome acknowledgement method taking an opaque `CodingAgentOutcomeAcknowledgementId` newtype minted by the existing session id generator at OutcomeOnly finalization. Event acknowledgement must not clear outcome-only or uncertain state.
 
 **Critical landmine** (`mod.rs:224-232`): `SubmissionCommitGuard::finish` currently passes `current_event_sequence()`. That sequence may belong to an unrelated progress/family event and is invalid for OutcomeOnly. Remove this guessing pattern completely.
 
@@ -173,13 +179,13 @@ Add a separate generation-scoped outcome acknowledgement method. Event acknowled
 
 **Loop cleanup pattern** (`rpc.rs:20-108`): all EOF paths converge through the main loop. Ensure cleanup runs after every normal/error loop exit, including after an admitted operation is drained, rather than only one match arm.
 
-**Moved-owner pattern** (`rpc/state.rs:59-80`): `CodingOperationTaskResult` returns the `CodingAgentSession` owner with the outcome. Runtime-owner shutdown occurs only after this owner is restored; connection detach can use shared public connection authority while the operation continues.
+**Moved-owner pattern** (`rpc/state.rs:59-80`): `CodingOperationTaskResult` returns the `CodingAgentSession` owner with the outcome. Capture the opaque shutdown-request handle before moving the owner. An RPC shutdown command invokes Phase A immediately through that handle, while runtime-owner Phase B occurs only after `CodingOperationTaskResult` restores the owner; connection detach can use shared public connection authority while the operation continues.
 
 **Compatibility test analog:** `rpc_mode.rs:2531-2642` uses exact JSON field assertions for state/hello and stable error codes. Add full snapshots/values for existing response shapes before and after lifecycle commands, plus dedicated new lifecycle responses.
 
 ### Interactive lifecycle projection: `interactive/app.rs`, `loop.rs`, and `prompt_task.rs`
 
-**Owner restoration pattern** (`prompt_task.rs:27-109`): every success/failure task result carries `CodingAgentSession` back to the loop. Preserve this invariant; normal UI exit detaches its stable connection, while only `run_interactive_mode`/the explicit top-level owner calls shutdown once the owner is restored.
+**Owner restoration pattern** (`prompt_task.rs:27-109`): every success/failure task result carries `CodingAgentSession` back to the loop. Preserve this invariant and retain/drain the task result on process exit rather than dropping it. Capture the shutdown-request handle before owner transfer so a final process exit can request Phase A immediately; normal embedded/UI exit detaches only, while `run_interactive_mode`/the explicit top-level owner calls Phase B shutdown once the owner is restored.
 
 **Boundary pattern** (`interactive/app.rs:63-84`): `run_interactive_mode` is the process-facing owner boundary; `run_interactive_loop_with_input` is the client/UI boundary. Place shutdown at the former and detach at the latter. A loop exit must not shut down a shared embedded runtime.
 
