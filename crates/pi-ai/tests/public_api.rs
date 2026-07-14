@@ -286,6 +286,24 @@ async fn scoped_ai_client_streams_without_global_registration() {
 }
 
 #[tokio::test]
+async fn parallel_scoped_ai_clients_with_the_same_api_do_not_cross_talk() {
+    let api = "shared-scoped-api";
+    let model = scoped_model(api, "scoped-provider");
+    let first = AiClient::new();
+    let second = AiClient::new();
+    first.register_provider(api, Arc::new(StaticProvider::new("first registry")));
+    second.register_provider(api, Arc::new(StaticProvider::new("second registry")));
+
+    let (first_result, second_result) = tokio::join!(
+        complete(first.stream_model(&model, empty_context(), None)),
+        complete(second.stream_model(&model, empty_context(), None)),
+    );
+
+    assert_eq!(message_text(&first_result.unwrap()), "first registry");
+    assert_eq!(message_text(&second_result.unwrap()), "second registry");
+}
+
+#[tokio::test]
 async fn scoped_ai_client_uses_injected_auth_resolver_without_stream_options() {
     let seen_api_key = Arc::new(Mutex::new(None));
     let client = AiClient::with_auth_resolver(Arc::new(StaticAuthResolver));
