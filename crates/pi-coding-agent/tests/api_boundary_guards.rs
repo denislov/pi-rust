@@ -15,6 +15,40 @@ struct CompileFixture {
     source: &'static str,
 }
 
+#[test]
+fn external_diagnostic_matcher_requires_code_primary_span_and_forbidden_surface() {
+    let diagnostic = serde_json::json!({
+        "reason": "compiler-message",
+        "message": {
+            "code": { "code": "E0432" },
+            "message": "unresolved import `pi_coding_agent::api::Operation`",
+            "spans": [{
+                "file_name": "src/main.rs",
+                "line_start": 1,
+                "line_end": 1,
+                "column_start": 30,
+                "column_end": 39,
+                "is_primary": true,
+                "label": "no `Operation` in `api`"
+            }],
+            "children": [],
+            "rendered": "error[E0432]: unresolved import `pi_coding_agent::api::Operation`"
+        }
+    });
+    let expected = ExpectedDiagnostic {
+        code: "E0432",
+        line: 1,
+        column_start: 30,
+        column_end: 39,
+        forbidden: "Operation",
+        fragments: &["unresolved import", "pi_coding_agent::api::Operation"],
+    };
+
+    assert!(diagnostic_matches(&diagnostic, &expected).is_ok());
+    let wrong_code = ExpectedDiagnostic { code: "E0603", ..expected };
+    assert!(diagnostic_matches(&diagnostic, &wrong_code).is_err());
+}
+
 const FAIL_FIXTURES: [CompileFixture; 12] = [
     CompileFixture {
         category: "operation-dispatch",
