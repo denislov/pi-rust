@@ -89,15 +89,18 @@ pub(crate) enum AdmissionRejection {
 impl AdmissionRejection {
     pub(crate) fn into_error(self) -> CodingSessionError {
         match self {
-            Self::DispatchMismatch { kind, actual, .. } => {
-                CodingSessionError::UnsupportedCapability {
-                    capability: format!(
-                        "{} operation was sent to the wrong dispatcher (requires {})",
-                        kind.as_str(),
-                        actual.dispatcher_label(),
-                    ),
-                }
-            }
+            Self::DispatchMismatch {
+                kind,
+                expected,
+                actual,
+            } => CodingSessionError::UnsupportedCapability {
+                capability: format!(
+                    "{} operation was sent to the wrong dispatcher (requires {}, received {})",
+                    kind.as_str(),
+                    expected.dispatcher_label(),
+                    actual.dispatcher_label(),
+                ),
+            },
             Self::Control(error) => error,
         }
     }
