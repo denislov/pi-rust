@@ -1,14 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const ALLOWED_GLOBAL_PROVIDER_MUTATION_FILES: &[&str] = &[
-    "crates/pi-ai/tests/support/mod.rs",
-    "crates/pi-ai/tests/support_guards.rs",
-    "crates/pi-ai/tests/provider_registry_boundary_guards.rs",
-];
+const ALLOWED_GLOBAL_PROVIDER_MUTATION_FILES: &[&str] =
+    &["crates/pi-ai/tests/provider_registry_boundary_guards.rs"];
 
 #[test]
-fn pi_ai_provider_tests_keep_global_registry_mutation_behind_guards() {
+fn pi_ai_provider_tests_do_not_mutate_global_registry() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = crate_root
         .parent()
@@ -21,7 +18,7 @@ fn pi_ai_provider_tests_keep_global_registry_mutation_behind_guards() {
 
     assert!(
         violations.is_empty(),
-        "global provider registry mutation must stay behind test guards; use ProviderRegistry/register_builtins_into for scoped built-in coverage:\n{}",
+        "pi-ai tests must use scoped ProviderRegistry/AiClient registration:\n{}",
         violations.join("\n")
     );
 }
@@ -271,7 +268,7 @@ fn pi_ai_api_facade_keeps_global_provider_runtime_helpers_out() {
 }
 
 #[test]
-fn registry_global_runtime_helpers_are_deprecated_compatibility_functions() {
+fn registry_global_runtime_helpers_are_removed() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let registry_source =
         fs::read_to_string(crate_root.join("src/registry.rs")).expect("read pi-ai registry.rs");
@@ -282,54 +279,35 @@ fn registry_global_runtime_helpers_are_deprecated_compatibility_functions() {
         "pub fn lookup(api: &str",
         "pub fn stream_model(model: &Model",
     ] {
-        let index = registry_source
-            .find(helper)
-            .unwrap_or_else(|| panic!("global registry helper should exist: {helper}"));
-        let preceding = &registry_source[index.saturating_sub(360)..index];
         assert!(
-            preceding.contains("#[deprecated(")
-                && preceding.contains("AiClient")
-                && preceding.contains("ProviderRegistry"),
-            "global registry helper `{helper}` should be deprecated with scoped AiClient/ProviderRegistry replacement guidance"
+            !registry_source.contains(helper),
+            "global registry helper `{helper}` must be removed"
         );
     }
 }
 
 #[test]
-fn pi_ai_root_global_runtime_helpers_are_deprecated_compatibility_exports() {
+fn pi_ai_root_global_runtime_helpers_are_removed() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lib_source = fs::read_to_string(crate_root.join("src/lib.rs")).expect("read pi-ai lib.rs");
 
     for helper in ["register", "stream_model"] {
-        let export = format!("pub use registry::{helper};");
-        let index = lib_source.find(&export).unwrap_or_else(|| {
-            panic!("root-level global runtime helper should be exported as `{export}`")
-        });
-        let preceding = &lib_source[index.saturating_sub(260)..index];
         assert!(
-            preceding.contains("#[deprecated(")
-                && preceding.contains("AiClient")
-                && preceding.contains("ProviderRegistry"),
-            "root-level pi_ai::{helper} should be a deprecated compatibility export with scoped runtime replacement guidance"
+            !lib_source.contains(&format!("pub use registry::{helper};")),
+            "root-level pi_ai::{helper} must be removed"
         );
     }
 }
 
 #[test]
-fn global_builtin_registration_helper_is_deprecated_with_scoped_replacements() {
+fn global_builtin_registration_helper_is_removed() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let providers_source = fs::read_to_string(crate_root.join("src/providers/mod.rs"))
         .expect("read pi-ai providers module");
 
-    let index = providers_source
-        .find("pub fn register_builtins()")
-        .expect("global built-in registration helper should remain for compatibility");
-    let preceding = &providers_source[index.saturating_sub(320)..index];
     assert!(
-        preceding.contains("#[deprecated(")
-            && preceding.contains("register_builtins_into")
-            && preceding.contains("AiClient::register_builtins"),
-        "pi_ai::providers::register_builtins should be deprecated with scoped ProviderRegistry/AiClient replacement guidance"
+        !providers_source.contains("pub fn register_builtins()"),
+        "pi_ai::providers::register_builtins must be removed"
     );
 }
 

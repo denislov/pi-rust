@@ -12,7 +12,7 @@ pub mod openai;
 pub mod openai_codex_responses;
 pub mod process_framework;
 
-use crate::registry::{self, ApiProvider, ProviderRegistry};
+use crate::registry::{ApiProvider, ProviderRegistry};
 use std::sync::Arc;
 
 pub const BUILTIN_PROVIDER_APIS: &[&str] = &[
@@ -77,14 +77,4 @@ fn register_each_builtin(mut register: impl FnMut(&'static str, Arc<dyn ApiProvi
 /// Register all built-in providers in the given scoped registry.
 pub fn register_builtins_into(registry: &ProviderRegistry) {
     register_each_builtin(|api, provider| registry.register(api, provider));
-}
-
-/// Register all built-in providers in the global registry.
-/// Call this once at startup.
-#[allow(deprecated)]
-#[deprecated(
-    note = "use register_builtins_into with a scoped ProviderRegistry or AiClient::register_builtins"
-)]
-pub fn register_builtins() {
-    register_each_builtin(registry::register);
 }

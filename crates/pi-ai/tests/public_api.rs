@@ -265,7 +265,6 @@ fn builtin_provider_catalog_is_stable_and_sorted() {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn scoped_ai_client_streams_without_global_registration() {
     let client = AiClient::new();
     let model = scoped_model("scoped-only-api", "scoped-provider");
@@ -279,10 +278,10 @@ async fn scoped_ai_client_streams_without_global_registration() {
         .unwrap();
     assert_eq!(message_text(&message), "scoped response");
 
-    let global_error = complete(pi_ai::stream_model(&model, empty_context(), None))
+    let isolated_error = complete(AiClient::new().stream_model(&model, empty_context(), None))
         .await
         .unwrap_err();
-    assert!(global_error.contains("unknown provider api: scoped-only-api"));
+    assert!(isolated_error.contains("unknown provider api: scoped-only-api"));
 }
 
 #[tokio::test]

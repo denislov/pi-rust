@@ -11,13 +11,12 @@
 // Or with custom prompt:
 //   cargo run -p pi-coding-agent --example manual_test -- hello world
 
+use pi_ai::AiClient;
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::{PrintModeOptions, run_print_mode};
 use std::sync::Arc;
 
-#[allow(deprecated)]
 #[tokio::main]
 async fn main() {
     let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
@@ -30,7 +29,8 @@ async fn main() {
     let api = "manual-test";
 
     // Register a faux provider that returns a scripted text response
-    registry::register(
+    let ai_client = AiClient::new();
+    ai_client.register_provider(
         api,
         Arc::new(FauxProvider::new(vec![
             pi_ai::providers::faux::FauxResponse {
@@ -73,7 +73,7 @@ async fn main() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
-        ai_client: None,
+        ai_client: Some(ai_client),
         session: None,
         session_target: None,
         session_name: None,
@@ -88,6 +88,4 @@ async fn main() {
         Ok(text) => println!("{}", text),
         Err(e) => eprintln!("Error: {}", e),
     }
-
-    registry::unregister(api);
 }

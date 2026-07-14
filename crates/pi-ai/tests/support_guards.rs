@@ -1,11 +1,9 @@
-#![allow(deprecated)]
-
 mod support;
 
 use std::sync::Arc;
 
 use async_stream::stream;
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
@@ -31,48 +29,25 @@ impl ApiProvider for GuardTestProvider {
 }
 
 #[test]
-fn provider_guard_unregisters_new_provider_on_drop() {
+fn provider_guard_registers_only_its_scoped_client() {
     let api = "pi-ai-provider-guard-drop-api";
-    registry::unregister(api);
-
-    {
-        let _guard = support::ProviderGuard::register(api, Arc::new(GuardTestProvider("temp")));
-        assert!(registry::lookup(api).is_some());
-    }
-
-    assert!(registry::lookup(api).is_none());
+    let guard = support::ProviderGuard::register(api, Arc::new(GuardTestProvider("temp")));
+    assert!(guard.ai_client().lookup_provider(api).is_some());
+    assert!(pi_ai::AiClient::new().lookup_provider(api).is_none());
 }
 
 #[test]
-fn provider_guard_clear_removes_provider_until_drop_then_restores_it() {
+fn provider_guard_clear_starts_with_an_empty_scoped_client() {
     let api = "pi-ai-provider-guard-clear-api";
-    registry::unregister(api);
-    registry::register(api, Arc::new(GuardTestProvider("original")));
-    let original = registry::lookup(api).expect("original provider registered");
-
-    {
-        let _guard = support::ProviderGuard::clear(api);
-        assert!(registry::lookup(api).is_none());
-    }
-
-    let restored = registry::lookup(api).expect("original provider restored");
-    assert!(Arc::ptr_eq(&original, &restored));
-    registry::unregister(api);
+    let guard = support::ProviderGuard::clear(api);
+    assert!(guard.ai_client().lookup_provider(api).is_none());
 }
 
 #[test]
-fn provider_guard_restores_existing_provider_on_drop() {
+fn provider_guard_instances_are_isolated() {
     let api = "pi-ai-provider-guard-restore-api";
-    registry::unregister(api);
-    registry::register(api, Arc::new(GuardTestProvider("original")));
-    let original = registry::lookup(api).expect("original provider registered");
-
-    {
-        let _guard = support::ProviderGuard::register(api, Arc::new(GuardTestProvider("temp")));
-        assert!(registry::lookup(api).is_some());
-    }
-
-    let restored = registry::lookup(api).expect("original provider restored");
-    assert!(Arc::ptr_eq(&original, &restored));
-    registry::unregister(api);
+    let first = support::ProviderGuard::register(api, Arc::new(GuardTestProvider("first")));
+    let second = support::ProviderGuard::register(api, Arc::new(GuardTestProvider("second")));
+    assert!(first.ai_client().lookup_provider(api).is_some());
+    assert!(second.ai_client().lookup_provider(api).is_some());
 }

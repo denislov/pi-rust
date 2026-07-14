@@ -6,7 +6,7 @@ use crate::types::{
 };
 use async_stream::stream;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 pub trait ApiProvider: Send + Sync {
     fn stream(&self, model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream;
@@ -426,31 +426,6 @@ impl AiClient {
     }
 }
 
-static REGISTRY: LazyLock<ProviderRegistry> = LazyLock::new(ProviderRegistry::new);
-
-#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime registration")]
-pub fn register(api: &str, provider: Arc<dyn ApiProvider>) {
-    REGISTRY.register(api, provider);
-}
-
-#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime state")]
-pub fn unregister(api: &str) {
-    REGISTRY.unregister(api);
-}
-
-#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime lookup")]
-pub fn lookup(api: &str) -> Option<Arc<dyn ApiProvider>> {
-    REGISTRY.lookup(api)
-}
-
-/// Top-level entry point: resolves provider by model.api, injects env API key
-/// if not provided, delegates to provider.stream(). Returns a stream that
-/// immediately yields Error on unknown api.
-#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime streaming")]
-pub fn stream_model(model: &Model, ctx: Context, opts: Option<StreamOptions>) -> EventStream {
-    REGISTRY.stream_model(model, ctx, opts)
-}
-
 fn unknown_provider_stream(api: String) -> EventStream {
     Box::pin(stream! {
         let mut msg = AssistantMessage::empty("registry", "");
@@ -464,7 +439,6 @@ fn unknown_provider_stream(api: String) -> EventStream {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::types::{AssistantMessage, ModelCost, ModelInput};
@@ -490,12 +464,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registry_register_and_lookup() {
-        register("reg-test-api", Arc::new(DummyProvider));
-        let found = lookup("reg-test-api");
+    async fn scoped_registry_register_and_lookup() {
+        let client = AiClient::new();
+        client.register_provider("reg-test-api", Arc::new(DummyProvider));
+        let found = client.lookup_provider("reg-test-api");
         assert!(found.is_some());
-        unregister("reg-test-api");
-        assert!(lookup("reg-test-api").is_none());
+        client.unregister_provider("reg-test-api");
+        assert!(client.lookup_provider("reg-test-api").is_none());
     }
 
     #[tokio::test]
@@ -520,7 +495,7 @@ mod tests {
             headers: None,
             compat: None,
         };
-        let mut stream = stream_model(
+        let mut stream = AiClient::new().stream_model(
             &model,
             Context {
                 system_prompt: None,
@@ -535,7 +510,8 @@ mod tests {
 
     #[tokio::test]
     async fn stream_model_delegates_to_provider() {
-        register("test-api", Arc::new(DummyProvider));
+        let client = AiClient::new();
+        client.register_provider("test-api", Arc::new(DummyProvider));
         let model = Model {
             id: "x".into(),
             name: "x".into(),
@@ -556,7 +532,7 @@ mod tests {
             headers: None,
             compat: None,
         };
-        let mut stream = stream_model(
+        let mut stream = client.stream_model(
             &model,
             Context {
                 system_prompt: None,
@@ -567,6 +543,5 @@ mod tests {
         );
         let event = stream.next().await.unwrap();
         assert!(matches!(event, AssistantMessageEvent::Done { .. }));
-        unregister("test-api");
     }
 }

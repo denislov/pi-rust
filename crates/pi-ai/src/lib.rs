@@ -19,14 +19,6 @@ pub mod util;
 
 pub use models::{all_models, calculate_cost, get_model, get_models, get_providers, lookup_model};
 pub use providers::{builtin_provider_apis, register_builtins_into};
-#[allow(deprecated)]
-#[deprecated(
-    note = "use AiClient or ProviderRegistry for scoped provider runtime registration"
-)]
-pub use registry::register;
-#[allow(deprecated)]
-#[deprecated(note = "use AiClient or ProviderRegistry for scoped provider runtime streaming")]
-pub use registry::stream_model;
 pub use registry::{
     AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuth, ProviderAuthResolver,
     ProviderRegistry,
@@ -43,9 +35,8 @@ pub use util::env_keys::env_api_key;
 /// Stable facade for embedding `pi-ai`.
 ///
 /// The root modules remain public during migration. New downstream code should
-/// prefer this module for APIs that are intended to stay stable. Root-level
-/// `register` and `stream_model` remain compatibility helpers outside this
-/// stable facade; new runtime code should use `AiClient` or `ProviderRegistry`.
+/// prefer this module for APIs that are intended to stay stable. Provider
+/// registration and streaming are scoped to `AiClient` or `ProviderRegistry`.
 pub mod api {
     pub use crate::compat::{
         AnthropicMessagesCompat, CacheControlFormat, ModelCompat, OpenAICompletionsCompat,

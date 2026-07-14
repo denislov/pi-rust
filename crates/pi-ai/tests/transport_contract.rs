@@ -1,6 +1,6 @@
 use pi_ai::transport::headers::merge_headers;
 use pi_ai::transport::http::send_json_stream;
-use pi_ai::transport::retry::{RetryConfig, is_retryable_status, parse_retry_after_ms};
+use pi_ai::util::http::{RetryConfig, is_retryable_status, parse_retry_after_ms};
 use pi_ai::{
     AssistantMessage, AssistantMessageEvent, Model, ModelCost, ModelInput, ProviderResponseInfo,
     ProviderStreamHooks, StopReason, StreamOptions, complete,

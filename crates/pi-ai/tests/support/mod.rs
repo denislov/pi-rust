@@ -1,13 +1,10 @@
-#![allow(deprecated)]
-
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pi_ai::registry::{self, ApiProvider};
+use pi_ai::registry::{AiClient, ApiProvider};
 
 #[allow(dead_code)]
 static ENV_LOCK: Mutex<()> = Mutex::new(());
-static PROVIDER_LOCK: Mutex<()> = Mutex::new(());
 
 #[allow(dead_code)]
 pub struct EnvGuard<'a> {
@@ -57,56 +54,39 @@ impl Drop for EnvGuard<'_> {
     }
 }
 
-pub struct ProviderGuard<'a> {
-    _lock: MutexGuard<'a, ()>,
-    saved: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+pub struct ProviderGuard {
+    ai_client: AiClient,
 }
 
 #[allow(dead_code)]
-impl ProviderGuard<'static> {
+impl ProviderGuard {
     pub fn for_api(api: impl Into<String>) -> Self {
-        let api = api.into();
-        let lock = PROVIDER_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let saved = vec![(api.clone(), registry::lookup(&api))];
-        Self { _lock: lock, saved }
+        let _ = api.into();
+        Self {
+            ai_client: AiClient::new(),
+        }
     }
 
     #[allow(dead_code)]
     pub fn for_apis<const N: usize>(apis: [&str; N]) -> Self {
-        let lock = PROVIDER_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let saved = apis
-            .iter()
-            .map(|api| ((*api).to_owned(), registry::lookup(api)))
-            .collect();
-        Self { _lock: lock, saved }
+        let _ = apis;
+        Self {
+            ai_client: AiClient::new(),
+        }
     }
 
     pub fn clear(api: impl Into<String>) -> Self {
-        let api = api.into();
-        let guard = Self::for_api(api.clone());
-        registry::unregister(&api);
-        guard
+        Self::for_api(api)
     }
 
     pub fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
         let api = api.into();
-        let guard = Self::for_api(api.clone());
-        registry::register(&api, provider);
-        guard
+        let ai_client = AiClient::new();
+        ai_client.register_provider(api, provider);
+        Self { ai_client }
     }
-}
 
-impl Drop for ProviderGuard<'_> {
-    fn drop(&mut self) {
-        for (api, provider) in self.saved.iter().rev() {
-            match provider {
-                Some(provider) => registry::register(api, Arc::clone(provider)),
-                None => registry::unregister(api),
-            }
-        }
+    pub fn ai_client(&self) -> AiClient {
+        self.ai_client.clone()
     }
 }
