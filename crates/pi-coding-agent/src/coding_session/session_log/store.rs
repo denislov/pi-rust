@@ -375,6 +375,7 @@ impl SessionLogStore {
             if event.session_sequence.is_none() {
                 event.session_sequence = Some(compatibility_sequence);
             }
+            validate_contiguous_session_sequence(&event, compatibility_sequence)?;
             validate_event_for_session(&event, &handle.manifest.session_id)?;
             events.push(event);
         }
@@ -746,18 +747,36 @@ fn next_session_sequence(
     })?;
 
     let mut compatibility_sequence = 0_u64;
-    let mut last_sequence = 0_u64;
     for (index, line) in content.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
         compatibility_sequence += 1;
-        let event = decode_event_line(line, index + 1, event_log_path)?;
+        let mut event = decode_event_line(line, index + 1, event_log_path)?;
+        if event.session_sequence.is_none() {
+            event.session_sequence = Some(compatibility_sequence);
+        }
+        validate_contiguous_session_sequence(&event, compatibility_sequence)?;
         validate_event_for_session(&event, session_id)?;
-        last_sequence = last_sequence.max(event.session_sequence.unwrap_or(compatibility_sequence));
     }
 
-    Ok(last_sequence + 1)
+    Ok(compatibility_sequence + 1)
+}
+
+fn validate_contiguous_session_sequence(
+    event: &SessionEventEnvelope,
+    expected_sequence: u64,
+) -> Result<(), CodingSessionError> {
+    let actual_sequence = event
+        .session_sequence
+        .expect("sequence is normalized before validation");
+    if actual_sequence != expected_sequence {
+        return Err(session_error(format!(
+            "session event sequence is not contiguous: event_id={}, expected={}, actual={}",
+            event.event_id, expected_sequence, actual_sequence
+        )));
+    }
+    Ok(())
 }
 
 fn validate_event_for_session(
@@ -1048,6 +1067,40 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(1), Some(2)]
         );
+    }
+
+    #[test]
+    fn read_events_rejects_non_contiguous_durable_sequences() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(create_options("sess_non_contiguous_sequence"))
+            .unwrap();
+        let events = [
+            event(
+                "sess_non_contiguous_sequence",
+                "evt_1",
+                SessionEventData::SessionCreated { cwd: None },
+            )
+            .with_session_sequence(1),
+            event(
+                "sess_non_contiguous_sequence",
+                "evt_3",
+                SessionEventData::TurnStarted {},
+            )
+            .with_session_sequence(3),
+        ];
+        let raw = events
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(handle.event_log_path().unwrap(), format!("{raw}\n")).unwrap();
+
+        let error = store.read_events(&handle).unwrap_err();
+        assert!(error.to_string().contains("event_id=evt_3"));
+        assert!(error.to_string().contains("expected=2"));
+        assert!(error.to_string().contains("actual=3"));
     }
 
     #[test]
