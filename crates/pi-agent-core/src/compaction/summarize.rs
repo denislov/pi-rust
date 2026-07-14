@@ -1,7 +1,7 @@
 use crate::ai_runtime::stream_model_with_provider_streamer;
 use crate::compaction::error::CompactionError;
 use crate::types::{AgentMessage, ProviderStreamer};
-use pi_ai::types::{ContentBlock, Context, Message, Model, StreamOptions};
+use pi_ai::api::{ContentBlock, Context, Message, Model, StreamOptions};
 use tokio_util::sync::CancellationToken;
 
 /// Maximum characters for a tool result in serialized summaries. Mirrors TS
@@ -229,7 +229,7 @@ pub async fn summarize_with_provider_streamer(
     opts.max_tokens = Some(4096);
 
     let stream = stream_model_with_provider_streamer(model, ctx, Some(opts), provider_streamer);
-    let message = pi_ai::complete(stream)
+    let message = pi_ai::api::complete(stream)
         .await
         .map_err(|e| CompactionError::SummarizationFailed(format!("complete failed: {}", e)))?;
 
@@ -254,7 +254,7 @@ pub async fn summarize_with_provider_streamer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_ai::types::AssistantMessage;
+    use pi_ai::api::AssistantMessage;
 
     fn user_msg(text: &str) -> AgentMessage {
         AgentMessage::UserText {

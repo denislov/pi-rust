@@ -290,7 +290,7 @@ fn configured_model_choices(
     auth: &crate::config::AuthStore,
 ) -> Vec<Model> {
     let mut configured_providers = BTreeSet::new();
-    for provider in pi_ai::get_providers() {
+    for provider in pi_ai::api::get_providers() {
         if provider_has_configured_key(&provider, &current_model.provider, cli_api_key, auth) {
             configured_providers.insert(provider);
         }

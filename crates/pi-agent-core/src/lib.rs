@@ -37,38 +37,6 @@ pub mod truncate;
 #[doc(hidden)]
 pub mod types;
 
-pub use agent::Agent;
-pub use env::{
-    ExecOptions, ExecutionEnv, ExecutionOutput, FileInfo, FileKind, FileSystem,
-    InMemoryExecutionEnv, Shell,
-};
-pub use errors::{
-    AgentHarnessError, AgentHarnessErrorCode, BranchSummaryError, BranchSummaryErrorCode,
-    ExecutionError, ExecutionErrorCode, FileError, FileErrorCode,
-};
-pub use harness::{
-    AbortResult, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentHarnessPhase,
-    BeforeAgentStartHook, BeforeProviderPayload, BeforeProviderPayloadHook,
-    BeforeProviderPayloadPatch, BeforeProviderRequest, BeforeProviderRequestHook,
-    BeforeProviderRequestPatch, ContextHook, GetApiKeyAndHeadersHook, HarnessContext,
-    HarnessHookFuture, HarnessHookKind, HeaderPatch, Observer, Patch, ProviderAuth,
-    ProviderResponse, StreamOptionsPatch, SubscriptionGuard, on_kind,
-};
-pub use hooks::{
-    AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
-    BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ConvertToLlmHook,
-    ShouldStopAfterTurnHook, TransformContextHook,
-};
-pub use resources::{parse_command_args, substitute_args};
-pub use types::{
-    AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, AgentTool,
-    AgentToolDefinitionError, AgentToolOutput, AgentToolResult, CompactionConfig,
-    CompactionSettings, DiagnosticSeverity, PromptTemplate, ProviderRequestSnapshot,
-    ProviderStreamer, QueueMode, ResourceDiagnostic, Skill, SourceTag, SourcedPromptTemplate,
-    SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel, ToolExecutionMode, ToolFn,
-    ToolUpdateCallback,
-};
-
 /// Stable low-level runtime facade for `pi-agent-core`.
 ///
 /// Product session ownership, adapter wire events, and workflow ownership belong
@@ -81,13 +49,20 @@ pub mod api {
         InMemoryExecutionEnv, Shell,
     };
     pub use crate::errors::{ExecutionError, ExecutionErrorCode, FileError, FileErrorCode};
+    pub use crate::harness::{
+        AbortResult, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentHarnessPhase,
+        BeforeAgentStartHook, BeforeProviderPayload, BeforeProviderPayloadHook,
+        BeforeProviderPayloadPatch, BeforeProviderRequest, BeforeProviderRequestHook,
+        BeforeProviderRequestPatch, ContextHook, GetApiKeyAndHeadersHook, HarnessContext,
+        HarnessHookFuture, HarnessHookKind, HeaderPatch, Observer, Patch, ProviderAuth,
+        ProviderResponse, StreamOptionsPatch, SubscriptionGuard, on_kind,
+    };
     pub use crate::hooks::{
         AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
-        AgentLoopTurnUpdate, BeforeProviderRequestContext, BeforeProviderRequestHook,
-        BeforeProviderRequestResult, BeforeToolCallContext, BeforeToolCallHook,
-        BeforeToolCallResult, ConvertToLlmHook, HookFuture, PrepareNextTurnContext,
-        PrepareNextTurnHook, ShouldStopAfterTurnContext, ShouldStopAfterTurnHook,
-        TransformContextHook,
+        AgentLoopTurnUpdate, BeforeProviderRequestContext, BeforeProviderRequestResult,
+        BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ConvertToLlmHook,
+        HookFuture, PrepareNextTurnContext, PrepareNextTurnHook, ShouldStopAfterTurnContext,
+        ShouldStopAfterTurnHook, TransformContextHook,
     };
     pub use crate::resources::{
         format_prompt_template_invocation, format_skill_invocation,

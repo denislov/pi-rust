@@ -2,8 +2,8 @@ mod common;
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
 use pi_agent_core::api::{Agent, AgentEvent, AgentMessage, QueueMode, ThinkingLevel};
+use pi_ai::api::{Model, StopReason, StreamOptions};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{Model, StopReason, StreamOptions};
 use std::sync::Arc;
 
 fn reasoning_model(api: &str) -> Model {
@@ -40,7 +40,7 @@ async fn steer_injects_user_message_before_next_model_call() {
     let texts: Vec<String> = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::LlmEvent(pi_ai::types::AssistantMessageEvent::TextDelta {
+            AgentEvent::LlmEvent(pi_ai::api::AssistantMessageEvent::TextDelta {
                 delta, ..
             }) => Some(delta.clone()),
             _ => None,
@@ -85,7 +85,7 @@ async fn follow_up_continues_after_stop() {
     let texts: Vec<String> = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::LlmEvent(pi_ai::types::AssistantMessageEvent::TextDelta {
+            AgentEvent::LlmEvent(pi_ai::api::AssistantMessageEvent::TextDelta {
                 delta, ..
             }) => Some(delta.clone()),
             _ => None,
@@ -127,7 +127,7 @@ async fn one_at_a_time_drains_one_steering_message() {
     let texts: Vec<String> = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::LlmEvent(pi_ai::types::AssistantMessageEvent::TextDelta {
+            AgentEvent::LlmEvent(pi_ai::api::AssistantMessageEvent::TextDelta {
                 delta, ..
             }) => Some(delta.clone()),
             _ => None,
@@ -223,7 +223,7 @@ pub fn stream_options_for_turn(
                 ThinkingLevel::XHigh => Some(16384u32),
                 ThinkingLevel::Off => None,
             };
-            options.thinking = Some(pi_ai::types::ThinkingConfig {
+            options.thinking = Some(pi_ai::api::ThinkingConfig {
                 enabled: true,
                 budget_tokens,
                 effort: Some(thinking_level.to_string()),

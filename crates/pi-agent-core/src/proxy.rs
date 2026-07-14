@@ -1,6 +1,6 @@
 use futures::StreamExt;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StopReason,
     StreamOptions, Usage,
 };

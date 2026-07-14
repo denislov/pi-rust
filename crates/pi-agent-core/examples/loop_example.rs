@@ -1,8 +1,8 @@
 use futures::StreamExt;
 use pi_agent_core::api::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
 use pi_ai::api::AiClient;
+use pi_ai::api::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -70,7 +70,7 @@ async fn main() {
             }
             AgentEvent::BeforeProviderRequest { .. } => {}
             AgentEvent::LlmEvent(e) => {
-                if let pi_ai::types::AssistantMessageEvent::TextDelta { delta, .. } = &e {
+                if let pi_ai::api::AssistantMessageEvent::TextDelta { delta, .. } = &e {
                     print!("{}", delta);
                 }
             }

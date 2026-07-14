@@ -25,7 +25,7 @@ use crate::types::{
 use futures::channel::mpsc;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
+use pi_ai::api::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
 
 use super::context::{AgentTurnContext, PendingToolCall, RuntimeCompactionState};
 

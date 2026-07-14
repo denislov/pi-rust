@@ -1,7 +1,7 @@
 use crate::session_context::{SessionError, SessionErrorCode};
 use crate::transcript::{SessionEntry, StoredAgentMessage};
 use crate::types::AgentMessage;
-use pi_ai::types::{AssistantMessage, ContentBlock, Cost, Usage};
+use pi_ai::api::{AssistantMessage, ContentBlock, Cost, Usage};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
@@ -331,7 +331,7 @@ pub fn build_session_context(
 mod tests {
     use super::*;
     use crate::transcript::{SessionEntry, StoredUsage, StoredUsageCost};
-    use pi_ai::types::ContentBlock;
+    use pi_ai::api::ContentBlock;
     use serde_json::Map;
 
     fn user_entry(id: &str, parent: Option<&str>, text: &str) -> SessionEntry {
@@ -381,7 +381,7 @@ mod tests {
                     total: total_tokens,
                     cost: StoredUsageCost::default(),
                 },
-                stop_reason: pi_ai::types::StopReason::Stop,
+                stop_reason: pi_ai::api::StopReason::Stop,
                 error_message: None,
                 timestamp: 1,
             },

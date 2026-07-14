@@ -252,8 +252,8 @@ fn try_add_tool_rejects_invalid_tool_before_provider_context() {
     assert!(context.tools.unwrap_or_default().is_empty());
 }
 
-fn test_model() -> pi_ai::types::Model {
-    pi_ai::types::Model {
+fn test_model() -> pi_ai::api::Model {
+    pi_ai::api::Model {
         id: "test".into(),
         name: "Test".into(),
         api: "test-api".into(),
@@ -261,8 +261,8 @@ fn test_model() -> pi_ai::types::Model {
         base_url: "https://example.invalid".into(),
         reasoning: false,
         thinking_level_map: None,
-        input: vec![pi_ai::types::ModelInput::Text],
-        cost: pi_ai::types::ModelCost::default(),
+        input: vec![pi_ai::api::ModelInput::Text],
+        cost: pi_ai::api::ModelCost::default(),
         context_window: 8000,
         max_tokens: 1024,
         headers: None,

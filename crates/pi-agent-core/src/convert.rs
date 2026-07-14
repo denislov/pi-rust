@@ -1,6 +1,6 @@
 use crate::resources::system_prompt::format_skills_for_system_prompt;
 use crate::types::{AgentMessage, AgentResources, AgentTool};
-use pi_ai::types::{ContentBlock, Context, Message, Tool};
+use pi_ai::api::{ContentBlock, Context, Message, Tool};
 
 /// Convert `AgentMessage`s into the LLM-facing `Message` list. Mirrors TS
 /// `convertToLlm` (`pi/packages/agent/src/harness/messages.ts`). The harness
@@ -187,8 +187,8 @@ pub fn bash_execution_to_text(
 mod tests {
     use super::*;
 
-    fn assistant_msg() -> pi_ai::types::AssistantMessage {
-        pi_ai::types::AssistantMessage::empty("test", "test-model")
+    fn assistant_msg() -> pi_ai::api::AssistantMessage {
+        pi_ai::api::AssistantMessage::empty("test", "test-model")
     }
 
     #[test]

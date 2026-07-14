@@ -64,7 +64,7 @@ impl InMemorySessionStorage {
 mod tests {
     use super::*;
     use crate::transcript::StoredAgentMessage;
-    use pi_ai::types::ContentBlock;
+    use pi_ai::api::ContentBlock;
 
     fn user_entry(id: &str, parent: Option<&str>) -> SessionEntry {
         SessionEntry::message(

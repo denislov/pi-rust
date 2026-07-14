@@ -17,21 +17,6 @@ pub mod types;
 #[doc(hidden)]
 pub mod util;
 
-pub use models::{all_models, calculate_cost, get_model, get_models, get_providers, lookup_model};
-pub use providers::{builtin_provider_apis, register_builtins_into};
-pub use registry::{
-    AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuth, ProviderAuthResolver,
-    ProviderRegistry,
-};
-pub use stream::{EventStream, complete};
-pub use types::{
-    AssistantMessage, AssistantMessageDiagnostic, AssistantMessageEvent, ContentBlock, Context,
-    Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, ProviderAuthDiagnostic,
-    ProviderResponseInfo, ProviderStreamHooks, StopReason, StreamOptions, ThinkingConfig, Tool,
-    Usage,
-};
-pub use util::env_keys::env_api_key;
-
 /// Stable facade for embedding `pi-ai`.
 ///
 /// The root modules remain public during migration. New downstream code should

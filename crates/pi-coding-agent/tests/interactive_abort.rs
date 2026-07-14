@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use async_stream::stream;
 use pi_ai::api::ApiProvider;
-use pi_ai::{
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, Context, EventStream, Model, StopReason, StreamOptions,
 };
 use pi_coding_agent::interactive::test_harness::{

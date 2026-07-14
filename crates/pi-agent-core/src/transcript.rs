@@ -20,7 +20,7 @@ pub fn agent_message_to_stored(
             message_id: _,
             text,
         } => Some(StoredAgentMessage::User {
-            content: vec![pi_ai::types::ContentBlock::Text {
+            content: vec![pi_ai::api::ContentBlock::Text {
                 text: text.clone(),
                 text_signature: None,
             }],

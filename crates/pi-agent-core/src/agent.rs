@@ -5,7 +5,7 @@ use crate::resources::{format_prompt_template_invocation, format_skill_invocatio
 use crate::types::{
     AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolDefinitionError,
 };
-use pi_ai::types::{Context, StreamOptions};
+use pi_ai::api::{Context, StreamOptions};
 use std::collections::VecDeque;
 use std::sync::{
     Arc, RwLock,

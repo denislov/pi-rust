@@ -5,8 +5,8 @@ use pi_agent_core::api::{
     AfterToolCallResult, Agent, AgentEvent, AgentMessage, AgentTool, AgentToolOutput,
     BeforeToolCallResult, QueueMode,
 };
+use pi_ai::api::{ContentBlock, Message, StopReason};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{ContentBlock, Message, StopReason};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -218,29 +218,29 @@ async fn should_stop_after_turn_runs_before_follow_up_queue() {
 #[tokio::test]
 async fn convert_to_llm_hook_overrides_default_message_conversion() {
     let api = "hooks-convert-to-llm";
-    let captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>> =
+    let captured: Arc<std::sync::Mutex<Vec<pi_ai::api::Message>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured_for_provider = captured.clone();
 
     struct CapturingProvider {
-        captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>>,
+        captured: Arc<std::sync::Mutex<Vec<pi_ai::api::Message>>>,
     }
-    impl pi_ai::registry::ApiProvider for CapturingProvider {
+    impl pi_ai::api::ApiProvider for CapturingProvider {
         fn stream(
             &self,
-            _model: &pi_ai::types::Model,
-            ctx: pi_ai::types::Context,
-            _opts: Option<pi_ai::types::StreamOptions>,
-        ) -> pi_ai::stream::EventStream {
+            _model: &pi_ai::api::Model,
+            ctx: pi_ai::api::Context,
+            _opts: Option<pi_ai::api::StreamOptions>,
+        ) -> pi_ai::api::EventStream {
             *self.captured.lock().unwrap() = ctx.messages.clone();
             Box::pin(async_stream::stream! {
-                let mut msg = pi_ai::types::AssistantMessage::empty("test", "test-model");
+                let mut msg = pi_ai::api::AssistantMessage::empty("test", "test-model");
                 msg.content.push(ContentBlock::Text {
                     text: "ok".into(),
                     text_signature: None,
                 });
                 msg.stop_reason = StopReason::Stop;
-                yield pi_ai::types::AssistantMessageEvent::Done {
+                yield pi_ai::api::AssistantMessageEvent::Done {
                     reason: StopReason::Stop,
                     message: msg,
                 };
@@ -297,29 +297,29 @@ async fn convert_to_llm_hook_overrides_default_message_conversion() {
 #[tokio::test]
 async fn transform_context_hook_rewrites_messages_before_llm_call() {
     let api = "hooks-transform-context";
-    let captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>> =
+    let captured: Arc<std::sync::Mutex<Vec<pi_ai::api::Message>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured_for_provider = captured.clone();
 
     struct CapturingProvider {
-        captured: Arc<std::sync::Mutex<Vec<pi_ai::types::Message>>>,
+        captured: Arc<std::sync::Mutex<Vec<pi_ai::api::Message>>>,
     }
-    impl pi_ai::registry::ApiProvider for CapturingProvider {
+    impl pi_ai::api::ApiProvider for CapturingProvider {
         fn stream(
             &self,
-            _model: &pi_ai::types::Model,
-            ctx: pi_ai::types::Context,
-            _opts: Option<pi_ai::types::StreamOptions>,
-        ) -> pi_ai::stream::EventStream {
+            _model: &pi_ai::api::Model,
+            ctx: pi_ai::api::Context,
+            _opts: Option<pi_ai::api::StreamOptions>,
+        ) -> pi_ai::api::EventStream {
             *self.captured.lock().unwrap() = ctx.messages.clone();
             Box::pin(async_stream::stream! {
-                let mut msg = pi_ai::types::AssistantMessage::empty("test", "test-model");
+                let mut msg = pi_ai::api::AssistantMessage::empty("test", "test-model");
                 msg.content.push(ContentBlock::Text {
                     text: "ok".into(),
                     text_signature: None,
                 });
                 msg.stop_reason = StopReason::Stop;
-                yield pi_ai::types::AssistantMessageEvent::Done {
+                yield pi_ai::api::AssistantMessageEvent::Done {
                     reason: StopReason::Stop,
                     message: msg,
                 };

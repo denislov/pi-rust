@@ -147,10 +147,10 @@ fn generated_registry_is_loaded_from_json_asset() {
 
 #[test]
 fn all_builtin_apis_register_into_scoped_registry() {
-    let registry = pi_ai::ProviderRegistry::new();
-    pi_ai::register_builtins_into(&registry);
+    let registry = pi_ai::api::ProviderRegistry::new();
+    pi_ai::api::register_builtins_into(&registry);
 
-    for api in pi_ai::builtin_provider_apis() {
+    for api in pi_ai::api::builtin_provider_apis() {
         assert!(
             registry.lookup(api).is_some(),
             "expected built-in api {api} to be registered into scoped registry"

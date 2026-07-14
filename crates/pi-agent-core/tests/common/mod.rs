@@ -2,13 +2,13 @@
 
 use async_stream::stream;
 use pi_agent_core::api::{AgentConfig, ProviderStreamer};
-use pi_ai::providers::faux::FauxResponse;
-use pi_ai::registry::{AiClient, ApiProvider};
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::EventStream;
+use pi_ai::api::{AiClient, ApiProvider};
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
+use pi_ai::providers::faux::FauxResponse;
 use std::sync::{Arc, Mutex};
 
 /// A scripted LLM response for one turn.

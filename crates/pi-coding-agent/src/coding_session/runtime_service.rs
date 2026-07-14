@@ -179,7 +179,7 @@ impl RuntimeService {
             Some(SessionMode::Enabled)
         ) && runtime.settings().is_none()
         {
-            config.compaction = Some(pi_agent_core::CompactionConfig::default());
+            config.compaction = Some(pi_agent_core::api::CompactionConfig::default());
         }
         config.provider_streamer = Some(provider_streamer);
 

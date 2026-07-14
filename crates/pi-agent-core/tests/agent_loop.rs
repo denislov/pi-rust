@@ -4,7 +4,7 @@ use futures::StreamExt;
 use pi_agent_core::api::{
     Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput, ToolExecutionMode,
 };
-use pi_ai::types::{
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason,
 };

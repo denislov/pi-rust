@@ -6,18 +6,18 @@ use pi_agent_core::api::{
     AgentEvent, AgentMessage, ExecutionError, ExecutionOutput, FileErrorCode, FileKind, FileSystem,
     InMemoryExecutionEnv, Shell,
 };
-use pi_agent_core::{
+use pi_agent_core::api::{
     AgentHarness, AgentHarnessEvent, AgentHarnessHooks, BeforeProviderPayload,
     BeforeProviderPayloadPatch, BeforeProviderRequestPatch, HeaderPatch, Patch, ProviderAuth,
     ProviderResponse, StreamOptionsPatch,
 };
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
-use pi_ai::registry::ApiProvider;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
+use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use std::sync::{Arc, Mutex};
 
 fn faux_model(api: &str) -> Model {
@@ -75,7 +75,7 @@ fn custom_messages_convert_to_context_and_session_wire_shape() {
         pi_agent_core::convert::convert_to_context(&None, &messages, &[], &Default::default());
     assert_eq!(ctx.messages.len(), 3);
     let text = match &ctx.messages[0] {
-        pi_ai::types::Message::User { content } => match &content[0] {
+        pi_ai::api::Message::User { content } => match &content[0] {
             ContentBlock::Text { text, .. } => text,
             _ => panic!("expected text"),
         },
@@ -469,7 +469,7 @@ async fn provider_payload_and_response_hooks_are_forwarded_through_stream_option
                 let mut payload = serde_json::json!({"steps": ["provider"]});
                 if let Some(hooks) = hooks.as_ref() {
                     payload = hooks.apply_payload(&model, payload).await.unwrap();
-                    hooks.emit_response(pi_ai::types::ProviderResponseInfo {
+                    hooks.emit_response(pi_ai::api::ProviderResponseInfo {
                         status: Some(202),
                         headers: Some(serde_json::json!({"x-provider": "yes"})),
                     }).await.unwrap();

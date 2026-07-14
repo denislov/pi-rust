@@ -1,7 +1,7 @@
 use crate::types::ProviderStreamer;
 use async_stream::stream;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
 

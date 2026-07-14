@@ -33,7 +33,7 @@ fn provider_guard_registers_only_its_scoped_client() {
     let api = "pi-ai-provider-guard-drop-api";
     let guard = support::ProviderGuard::register(api, Arc::new(GuardTestProvider("temp")));
     assert!(guard.ai_client().lookup_provider(api).is_some());
-    assert!(pi_ai::AiClient::new().lookup_provider(api).is_none());
+    assert!(pi_ai::api::AiClient::new().lookup_provider(api).is_none());
 }
 
 #[test]

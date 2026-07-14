@@ -1,7 +1,7 @@
 use crate::types::{
     AgentMessage, AgentResources, AgentToolResult, ProviderRequestSnapshot, ThinkingLevel,
 };
-use pi_ai::types::{AssistantMessage, ContentBlock, Context, Message, Model, StreamOptions};
+use pi_ai::api::{AssistantMessage, ContentBlock, Context, Message, Model, StreamOptions};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;

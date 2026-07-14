@@ -1,7 +1,7 @@
 use crate::hooks::AgentHooks;
 use futures::Stream;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, StreamOptions,
 };
 use std::future::Future;
@@ -667,7 +667,7 @@ mod tests {
 
     #[test]
     fn agent_config_defaults_match_m4_baseline() {
-        let model = pi_ai::types::Model {
+        let model = pi_ai::api::Model {
             id: "test".into(),
             name: "Test".into(),
             api: "test-api".into(),
@@ -675,8 +675,8 @@ mod tests {
             base_url: "https://example.invalid".into(),
             reasoning: false,
             thinking_level_map: None,
-            input: vec![pi_ai::types::ModelInput::Text],
-            cost: pi_ai::types::ModelCost::default(),
+            input: vec![pi_ai::api::ModelInput::Text],
+            cost: pi_ai::api::ModelCost::default(),
             context_window: 8000,
             max_tokens: 1024,
             headers: None,

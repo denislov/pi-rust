@@ -3,9 +3,9 @@ mod common;
 use std::sync::Arc;
 
 use async_stream::stream;
-use pi_ai::registry::ApiProvider;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
 };
 
@@ -28,5 +28,5 @@ fn provider_guard_registers_only_its_scoped_client() {
     let api = "pi-agent-core-provider-guard-drop-api";
     let guard = common::ProviderGuard::register(api, Arc::new(GuardTestProvider));
     assert!(guard.ai_client().lookup_provider(api).is_some());
-    assert!(pi_ai::AiClient::new().lookup_provider(api).is_none());
+    assert!(pi_ai::api::AiClient::new().lookup_provider(api).is_none());
 }

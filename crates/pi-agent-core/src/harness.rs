@@ -1,12 +1,13 @@
+use crate::agent::Agent;
 use crate::errors::{AgentHarnessError, AgentHarnessErrorCode};
 use crate::hooks::{
     BeforeProviderRequestContext as LoopBeforeProviderRequest,
     BeforeProviderRequestHook as LoopBeforeProviderRequestHook,
     BeforeProviderRequestResult as LoopBeforeProviderRequestResult,
 };
-use crate::{Agent, AgentConfig, AgentEvent, AgentMessage, AgentStream, AgentTool};
+use crate::types::{AgentConfig, AgentEvent, AgentMessage, AgentStream, AgentTool};
 use futures::{Stream, StreamExt};
-use pi_ai::types::{Context, Model, ProviderResponseInfo, ProviderStreamHooks, StreamOptions};
+use pi_ai::api::{Context, Model, ProviderResponseInfo, ProviderStreamHooks, StreamOptions};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -92,7 +93,7 @@ pub struct StreamOptionsPatch {
     pub max_tokens: Option<Patch<u32>>,
     pub api_key: Option<Patch<String>>,
     pub cache_retention: Option<Patch<serde_json::Value>>,
-    pub thinking: Option<Patch<pi_ai::types::ThinkingConfig>>,
+    pub thinking: Option<Patch<pi_ai::api::ThinkingConfig>>,
     pub tool_choice: Option<Patch<serde_json::Value>>,
     pub session_id: Option<Patch<String>>,
     pub azure_api_version: Option<Patch<String>>,

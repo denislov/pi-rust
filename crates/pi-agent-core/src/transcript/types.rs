@@ -1,4 +1,4 @@
-use pi_ai::types::{ContentBlock, StopReason};
+use pi_ai::api::{ContentBlock, StopReason};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;

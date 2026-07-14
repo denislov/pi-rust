@@ -2,9 +2,9 @@ mod common;
 
 use common::ProviderGuard;
 use futures::StreamExt;
-use pi_agent_core::{AgentHarness, AgentHarnessEvent, AgentHarnessHooks};
+use pi_agent_core::api::{AgentHarness, AgentHarnessEvent, AgentHarnessHooks};
+use pi_ai::api::{Model, ModelCost, ModelInput, StopReason};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
-use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use std::sync::{Arc, Mutex};
 
 fn faux_model(api: &str) -> Model {
@@ -92,7 +92,7 @@ async fn subscribe_guard_drop_removes_listener() {
 
 #[tokio::test]
 async fn on_context_appends_to_existing_hook_chain() {
-    use pi_agent_core::on_kind::ContextKind;
+    use pi_agent_core::api::on_kind::ContextKind;
 
     let api = "on-context";
     let _provider_guard = register_simple_text(api, "hi");
@@ -126,7 +126,7 @@ async fn on_context_appends_to_existing_hook_chain() {
 
 #[tokio::test]
 async fn phase_starts_idle_and_returns_to_idle_after_prompt() {
-    use pi_agent_core::AgentHarnessPhase;
+    use pi_agent_core::api::AgentHarnessPhase;
 
     let api = "phase-idle";
     let _provider_guard = register_simple_text(api, "ok");
@@ -141,7 +141,7 @@ async fn phase_starts_idle_and_returns_to_idle_after_prompt() {
 
 #[tokio::test]
 async fn phase_is_turn_during_active_prompt() {
-    use pi_agent_core::AgentHarnessPhase;
+    use pi_agent_core::api::AgentHarnessPhase;
 
     let api = "phase-turn";
     let _provider_guard = register_simple_text(api, "ok");
@@ -167,7 +167,7 @@ async fn phase_is_turn_during_active_prompt() {
 
 #[tokio::test]
 async fn abort_returns_cleared_queue_messages() {
-    use pi_agent_core::AbortResult;
+    use pi_agent_core::api::AbortResult;
 
     let api = "abort-queues";
     let _provider_guard = register_simple_text(api, "ok");
@@ -195,7 +195,7 @@ async fn abort_returns_cleared_queue_messages() {
 
 #[tokio::test]
 async fn abort_with_empty_queues_returns_empty_lists() {
-    use pi_agent_core::AbortResult;
+    use pi_agent_core::api::AbortResult;
 
     let api = "abort-empty";
     let _provider_guard = register_simple_text(api, "ok");

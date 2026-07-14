@@ -1,5 +1,5 @@
 use crate::types::AgentMessage;
-use pi_ai::types::{ContentBlock, StopReason, Usage};
+use pi_ai::api::{ContentBlock, StopReason, Usage};
 
 pub fn estimate_tokens(messages: &[AgentMessage]) -> u32 {
     let mut total: u32 = 0;
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn estimate_tokens_uses_assistant_content_not_provider_usage() {
-        use pi_ai::types::AssistantMessage;
+        use pi_ai::api::AssistantMessage;
         let mut msg = AssistantMessage::empty("test", "test-model");
         msg.usage.total_tokens = 42;
         msg.content.push(ContentBlock::Text {
@@ -178,7 +178,7 @@ mod tests {
 
     // ---- estimate_context_tokens (TS-parity context usage) ----
 
-    use pi_ai::types::{AssistantMessage, StopReason};
+    use pi_ai::api::{AssistantMessage, StopReason};
 
     fn user_msg(text: &str) -> AgentMessage {
         AgentMessage::UserText {

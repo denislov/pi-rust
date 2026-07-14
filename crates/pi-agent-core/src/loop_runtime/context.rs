@@ -1,5 +1,5 @@
 use crate::types::ThinkingLevel;
-use pi_ai::types::{Model, StreamOptions, ThinkingConfig};
+use pi_ai::api::{Model, StreamOptions, ThinkingConfig};
 
 pub(crate) fn stream_options_for_turn(
     model: &Model,
@@ -38,7 +38,7 @@ pub(crate) fn stream_options_for_turn(
 #[cfg(test)]
 mod tests {
     use crate::types::ThinkingLevel;
-    use pi_ai::types::{Model, ModelCost, ModelInput, StreamOptions};
+    use pi_ai::api::{Model, ModelCost, ModelInput, StreamOptions};
 
     fn model(reasoning: bool) -> Model {
         Model {

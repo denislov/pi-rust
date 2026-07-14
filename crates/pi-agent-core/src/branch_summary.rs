@@ -4,7 +4,7 @@ use crate::convert::convert_to_context;
 use crate::errors::{BranchSummaryError, BranchSummaryErrorCode};
 use crate::transcript::{SessionEntry, StoredAgentMessage};
 use crate::types::{AgentMessage, AgentResources, ProviderStreamer};
-use pi_ai::types::{ContentBlock, Model, StopReason, StreamOptions};
+use pi_ai::api::{ContentBlock, Model, StopReason, StreamOptions};
 use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -225,11 +225,11 @@ pub async fn generate_branch_summary_with_provider_streamer(
     use futures::StreamExt;
     while let Some(event) = stream.next().await {
         match event {
-            pi_ai::types::AssistantMessageEvent::Done { message, .. } => {
+            pi_ai::api::AssistantMessageEvent::Done { message, .. } => {
                 assistant = Some(message);
                 break;
             }
-            pi_ai::types::AssistantMessageEvent::Error { message, .. } => {
+            pi_ai::api::AssistantMessageEvent::Error { message, .. } => {
                 if message.stop_reason == StopReason::Aborted {
                     return Err(BranchSummaryError::new(
                         BranchSummaryErrorCode::Aborted,
@@ -352,20 +352,20 @@ fn stored_to_agent_message(entry_id: &str, stored: StoredAgentMessage) -> Option
             error_message,
             timestamp,
         } => {
-            let assistant = pi_ai::types::AssistantMessage {
+            let assistant = pi_ai::api::AssistantMessage {
                 content,
                 api,
                 provider: Some(provider),
                 model,
                 response_model,
                 response_id,
-                usage: pi_ai::types::Usage {
+                usage: pi_ai::api::Usage {
                     input: usage.input,
                     output: usage.output,
                     cache_read: usage.cache_read,
                     cache_write: usage.cache_write,
                     total_tokens: usage.total,
-                    cost: pi_ai::types::Cost {
+                    cost: pi_ai::api::Cost {
                         input: usage.cost.input,
                         output: usage.cost.output,
                         cache_read: usage.cost.cache_read,

@@ -48,7 +48,7 @@ fn queue_mode_parses_cli_values() {
 
 #[test]
 fn agent_config_defaults_match_m4_baseline() {
-    let model = pi_ai::Model {
+    let model = pi_ai::api::Model {
         id: "test".into(),
         name: "Test".into(),
         api: "test-api".into(),
@@ -56,8 +56,8 @@ fn agent_config_defaults_match_m4_baseline() {
         base_url: "https://example.invalid".into(),
         reasoning: false,
         thinking_level_map: None,
-        input: vec![pi_ai::ModelInput::Text],
-        cost: pi_ai::ModelCost::default(),
+        input: vec![pi_ai::api::ModelInput::Text],
+        cost: pi_ai::api::ModelCost::default(),
         context_window: 8_000,
         max_tokens: 1_024,
         headers: None,

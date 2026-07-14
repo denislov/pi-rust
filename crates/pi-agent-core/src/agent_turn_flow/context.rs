@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 
 use futures::channel::mpsc;
-use pi_ai::types::{AssistantMessage, Context, StreamOptions};
+use pi_ai::api::{AssistantMessage, Context, StreamOptions};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::{Agent, AgentState};

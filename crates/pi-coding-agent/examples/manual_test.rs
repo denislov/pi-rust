@@ -11,9 +11,9 @@
 // Or with custom prompt:
 //   cargo run -p pi-coding-agent --example manual_test -- hello world
 
-use pi_ai::AiClient;
+use pi_ai::api::AiClient;
+use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::{PrintModeOptions, run_print_mode};
 use std::sync::Arc;
 
@@ -79,7 +79,7 @@ async fn main() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text(invocation_text),
     };

@@ -1,10 +1,10 @@
-use pi_ai::transport::headers::merge_headers;
-use pi_ai::transport::http::send_json_stream;
-use pi_ai::util::http::{RetryConfig, is_retryable_status, parse_retry_after_ms};
-use pi_ai::{
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, Model, ModelCost, ModelInput, ProviderResponseInfo,
     ProviderStreamHooks, StopReason, StreamOptions, complete,
 };
+use pi_ai::transport::headers::merge_headers;
+use pi_ai::transport::http::send_json_stream;
+use pi_ai::util::http::{RetryConfig, is_retryable_status, parse_retry_after_ms};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ fn test_model() -> Model {
     }
 }
 
-fn done_stream(api: &'static str) -> pi_ai::EventStream {
+fn done_stream(api: &'static str) -> pi_ai::api::EventStream {
     Box::pin(async_stream::stream! {
         yield AssistantMessageEvent::Done {
             reason: StopReason::Stop,
@@ -212,7 +212,7 @@ fn retry_config_defaults() {
 
 #[test]
 fn retry_config_from_options() {
-    let opts = pi_ai::StreamOptions {
+    let opts = pi_ai::api::StreamOptions {
         max_retries: Some(1),
         max_retry_delay_ms: Some(5_000),
         timeout_ms: Some(30_000),

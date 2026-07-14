@@ -1,7 +1,7 @@
 use pi_agent_core::transcript::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, StoredUsageCost,
 };
-use pi_ai::types::{ContentBlock, StopReason};
+use pi_ai::api::{ContentBlock, StopReason};
 
 #[test]
 fn header_serializes_as_jsonl_v3_header() {

@@ -63,7 +63,7 @@ pub fn prepare_compaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_ai::types::ContentBlock;
+    use pi_ai::api::ContentBlock;
 
     fn user_msg(text: &str) -> AgentMessage {
         AgentMessage::UserText {

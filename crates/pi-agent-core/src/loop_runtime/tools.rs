@@ -1,5 +1,5 @@
 use crate::types::{AgentMessage, AgentTool, AgentToolResult, ToolExecutionMode};
-use pi_ai::types::{AssistantMessage, ContentBlock};
+use pi_ai::api::{AssistantMessage, ContentBlock};
 
 pub(crate) struct ToolCallRequest {
     pub index: usize,
@@ -74,7 +74,7 @@ mod tests {
     use crate::types::{
         AgentMessage, AgentTool, AgentToolOutput, AgentToolResult, ToolExecutionMode,
     };
-    use pi_ai::types::{AssistantMessage, ContentBlock};
+    use pi_ai::api::{AssistantMessage, ContentBlock};
     use std::sync::Arc;
 
     fn text_tool(name: &str, execution_mode: Option<ToolExecutionMode>) -> AgentTool {
