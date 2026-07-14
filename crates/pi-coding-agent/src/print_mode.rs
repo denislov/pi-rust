@@ -7,9 +7,9 @@ use crate::coding_session::{
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
-use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
-use pi_ai::AiClient;
-use pi_ai::types::Model;
+use pi_agent_core::api::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
+use pi_ai::api::AiClient;
+use pi_ai::api::Model;
 use std::path::PathBuf;
 
 pub struct PrintModeOptions {

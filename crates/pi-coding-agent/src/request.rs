@@ -9,10 +9,10 @@ use crate::runtime::{
 use crate::session::ResolvedSessionTarget;
 use crate::tools::{self, ToolFilter};
 use crate::{CliArgs, CliError};
+use pi_agent_core::api::{AgentResources, ResourceDiagnostic};
 use pi_agent_core::types::DiagnosticSeverity as ResourceDiagnosticSeverity;
-use pi_agent_core::{AgentResources, ResourceDiagnostic};
-use pi_ai::AiClient;
-use pi_ai::types::{Model, ProviderAuthDiagnostic};
+use pi_ai::api::AiClient;
+use pi_ai::api::{Model, ProviderAuthDiagnostic};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +40,7 @@ pub struct ResolvedCliContext {
     pub auth_diagnostics: Vec<ProviderAuthDiagnostic>,
     pub loaded_resources: LoadedResources,
     pub system_prompt: Option<String>,
-    pub tools: Vec<pi_agent_core::AgentTool>,
+    pub tools: Vec<pi_agent_core::api::AgentTool>,
     pub register_builtins: bool,
     pub ai_client: Option<AiClient>,
     pub session: Option<SessionRunOptions>,

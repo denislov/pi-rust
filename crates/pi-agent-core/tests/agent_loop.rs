@@ -1,7 +1,7 @@
 mod common;
 use common::{ProviderGuard, ScriptedTurn, TestProvider, text_turn, tool_use_turn};
 use futures::StreamExt;
-use pi_agent_core::{
+use pi_agent_core::api::{
     Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput, ToolExecutionMode,
 };
 use pi_ai::types::{

@@ -162,11 +162,11 @@ pub(super) fn parse_slash_command(text: &str) -> Option<ParsedSlashCommand> {
 
 pub(super) fn parse_model_selector_arg(
     arg: &str,
-) -> Result<(String, Option<pi_agent_core::ThinkingLevel>), String> {
+) -> Result<(String, Option<pi_agent_core::api::ThinkingLevel>), String> {
     match arg.rsplit_once(':') {
         Some((model_id, level)) if !model_id.is_empty() && !level.is_empty() => {
             let thinking = level
-                .parse::<pi_agent_core::ThinkingLevel>()
+                .parse::<pi_agent_core::api::ThinkingLevel>()
                 .map_err(|error| error.to_string())?;
             Ok((model_id.to_string(), Some(thinking)))
         }

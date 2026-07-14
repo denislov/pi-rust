@@ -1532,7 +1532,7 @@ fn format_label_timestamp(timestamp: &str) -> String {
 mod tests {
     use super::*;
     use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage};
-    use pi_ai::types::{ContentBlock, StopReason};
+    use pi_ai::api::{ContentBlock, StopReason};
 
     fn user_node(id: &str, parent: Option<&str>, text: &str) -> SessionTreeNode {
         let entry = SessionEntry::message(
@@ -1571,7 +1571,7 @@ mod tests {
                 response_model: None,
                 response_id: None,
                 usage: Default::default(),
-                stop_reason: pi_ai::types::StopReason::Stop,
+                stop_reason: pi_ai::api::StopReason::Stop,
                 error_message: None,
                 timestamp: 2,
             },

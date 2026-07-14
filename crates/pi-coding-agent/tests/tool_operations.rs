@@ -1,5 +1,5 @@
 use futures::future::{BoxFuture, FutureExt};
-use pi_ai::types::ContentBlock;
+use pi_ai::api::ContentBlock;
 use pi_coding_agent::tools::ShellCapability;
 use pi_coding_agent::tools::bash::{BashOperations, BashOptions};
 use pi_coding_agent::tools::bash::{bash_execute_with_operations, bash_tool_with_operations};
@@ -169,7 +169,7 @@ impl BashOperations for FakeBashOps {
         cwd: &'a Path,
         args: serde_json::Value,
         _options: &'a BashOptions,
-        on_update: Option<pi_agent_core::ToolUpdateCallback>,
+        on_update: Option<pi_agent_core::api::ToolUpdateCallback>,
     ) -> BoxFuture<'a, Result<Vec<ContentBlock>, String>> {
         async move {
             let command = args
@@ -182,7 +182,7 @@ impl BashOperations for FakeBashOps {
                 .unwrap()
                 .push((cwd.to_path_buf(), command));
             if let Some(on_update) = on_update {
-                on_update(pi_agent_core::AgentToolOutput::new(vec![
+                on_update(pi_agent_core::api::AgentToolOutput::new(vec![
                     ContentBlock::Text {
                         text: "fake update".into(),
                         text_signature: None,
@@ -205,7 +205,7 @@ async fn bash_can_use_injected_operations_and_stream_updates() {
     let updates = Arc::new(Mutex::new(Vec::new()));
     let update_sink = {
         let updates = updates.clone();
-        Arc::new(move |output: pi_agent_core::AgentToolOutput| {
+        Arc::new(move |output: pi_agent_core::api::AgentToolOutput| {
             updates.lock().unwrap().push(text(&output.content));
         })
     };

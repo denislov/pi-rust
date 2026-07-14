@@ -1,7 +1,7 @@
 mod common;
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentEvent, AgentMessage, QueueMode, ThinkingLevel};
+use pi_agent_core::api::{Agent, AgentEvent, AgentMessage, QueueMode, ThinkingLevel};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{Model, StopReason, StreamOptions};
 use std::sync::Arc;

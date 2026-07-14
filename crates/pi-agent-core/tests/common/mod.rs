@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use async_stream::stream;
-use pi_agent_core::{AgentConfig, ProviderStreamer};
+use pi_agent_core::api::{AgentConfig, ProviderStreamer};
 use pi_ai::providers::faux::FauxResponse;
 use pi_ai::registry::{AiClient, ApiProvider};
 use pi_ai::stream::EventStream;

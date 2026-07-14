@@ -335,7 +335,7 @@ fn collect_core_session_imports_with_allowlist(
             violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
         }
 
-        if line.contains("use pi_agent_core::{") {
+        if line.contains("use pi_agent_core::api::{") {
             in_pi_agent_core_grouped_use = true;
         }
         if in_pi_agent_core_grouped_use && line.contains("session::") {

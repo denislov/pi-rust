@@ -1,13 +1,13 @@
 mod support;
 
-use pi_agent_core::{AgentTool, AgentToolOutput};
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_ai::registry::ApiProvider;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_agent_core::api::{AgentTool, AgentToolOutput};
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
+use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_coding_agent::{
     CliError, PrintModeOptions, PromptInvocation, ResolvedSessionTarget, SessionMode,
     SessionRunOptions, run_print_mode,
@@ -122,7 +122,7 @@ async fn prints_single_turn_text_response() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
@@ -160,7 +160,7 @@ async fn disabled_session_print_uses_non_persistent_runtime_without_session_file
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
@@ -196,7 +196,7 @@ async fn treats_length_as_successful_final_text() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
@@ -235,7 +235,7 @@ async fn returns_agent_failure_on_error_stop_reason() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
@@ -285,7 +285,7 @@ async fn supports_tool_call_loop_with_injected_tool() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("echo hi".into()),
     })
@@ -323,7 +323,7 @@ async fn explicit_new_session_writes_rust_native_session_events() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("hi".into()),
     })
@@ -385,7 +385,7 @@ async fn open_or_create_session_target_reopens_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("first question".into()),
     })
@@ -411,7 +411,7 @@ async fn open_or_create_session_target_reopens_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("second question".into()),
     })
@@ -488,7 +488,7 @@ async fn open_target_reuses_existing_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("remember".into()),
     })
@@ -513,7 +513,7 @@ async fn open_target_reuses_existing_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("continue".into()),
     })
@@ -564,7 +564,7 @@ async fn continue_most_recent_uses_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("prior question".into()),
     })
@@ -589,7 +589,7 @@ async fn continue_most_recent_uses_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("next".into()),
     })
@@ -629,7 +629,7 @@ async fn continue_most_recent_reports_missing_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("next".into()),
     })
@@ -681,7 +681,7 @@ async fn fork_target_routes_through_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("source question".into()),
     })
@@ -707,7 +707,7 @@ async fn fork_target_routes_through_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text("fork question".into()),
     })

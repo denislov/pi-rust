@@ -2033,7 +2033,7 @@ impl CodingAgentSession {
         let prompt_options =
             PromptTurnOptions::from_prompt_run_options(crate::prompt_options::PromptRunOptions {
                 prompt: prompt.into(),
-                model: pi_ai::types::Model {
+                model: pi_ai::api::Model {
                     id: "test-model".into(),
                     name: "Test Model".into(),
                     api: "interactive-pending-delegation-fixture".into(),
@@ -2041,8 +2041,8 @@ impl CodingAgentSession {
                     base_url: String::new(),
                     reasoning: false,
                     thinking_level_map: None,
-                    input: vec![pi_ai::types::ModelInput::Text],
-                    cost: pi_ai::types::ModelCost::default(),
+                    input: vec![pi_ai::api::ModelInput::Text],
+                    cost: pi_ai::api::ModelCost::default(),
                     context_window: 0,
                     max_tokens: 0,
                     headers: None,
@@ -2060,7 +2060,7 @@ impl CodingAgentSession {
                 session_name: None,
                 thinking_level: None,
                 tool_execution: None,
-                resources: pi_agent_core::AgentResources::default(),
+                resources: pi_agent_core::api::AgentResources::default(),
                 settings: None,
                 invocation: crate::runtime::PromptInvocation::Text(prompt.into()),
             });
@@ -2125,15 +2125,15 @@ mod tests {
     };
 
     use async_stream::stream;
-    use pi_agent_core::{AgentResources, AgentTool, AgentToolOutput};
-    use pi_ai::AiClient;
-    use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
-    use pi_ai::registry::ApiProvider;
-    use pi_ai::stream::EventStream;
-    use pi_ai::types::{
+    use pi_agent_core::api::{AgentResources, AgentTool, AgentToolOutput};
+    use pi_ai::api::AiClient;
+    use pi_ai::api::ApiProvider;
+    use pi_ai::api::EventStream;
+    use pi_ai::api::{
         AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
         ModelInput, StopReason, StreamOptions,
     };
+    use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
     use tokio::sync::oneshot;
 
     use super::delegation::delegation_runtime_seed_from_prompt_options;

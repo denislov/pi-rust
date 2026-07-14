@@ -1,4 +1,4 @@
-use pi_agent_core::ThinkingLevel;
+use pi_agent_core::api::ThinkingLevel;
 use pi_agent_core::transcript::SessionEntry;
 
 #[test]

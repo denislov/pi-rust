@@ -3,8 +3,8 @@ mod support;
 use pi_agent_core::transcript::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, create_timestamp,
 };
+use pi_ai::api::StopReason;
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
-use pi_ai::types::StopReason;
 use pi_coding_agent::CliArgs;
 use pi_coding_agent::interactive::test_harness::{
     run_scripted_interactive_with_args_and_session_dir, run_scripted_interactive_with_session_dir,
@@ -1755,7 +1755,7 @@ fn write_legacy_session(
             None,
             timestamp.clone(),
             StoredAgentMessage::User {
-                content: vec![pi_ai::types::ContentBlock::Text {
+                content: vec![pi_ai::api::ContentBlock::Text {
                     text: user_text.to_string(),
                     text_signature: None,
                 }],
@@ -1768,7 +1768,7 @@ fn write_legacy_session(
             Some("entry-user".to_string()),
             timestamp.clone(),
             StoredAgentMessage::Assistant {
-                content: vec![pi_ai::types::ContentBlock::Text {
+                content: vec![pi_ai::api::ContentBlock::Text {
                     text: assistant_text.to_string(),
                     text_signature: None,
                 }],

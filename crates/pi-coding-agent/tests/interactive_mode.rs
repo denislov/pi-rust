@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::stream;
-use pi_ai::providers::faux::{FauxProvider, FauxResponse};
-use pi_ai::registry::ApiProvider;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, StopReason,
     StreamOptions,
 };
+use pi_ai::providers::faux::{FauxProvider, FauxResponse};
 use pi_coding_agent::interactive::test_harness::{
     ScriptedInputDriver, ScriptedInteractiveOutput, run_scripted_idle_interactive,
     run_scripted_idle_interactive_with_ai_client, run_scripted_idle_interactive_with_delays,
@@ -1085,7 +1085,7 @@ async fn scripted_interactive_model_command_switches_footer_model() {
 #[tokio::test]
 async fn scripted_interactive_model_command_changes_next_prompt_model() {
     let _guard = ENV_LOCK.lock().await;
-    let target_model = pi_ai::lookup_model("claude-haiku-4-5").expect("known model");
+    let target_model = pi_ai::api::lookup_model("claude-haiku-4-5").expect("known model");
     let model_ids = Arc::new(Mutex::new(Vec::new()));
     let _provider_guard = ProviderGuard::register(
         &target_model.api,
@@ -1111,7 +1111,7 @@ async fn scripted_interactive_model_command_changes_next_prompt_model() {
 #[tokio::test]
 async fn scripted_interactive_model_selector_confirms_filtered_model() {
     let _guard = ENV_LOCK.lock().await;
-    let default_model = pi_ai::lookup_model("claude-sonnet-4-5").expect("known default model");
+    let default_model = pi_ai::api::lookup_model("claude-sonnet-4-5").expect("known default model");
     let _provider_guard = ProviderGuard::register(
         &default_model.api,
         Arc::new(RecordingModelProvider {
@@ -1192,7 +1192,7 @@ async fn scripted_interactive_model_selector_lists_configured_provider_models() 
 #[tokio::test]
 async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider() {
     let _guard = ENV_LOCK.lock().await;
-    let target_model = pi_ai::lookup_model("gpt-5").expect("known model");
+    let target_model = pi_ai::api::lookup_model("gpt-5").expect("known model");
     let model_ids = Arc::new(Mutex::new(Vec::new()));
     let api_keys = Arc::new(Mutex::new(Vec::new()));
     let _provider_guard = ProviderGuard::register(

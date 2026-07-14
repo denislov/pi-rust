@@ -33,7 +33,7 @@ mod tests {
         CodingSessionError, ProductEvent, ProductEventSequence,
     };
     use pi_agent_core::transcript::StoredAgentMessage;
-    use pi_ai::types::{StopReason, Usage};
+    use pi_ai::api::{StopReason, Usage};
 
     fn adapter() -> RpcCodingEventAdapter {
         RpcCodingEventAdapter::new_with_provider(

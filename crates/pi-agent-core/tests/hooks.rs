@@ -1,7 +1,7 @@
 mod common;
 use common::{ProviderGuard, TestProvider, faux_model, tool_use_turn};
 use futures::StreamExt;
-use pi_agent_core::{
+use pi_agent_core::api::{
     AfterToolCallResult, Agent, AgentEvent, AgentMessage, AgentTool, AgentToolOutput,
     BeforeToolCallResult, QueueMode,
 };
@@ -93,7 +93,7 @@ async fn before_hook_blocks_tool_execution() {
     let mut stream = agent.prompt("run");
     let mut saw_blocked_result = false;
     while let Some(event) = stream.next().await {
-        if let pi_agent_core::AgentEvent::ToolCallEnd { result, .. } = event {
+        if let pi_agent_core::api::AgentEvent::ToolCallEnd { result, .. } = event {
             saw_blocked_result = result.is_error
                 && result
                     .content
@@ -135,7 +135,7 @@ async fn after_hook_replaces_tool_result() {
     let messages = agent.messages();
     assert!(messages.iter().any(|msg| matches!(
         msg,
-        pi_agent_core::AgentMessage::ToolResult { is_error: true, content, .. }
+        pi_agent_core::api::AgentMessage::ToolResult { is_error: true, content, .. }
             if content.iter().any(|block| matches!(block, ContentBlock::Text { text, .. } if text == "rewritten"))
     )));
 }

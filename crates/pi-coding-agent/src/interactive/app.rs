@@ -7,10 +7,10 @@ use std::sync::atomic::AtomicUsize;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
-use pi_agent_core::AgentResources;
+use pi_agent_core::api::AgentResources;
 use pi_agent_core::transcript::create_session_id;
-use pi_ai::AiClient;
-use pi_ai::types::{Model, ProviderAuthDiagnostic};
+use pi_ai::api::AiClient;
+use pi_ai::api::{Model, ProviderAuthDiagnostic};
 #[cfg(test)]
 use pi_tui::{Component, InputEvent, Terminal, visible_width};
 use pi_tui::{KeybindingsManager, ProcessTerminal, TuiTheme, dark_theme, light_theme};
@@ -110,14 +110,14 @@ pub(super) struct PromptContext {
     pub(super) auth: crate::config::AuthStore,
     pub(super) system_prompt: Option<String>,
     pub(super) max_turns: Option<u32>,
-    pub(super) tools: Vec<pi_agent_core::AgentTool>,
+    pub(super) tools: Vec<pi_agent_core::api::AgentTool>,
     pub(super) register_builtins: bool,
     pub(super) ai_client: Option<AiClient>,
     pub(super) session: Option<SessionRunOptions>,
     pub(super) session_target: Option<ResolvedSessionTarget>,
     pub(super) session_name: Option<String>,
-    pub(super) thinking_level: Option<pi_agent_core::ThinkingLevel>,
-    pub(super) tool_execution: Option<pi_agent_core::ToolExecutionMode>,
+    pub(super) thinking_level: Option<pi_agent_core::api::ThinkingLevel>,
+    pub(super) tool_execution: Option<pi_agent_core::api::ToolExecutionMode>,
     pub(super) resources: AgentResources,
     pub(super) profile_registry: ProfileRegistry,
     pub(super) default_agent_profile_id: ProfileId,
@@ -296,7 +296,7 @@ fn configured_model_choices(
         }
     }
 
-    let mut models = pi_ai::all_models()
+    let mut models = pi_ai::api::all_models()
         .iter()
         .filter(|model| configured_providers.contains(&model.provider))
         .cloned()
@@ -332,7 +332,7 @@ fn rotation_model_choices(
         return Ok(Vec::new());
     };
     let rotation = crate::models::parse_model_rotation(models_arg)?;
-    let mut candidates = pi_ai::all_models().to_vec();
+    let mut candidates = pi_ai::api::all_models().to_vec();
     candidates.sort_by(|left, right| left.id.cmp(&right.id));
     if let Some(provider) = provider {
         candidates.retain(|model| model.provider == provider);
@@ -1049,8 +1049,8 @@ mod tests {
             base_url: String::new(),
             reasoning,
             thinking_level_map: None,
-            input: vec![pi_ai::types::ModelInput::Text],
-            cost: pi_ai::types::ModelCost::default(),
+            input: vec![pi_ai::api::ModelInput::Text],
+            cost: pi_ai::api::ModelCost::default(),
             context_window,
             max_tokens: 0,
             headers: None,
@@ -1125,11 +1125,11 @@ mod tests {
         let mut root =
             InteractiveRoot::new(PathBuf::from("."), "m".to_string(), "session".to_string());
         root.model = Some(footer_model("m", "p", true, 200_000));
-        root.thinking_level = pi_agent_core::ThinkingLevel::High;
+        root.thinking_level = pi_agent_core::api::ThinkingLevel::High;
         let footer = root.footer(80).join("\n");
         assert!(footer.contains("m • high"), "{footer}");
 
-        root.thinking_level = pi_agent_core::ThinkingLevel::Off;
+        root.thinking_level = pi_agent_core::api::ThinkingLevel::Off;
         let footer = root.footer(80).join("\n");
         assert!(footer.contains("m • thinking off"), "{footer}");
     }
@@ -1372,14 +1372,14 @@ mod tests {
         .with_resolved_theme(resolved);
 
         // thinkingHigh in dark.json -> "#b294bb"
-        root.thinking_level = pi_agent_core::ThinkingLevel::High;
+        root.thinking_level = pi_agent_core::api::ThinkingLevel::High;
         assert_eq!(
             root.editor_border_style().fg,
             pi_tui::Color::Rgb(0xb2, 0x94, 0xbb)
         );
 
         // thinkingOff in dark.json -> "darkGray" var -> "#505050"
-        root.thinking_level = pi_agent_core::ThinkingLevel::Off;
+        root.thinking_level = pi_agent_core::api::ThinkingLevel::Off;
         assert_eq!(
             root.editor_border_style().fg,
             pi_tui::Color::Rgb(0x50, 0x50, 0x50)
@@ -1883,7 +1883,7 @@ mod tests {
             "no-session".to_string(),
         );
         assert!(root.settings.default_thinking_level.is_none());
-        assert_eq!(root.thinking_level, pi_agent_core::ThinkingLevel::Off);
+        assert_eq!(root.thinking_level, pi_agent_core::api::ThinkingLevel::Off);
 
         root.handle_slash_command(ParsedSlashCommand {
             name: "settings".to_string(),
@@ -1899,10 +1899,13 @@ mod tests {
             root.settings.default_thinking_level.as_deref(),
             Some("minimal")
         );
-        assert_eq!(root.thinking_level, pi_agent_core::ThinkingLevel::Minimal);
+        assert_eq!(
+            root.thinking_level,
+            pi_agent_core::api::ThinkingLevel::Minimal
+        );
         assert_eq!(
             root.take_selected_thinking_level(),
-            Some(pi_agent_core::ThinkingLevel::Minimal)
+            Some(pi_agent_core::api::ThinkingLevel::Minimal)
         );
         let updated = root
             .take_settings_update()
@@ -2133,9 +2136,9 @@ mod tests {
     #[test]
     fn ctrl_p_cycles_models_from_rotation() {
         let rotation = vec![
-            pi_ai::lookup_model("claude-haiku-4-5").unwrap(),
-            pi_ai::lookup_model("gpt-5").unwrap(),
-            pi_ai::lookup_model("gpt-5-mini").unwrap(),
+            pi_ai::api::lookup_model("claude-haiku-4-5").unwrap(),
+            pi_ai::api::lookup_model("gpt-5").unwrap(),
+            pi_ai::api::lookup_model("gpt-5-mini").unwrap(),
         ];
         let mut root = InteractiveRoot::new_with_theme_and_models(
             PathBuf::from("."),
@@ -2258,7 +2261,7 @@ mod tests {
         assert_eq!(root.take_selected_model().unwrap().id, "gpt-5");
         assert_eq!(
             root.take_selected_thinking_level(),
-            Some(pi_agent_core::ThinkingLevel::High)
+            Some(pi_agent_core::api::ThinkingLevel::High)
         );
     }
 
@@ -3027,7 +3030,7 @@ mod tests {
 
     #[test]
     fn expand_skill_command_expands_to_xml_block() {
-        let skills = vec![pi_agent_core::Skill {
+        let skills = vec![pi_agent_core::api::Skill {
             name: "rust".into(),
             description: "Rust".into(),
             location: "/skills/rust/SKILL.md".into(),
@@ -3061,7 +3064,7 @@ mod tests {
 
     #[test]
     fn expand_prompt_template_substitutes_args() {
-        let templates = vec![pi_agent_core::PromptTemplate {
+        let templates = vec![pi_agent_core::api::PromptTemplate {
             name: "review".into(),
             description: "Review".into(),
             content: "Review $1 and $ARGUMENTS".into(),
@@ -3094,7 +3097,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+        root.prompt_templates = vec![pi_agent_core::api::PromptTemplate {
             name: "review".into(),
             description: "Review".into(),
             content: "Review $ARGUMENTS".into(),
@@ -3126,7 +3129,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.skills = vec![pi_agent_core::Skill {
+        root.skills = vec![pi_agent_core::api::Skill {
             name: "rust".into(),
             description: "Rust".into(),
             location: "/skills/rust/SKILL.md".into(),
@@ -3158,7 +3161,7 @@ mod tests {
             "no-session".to_string(),
         );
         // Even with templates loaded, builtin commands take priority
-        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+        root.prompt_templates = vec![pi_agent_core::api::PromptTemplate {
             name: "help".into(),
             description: "custom help".into(),
             content: "custom content".into(),
@@ -3845,13 +3848,13 @@ members = ["coder"]
         assert!(commands.iter().any(|c| c.name == "quit"));
 
         // With templates loaded
-        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+        root.prompt_templates = vec![pi_agent_core::api::PromptTemplate {
             name: "review".into(),
             description: "Review code".into(),
             content: "content".into(),
             location: "/p/review.md".into(),
         }];
-        root.skills = vec![pi_agent_core::Skill {
+        root.skills = vec![pi_agent_core::api::Skill {
             name: "rust".into(),
             description: "Rust".into(),
             location: "/s/rust".into(),
@@ -4069,13 +4072,13 @@ display_name = "Coder"
             "no-session".to_string(),
         );
         root.settings.enable_skill_commands = false;
-        root.prompt_templates = vec![pi_agent_core::PromptTemplate {
+        root.prompt_templates = vec![pi_agent_core::api::PromptTemplate {
             name: "review".into(),
             description: "Review code".into(),
             content: "content".into(),
             location: "/p/review.md".into(),
         }];
-        root.skills = vec![pi_agent_core::Skill {
+        root.skills = vec![pi_agent_core::api::Skill {
             name: "rust".into(),
             description: "Rust".into(),
             location: "/s/rust".into(),
@@ -4100,7 +4103,7 @@ display_name = "Coder"
             "no-session".to_string(),
         );
         root.settings.enable_skill_commands = false;
-        root.skills = vec![pi_agent_core::Skill {
+        root.skills = vec![pi_agent_core::api::Skill {
             name: "rust".into(),
             description: "Rust".into(),
             location: "/s/rust".into(),
@@ -4123,7 +4126,7 @@ display_name = "Coder"
             "no-session".to_string(),
         );
         root.settings.enable_skill_commands = true;
-        root.skills = vec![pi_agent_core::Skill {
+        root.skills = vec![pi_agent_core::api::Skill {
             name: "rust".into(),
             description: "Rust".into(),
             location: "/s/rust".into(),
@@ -4562,8 +4565,8 @@ pub mod test_harness {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
+    use pi_ai::api::{Model, ModelCost, ModelInput};
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::types::{Model, ModelCost, ModelInput};
     use pi_tui::{TerminalOp, VirtualTerminal};
 
     use super::*;
@@ -4698,14 +4701,14 @@ pub mod test_harness {
     }
 
     pub async fn run_scripted_interactive_with_provider_chunks(
-        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        provider: Arc<dyn pi_ai::api::ApiProvider>,
         input_chunks: Vec<&str>,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         run_scripted_with_provider(provider, input_chunks, None).await
     }
 
     pub async fn run_scripted_interactive_with_provider_driver<F, Fut>(
-        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        provider: Arc<dyn pi_ai::api::ApiProvider>,
         driver: F,
     ) -> Result<ScriptedInteractiveOutput, CliError>
     where
@@ -4736,7 +4739,7 @@ pub mod test_harness {
     }
 
     pub async fn run_scripted_interactive_with_observed_provider_driver<F, Fut>(
-        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        provider: Arc<dyn pi_ai::api::ApiProvider>,
         driver: F,
     ) -> Result<ScriptedInteractiveOutput, CliError>
     where
@@ -4781,7 +4784,7 @@ pub mod test_harness {
 
     pub async fn run_scripted_idle_interactive_with_ai_client(
         input: &str,
-        ai_client: pi_ai::AiClient,
+        ai_client: pi_ai::api::AiClient,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         let mut input = InputPump::from_chunks(vec![input.to_string()]);
         let parsed = CliArgs::default();
@@ -4877,7 +4880,7 @@ pub mod test_harness {
     }
 
     async fn run_scripted_with_provider(
-        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        provider: Arc<dyn pi_ai::api::ApiProvider>,
         input_chunks: Vec<&str>,
         session_dir: Option<&Path>,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
@@ -4885,7 +4888,7 @@ pub mod test_harness {
     }
 
     async fn run_scripted_with_provider_and_size(
-        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        provider: Arc<dyn pi_ai::api::ApiProvider>,
         input_chunks: Vec<&str>,
         session_dir: Option<&Path>,
         columns: usize,
@@ -4903,7 +4906,7 @@ pub mod test_harness {
     }
 
     async fn run_scripted_with_provider_args_and_size(
-        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        provider: Arc<dyn pi_ai::api::ApiProvider>,
         parsed: CliArgs,
         input_chunks: Vec<&str>,
         session_dir: Option<&Path>,
@@ -4948,7 +4951,7 @@ pub mod test_harness {
     }
 
     async fn run_scripted_with_provider_and_waits(
-        provider: Arc<dyn pi_ai::registry::ApiProvider>,
+        provider: Arc<dyn pi_ai::api::ApiProvider>,
         session_dir: &Path,
         input_steps: Vec<(&str, &str)>,
         columns: usize,

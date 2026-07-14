@@ -1,4 +1,4 @@
-use pi_agent_core::{AgentConfig, AgentTool, QueueMode, ThinkingLevel, ToolExecutionMode};
+use pi_agent_core::api::{AgentConfig, AgentTool, QueueMode, ThinkingLevel, ToolExecutionMode};
 
 #[test]
 fn thinking_level_parses_cli_values() {

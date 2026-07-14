@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use pi_agent_core::{AgentResources, AgentTool};
+use pi_agent_core::api::{AgentResources, AgentTool};
 use serde::{Deserialize, Serialize};
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -346,7 +346,7 @@ fn prompt_turn_mode_label(mode: PromptTurnMode) -> &'static str {
     }
 }
 
-fn persisted_delegation_model(model: &pi_ai::types::Model) -> pi_ai::types::Model {
+fn persisted_delegation_model(model: &pi_ai::api::Model) -> pi_ai::api::Model {
     let mut persisted = model.clone();
     persisted.headers = None;
     persisted
@@ -658,8 +658,8 @@ fn delegation_response(
 
 #[cfg(test)]
 mod tests {
-    use pi_agent_core::AgentToolOutput;
-    use pi_ai::types::ContentBlock;
+    use pi_agent_core::api::AgentToolOutput;
+    use pi_ai::api::ContentBlock;
 
     use super::super::profiles::{DelegationConfirmationMode, ProfileKind};
     use super::super::prompt::DelegationRequest;

@@ -2,9 +2,9 @@ mod support;
 
 use std::sync::Arc;
 
-use pi_agent_core::AgentResources;
+use pi_agent_core::api::AgentResources;
+use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
     CodingAgentOperation, CodingAgentProductEvent, CodingAgentProductEventDurability,
     CodingAgentProductEventKind, CodingAgentProductEventTerminalOperationKind,

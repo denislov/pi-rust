@@ -9,9 +9,9 @@ use futures::{
     StreamExt,
     future::{BoxFuture, FutureExt},
 };
+use pi_agent_core::api::{ExecOptions, ExecutionEnv, FileError};
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
-use pi_agent_core::{ExecOptions, ExecutionEnv, FileError};
-use pi_ai::types::{
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, StopReason,
     StreamOptions,
 };
@@ -377,7 +377,7 @@ pub(crate) struct SelfHealingEditContext {
     options: SelfHealingEditOptions,
     target_was_read: bool,
     proposal_ready: bool,
-    apply_output: Option<pi_agent_core::AgentToolOutput>,
+    apply_output: Option<pi_agent_core::api::AgentToolOutput>,
     outcome: Option<SelfHealingEditOutcome>,
     diagnostics: Vec<SelfHealingEditDiagnostic>,
     attempts: usize,

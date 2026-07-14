@@ -1,4 +1,4 @@
-use pi_agent_core::AgentResources;
+use pi_agent_core::api::AgentResources;
 use pi_coding_agent::config::settings::{
     CompactionSettings, RetrySettings, Settings, TerminalSettings,
 };
@@ -321,5 +321,8 @@ fn build_agent_config_applies_default_thinking_level_from_settings() {
         Some(&settings),
     );
 
-    assert_eq!(config.thinking_level, pi_agent_core::ThinkingLevel::High);
+    assert_eq!(
+        config.thinking_level,
+        pi_agent_core::api::ThinkingLevel::High
+    );
 }

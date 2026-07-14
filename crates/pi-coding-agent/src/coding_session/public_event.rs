@@ -1396,7 +1396,7 @@ mod tests {
         ProfileId, ProfileKind, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
         SelfHealingEditReplacement,
     };
-    use pi_ai::types::{Cost, Usage};
+    use pi_ai::api::{Cost, Usage};
 
     // product-event-inventory:start
     const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 46] = [

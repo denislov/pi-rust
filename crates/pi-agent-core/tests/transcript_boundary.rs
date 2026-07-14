@@ -190,7 +190,7 @@ fn collect_public_session_imports(
         {
             violations.push(format!("{}:{}: {}", relative, line_index + 1, line.trim()));
         }
-        if line.contains("use pi_agent_core::{") {
+        if line.contains("use pi_agent_core::api::{") {
             in_grouped_use = true;
         }
         if in_grouped_use && line.contains("session::") {

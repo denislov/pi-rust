@@ -265,11 +265,11 @@ mod tests {
     };
 
     use futures::future::{BoxFuture, FutureExt};
-    use pi_agent_core::{
+    use pi_agent_core::api::{
         AgentResources, AgentTool, ExecutionOutput, FileSystem, InMemoryExecutionEnv,
     };
+    use pi_ai::api::{ContentBlock, Model, ModelCost, ModelInput};
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
 
     use super::*;
     use crate::coding_session::capability_snapshot::OperationCapabilitySnapshot;

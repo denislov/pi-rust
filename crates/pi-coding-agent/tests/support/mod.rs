@@ -3,9 +3,9 @@
 use std::ffi::{OsStr, OsString};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pi_ai::AiClient;
-use pi_ai::registry::ApiProvider;
-use pi_ai::types::Usage;
+use pi_ai::api::AiClient;
+use pi_ai::api::ApiProvider;
+use pi_ai::api::Usage;
 use pi_coding_agent::api::{
     CodingAgentProductEvent, CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
     CodingAgentProductEventError, CodingAgentProductEventKind, CodingAgentProductEventReplacement,

@@ -1,8 +1,8 @@
 use crate::runtime::{PromptInvocation, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
-use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
-use pi_ai::AiClient;
-use pi_ai::types::{AssistantMessage, ContentBlock, Model, ProviderAuthDiagnostic};
+use pi_agent_core::api::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
+use pi_ai::api::AiClient;
+use pi_ai::api::{AssistantMessage, ContentBlock, Model, ProviderAuthDiagnostic};
 
 pub struct PromptRunOptions {
     pub prompt: String,

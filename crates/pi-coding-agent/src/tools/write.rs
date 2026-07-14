@@ -2,8 +2,8 @@ use crate::coding_session::FilesystemCapability;
 use crate::tools::file_mutation_queue::with_file_mutation_queue;
 use crate::tools::path::resolve_to_cwd;
 use futures::future::{BoxFuture, FutureExt};
-use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
-use pi_ai::types::ContentBlock;
+use pi_agent_core::api::{AgentTool, AgentToolOutput, ToolFn};
+use pi_ai::api::ContentBlock;
 use std::path::Path;
 use std::sync::Arc;
 

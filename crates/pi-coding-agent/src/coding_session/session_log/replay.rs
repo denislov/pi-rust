@@ -6,7 +6,7 @@ use super::event::{
 };
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
 use pi_agent_core::compaction::estimate::calculate_context_tokens;
-use pi_ai::types::Usage;
+use pi_ai::api::Usage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationReplayStatus {
@@ -819,7 +819,7 @@ fn tool_result_summary(result: &PersistedToolResult) -> String {
 mod tests {
     use super::super::event::{OperationKind, PersistedRole};
     use super::*;
-    use pi_ai::types::{Model, ModelCost, ModelInput};
+    use pi_ai::api::{Model, ModelCost, ModelInput};
 
     fn event(
         event_id: &str,

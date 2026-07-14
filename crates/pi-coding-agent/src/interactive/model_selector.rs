@@ -1,4 +1,4 @@
-use pi_ai::types::Model;
+use pi_ai::api::Model;
 use pi_tui::{
     Component, Editor, InputEvent, KeybindingsManager, SYSTEM, USER, color_enabled,
     fuzzy_filter_indices, paint_with,

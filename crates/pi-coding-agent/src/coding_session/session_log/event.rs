@@ -3,8 +3,8 @@ use serde_json::Value;
 
 use crate::coding_session::delegation::DelegationLineageEntry;
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
-use pi_ai::types::Model;
-use pi_ai::types::Usage;
+use pi_ai::api::Model;
+use pi_ai::api::Usage;
 
 use super::manifest::{EVENT_SCHEMA, EVENT_VERSION};
 
@@ -383,7 +383,7 @@ pub(crate) enum DiagnosticLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_ai::types::{ModelCost, ModelInput};
+    use pi_ai::api::{ModelCost, ModelInput};
     use serde_json::json;
 
     #[test]

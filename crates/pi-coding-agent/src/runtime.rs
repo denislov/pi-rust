@@ -1,10 +1,10 @@
 use crate::{CliArgs, CliError};
-use pi_agent_core::{
+use pi_agent_core::api::{
     AgentConfig, AgentResources, AgentTool, CompactionConfig, CompactionSettings, ThinkingLevel,
     ToolExecutionMode,
 };
-use pi_ai::AiClient;
-use pi_ai::types::{Model, ProviderAuthDiagnostic, StreamOptions};
+use pi_ai::api::AiClient;
+use pi_ai::api::{Model, ProviderAuthDiagnostic, StreamOptions};
 use std::path::PathBuf;
 
 pub const DEFAULT_MODEL_ID: &str = "claude-sonnet-4-5";
@@ -90,7 +90,7 @@ pub fn select_model(
     let effective_provider = args.provider.as_deref().or(default_provider);
     if let Some(models) = args.models.as_deref() {
         let rotation = crate::models::parse_model_rotation(models)?;
-        let mut candidates = pi_ai::all_models().to_vec();
+        let mut candidates = pi_ai::api::all_models().to_vec();
         candidates.sort_by(|a, b| a.id.cmp(&b.id));
         if let Some(provider) = effective_provider {
             candidates.retain(|model| model.provider == provider);
@@ -105,7 +105,7 @@ pub fn select_model(
     }
 
     if let Some(model_id) = &args.model {
-        let model = pi_ai::lookup_model(model_id)
+        let model = pi_ai::api::lookup_model(model_id)
             .ok_or_else(|| CliError::UnknownModel(model_id.clone()))?;
         if let Some(provider) = effective_provider
             && model.provider != provider
@@ -128,7 +128,7 @@ pub fn select_model(
     }
 
     if let Some(model_id) = default_model {
-        let model = pi_ai::lookup_model(model_id)
+        let model = pi_ai::api::lookup_model(model_id)
             .ok_or_else(|| CliError::UnknownModel(model_id.to_string()))?;
         if let Some(provider) = effective_provider
             && model.provider != provider
@@ -148,12 +148,12 @@ pub fn select_model(
         return Err(CliError::UnknownModel(provider.to_string()));
     }
 
-    pi_ai::lookup_model(DEFAULT_MODEL_ID)
+    pi_ai::api::lookup_model(DEFAULT_MODEL_ID)
         .ok_or_else(|| CliError::UnknownModel(DEFAULT_MODEL_ID.to_string()))
 }
 
 fn first_model_for_provider(provider: &str) -> Option<Model> {
-    let mut models = pi_ai::all_models()
+    let mut models = pi_ai::api::all_models()
         .iter()
         .filter(|model| model.provider == provider)
         .cloned()
@@ -243,11 +243,11 @@ pub(crate) fn build_agent_config_with_auth_diagnostics(
         config.steering_mode = settings
             .steering_mode
             .parse()
-            .unwrap_or(pi_agent_core::QueueMode::OneAtATime);
+            .unwrap_or(pi_agent_core::api::QueueMode::OneAtATime);
         config.follow_up_mode = settings
             .follow_up_mode
             .parse()
-            .unwrap_or(pi_agent_core::QueueMode::OneAtATime);
+            .unwrap_or(pi_agent_core::api::QueueMode::OneAtATime);
     }
     let settings_thinking_level = settings
         .and_then(|settings| settings.default_thinking_level.as_deref())
@@ -279,7 +279,7 @@ pub fn effective_no_context_files(args: &CliArgs, settings: &crate::config::Sett
 #[derive(Clone, Debug)]
 pub enum PromptInvocation {
     Text(String),
-    Content(Vec<pi_ai::types::ContentBlock>),
+    Content(Vec<pi_ai::api::ContentBlock>),
     Compact {
         custom_instructions: Option<String>,
     },

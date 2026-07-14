@@ -1,7 +1,7 @@
 mod support;
 
+use pi_ai::api::{Model, ModelCost, ModelInput, StopReason};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
 use pi_coding_agent::{CliRunOptions, run_cli_with_options};
 use std::sync::Arc;
@@ -87,7 +87,7 @@ async fn json_mode_emits_tool_execution_events() {
         ])),
     );
 
-    let tool = pi_agent_core::AgentTool::new_text(
+    let tool = pi_agent_core::api::AgentTool::new_text(
         "echo",
         "echo input",
         serde_json::json!({"type":"object","properties":{"text":{"type":"string"}}}),

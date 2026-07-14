@@ -1,9 +1,9 @@
 mod support;
 
-use pi_agent_core::ThinkingLevel;
-use pi_ai::EventStream;
-use pi_ai::registry::ApiProvider;
-use pi_ai::types::{
+use pi_agent_core::api::ThinkingLevel;
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
@@ -412,7 +412,7 @@ async fn multimodal_prompt_content_reaches_provider_context() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Content(vec![
             ContentBlock::Text {
@@ -432,7 +432,7 @@ async fn multimodal_prompt_content_reaches_provider_context() {
     let contexts = contexts.lock().unwrap();
     let first_message = contexts[0].messages.first().expect("first message");
     let content = match first_message {
-        pi_ai::types::Message::User { content } => content,
+        pi_ai::api::Message::User { content } => content,
         _ => panic!("expected user message"),
     };
     assert!(content.iter().any(
@@ -461,7 +461,7 @@ async fn interactive_prompt_file_image_reaches_provider_context() {
     let contexts = contexts.lock().unwrap();
     let first_message = contexts[0].messages.first().expect("first message");
     let content = match first_message {
-        pi_ai::types::Message::User { content } => content,
+        pi_ai::api::Message::User { content } => content,
         _ => panic!("expected user message"),
     };
     assert!(content.iter().any(
@@ -585,7 +585,7 @@ fn parses_m10_cli_flags_and_filters_tools() {
 #[test]
 fn no_builtin_tools_keeps_custom_tools() {
     let mut tools = builtin_tools(tempfile::tempdir().unwrap().path().to_path_buf());
-    tools.push(pi_agent_core::AgentTool::new_text(
+    tools.push(pi_agent_core::api::AgentTool::new_text(
         "custom",
         "custom tool",
         serde_json::json!({"type":"object"}),

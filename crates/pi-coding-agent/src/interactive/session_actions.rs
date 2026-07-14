@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage, StoredUsage};
 use pi_agent_core::transcript::{SessionTreeNode, create_timestamp};
 #[cfg(test)]
-use pi_ai::types::{ContentBlock, StopReason};
+use pi_ai::api::{ContentBlock, StopReason};
 
 use crate::CliError;
 use crate::coding_session::{

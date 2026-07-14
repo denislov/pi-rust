@@ -2,9 +2,9 @@ mod common;
 
 use common::{ProviderGuard, faux_model_with_window};
 use futures::StreamExt;
+use pi_agent_core::api::{Agent, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings};
 use pi_agent_core::compaction::estimate::estimate_tokens;
 use pi_agent_core::compaction::prepare::{prepare_compaction, should_compact};
-use pi_agent_core::{Agent, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{ContentBlock, StopReason, StreamOptions};
 use std::sync::Arc;

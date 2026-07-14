@@ -1,7 +1,7 @@
 mod support;
 
+use pi_ai::api::{Model, ModelCost, ModelInput, StopReason};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
-use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
 use pi_coding_agent::{CliRunOptions, run_cli_with_options};
 use std::sync::Arc;
@@ -42,7 +42,7 @@ fn test_options(
     api: &str,
     cwd: &std::path::Path,
     sessions: &std::path::Path,
-    ai_client: pi_ai::AiClient,
+    ai_client: pi_ai::api::AiClient,
 ) -> CliRunOptions {
     CliRunOptions {
         model_override: Some(faux_model(api)),

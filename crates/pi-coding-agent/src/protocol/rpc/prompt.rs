@@ -21,7 +21,7 @@ use crate::protocol::types::{
 };
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::resolve_session_dir;
-use pi_agent_core::AgentResources;
+use pi_agent_core::api::AgentResources;
 use std::path::PathBuf;
 use tokio::io::AsyncWrite;
 use tokio::sync::oneshot;
@@ -31,7 +31,7 @@ impl RpcState {
         &mut self,
         id: Option<String>,
         message: String,
-        images: Option<Vec<pi_ai::types::ContentBlock>>,
+        images: Option<Vec<pi_ai::api::ContentBlock>>,
         streaming_behavior: Option<StreamingBehavior>,
         after_snapshot_sequence: Option<ProductEventSequence>,
         idempotency_key: Option<String>,

@@ -2,6 +2,7 @@ mod common;
 
 use common::ProviderGuard;
 use futures::StreamExt;
+use pi_agent_core::api::{ExecutionOutput, FileSystem, InMemoryExecutionEnv, ProviderStreamer};
 use pi_agent_core::branch_summary::{
     BranchSummaryOptions, collect_entries_for_branch_summary,
     generate_branch_summary_with_provider_streamer, prepare_branch_entries,
@@ -13,7 +14,6 @@ use pi_agent_core::proxy::{
 use pi_agent_core::shell_output::{ShellCaptureOptions, execute_shell_with_capture};
 use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage, StoredUsage};
 use pi_agent_core::truncate::{TruncationLimit, truncate_head, truncate_tail};
-use pi_agent_core::{ExecutionOutput, FileSystem, InMemoryExecutionEnv, ProviderStreamer};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
@@ -121,12 +121,10 @@ fn branch_summary_collects_abandoned_branch_and_prepares_messages() {
     );
 
     let prepared = prepare_branch_entries(&entries, 0);
-    assert!(
-        prepared
-            .messages
-            .iter()
-            .any(|message| matches!(message, pi_agent_core::AgentMessage::BranchSummary { .. }))
-    );
+    assert!(prepared.messages.iter().any(|message| matches!(
+        message,
+        pi_agent_core::api::AgentMessage::BranchSummary { .. }
+    )));
     assert!(prepared.file_ops.read.contains("README.md"));
     assert!(prepared.file_ops.modified.contains("src/lib.rs"));
     assert!(prepared.total_tokens > 0);

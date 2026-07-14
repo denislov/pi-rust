@@ -1,8 +1,8 @@
 use crate::coding_session::ShellCapability;
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
 use futures::future::{BoxFuture, FutureExt};
-use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn, ToolUpdateCallback};
-use pi_ai::types::ContentBlock;
+use pi_agent_core::api::{AgentTool, AgentToolOutput, ToolFn, ToolUpdateCallback};
+use pi_ai::api::ContentBlock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -563,7 +563,7 @@ pub fn bash_tool_with_operations(
         name: "bash".into(),
         description: DESCRIPTION.into(),
         parameters: schema(),
-        execution_mode: Some(pi_agent_core::ToolExecutionMode::Sequential),
+        execution_mode: Some(pi_agent_core::api::ToolExecutionMode::Sequential),
         execute,
     }
 }

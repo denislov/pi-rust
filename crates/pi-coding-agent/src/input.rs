@@ -1,7 +1,7 @@
 use crate::CliError;
 use base64::Engine;
 use image::{GenericImageView, ImageFormat};
-use pi_ai::types::ContentBlock;
+use pi_ai::api::ContentBlock;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 

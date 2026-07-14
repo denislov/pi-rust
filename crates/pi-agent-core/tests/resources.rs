@@ -1,4 +1,4 @@
-use pi_agent_core::Skill;
+use pi_agent_core::api::Skill;
 use pi_agent_core::resources::{
     format_prompt_template_invocation, format_skill_invocation, format_skills_for_system_prompt,
     load_prompt_templates, load_skills, parse_frontmatter,

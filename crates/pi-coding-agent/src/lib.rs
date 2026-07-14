@@ -144,8 +144,8 @@ pub(crate) mod test_support {
     use std::ffi::{OsStr, OsString};
     use std::sync::{Arc, Mutex, MutexGuard};
 
-    use pi_ai::AiClient;
-    use pi_ai::registry::ApiProvider;
+    use pi_ai::api::AiClient;
+    use pi_ai::api::ApiProvider;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 

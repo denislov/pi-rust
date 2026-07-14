@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
+use pi_agent_core::api::{PromptTemplate, Skill};
 use pi_agent_core::resources::{parse_command_args, substitute_args};
-use pi_agent_core::{PromptTemplate, Skill};
 use pi_tui::KeybindingsManager;
 
 use crate::coding_session::SelfHealingEditReplacement;
@@ -948,7 +948,7 @@ fn handle_model_command(root: &mut InteractiveRoot, args: &str) {
         }
     };
 
-    match pi_ai::lookup_model(&model_id) {
+    match pi_ai::api::lookup_model(&model_id) {
         Some(model) => root.set_selected_model_with_thinking(model, thinking_level),
         None => {
             root.transcript

@@ -186,7 +186,7 @@ async fn abort_returns_cleared_queue_messages() {
         .cleared_steer
         .iter()
         .filter_map(|m| match m {
-            pi_agent_core::AgentMessage::UserText { text, .. } => Some(text.as_str()),
+            pi_agent_core::api::AgentMessage::UserText { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

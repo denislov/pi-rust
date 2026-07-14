@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use pi_ai::types::Model;
+use pi_ai::api::Model;
 use pi_tui::{
     Component, ERROR, Editor, InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager,
     MarkdownTheme, STATUS_IDLE, STATUS_RUNNING, SYSTEM, SettingItem, SettingsList,
@@ -597,12 +597,12 @@ pub(super) struct InteractiveRoot {
     pub(super) model_id: String,
     pub(super) session_label: String,
     pub(super) selected_model: Option<Model>,
-    pub(super) selected_thinking_level: Option<pi_agent_core::ThinkingLevel>,
+    pub(super) selected_thinking_level: Option<pi_agent_core::api::ThinkingLevel>,
     /// Currently active model for footer display. Distinct from
     /// `selected_model`, which is consumed to apply pending changes.
     pub(super) model: Option<Model>,
     /// Currently active thinking level (never consumed by `take_*`).
-    pub(super) thinking_level: pi_agent_core::ThinkingLevel,
+    pub(super) thinking_level: pi_agent_core::api::ThinkingLevel,
     pub(super) available_models: Vec<Model>,
     pub(super) model_rotation: Vec<Model>,
     pub(super) selecting_model: bool,
@@ -631,8 +631,8 @@ pub(super) struct InteractiveRoot {
     last_empty_editor_escape_at: Option<Instant>,
     pub(super) theme: TuiTheme,
     pub(super) resolved_theme: Option<ResolvedTheme>,
-    pub(super) prompt_templates: Vec<pi_agent_core::PromptTemplate>,
-    pub(super) skills: Vec<pi_agent_core::Skill>,
+    pub(super) prompt_templates: Vec<pi_agent_core::api::PromptTemplate>,
+    pub(super) skills: Vec<pi_agent_core::api::Skill>,
     pub(super) profile_registry: ProfileRegistry,
     pub(super) default_agent_profile_id: ProfileId,
     plugin_commands: Vec<PluginSlashCommand>,
@@ -780,7 +780,7 @@ impl InteractiveRoot {
             selected_model: None,
             selected_thinking_level: None,
             model: None,
-            thinking_level: pi_agent_core::ThinkingLevel::default(),
+            thinking_level: pi_agent_core::api::ThinkingLevel::default(),
             available_models,
             model_rotation: Vec::new(),
             selecting_model: false,
@@ -845,7 +845,9 @@ impl InteractiveRoot {
         self.selected_model.take()
     }
 
-    pub(super) fn take_selected_thinking_level(&mut self) -> Option<pi_agent_core::ThinkingLevel> {
+    pub(super) fn take_selected_thinking_level(
+        &mut self,
+    ) -> Option<pi_agent_core::api::ThinkingLevel> {
         self.selected_thinking_level.take()
     }
 
@@ -1680,7 +1682,7 @@ impl InteractiveRoot {
     pub(super) fn set_selected_model_with_thinking(
         &mut self,
         model: Model,
-        thinking_level: Option<pi_agent_core::ThinkingLevel>,
+        thinking_level: Option<pi_agent_core::api::ThinkingLevel>,
     ) {
         self.model_id = model.id.clone();
         self.model = Some(model.clone());
@@ -1922,7 +1924,7 @@ impl InteractiveRoot {
             .to_string();
         let mut right_side = if self.current_model().map(|m| m.reasoning).unwrap_or(false) {
             let level = self.thinking_level;
-            if level == pi_agent_core::ThinkingLevel::Off {
+            if level == pi_agent_core::api::ThinkingLevel::Off {
                 format!("{model_name} • thinking off")
             } else {
                 format!("{model_name} • {level}")
@@ -2029,8 +2031,8 @@ impl InteractiveRoot {
 
     /// Map a thinking level to its border color token, mirroring TS
     /// `getThinkingBorderColor`.
-    fn thinking_border_token(level: pi_agent_core::ThinkingLevel) -> ThemeColor {
-        use pi_agent_core::ThinkingLevel;
+    fn thinking_border_token(level: pi_agent_core::api::ThinkingLevel) -> ThemeColor {
+        use pi_agent_core::api::ThinkingLevel;
         match level {
             ThinkingLevel::Off => ThemeColor::ThinkingOff,
             ThinkingLevel::Minimal => ThemeColor::ThinkingMinimal,
@@ -2177,7 +2179,7 @@ impl InteractiveRoot {
                 self.settings.default_thinking_level = Some(value.to_string());
                 self.settings_delta.default_thinking_level = Some(value.to_string());
                 // Also update the active thinking level so the editor border reflects it
-                if let Ok(level) = value.parse::<pi_agent_core::ThinkingLevel>() {
+                if let Ok(level) = value.parse::<pi_agent_core::api::ThinkingLevel>() {
                     self.thinking_level = level;
                     self.selected_thinking_level = Some(level);
                 }

@@ -4,8 +4,8 @@ use futures::future::{BoxFuture, FutureExt};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use pi_agent_core::AgentEvent;
-use pi_ai::types::{AssistantMessageEvent, ContentBlock};
+use pi_agent_core::api::AgentEvent;
+use pi_ai::api::{AssistantMessageEvent, ContentBlock};
 
 use super::capability_snapshot::InstalledCapabilityGeneration;
 use super::{
@@ -1169,8 +1169,10 @@ fn map_recv_error(error: broadcast::error::RecvError) -> CodingSessionError {
 
 #[cfg(test)]
 mod tests {
-    use pi_agent_core::{AgentEvent, AgentToolOutput, AgentToolResult, ProviderRequestSnapshot};
-    use pi_ai::types::{
+    use pi_agent_core::api::{
+        AgentEvent, AgentToolOutput, AgentToolResult, ProviderRequestSnapshot,
+    };
+    use pi_ai::api::{
         AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost,
         ModelInput, StopReason, StreamOptions, Usage,
     };

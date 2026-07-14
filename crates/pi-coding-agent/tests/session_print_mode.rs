@@ -1,7 +1,7 @@
 mod support;
 
+use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::print_mode::PrintModeOptions;
 use pi_coding_agent::run_print_mode;
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
@@ -62,7 +62,7 @@ async fn persists_new_print_mode_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("hi".into()),
     })
@@ -112,7 +112,7 @@ async fn enabled_session_with_name_uses_rust_native_log() {
         session_name: Some("test-session-name".into()),
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("hi".into()),
     })
@@ -160,7 +160,7 @@ async fn continues_most_recent_rust_native_session() {
             session_name: None,
             thinking_level: None,
             tool_execution: None,
-            resources: pi_agent_core::AgentResources::default(),
+            resources: pi_agent_core::api::AgentResources::default(),
             settings: None,
             invocation: pi_coding_agent::PromptInvocation::Text("old context".into()),
         })
@@ -191,7 +191,7 @@ async fn continues_most_recent_rust_native_session() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("continue".into()),
     })

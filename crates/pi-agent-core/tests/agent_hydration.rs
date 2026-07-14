@@ -2,7 +2,7 @@ mod common;
 
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentEvent, AgentMessage};
+use pi_agent_core::api::{Agent, AgentEvent, AgentMessage};
 use pi_ai::providers::faux::FauxProvider;
 use std::sync::Arc;
 

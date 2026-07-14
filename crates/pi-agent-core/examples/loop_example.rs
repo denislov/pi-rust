@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
+use pi_agent_core::api::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
 use pi_ai::api::AiClient;
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
@@ -102,24 +102,26 @@ async fn main() {
     println!("\n=== Final messages ({}) ===", agent.messages().len());
     for msg in agent.messages() {
         match msg {
-            pi_agent_core::AgentMessage::UserText { text, .. } => println!("  User: {}", text),
-            pi_agent_core::AgentMessage::Assistant { .. } => println!("  Assistant (response)"),
-            pi_agent_core::AgentMessage::ToolResult { tool_call_id, .. } => {
+            pi_agent_core::api::AgentMessage::UserText { text, .. } => println!("  User: {}", text),
+            pi_agent_core::api::AgentMessage::Assistant { .. } => {
+                println!("  Assistant (response)")
+            }
+            pi_agent_core::api::AgentMessage::ToolResult { tool_call_id, .. } => {
                 println!("  ToolResult: {}", tool_call_id)
             }
-            pi_agent_core::AgentMessage::SystemPrompt { text, .. } => {
+            pi_agent_core::api::AgentMessage::SystemPrompt { text, .. } => {
                 println!("  System: {}", text)
             }
-            pi_agent_core::AgentMessage::CompactionSummary { summary, .. } => {
+            pi_agent_core::api::AgentMessage::CompactionSummary { summary, .. } => {
                 println!("  Compaction: {}", summary)
             }
-            pi_agent_core::AgentMessage::BashExecution { command, .. } => {
+            pi_agent_core::api::AgentMessage::BashExecution { command, .. } => {
                 println!("  BashExecution: {}", command)
             }
-            pi_agent_core::AgentMessage::Custom { custom_type, .. } => {
+            pi_agent_core::api::AgentMessage::Custom { custom_type, .. } => {
                 println!("  Custom: {}", custom_type)
             }
-            pi_agent_core::AgentMessage::BranchSummary { from_id, .. } => {
+            pi_agent_core::api::AgentMessage::BranchSummary { from_id, .. } => {
                 println!("  BranchSummary from {}", from_id)
             }
         }

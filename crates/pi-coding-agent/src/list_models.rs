@@ -1,5 +1,5 @@
 use crate::CliError;
-use pi_ai::types::{Model, ModelInput};
+use pi_ai::api::{Model, ModelInput};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -18,7 +18,7 @@ pub fn list_models_output(
     provider: Option<&str>,
     json: bool,
 ) -> Result<String, CliError> {
-    let mut models = pi_ai::all_models()
+    let mut models = pi_ai::api::all_models()
         .iter()
         .filter(|model| provider.is_none_or(|provider| model.provider == provider))
         .cloned()

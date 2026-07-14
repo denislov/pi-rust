@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use pi_agent_core::{
+use pi_agent_core::api::{
     Agent, AgentEvent, AgentResources, AgentTool, AgentToolResult, ProviderStreamer, ThinkingLevel,
     ToolExecutionMode,
 };
-use pi_ai::types::{
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Model, ProviderAuthDiagnostic,
 };
 
@@ -447,7 +447,7 @@ impl RuntimeSnapshot {
     ) {
         self.profile_diagnostics.append(&mut diagnostics);
         if let Some(model_id) = profile.model.as_deref() {
-            match pi_ai::lookup_model(model_id) {
+            match pi_ai::api::lookup_model(model_id) {
                 Some(model) => self.model = model,
                 None => self
                     .profile_diagnostics
@@ -1451,8 +1451,8 @@ fn content_blocks_text(content: &[ContentBlock]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use pi_agent_core::{AgentEvent, AgentResources, AgentToolResult, ToolExecutionMode};
-    use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput};
+    use pi_agent_core::api::{AgentEvent, AgentResources, AgentToolResult, ToolExecutionMode};
+    use pi_ai::api::{ContentBlock, Model, ModelCost, ModelInput};
 
     use super::super::delegation::DelegationAuthorizationDecision;
     use super::super::profiles::{DelegationConfirmationMode, ProfileSource, SupervisionPolicy};

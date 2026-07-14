@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use pi_agent_core::transcript::SessionTreeNode;
-use pi_ai::AiClient;
+use pi_ai::api::AiClient;
 
 use crate::coding_session::operation_control::OperationKind;
 use crate::coding_session::profiles::{ProfileId, ProfileKind};

@@ -1,7 +1,7 @@
 mod support;
 
 use pi_agent_core::transcript::StoredAgentMessage;
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, StopReason, Usage};
+use pi_ai::api::{AssistantMessageEvent, ContentBlock, StopReason, Usage};
 use pi_coding_agent::api::{
     CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
     CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,

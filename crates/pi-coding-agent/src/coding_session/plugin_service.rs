@@ -3,7 +3,7 @@ use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 
-use pi_agent_core::AgentTool;
+use pi_agent_core::api::AgentTool;
 
 use super::CodingSessionError;
 use super::capability_snapshot::PluginCapabilitySet;
@@ -429,7 +429,7 @@ fn panic_message(panic: Box<dyn Any + Send>) -> String {
 mod tests {
     use std::sync::Arc;
 
-    use pi_agent_core::AgentTool;
+    use pi_agent_core::api::AgentTool;
 
     use super::*;
     use crate::coding_session::capability_snapshot::PluginCapabilitySet;

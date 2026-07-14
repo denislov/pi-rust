@@ -1,11 +1,11 @@
 mod support;
 
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
+use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_coding_agent::{CliRunOptions, SessionRunOptions, protocol::rpc::run_rpc_mode_for_io};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -153,7 +153,7 @@ struct PausingProvider {
     opened: Arc<AtomicBool>,
 }
 
-impl pi_ai::registry::ApiProvider for PausingProvider {
+impl pi_ai::api::ApiProvider for PausingProvider {
     fn stream(&self, model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
         let release = Arc::clone(&self.release);
         let opened = Arc::clone(&self.opened);
@@ -198,7 +198,7 @@ struct AbortAwareProvider {
     release: Arc<Notify>,
 }
 
-impl pi_ai::registry::ApiProvider for AbortAwareProvider {
+impl pi_ai::api::ApiProvider for AbortAwareProvider {
     fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
         let cancelled = Arc::clone(&self.cancelled);
         let release = Arc::clone(&self.release);
@@ -253,7 +253,7 @@ impl BlockingTwoTurnProvider {
     }
 }
 
-impl pi_ai::registry::ApiProvider for BlockingTwoTurnProvider {
+impl pi_ai::api::ApiProvider for BlockingTwoTurnProvider {
     fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
         let call_index = {
             let mut contexts = self.contexts.lock().unwrap();

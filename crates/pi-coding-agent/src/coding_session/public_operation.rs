@@ -394,7 +394,7 @@ mod tests {
     use crate::coding_session::plugin_service::PluginDiagnostic;
     use crate::plugins::PluginCapabilities;
     use crate::runtime::PromptInvocation;
-    use pi_ai::types::AssistantMessage;
+    use pi_ai::api::AssistantMessage;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ExpectedInternalOperationVariant {

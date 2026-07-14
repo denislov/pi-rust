@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 
-use pi_agent_core::AgentResources;
-use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry::ApiProvider;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_agent_core::api::AgentResources;
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
+use pi_ai::providers::faux::FauxProvider;
 use pi_coding_agent::api::{
     AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, AgentTeamMemberOutcome,
     AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CapabilityStatus, CliArgs,

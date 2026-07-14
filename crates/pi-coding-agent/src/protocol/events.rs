@@ -13,7 +13,7 @@ use crate::protocol::types::{
     ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, ToolExecutionResult,
 };
 use pi_agent_core::transcript::{StoredAgentMessage, StoredUsage, StoredUsageCost};
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
+use pi_ai::api::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
 
 pub struct CodingProtocolEventAdapter {
     api: String,

@@ -24,7 +24,7 @@ use crate::protocol::version::{
 };
 use crate::runtime::{PromptInvocation, SessionMode};
 use crate::session::resolve_session_dir;
-use pi_agent_core::AgentResources;
+use pi_agent_core::api::AgentResources;
 use tokio::io::AsyncWrite;
 
 impl RpcState {
@@ -1715,7 +1715,7 @@ where
     .await
 }
 
-pub(super) fn has_images(images: &Option<Vec<pi_ai::types::ContentBlock>>) -> bool {
+pub(super) fn has_images(images: &Option<Vec<pi_ai::api::ContentBlock>>) -> bool {
     images.as_ref().is_some_and(|images| !images.is_empty())
 }
 

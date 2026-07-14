@@ -127,7 +127,7 @@ fn branch_summary_runtime(
 
 #[cfg(test)]
 mod tests {
-    use pi_agent_core::AgentResources;
+    use pi_agent_core::api::AgentResources;
 
     use super::super::capability_snapshot::OperationCapabilitySnapshot;
     use super::super::profiles::ProfileId;
@@ -139,7 +139,7 @@ mod tests {
     fn prompt_options() -> PromptTurnOptions {
         PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: "summarize".into(),
-            model: pi_ai::lookup_model("claude-haiku-4-5").unwrap(),
+            model: pi_ai::api::lookup_model("claude-haiku-4-5").unwrap(),
             api_key: None,
             auth_diagnostics: Vec::new(),
             system_prompt: None,

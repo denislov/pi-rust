@@ -1,6 +1,6 @@
 mod support;
 
-use pi_ai::types::{Cost, Usage};
+use pi_ai::api::{Cost, Usage};
 use pi_coding_agent::api::{
     CodingAgentCapabilityProductEvent, CodingAgentDelegationEventContext,
     CodingAgentDelegationProductEvent, CodingAgentMessageProductEvent,

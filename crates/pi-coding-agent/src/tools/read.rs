@@ -4,8 +4,8 @@ use crate::tools::truncate::{
     DEFAULT_MAX_BYTES, TruncatedBy, TruncationOptions, format_size, truncate_head,
 };
 use futures::future::{BoxFuture, FutureExt};
-use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
-use pi_ai::types::ContentBlock;
+use pi_agent_core::api::{AgentTool, AgentToolOutput, ToolFn};
+use pi_ai::api::ContentBlock;
 use std::path::Path;
 use std::sync::Arc;
 

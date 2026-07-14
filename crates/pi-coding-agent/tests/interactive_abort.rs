@@ -7,7 +7,7 @@ use std::sync::{
 use std::time::Duration;
 
 use async_stream::stream;
-use pi_ai::registry::ApiProvider;
+use pi_ai::api::ApiProvider;
 use pi_ai::{
     AssistantMessage, AssistantMessageEvent, Context, EventStream, Model, StopReason, StreamOptions,
 };

@@ -1,4 +1,4 @@
-use pi_ai::types::ContentBlock;
+use pi_ai::api::ContentBlock;
 use pi_coding_agent::tools::write::write_execute;
 use tempfile::tempdir;
 

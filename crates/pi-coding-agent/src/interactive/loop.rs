@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pi_agent_core::AgentResources;
+use pi_agent_core::api::AgentResources;
 use pi_agent_core::transcript::create_session_id;
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
@@ -2414,8 +2414,8 @@ mod tests {
         ProductEventSequence, ProfileId, UiSnapshot, UiSnapshotCursor,
     };
     use crate::runtime::SessionRunOptions;
+    use pi_ai::api::{Model, ModelCost, ModelInput, Usage};
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::types::{Model, ModelCost, ModelInput, Usage};
     use pi_tui::VirtualTerminal;
 
     fn test_tui() -> (Tui<VirtualTerminal>, usize) {

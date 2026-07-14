@@ -1,6 +1,6 @@
 use crate::CliError;
 use globset::{Glob, GlobMatcher};
-use pi_agent_core::ThinkingLevel;
+use pi_agent_core::api::ThinkingLevel;
 
 #[derive(Debug)]
 pub struct ModelRotation {

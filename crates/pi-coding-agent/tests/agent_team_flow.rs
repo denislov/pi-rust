@@ -8,10 +8,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
-use pi_agent_core::AgentResources;
-use pi_ai::registry::ApiProvider;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_agent_core::api::AgentResources;
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
@@ -494,7 +494,7 @@ struct ProviderGuard {
 }
 
 impl ProviderGuard {
-    fn ai_client(&self) -> pi_ai::AiClient {
+    fn ai_client(&self) -> pi_ai::api::AiClient {
         self._guard.ai_client()
     }
 

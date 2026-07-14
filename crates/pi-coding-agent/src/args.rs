@@ -1,5 +1,5 @@
 use crate::CliError;
-use pi_agent_core::{ThinkingLevel, ToolExecutionMode};
+use pi_agent_core::api::{ThinkingLevel, ToolExecutionMode};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -2,11 +2,14 @@ mod common;
 
 use common::ProviderGuard;
 use futures::StreamExt;
+use pi_agent_core::api::{
+    AgentEvent, AgentMessage, ExecutionError, ExecutionOutput, FileErrorCode, FileKind, FileSystem,
+    InMemoryExecutionEnv, Shell,
+};
 use pi_agent_core::{
-    AgentEvent, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentMessage,
-    BeforeProviderPayload, BeforeProviderPayloadPatch, BeforeProviderRequestPatch, ExecutionError,
-    ExecutionOutput, FileErrorCode, FileKind, FileSystem, HeaderPatch, InMemoryExecutionEnv, Patch,
-    ProviderAuth, ProviderResponse, Shell, StreamOptionsPatch,
+    AgentHarness, AgentHarnessEvent, AgentHarnessHooks, BeforeProviderPayload,
+    BeforeProviderPayloadPatch, BeforeProviderRequestPatch, HeaderPatch, Patch, ProviderAuth,
+    ProviderResponse, StreamOptionsPatch,
 };
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::registry::ApiProvider;
@@ -421,7 +424,7 @@ async fn provider_request_auth_and_patch_merge_delete_apply_to_each_provider_cal
     };
 
     let harness = AgentHarness::new(config).with_hooks(hooks);
-    harness.add_tool(pi_agent_core::AgentTool::new_text(
+    harness.add_tool(pi_agent_core::api::AgentTool::new_text(
         "noop",
         "no operation",
         serde_json::json!({"type": "object"}),

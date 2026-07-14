@@ -1,7 +1,7 @@
 mod support;
 
+use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::runtime::{SessionMode, SessionRunOptions};
 use pi_coding_agent::{CliRunOptions, run_cli_with_options};
 use std::sync::Arc;

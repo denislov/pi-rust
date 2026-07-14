@@ -4,8 +4,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use futures::StreamExt;
+use pi_agent_core::api::{AgentEvent, AgentMessage, AgentStream};
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
-use pi_agent_core::{AgentEvent, AgentMessage, AgentStream};
 
 use super::CodingSessionError;
 use super::operation_control::PromptControlCommand;
@@ -368,7 +368,7 @@ enum AgentTurnInput {
 
 fn apply_prompt_control_command(
     ctx: &mut PromptTurnContext,
-    agent: &pi_agent_core::Agent,
+    agent: &pi_agent_core::api::Agent,
     command: PromptControlCommand,
 ) {
     match command {
@@ -494,16 +494,16 @@ mod tests {
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Mutex};
 
+    use pi_agent_core::api::{Agent, AgentConfig, AgentResources, AgentTool, AgentToolOutput};
     use pi_agent_core::flow::{FlowEvent, NodeId};
-    use pi_agent_core::{Agent, AgentConfig, AgentResources, AgentTool, AgentToolOutput};
-    use pi_ai::AiClient;
-    use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
-    use pi_ai::registry::ApiProvider;
-    use pi_ai::stream::EventStream;
-    use pi_ai::types::{
+    use pi_ai::api::AiClient;
+    use pi_ai::api::ApiProvider;
+    use pi_ai::api::EventStream;
+    use pi_ai::api::{
         AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
         ModelInput, StopReason, StreamOptions,
     };
+    use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
     use serde_json::json;
     use tokio::sync::oneshot;
 
@@ -550,7 +550,7 @@ mod tests {
     fn agent_with_provider(api: &str, provider: Arc<dyn ApiProvider>) -> Agent {
         let ai_client = Arc::new(AiClient::new());
         ai_client.register_provider(api, provider);
-        let provider_streamer: pi_agent_core::ProviderStreamer =
+        let provider_streamer: pi_agent_core::api::ProviderStreamer =
             Arc::new(move |model, context, options| {
                 ai_client.stream_model(model, context, options)
             });

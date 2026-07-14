@@ -778,9 +778,9 @@ impl CodingAgentProductEventReceiver {
 mod product_event_projection_tests {
     use std::sync::Arc;
 
-    use pi_agent_core::AgentResources;
+    use pi_agent_core::api::AgentResources;
+    use pi_ai::api::{Model, ModelCost, ModelInput};
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::types::{Model, ModelCost, ModelInput};
 
     use super::*;
     use crate::coding_session::public_event::{
@@ -811,7 +811,7 @@ mod product_event_projection_tests {
         }
     }
 
-    fn prompt_options(api: &str, ai_client: pi_ai::AiClient) -> PromptTurnOptions {
+    fn prompt_options(api: &str, ai_client: pi_ai::api::AiClient) -> PromptTurnOptions {
         PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: "force real reconnect lag".into(),
             model: model(api),

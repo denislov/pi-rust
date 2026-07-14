@@ -1,8 +1,8 @@
 use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
 use crate::protocol::version::{ProtocolFamilyVersion, RequestedProtocolVersion};
+use pi_agent_core::api::{QueueMode, ThinkingLevel};
 use pi_agent_core::transcript::StoredAgentMessage;
-use pi_agent_core::{QueueMode, ThinkingLevel};
-use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model};
+use pi_ai::api::{AssistantMessageEvent, ContentBlock, Model};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::Display;

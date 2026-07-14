@@ -7,10 +7,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
-use pi_agent_core::{AgentResources, AgentTool};
-use pi_ai::registry::ApiProvider;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{
+use pi_agent_core::api::{AgentResources, AgentTool};
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
@@ -1833,7 +1833,7 @@ fn persistent_confirmation_session_options(
     cwd: &Path,
     sessions: &Path,
     session_id: &str,
-    ai_client: pi_ai::AiClient,
+    ai_client: pi_ai::api::AiClient,
 ) -> CodingAgentSessionOptions {
     CodingAgentSessionOptions::new()
         .with_ai_client(ai_client)
@@ -2072,7 +2072,7 @@ struct ProviderGuard {
 }
 
 impl ProviderGuard {
-    fn ai_client(&self) -> pi_ai::AiClient {
+    fn ai_client(&self) -> pi_ai::api::AiClient {
         self._guard.ai_client()
     }
 

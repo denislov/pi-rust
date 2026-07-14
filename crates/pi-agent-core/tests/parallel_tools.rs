@@ -1,7 +1,7 @@
 mod common;
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentEvent, AgentTool, AgentToolOutput, ToolExecutionMode};
+use pi_agent_core::api::{Agent, AgentEvent, AgentTool, AgentToolOutput, ToolExecutionMode};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry::ApiProvider;
 use pi_ai::types::{ContentBlock, StopReason};
@@ -236,7 +236,7 @@ async fn parallel_tool_results_are_appended_in_assistant_order() {
         .messages()
         .into_iter()
         .filter_map(|msg| match msg {
-            pi_agent_core::AgentMessage::ToolResult { tool_name, .. } => Some(tool_name),
+            pi_agent_core::api::AgentMessage::ToolResult { tool_name, .. } => Some(tool_name),
             _ => None,
         })
         .collect();
@@ -266,7 +266,7 @@ async fn parallel_tool_end_events_are_emitted_in_completion_order() {
     let mut stream = agent.prompt("go");
     let mut end_events = Vec::new();
     while let Some(event) = stream.next().await {
-        if let pi_agent_core::AgentEvent::ToolCallEnd { tool_name, .. } = event {
+        if let pi_agent_core::api::AgentEvent::ToolCallEnd { tool_name, .. } = event {
             end_events.push(tool_name);
         }
     }

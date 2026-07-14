@@ -1,4 +1,4 @@
-use pi_agent_core::AgentTool;
+use pi_agent_core::api::AgentTool;
 
 use super::error::PluginError;
 use super::registry::PluginMetadata;

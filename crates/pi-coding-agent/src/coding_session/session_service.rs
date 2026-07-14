@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use pi_agent_core::transcript::{SessionEntry, SessionTreeNode, StoredAgentMessage};
-use pi_ai::types::ContentBlock;
+use pi_ai::api::ContentBlock;
 
 use super::capability_snapshot::{OperationCapabilitySnapshot, SessionWriteCapability};
 use super::event_service::EventService;

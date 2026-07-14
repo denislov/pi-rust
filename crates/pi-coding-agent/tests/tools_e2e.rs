@@ -1,13 +1,13 @@
 mod support;
 
 use futures::stream;
-use pi_ai::EventStream;
-use pi_ai::providers::faux::{FauxCall, FauxResponse, FauxToolCall};
-use pi_ai::registry::ApiProvider;
-use pi_ai::types::{
+use pi_ai::api::ApiProvider;
+use pi_ai::api::EventStream;
+use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
+use pi_ai::providers::faux::{FauxCall, FauxResponse, FauxToolCall};
 use pi_coding_agent::{PrintModeOptions, builtin_tools, run_print_mode};
 use std::sync::{Arc, Mutex};
 use support::ProviderGuard;
@@ -154,7 +154,7 @@ async fn run_scripted_read(
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("read it".into()),
     })
@@ -273,7 +273,7 @@ async fn grep_builtin_tool_success_is_sent_back_to_model() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::AgentResources::default(),
+        resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
         invocation: pi_coding_agent::PromptInvocation::Text("search".into()),
     })

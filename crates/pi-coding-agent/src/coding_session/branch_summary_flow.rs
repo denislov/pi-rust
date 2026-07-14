@@ -4,10 +4,10 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
-use pi_agent_core::AgentMessage;
+use pi_agent_core::api::AgentMessage;
 use pi_agent_core::compaction::summarize::summarize_with_provider_streamer;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
-use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
+use pi_ai::api::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
 use super::capability_snapshot::OperationCapabilitySnapshot;
@@ -710,9 +710,9 @@ fn persisted_content_blocks_text(content: &[PersistedContentBlock]) -> String {
 mod tests {
     use std::sync::Arc;
 
-    use pi_agent_core::AgentResources;
+    use pi_agent_core::api::AgentResources;
+    use pi_ai::api::{Model, ModelCost, ModelInput};
     use pi_ai::providers::faux::FauxProvider;
-    use pi_ai::types::{Model, ModelCost, ModelInput};
 
     use super::*;
     use crate::coding_session::session_log::event::{
@@ -744,7 +744,7 @@ mod tests {
 
     fn branch_runtime(
         api: &str,
-        ai_client: pi_ai::AiClient,
+        ai_client: pi_ai::api::AiClient,
     ) -> crate::coding_session::prompt::RuntimeSnapshot {
         PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
             prompt: String::new(),

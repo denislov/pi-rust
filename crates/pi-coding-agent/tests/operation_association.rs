@@ -2,9 +2,9 @@ mod support;
 
 use std::sync::Arc;
 
-use pi_agent_core::AgentResources;
+use pi_agent_core::api::AgentResources;
+use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{Model, ModelCost, ModelInput};
 use pi_coding_agent::api::{
     CodingAgentClientId, CodingAgentOperation, CodingAgentOperationOutcome,
     CodingAgentProductEventKind, CodingAgentSession, CodingAgentSessionOptions,
@@ -66,7 +66,7 @@ async fn seeded_compaction_session(
     api: &str,
     session_id: &str,
     root: &std::path::Path,
-    ai_client: pi_ai::AiClient,
+    ai_client: pi_ai::api::AiClient,
 ) -> CodingAgentSession {
     let mut session = CodingAgentSession::create(
         CodingAgentSessionOptions::new()
@@ -93,8 +93,8 @@ async fn terminal_association_uses_the_exact_compact_root_event() {
     let _provider = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
-            FauxProvider::text_call("seed answer", pi_ai::types::StopReason::Stop),
-            FauxProvider::text_call("compact summary", pi_ai::types::StopReason::Stop),
+            FauxProvider::text_call("seed answer", pi_ai::api::StopReason::Stop),
+            FauxProvider::text_call("compact summary", pi_ai::api::StopReason::Stop),
         ])),
     );
     let temp = tempfile::tempdir().unwrap();

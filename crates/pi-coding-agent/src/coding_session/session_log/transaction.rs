@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use pi_ai::types::Usage;
+use pi_ai::api::Usage;
 use serde_json::Value;
 
 use super::event::{

@@ -1,4 +1,4 @@
-use pi_agent_core::{ThinkingLevel, ToolExecutionMode};
+use pi_agent_core::api::{ThinkingLevel, ToolExecutionMode};
 use pi_coding_agent::parse_args;
 
 #[test]

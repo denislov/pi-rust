@@ -1,8 +1,8 @@
 use crate::coding_session::FilesystemCapability;
 use crate::tools::path::resolve_to_cwd;
 use crate::tools::truncate::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
-use pi_agent_core::{AgentTool, AgentToolOutput, ToolFn};
-use pi_ai::types::ContentBlock;
+use pi_agent_core::api::{AgentTool, AgentToolOutput, ToolFn};
+use pi_ai::api::ContentBlock;
 use std::path::Path;
 use std::sync::Arc;
 

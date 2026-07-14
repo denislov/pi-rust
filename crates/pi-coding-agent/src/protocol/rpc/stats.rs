@@ -172,7 +172,7 @@ impl RpcState {
                     content
                         .iter()
                         .filter_map(|block| match block {
-                            pi_ai::types::ContentBlock::Text { text, .. } => Some(text.as_str()),
+                            pi_ai::api::ContentBlock::Text { text, .. } => Some(text.as_str()),
                             _ => None,
                         })
                         .collect::<Vec<_>>()

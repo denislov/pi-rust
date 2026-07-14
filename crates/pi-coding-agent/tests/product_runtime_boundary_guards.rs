@@ -450,9 +450,9 @@ fn adapters_do_not_construct_or_run_low_level_agents() {
             |line| {
                 line.contains("Agent::new(")
                     || line.contains("Agent::with_messages(")
-                    || line.contains("use pi_agent_core::Agent;")
-                    || line.contains("use pi_agent_core::{Agent,")
-                    || line.contains("use pi_agent_core::{ Agent,")
+                    || line.contains("use pi_agent_core::api::Agent;")
+                    || line.contains("use pi_agent_core::api::{Agent,")
+                    || line.contains("use pi_agent_core::api::{ Agent,")
             },
         );
     }

@@ -17,10 +17,10 @@ impl std::fmt::Debug for RuntimeService {
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use pi_agent_core::{Agent, AgentMessage, AgentResources, AgentTool, ProviderStreamer};
-use pi_ai::AiClient;
-use pi_ai::stream::EventStream;
-use pi_ai::types::{AssistantMessage, ContentBlock, Context, StopReason, StreamOptions};
+use pi_agent_core::api::{Agent, AgentMessage, AgentResources, AgentTool, ProviderStreamer};
+use pi_ai::api::AiClient;
+use pi_ai::api::EventStream;
+use pi_ai::api::{AssistantMessage, ContentBlock, Context, StopReason, StreamOptions};
 
 use crate::runtime::{SessionMode, build_agent_config_with_auth_diagnostics};
 
@@ -445,8 +445,8 @@ fn flush_replay_hydration_group(
 mod tests {
     use std::sync::Arc;
 
-    use pi_agent_core::{AgentResources, AgentTool, ToolExecutionMode};
-    use pi_ai::types::{Model, ModelCost, ModelInput, ProviderAuthDiagnostic};
+    use pi_agent_core::api::{AgentResources, AgentTool, ToolExecutionMode};
+    use pi_ai::api::{Model, ModelCost, ModelInput, ProviderAuthDiagnostic};
 
     use super::*;
     use crate::coding_session::session_log::event::DiagnosticLevel;

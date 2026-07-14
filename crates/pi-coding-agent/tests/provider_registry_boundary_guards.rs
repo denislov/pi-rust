@@ -359,7 +359,7 @@ fn runtime_service_exposes_reusable_scoped_provider_streamer() {
     );
     assert!(
         runtime_service.contains("AiClient::new()"),
-        "scoped provider streamer helper should create a scoped pi_ai::AiClient"
+        "scoped provider streamer helper should create a scoped pi_ai::api::AiClient"
     );
     assert!(
         runtime_service.contains("ai_client.register_builtins()"),

@@ -7,7 +7,7 @@ use super::{
     CodingSessionError, ProfileId, ProfileKind, SelfHealingEditCheckOutput,
     SelfHealingEditDiagnostic, SelfHealingEditReplacement, operation_control::OperationKind,
 };
-use pi_ai::types::Usage;
+use pi_ai::api::Usage;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
