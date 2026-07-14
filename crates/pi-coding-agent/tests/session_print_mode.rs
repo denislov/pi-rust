@@ -52,6 +52,7 @@ async fn persists_new_print_mode_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: Some(_provider_guard.ai_client()),
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir.clone(),
@@ -101,6 +102,7 @@ async fn enabled_session_with_name_uses_rust_native_log() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: Some(_provider_guard.ai_client()),
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,
@@ -148,6 +150,7 @@ async fn continues_most_recent_rust_native_session() {
             max_turns: Some(5),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_first_provider_guard.ai_client()),
             session: Some(SessionRunOptions {
                 mode: SessionMode::Enabled,
                 cwd: project_dir.clone(),
@@ -178,6 +181,7 @@ async fn continues_most_recent_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: Some(_second_provider_guard.ai_client()),
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,

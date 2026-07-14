@@ -124,6 +124,7 @@ async fn list_models_is_read_only_for_session_id() {
         ],
         CliRunOptions {
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions {
                 mode: SessionMode::Enabled,
                 cwd: project,

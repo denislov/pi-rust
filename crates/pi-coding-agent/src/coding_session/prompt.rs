@@ -377,6 +377,7 @@ impl RuntimeSnapshot {
             max_turns,
             tools,
             register_builtins,
+            ai_client,
             session,
             session_target: _,
             session_name: _,
@@ -405,7 +406,17 @@ impl RuntimeSnapshot {
             profile_tool_allowlist: None,
             profile_skill_allowlist: None,
             profile_diagnostics: Vec::new(),
-            provider_streamer: None,
+            provider_streamer: ai_client.map(|ai_client| {
+                if register_builtins {
+                    ai_client.register_builtins();
+                }
+                let ai_client = std::sync::Arc::new(ai_client);
+                let provider_streamer: ProviderStreamer =
+                    std::sync::Arc::new(move |model, context, options| {
+                        ai_client.stream_model(model, context, options)
+                    });
+                provider_streamer
+            }),
         }
     }
 
@@ -1481,6 +1492,7 @@ mod tests {
             max_turns: Some(3),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: Some(SessionRunOptions {
                 mode: SessionMode::Enabled,
                 cwd: ".".into(),

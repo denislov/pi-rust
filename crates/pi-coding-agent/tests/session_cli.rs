@@ -43,6 +43,7 @@ fn test_options(api: &str, cwd: &std::path::Path, sessions: &std::path::Path) ->
         model_override: Some(faux_model(api)),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: cwd.to_path_buf(),
@@ -103,6 +104,7 @@ async fn no_session_does_not_write_files() {
         model_override: Some(faux_model(api)),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: SessionRunOptions {
             mode: SessionMode::Disabled,
             cwd: cwd.clone(),
@@ -405,6 +407,7 @@ async fn session_dir_flag_writes_to_custom_path() {
         model_override: Some(faux_model(api)),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: cwd.clone(),

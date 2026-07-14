@@ -620,6 +620,7 @@ async fn rpc_self_healing_edit_applies_edit_through_persistent_session() {
             model_override: Some(faux_model("pi-coding-rpc-self-healing-edit")),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -676,6 +677,7 @@ async fn rpc_self_healing_edit_runs_check_command() {
             model_override: Some(faux_model("pi-coding-rpc-self-healing-edit-check")),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -717,6 +719,7 @@ async fn rpc_self_healing_edit_failed_check_returns_check_output() {
             model_override: Some(faux_model("pi-coding-rpc-self-healing-edit-check-fail")),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -775,6 +778,7 @@ async fn rpc_self_healing_edit_uses_planned_repair_attempts() {
             model_override: Some(faux_model("pi-coding-rpc-self-healing-edit-repair")),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -838,6 +842,7 @@ async fn rpc_self_healing_edit_repair_exhaustion_returns_repair_attempts() {
             )),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -901,6 +906,7 @@ async fn rpc_self_healing_edit_uses_model_repair_policy() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -966,6 +972,7 @@ allowed_agents = ["reviewer"]
             model_override: Some(faux_model("pi-coding-rpc-list-agents")),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -1049,6 +1056,7 @@ require_confirmation = "always"
             model_override: Some(faux_model("pi-coding-rpc-list-teams")),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::disabled(cwd),
         },
     )
@@ -1109,6 +1117,7 @@ display_name = "Coder"
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::disabled(cwd),
         },
     )
@@ -1224,6 +1233,7 @@ system_prompt = "Coder child instructions."
                 model_override: Some(large_context_faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: None,
                 session: SessionRunOptions::disabled(cwd),
             },
         )
@@ -1444,6 +1454,7 @@ display_name = "Coder"
                 model_override: Some(large_context_faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: None,
                 session: SessionRunOptions::disabled(cwd),
             },
         )
@@ -1662,6 +1673,7 @@ members = ["coder"]
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::disabled(cwd),
         },
     )
@@ -1752,6 +1764,7 @@ members = ["default"]
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: None,
                 session: SessionRunOptions::disabled(cwd),
             },
         )
@@ -1828,6 +1841,7 @@ display_name = "Coder"
             model_override: Some(faux_model("pi-coding-rpc-set-default-agent")),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -2226,6 +2240,7 @@ runtime = "lua"
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -2293,6 +2308,7 @@ end
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )

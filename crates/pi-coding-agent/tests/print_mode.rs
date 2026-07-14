@@ -116,6 +116,7 @@ async fn prints_single_turn_text_response() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: None,
         session_target: None,
         session_name: None,
@@ -149,6 +150,7 @@ async fn disabled_session_print_uses_non_persistent_runtime_without_session_file
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Disabled,
             cwd: project_dir,
@@ -188,6 +190,7 @@ async fn treats_length_as_successful_final_text() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: None,
         session_target: None,
         session_name: None,
@@ -226,6 +229,7 @@ async fn returns_agent_failure_on_error_stop_reason() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: None,
         session_target: None,
         session_name: None,
@@ -275,6 +279,7 @@ async fn supports_tool_call_loop_with_injected_tool() {
         max_turns: Some(5),
         tools: vec![echo_tool()],
         register_builtins: false,
+        ai_client: None,
         session: None,
         session_target: None,
         session_name: None,
@@ -308,6 +313,7 @@ async fn explicit_new_session_writes_rust_native_session_events() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,
@@ -369,6 +375,7 @@ async fn open_or_create_session_target_reopens_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir.clone(),
@@ -394,6 +401,7 @@ async fn open_or_create_session_target_reopens_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,
@@ -470,6 +478,7 @@ async fn open_target_reuses_existing_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir.clone(),
@@ -494,6 +503,7 @@ async fn open_target_reuses_existing_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,
@@ -544,6 +554,7 @@ async fn continue_most_recent_uses_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir.clone(),
@@ -568,6 +579,7 @@ async fn continue_most_recent_uses_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,
@@ -607,6 +619,7 @@ async fn continue_most_recent_reports_missing_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,
@@ -658,6 +671,7 @@ async fn fork_target_routes_through_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir.clone(),
@@ -683,6 +697,7 @@ async fn fork_target_routes_through_rust_native_session() {
         max_turns: Some(5),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: project_dir,

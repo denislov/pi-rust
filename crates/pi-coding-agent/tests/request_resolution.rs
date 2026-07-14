@@ -39,6 +39,7 @@ fn resolve_prompt_request_builds_common_headless_context() {
         CliRunOptions {
             tools: builtin_tools(cwd.clone()),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::enabled(cwd.clone()),
             ..CliRunOptions::default()
         },
@@ -120,6 +121,7 @@ fn resolve_prompt_request_preserves_oauth_auth_source_diagnostic() {
         CliRunOptions {
             tools: builtin_tools(cwd.clone()),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::enabled(cwd.clone()),
             ..CliRunOptions::default()
         },
@@ -158,6 +160,7 @@ fn resolve_cli_context_validates_loaded_skill_names_without_prompt() {
         parsed,
         CliRunOptions {
             tools: builtin_tools(cwd.clone()),
+            ai_client: None,
             session: SessionRunOptions::enabled(cwd.clone()),
             ..CliRunOptions::default()
         },
@@ -201,6 +204,7 @@ fn resolve_cli_context_returns_config_and_resource_diagnostics() {
         CliRunOptions {
             tools: builtin_tools(cwd.clone()),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::enabled(cwd.clone()),
             ..CliRunOptions::default()
         },

@@ -11,6 +11,7 @@ async fn main() {
             model_override: None,
             tools: pi_coding_agent::builtin_tools(cwd.clone()),
             register_builtins: true,
+            ai_client: None,
             session: pi_coding_agent::SessionRunOptions::enabled(cwd),
         };
         match pi_coding_agent::protocol::rpc::run_rpc_mode_stdio(options).await {
@@ -42,6 +43,7 @@ async fn main() {
             model_override: None,
             tools: pi_coding_agent::builtin_tools(cwd.clone()),
             register_builtins: true,
+            ai_client: None,
             session: pi_coding_agent::SessionRunOptions::enabled(cwd),
         },
         stdin,

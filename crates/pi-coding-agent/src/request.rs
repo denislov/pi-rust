@@ -11,6 +11,7 @@ use crate::tools::{self, ToolFilter};
 use crate::{CliArgs, CliError};
 use pi_agent_core::types::DiagnosticSeverity as ResourceDiagnosticSeverity;
 use pi_agent_core::{AgentResources, ResourceDiagnostic};
+use pi_ai::AiClient;
 use pi_ai::types::{Model, ProviderAuthDiagnostic};
 use std::path::PathBuf;
 
@@ -41,6 +42,7 @@ pub struct ResolvedCliContext {
     pub system_prompt: Option<String>,
     pub tools: Vec<pi_agent_core::AgentTool>,
     pub register_builtins: bool,
+    pub ai_client: Option<AiClient>,
     pub session: Option<SessionRunOptions>,
     pub session_target: Option<ResolvedSessionTarget>,
     pub session_name: Option<String>,
@@ -148,6 +150,7 @@ pub fn resolve_cli_context(
         system_prompt,
         tools,
         register_builtins: options.register_builtins,
+        ai_client: options.ai_client,
         session,
         session_target,
         session_name,
@@ -195,6 +198,7 @@ pub fn resolve_prompt_request(
         max_turns: context.parsed.max_turns,
         tools: context.tools.clone(),
         register_builtins: context.register_builtins,
+        ai_client: context.ai_client.clone(),
         session: context.session.clone(),
         session_target: context.session_target.clone(),
         session_name: context.session_name.clone(),

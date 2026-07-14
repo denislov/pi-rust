@@ -821,6 +821,7 @@ mod product_event_projection_tests {
             max_turns: Some(1),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: Some(SessionRunOptions::disabled(".".into())),
             session_target: None,
             session_name: None,

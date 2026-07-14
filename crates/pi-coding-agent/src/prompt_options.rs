@@ -1,6 +1,7 @@
 use crate::runtime::{PromptInvocation, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
 use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
+use pi_ai::AiClient;
 use pi_ai::types::{AssistantMessage, ContentBlock, Model, ProviderAuthDiagnostic};
 
 pub struct PromptRunOptions {
@@ -12,6 +13,7 @@ pub struct PromptRunOptions {
     pub max_turns: Option<u32>,
     pub tools: Vec<AgentTool>,
     pub register_builtins: bool,
+    pub ai_client: Option<AiClient>,
     pub session: Option<SessionRunOptions>,
     pub session_target: Option<ResolvedSessionTarget>,
     pub session_name: Option<String>,

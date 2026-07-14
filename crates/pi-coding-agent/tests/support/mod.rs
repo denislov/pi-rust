@@ -3,6 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use pi_ai::AiClient;
 use pi_ai::registry::{self, ApiProvider};
 use pi_ai::types::Usage;
 use pi_coding_agent::api::{
@@ -76,6 +77,7 @@ impl Drop for EnvGuard<'_> {
 pub struct ProviderGuard<'a> {
     _lock: MutexGuard<'a, ()>,
     previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+    ai_client: AiClient,
 }
 
 #[allow(dead_code)]
@@ -89,15 +91,22 @@ impl ProviderGuard<'static> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut previous = Vec::with_capacity(providers.len());
+        let ai_client = AiClient::new();
         for (api, provider) in providers {
             let prior = registry::lookup(&api);
-            registry::register(&api, provider);
+            registry::register(&api, provider.clone());
+            ai_client.register_provider(api.clone(), provider);
             previous.push((api, prior));
         }
         Self {
             _lock: lock,
             previous,
+            ai_client,
         }
+    }
+
+    pub fn ai_client(&self) -> AiClient {
+        self.ai_client.clone()
     }
 }
 

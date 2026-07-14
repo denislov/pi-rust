@@ -11,6 +11,7 @@ use crate::protocol::types::ProtocolEvent;
 use crate::runtime::{SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
 use pi_agent_core::transcript::{SessionHeader, create_session_id, create_timestamp};
+use pi_ai::AiClient;
 use std::path::PathBuf;
 
 pub async fn run_json_mode(options: PromptRunOptions) -> CliOutput {
@@ -121,19 +122,27 @@ async fn open_json_coding_session(
     options: &PromptRunOptions,
 ) -> Result<CodingAgentSession, CodingSessionError> {
     let Some(session_options) = options.session.as_ref() else {
-        return CodingAgentSession::non_persistent(CodingAgentSessionOptions::new()).await;
+        return CodingAgentSession::non_persistent(with_ai_client(
+            CodingAgentSessionOptions::new(),
+            options.ai_client.as_ref(),
+        ))
+        .await;
     };
     if !matches!(session_options.mode, SessionMode::Enabled) {
-        return CodingAgentSession::non_persistent(
+        return CodingAgentSession::non_persistent(with_ai_client(
             CodingAgentSessionOptions::new().with_cwd(session_options.cwd.clone()),
-        )
+            options.ai_client.as_ref(),
+        ))
         .await;
     }
 
     let session_root = json_coding_session_root(session_options)?;
-    let coding_options = CodingAgentSessionOptions::new()
-        .with_cwd(session_options.cwd.clone())
-        .with_session_log_root(session_root);
+    let coding_options = with_ai_client(
+        CodingAgentSessionOptions::new()
+            .with_cwd(session_options.cwd.clone())
+            .with_session_log_root(session_root),
+        options.ai_client.as_ref(),
+    );
 
     match options
         .session_target
@@ -161,6 +170,16 @@ async fn open_json_coding_session(
         ResolvedSessionTarget::ForkTarget(_) => Err(CodingSessionError::UnsupportedCapability {
             capability: "Rust-native session fork".into(),
         }),
+    }
+}
+
+fn with_ai_client(
+    options: CodingAgentSessionOptions,
+    ai_client: Option<&AiClient>,
+) -> CodingAgentSessionOptions {
+    match ai_client {
+        Some(ai_client) => options.with_ai_client(ai_client.clone()),
+        None => options,
     }
 }
 

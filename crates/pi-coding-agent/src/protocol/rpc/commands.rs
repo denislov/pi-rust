@@ -605,6 +605,7 @@ impl RpcState {
             max_turns: Some(1),
             tools: self.options.tools.clone(),
             register_builtins: false,
+            ai_client: self.options.ai_client.clone(),
             session: Some(self.options.session.clone()),
             session_target: None,
             session_name: self.session_name.clone(),

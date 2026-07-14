@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use pi_agent_core::AgentResources;
 use pi_agent_core::transcript::create_session_id;
+use pi_ai::AiClient;
 use pi_ai::types::{Model, ProviderAuthDiagnostic};
 #[cfg(test)]
 use pi_tui::{Component, InputEvent, Terminal, visible_width};
@@ -111,6 +112,7 @@ pub(super) struct PromptContext {
     pub(super) max_turns: Option<u32>,
     pub(super) tools: Vec<pi_agent_core::AgentTool>,
     pub(super) register_builtins: bool,
+    pub(super) ai_client: Option<AiClient>,
     pub(super) session: Option<SessionRunOptions>,
     pub(super) session_target: Option<ResolvedSessionTarget>,
     pub(super) session_name: Option<String>,
@@ -192,6 +194,7 @@ pub(super) fn build_prompt_context(
         max_turns: parsed.max_turns,
         tools: resolved.tools,
         register_builtins: resolved.register_builtins,
+        ai_client: resolved.ai_client,
         session: resolved.session,
         session_target,
         session_name: resolved.session_name,
@@ -4722,6 +4725,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::disabled(PathBuf::from(".")),
         };
 
@@ -4754,6 +4758,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: SessionRunOptions::disabled(PathBuf::from(".")),
         };
         let input_driver = ScriptedInputDriver {
@@ -4911,6 +4916,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session,
         };
 
@@ -4950,6 +4956,7 @@ pub mod test_harness {
             model_override: Some(faux_model(&api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session,
         };
 

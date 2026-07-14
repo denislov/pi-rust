@@ -144,6 +144,7 @@ pub(crate) mod test_support {
     use std::ffi::{OsStr, OsString};
     use std::sync::{Arc, Mutex, MutexGuard};
 
+    use pi_ai::AiClient;
     use pi_ai::registry::{self, ApiProvider};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -207,6 +208,7 @@ pub(crate) mod test_support {
     pub(crate) struct ProviderGuard<'a> {
         _lock: MutexGuard<'a, ()>,
         previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+        ai_client: AiClient,
     }
 
     #[allow(dead_code)]
@@ -220,15 +222,22 @@ pub(crate) mod test_support {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut previous = Vec::with_capacity(providers.len());
+            let ai_client = AiClient::new();
             for (api, provider) in providers {
                 let prior = registry::lookup(&api);
-                registry::register(&api, provider);
+                registry::register(&api, provider.clone());
+                ai_client.register_provider(api.clone(), provider);
                 previous.push((api, prior));
             }
             Self {
                 _lock: lock,
                 previous,
+                ai_client,
             }
+        }
+
+        pub(crate) fn ai_client(&self) -> AiClient {
+            self.ai_client.clone()
         }
     }
 
@@ -291,6 +300,7 @@ fn default_cli_options(cwd: std::path::PathBuf) -> CliRunOptions {
         model_override: None,
         tools: builtin_tools(cwd.clone()),
         register_builtins: true,
+        ai_client: None,
         session: SessionRunOptions::enabled(cwd),
     }
 }

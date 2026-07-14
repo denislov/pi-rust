@@ -325,6 +325,7 @@ fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
         max_turns: Some(2),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
         session_target: None,
         session_name: None,

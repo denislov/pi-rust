@@ -80,6 +80,7 @@ async fn rpc_prompt_persists_session_messages() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )
@@ -118,6 +119,7 @@ async fn rpc_state_reports_persisted_session_path_after_prompt() {
                 model_override: Some(faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
+                ai_client: None,
                 session: session_options,
             },
         )
@@ -187,6 +189,7 @@ async fn rpc_disabled_session_prompt_uses_non_persistent_runtime_without_session
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: session_options,
         },
     )

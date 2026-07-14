@@ -676,6 +676,7 @@ mod tests {
             max_turns: Some(2),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: None,
             session_target: None,
             session_name: None,

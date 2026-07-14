@@ -281,6 +281,7 @@ fn prompt_options_from_delegation_runtime_seed(
         max_turns: seed.max_turns,
         tools,
         register_builtins: seed.register_builtins,
+        ai_client: None,
         session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
         session_target: None,
         session_name: seed.session_name,

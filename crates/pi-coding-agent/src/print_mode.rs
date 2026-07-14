@@ -8,6 +8,7 @@ use crate::prompt_options::PromptRunOptions;
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};
 use pi_agent_core::{AgentResources, AgentTool, ThinkingLevel, ToolExecutionMode};
+use pi_ai::AiClient;
 use pi_ai::types::Model;
 use std::path::PathBuf;
 
@@ -19,6 +20,7 @@ pub struct PrintModeOptions {
     pub max_turns: Option<u32>,
     pub tools: Vec<AgentTool>,
     pub register_builtins: bool,
+    pub ai_client: Option<AiClient>,
     pub session: Option<SessionRunOptions>,
     pub session_target: Option<ResolvedSessionTarget>,
     pub session_name: Option<String>,
@@ -39,6 +41,7 @@ impl PrintModeOptions {
             max_turns: None,
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: None,
             session: None,
             session_target: None,
             session_name: None,
@@ -61,6 +64,7 @@ impl From<PromptRunOptions> for PrintModeOptions {
             max_turns: options.max_turns,
             tools: options.tools,
             register_builtins: options.register_builtins,
+            ai_client: options.ai_client,
             session: options.session,
             session_target: options.session_target,
             session_name: options.session_name,
@@ -95,6 +99,7 @@ fn session_prompt_options_from_print_options(options: PrintModeOptions) -> Promp
         max_turns: options.max_turns,
         tools: options.tools,
         register_builtins: options.register_builtins,
+        ai_client: options.ai_client,
         session: options.session,
         session_target: options.session_target,
         session_name: options.session_name,
@@ -117,9 +122,12 @@ async fn run_print_mode_with_coding_session(
     }
 
     let session_root = print_coding_session_root(session_options)?;
-    let session_options = CodingAgentSessionOptions::new()
-        .with_cwd(session_options.cwd.clone())
-        .with_session_log_root(session_root);
+    let session_options = with_ai_client(
+        CodingAgentSessionOptions::new()
+            .with_cwd(session_options.cwd.clone())
+            .with_session_log_root(session_root),
+        options.ai_client.as_ref(),
+    );
 
     let mut session =
         open_print_coding_session(session_options, options.session_target.as_ref()).await?;
@@ -144,6 +152,7 @@ async fn run_non_persistent_print_mode(
         .as_ref()
         .map(|session| CodingAgentSessionOptions::new().with_cwd(session.cwd.clone()))
         .unwrap_or_default();
+    let coding_options = with_ai_client(coding_options, options.ai_client.as_ref());
     let mut session = CodingAgentSession::non_persistent(coding_options).await?;
     let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
     let outcome = match session
@@ -154,6 +163,16 @@ async fn run_non_persistent_print_mode(
         _ => unreachable!("prompt operation returned a different public outcome"),
     };
     Ok(outcome)
+}
+
+fn with_ai_client(
+    options: CodingAgentSessionOptions,
+    ai_client: Option<&AiClient>,
+) -> CodingAgentSessionOptions {
+    match ai_client {
+        Some(ai_client) => options.with_ai_client(ai_client.clone()),
+        None => options,
+    }
 }
 
 fn ensure_non_persistent_print_target(

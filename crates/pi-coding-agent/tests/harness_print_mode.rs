@@ -122,6 +122,7 @@ async fn print_mode_runs_with_thinking_flag() {
         max_turns: Some(1),
         tools: Vec::new(),
         register_builtins: false,
+        ai_client: Some(_provider_guard.ai_client()),
         session: None,
         session_target: None,
         session_name: None,
@@ -150,6 +151,7 @@ async fn cli_accepts_thinking_flag() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -172,6 +174,7 @@ async fn cli_accepts_tool_execution_flag() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -193,6 +196,7 @@ async fn cli_rejects_invalid_thinking_level() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )

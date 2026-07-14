@@ -1790,6 +1790,7 @@ fn prompt_options_with_tools(
         max_turns: Some(4),
         tools,
         register_builtins: false,
+        ai_client: None,
         session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
         session_target: None,
         session_name: None,

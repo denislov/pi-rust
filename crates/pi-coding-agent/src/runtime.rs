@@ -3,6 +3,7 @@ use pi_agent_core::{
     AgentConfig, AgentResources, AgentTool, CompactionConfig, CompactionSettings, ThinkingLevel,
     ToolExecutionMode,
 };
+use pi_ai::AiClient;
 use pi_ai::types::{Model, ProviderAuthDiagnostic, StreamOptions};
 use std::path::PathBuf;
 
@@ -64,6 +65,7 @@ pub struct CliRunOptions {
     pub model_override: Option<Model>,
     pub tools: Vec<AgentTool>,
     pub register_builtins: bool,
+    pub ai_client: Option<AiClient>,
     pub session: SessionRunOptions,
 }
 
@@ -73,6 +75,7 @@ impl Default for CliRunOptions {
             model_override: None,
             tools: Vec::new(),
             register_builtins: true,
+            ai_client: None,
             session: SessionRunOptions::disabled(PathBuf::from(".")),
         }
     }

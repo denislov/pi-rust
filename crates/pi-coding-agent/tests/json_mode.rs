@@ -48,6 +48,7 @@ async fn json_mode_emits_session_header_and_lifecycle_events() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -103,6 +104,7 @@ async fn json_mode_emits_tool_execution_events() {
             model_override: Some(faux_model(api)),
             tools: vec![tool],
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -143,6 +145,7 @@ async fn json_mode_maps_provider_failure_to_error_output() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             ..Default::default()
         },
     )
@@ -176,6 +179,7 @@ async fn json_mode_enabled_session_uses_rust_native_log() {
             model_override: Some(faux_model(api)),
             tools: Vec::new(),
             register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
             session: SessionRunOptions {
                 mode: SessionMode::Enabled,
                 cwd: project_dir.clone(),
