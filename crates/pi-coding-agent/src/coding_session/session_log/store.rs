@@ -5,6 +5,8 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
+use serde_json::Value;
+
 use super::event::SessionEventEnvelope;
 use super::manifest::{
     EVENT_SCHEMA, EVENT_VERSION, SESSION_EVENT_LOG_FILE, SESSION_MANIFEST_FILE, SESSION_SCHEMA,
@@ -369,13 +371,7 @@ impl SessionLogStore {
                 continue;
             }
             compatibility_sequence += 1;
-            let mut event: SessionEventEnvelope = serde_json::from_str(line).map_err(|error| {
-                session_error(format!(
-                    "failed to parse session event at line {} in {}: {error}",
-                    index + 1,
-                    event_log_path.display()
-                ))
-            })?;
+            let mut event = decode_event_line(line, index + 1, &event_log_path)?;
             if event.session_sequence.is_none() {
                 event.session_sequence = Some(compatibility_sequence);
             }
@@ -609,12 +605,74 @@ fn read_manifest(session_dir: &Path) -> Result<SessionManifest, CodingSessionErr
             manifest_path.display()
         ))
     })?;
-    serde_json::from_str(&content).map_err(|error| {
+    decode_manifest(&content, &manifest_path)
+}
+
+fn decode_manifest(
+    content: &str,
+    manifest_path: &Path,
+) -> Result<SessionManifest, CodingSessionError> {
+    let value: Value = serde_json::from_str(content).map_err(|error| {
         session_error(format!(
             "failed to parse session manifest {}: {error}",
             manifest_path.display()
         ))
-    })
+    })?;
+    let schema = json_string_field(&value, "schema");
+    let version = json_u32_field(&value, "version");
+    match (schema.as_deref(), version) {
+        (Some(SESSION_SCHEMA), Some(SESSION_VERSION)) => {
+            serde_json::from_value(value).map_err(|error| {
+                session_error(format!(
+                    "failed to decode v{SESSION_VERSION} session manifest {}: {error}",
+                    manifest_path.display()
+                ))
+            })
+        }
+        _ => Err(session_error(format!(
+            "unsupported session manifest decoder: schema={}, version={}; recovery: open with a compatible pi-rust release or migrate the manifest",
+            schema.as_deref().unwrap_or("<missing>"),
+            version.map_or_else(|| "<missing>".to_owned(), |value| value.to_string()),
+        ))),
+    }
+}
+
+fn decode_event_line(
+    line: &str,
+    line_number: usize,
+    event_log_path: &Path,
+) -> Result<SessionEventEnvelope, CodingSessionError> {
+    let value: Value = serde_json::from_str(line).map_err(|error| {
+        session_error(format!(
+            "failed to parse session event at line {line_number} in {}: {error}",
+            event_log_path.display()
+        ))
+    })?;
+    let schema = json_string_field(&value, "schema");
+    let version = json_u32_field(&value, "version");
+    let event_id = json_string_field(&value, "event_id");
+    match (schema.as_deref(), version) {
+        (Some(EVENT_SCHEMA), Some(EVENT_VERSION)) => serde_json::from_value(value).map_err(|error| {
+            session_error(format!(
+                "failed to decode v{EVENT_VERSION} session event at line {line_number} in {}: {error}",
+                event_log_path.display()
+            ))
+        }),
+        _ => Err(session_error(format!(
+            "unsupported session event decoder: schema={}, version={}, event_id={}; recovery: open with a compatible pi-rust release or migrate the session event log",
+            schema.as_deref().unwrap_or("<missing>"),
+            version.map_or_else(|| "<missing>".to_owned(), |value| value.to_string()),
+            event_id.as_deref().unwrap_or("<missing>"),
+        ))),
+    }
+}
+
+fn json_string_field(value: &Value, field: &str) -> Option<String> {
+    value.get(field)?.as_str().map(str::to_owned)
+}
+
+fn json_u32_field(value: &Value, field: &str) -> Option<u32> {
+    value.get(field)?.as_u64()?.try_into().ok()
 }
 
 fn create_empty_event_log(session_dir: &Path) -> Result<(), CodingSessionError> {
@@ -694,13 +752,7 @@ fn next_session_sequence(
             continue;
         }
         compatibility_sequence += 1;
-        let event: SessionEventEnvelope = serde_json::from_str(line).map_err(|error| {
-            session_error(format!(
-                "failed to parse session event at line {} in {}: {error}",
-                index + 1,
-                event_log_path.display()
-            ))
-        })?;
+        let event = decode_event_line(line, index + 1, event_log_path)?;
         validate_event_for_session(&event, session_id)?;
         last_sequence = last_sequence.max(event.session_sequence.unwrap_or(compatibility_sequence));
     }
@@ -996,6 +1048,37 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(1), Some(2)]
         );
+    }
+
+    #[test]
+    fn decoder_matrix_rejects_unknown_manifest_and_event_versions_with_recovery_context() {
+        let manifest_error = decode_manifest(
+            r#"{"schema":"pi-rust.session","version":99}"#,
+            Path::new("/tmp/session.json"),
+        )
+        .unwrap_err();
+        assert!(
+            manifest_error
+                .to_string()
+                .contains("schema=pi-rust.session")
+        );
+        assert!(manifest_error.to_string().contains("version=99"));
+        assert!(manifest_error.to_string().contains("recovery:"));
+
+        let event_error = decode_event_line(
+            r#"{"schema":"pi-rust.session.event","version":99,"event_id":"evt-future"}"#,
+            7,
+            Path::new("/tmp/events.jsonl"),
+        )
+        .unwrap_err();
+        assert!(
+            event_error
+                .to_string()
+                .contains("schema=pi-rust.session.event")
+        );
+        assert!(event_error.to_string().contains("version=99"));
+        assert!(event_error.to_string().contains("event_id=evt-future"));
+        assert!(event_error.to_string().contains("recovery:"));
     }
 
     #[test]
