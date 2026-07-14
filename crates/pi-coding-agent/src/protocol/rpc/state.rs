@@ -1,6 +1,6 @@
 use crate::args::CliArgs;
 use crate::error::CliError;
-use crate::protocol::rpc::event_queue::RpcQueuedProductEvent;
+use crate::protocol::rpc::event_queue::RpcProductEventReceiver;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::types::{RpcDetachStatus, RpcNegotiatedProtocolState};
 use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION};
@@ -20,7 +20,7 @@ use pi_agent_core::api::{QueueMode, ThinkingLevel};
 use pi_ai::api::Model;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 const RPC_IDEMPOTENCY_RECORD_LIMIT: usize = 64;
 
@@ -60,7 +60,7 @@ pub(super) enum RunningPrompt {
 }
 
 pub(super) struct CodingRunningPrompt {
-    pub(super) events: mpsc::Receiver<RpcQueuedProductEvent>,
+    pub(super) events: RpcProductEventReceiver,
     pub(super) done: oneshot::Receiver<CodingOperationTaskResult>,
     pub(super) operation_kind: OperationKind,
     pub(super) adapter: RpcCodingEventAdapter,

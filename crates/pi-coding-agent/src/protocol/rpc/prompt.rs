@@ -1774,7 +1774,7 @@ mod tests {
 
         assert_eq!(prompt_source.matches(&product_subscription).count(), 4);
         assert!(!prompt_source.contains(&compatibility_subscription));
-        assert!(state_source.contains("Receiver<RpcQueuedProductEvent>"));
+        assert!(state_source.contains("events: RpcProductEventReceiver"));
         assert!(rpc_source.contains("CodingEvent(Option<RpcQueuedProductEvent>)"));
         assert!(prompt_source.contains(&product_adapter));
         assert!(prompt_source.contains("connection.reconnect_from_cursor(cursor)"));

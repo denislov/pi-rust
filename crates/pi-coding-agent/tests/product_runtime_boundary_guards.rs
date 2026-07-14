@@ -600,7 +600,7 @@ fn production_rpc_projects_the_public_client_connection_without_authority_mirror
 
     assert!(state_production.contains("client_connection"));
     assert!(state_production.contains("CodingAgentClientConnection"));
-    assert!(prompt_production.contains("connection.reconnect("));
+    assert!(prompt_production.contains("connection.reconnect_from_cursor("));
     assert!(prompt_production.contains("connection.acknowledge("));
     assert!(prompt_production.contains("connection.prepare_submission("));
     assert!(prompt_production.contains("session.run("));
