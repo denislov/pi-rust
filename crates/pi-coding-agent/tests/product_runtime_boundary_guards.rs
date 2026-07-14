@@ -1723,6 +1723,55 @@ fn adapter_inventory_is_recursive_and_receiver_aware() {
     }
 }
 
+#[test]
+fn runtime_admission_has_no_direct_operation_control_bypass() {
+    let scan = SourceScan::new();
+    let session_path = scan.crate_root.join("src/coding_session/mod.rs");
+    let session_source = fs::read_to_string(&session_path).expect("read coding session source");
+    let session_production = production_source(&sanitize_rust_source(&session_source));
+    assert_eq!(
+        session_production.matches("OperationScheduler::admit(").count(),
+        3,
+        "canonical sync/async dispatchers must all route through typed scheduler admission"
+    );
+    assert!(
+        !session_production.contains("IntentRouter::admit_operation")
+            && !session_production.contains("IntentRouter::begin"),
+        "legacy router-owned admission entry points must not return to production dispatch"
+    );
+
+    let mut violations = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src")) {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source = fs::read_to_string(&path).expect("read product source");
+        let production = production_source(&sanitize_rust_source(&source));
+        for (line_no, line) in production.lines().enumerate() {
+            let bypass = line.contains("control.begin(")
+                || line.contains("operation_control.begin(")
+                || line.contains("state.begin(")
+                || line.contains(".begin(OperationKind::");
+            if !bypass {
+                continue;
+            }
+            let owner = relative.ends_with("src/coding_session/scheduler.rs")
+                || relative.ends_with("src/coding_session/operation_control.rs");
+            if !owner {
+                violations.push(format!(
+                    "{}:{}: {}",
+                    relative,
+                    line_no + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "runtime-affecting product code bypasses OperationScheduler admission:\n{}",
+        violations.join("\n")
+    );
+}
+
 fn discover_adapter_candidates(scan: &SourceScan) -> HashSet<String> {
     let sources = rust_files_under(&scan.crate_root.join("src"))
         .into_iter()
