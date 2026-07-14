@@ -2768,12 +2768,11 @@ async fn rpc_hello_negotiates_supported_protocol_families() {
     .unwrap();
 
     let lines = parse_lines(&output);
-    assert_eq!(lines[0]["command"], "hello");
-    assert_eq!(lines[0]["success"], true);
-    assert_eq!(lines[0]["data"]["protocol"]["family"], "rpc");
-    assert_eq!(lines[0]["data"]["protocol"]["major"], 1);
-    assert_eq!(lines[0]["data"]["productEvents"]["family"], "product_event");
-    assert_eq!(lines[0]["data"]["uiSnapshot"]["family"], "ui_snapshot");
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/architecture-baseline-v1/rpc-hello-response.json"
+    ))
+    .unwrap();
+    assert_eq!(lines, vec![expected]);
 }
 
 #[tokio::test]
