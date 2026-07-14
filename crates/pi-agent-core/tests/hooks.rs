@@ -32,11 +32,7 @@ fn simple_text_tool(name: &str, text: &str) -> AgentTool {
     }
 }
 
-fn script_tool_then_stop(
-    api: &str,
-    tool_name: &str,
-    args: serde_json::Value,
-) -> ProviderGuard<'static> {
+fn script_tool_then_stop(api: &str, tool_name: &str, args: serde_json::Value) -> ProviderGuard {
     let json_str = args.to_string();
     ProviderGuard::register(
         api,
@@ -64,7 +60,8 @@ async fn before_hook_blocks_tool_execution() {
     let api = "hooks-before";
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_real = calls.clone();
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = script_tool_then_stop(api, "echo", serde_json::json!({}));
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.hooks.before_tool_call = Some(Arc::new(move |ctx| {
         assert_eq!(ctx.tool_name, "echo");
         Box::pin(async move {
@@ -93,7 +90,6 @@ async fn before_hook_blocks_tool_execution() {
         }),
     });
 
-    let _provider_guard = script_tool_then_stop(api, "echo", serde_json::json!({}));
     let mut stream = agent.prompt("run");
     let mut saw_blocked_result = false;
     while let Some(event) = stream.next().await {
@@ -113,7 +109,8 @@ async fn before_hook_blocks_tool_execution() {
 #[tokio::test]
 async fn after_hook_replaces_tool_result() {
     let api = "hooks-after";
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = script_tool_then_stop(api, "echo", serde_json::json!({}));
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.hooks.after_tool_call = Some(Arc::new(|ctx| {
         assert_eq!(ctx.tool_name, "echo");
         assert!(!ctx.result.is_error);
@@ -131,7 +128,6 @@ async fn after_hook_replaces_tool_result() {
 
     let agent = Agent::new(config);
     agent.add_tool(simple_text_tool("echo", "original"));
-    let _provider_guard = script_tool_then_stop(api, "echo", serde_json::json!({}));
 
     let mut stream = agent.prompt("run");
     while stream.next().await.is_some() {}
@@ -147,7 +143,15 @@ async fn after_hook_replaces_tool_result() {
 #[tokio::test]
 async fn after_hook_terminate_stops_loop_after_tool_results() {
     let api = "hooks-after-terminate";
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(TestProvider::new(vec![tool_use_turn(
+            "tool_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.hooks.after_tool_call = Some(Arc::new(|_| {
         Box::pin(async move {
             Ok(Some(AfterToolCallResult {
@@ -160,15 +164,6 @@ async fn after_hook_terminate_stops_loop_after_tool_results() {
 
     let agent = Agent::new(config);
     agent.add_tool(simple_text_tool("echo", "ok"));
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(TestProvider::new(vec![tool_use_turn(
-            "tool_1",
-            "echo",
-            serde_json::json!({}),
-        )])),
-    );
-
     let events: Vec<_> = agent.prompt("run").collect().await;
 
     assert!(
@@ -188,7 +183,14 @@ async fn should_stop_after_turn_runs_before_follow_up_queue() {
     let api = "hooks-should-stop";
     let calls = Arc::new(AtomicUsize::new(0));
     let hook_calls = calls.clone();
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("first.", StopReason::Stop),
+            FauxProvider::text_call("second.", StopReason::Stop),
+        ])),
+    );
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.follow_up_mode = QueueMode::All;
     config.hooks.should_stop_after_turn = Some(Arc::new(move |_| {
         hook_calls.fetch_add(1, Ordering::SeqCst);
@@ -197,14 +199,6 @@ async fn should_stop_after_turn_runs_before_follow_up_queue() {
 
     let agent = Agent::new(config);
     agent.follow_up("should not run");
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(FauxProvider::with_call_queue(vec![
-            FauxProvider::text_call("first.", StopReason::Stop),
-            FauxProvider::text_call("second.", StopReason::Stop),
-        ])),
-    );
-
     let events: Vec<_> = agent.prompt("run").collect().await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -261,7 +255,7 @@ async fn convert_to_llm_hook_overrides_default_message_conversion() {
         }),
     );
 
-    let mut config = common::agent_config(faux_model(api));
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.hooks.convert_to_llm = Some(Arc::new(|messages, _resources| {
         Box::pin(async move {
             let combined = messages
@@ -340,7 +334,7 @@ async fn transform_context_hook_rewrites_messages_before_llm_call() {
         }),
     );
 
-    let mut config = common::agent_config(faux_model(api));
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.hooks.transform_context = Some(Arc::new(|messages| {
         Box::pin(async move {
             let replaced = vec![AgentMessage::UserText {
@@ -383,7 +377,14 @@ async fn prepare_next_turn_can_replace_messages_before_follow_up_turn() {
     let api = "hooks-prepare-next-turn";
     let calls = Arc::new(AtomicUsize::new(0));
     let hook_calls = calls.clone();
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("first.", StopReason::Stop),
+            FauxProvider::text_call("second.", StopReason::Stop),
+        ])),
+    );
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.follow_up_mode = QueueMode::All;
     config.hooks.prepare_next_turn = Some(Arc::new(move |ctx| {
         hook_calls.fetch_add(1, Ordering::SeqCst);
@@ -404,14 +405,6 @@ async fn prepare_next_turn_can_replace_messages_before_follow_up_turn() {
 
     let agent = Agent::new(config);
     agent.follow_up("follow-up");
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(FauxProvider::with_call_queue(vec![
-            FauxProvider::text_call("first.", StopReason::Stop),
-            FauxProvider::text_call("second.", StopReason::Stop),
-        ])),
-    );
-
     let events: Vec<_> = agent.prompt("run").collect().await;
 
     assert!(calls.load(Ordering::SeqCst) >= 1);

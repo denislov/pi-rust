@@ -124,11 +124,7 @@ fn two_tool_call_provider(call1_name: &str, call2_name: &str) -> Arc<dyn ApiProv
     ]))
 }
 
-fn make_two_tool_call_provider(
-    api: &str,
-    call1_name: &str,
-    call2_name: &str,
-) -> ProviderGuard<'static> {
+fn make_two_tool_call_provider(api: &str, call1_name: &str, call2_name: &str) -> ProviderGuard {
     ProviderGuard::register(api, two_tool_call_provider(call1_name, call2_name))
 }
 
@@ -137,7 +133,12 @@ async fn parallel_tools_share_one_virtual_delay_while_sequential_tools_wait_per_
     let api_par = "parallel-faster-par";
     let api_seq = "parallel-faster-seq";
 
-    let mut config_par = common::agent_config(faux_model(api_par));
+    let _provider_guard = ProviderGuard::register_many(vec![
+        (api_par.to_string(), two_tool_call_provider("slow", "fast")),
+        (api_seq.to_string(), two_tool_call_provider("slow", "fast")),
+    ]);
+
+    let mut config_par = _provider_guard.agent_config(faux_model(api_par));
     config_par.tool_execution = ToolExecutionMode::Parallel;
     config_par.max_turns = Some(5);
 
@@ -156,11 +157,6 @@ async fn parallel_tools_share_one_virtual_delay_while_sequential_tools_wait_per_
         par_probe,
     ));
 
-    let _provider_guard = ProviderGuard::register_many(vec![
-        (api_par.to_string(), two_tool_call_provider("slow", "fast")),
-        (api_seq.to_string(), two_tool_call_provider("slow", "fast")),
-    ]);
-
     let par_task = tokio::spawn(collect_prompt_events(agent_par));
     assert_eq!(recv_tool_signal(&mut par_started).await, "slow");
     assert_eq!(recv_tool_signal(&mut par_started).await, "fast");
@@ -177,7 +173,7 @@ async fn parallel_tools_share_one_virtual_delay_while_sequential_tools_wait_per_
     parallel_end_events.sort();
     assert_eq!(parallel_end_events, vec!["fast", "slow"]);
 
-    let mut config_seq = common::agent_config(faux_model(api_seq));
+    let mut config_seq = _provider_guard.agent_config(faux_model(api_seq));
     config_seq.tool_execution = ToolExecutionMode::Sequential;
     config_seq.max_turns = Some(5);
 
@@ -216,7 +212,8 @@ async fn parallel_tools_share_one_virtual_delay_while_sequential_tools_wait_per_
 #[tokio::test(start_paused = true)]
 async fn parallel_tool_results_are_appended_in_assistant_order() {
     let api = "parallel-order";
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = make_two_tool_call_provider(api, "slow", "fast");
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     config.max_turns = Some(5);
 
@@ -231,8 +228,6 @@ async fn parallel_tool_results_are_appended_in_assistant_order() {
         PARALLEL_TOOLS_FAST_DELAY_MS,
         "fast_result",
     ));
-
-    let _provider_guard = make_two_tool_call_provider(api, "slow", "fast");
 
     let mut stream = agent.prompt("go");
     while stream.next().await.is_some() {}
@@ -251,7 +246,8 @@ async fn parallel_tool_results_are_appended_in_assistant_order() {
 #[tokio::test(start_paused = true)]
 async fn parallel_tool_end_events_are_emitted_in_completion_order() {
     let api = "parallel-event-order";
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = make_two_tool_call_provider(api, "slow", "fast");
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     config.max_turns = Some(5);
 
@@ -267,8 +263,6 @@ async fn parallel_tool_end_events_are_emitted_in_completion_order() {
         "fast_result",
     ));
 
-    let _provider_guard = make_two_tool_call_provider(api, "slow", "fast");
-
     let mut stream = agent.prompt("go");
     let mut end_events = Vec::new();
     while let Some(event) = stream.next().await {
@@ -283,7 +277,8 @@ async fn parallel_tool_end_events_are_emitted_in_completion_order() {
 #[tokio::test(start_paused = true)]
 async fn per_tool_sequential_override_forces_batch_sequential() {
     let api = "parallel-override";
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = make_two_tool_call_provider(api, "slow", "fast");
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     config.max_turns = Some(5);
 
@@ -299,8 +294,6 @@ async fn per_tool_sequential_override_forces_batch_sequential() {
         probed_delayed_tool("fast", PARALLEL_TOOLS_SHARED_DELAY_MS, "fast_result", probe);
     fast_tool.execution_mode = Some(ToolExecutionMode::Sequential);
     agent.add_tool(fast_tool);
-
-    let _provider_guard = make_two_tool_call_provider(api, "slow", "fast");
 
     let task = tokio::spawn(collect_prompt_events(agent));
     assert_eq!(recv_tool_signal(&mut started).await, "slow");

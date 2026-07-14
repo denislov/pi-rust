@@ -38,13 +38,16 @@ fn test_model(api_key: &str) -> Model {
     }
 }
 
-fn test_config(api_key: &str) -> AgentConfig {
+fn test_config(api_key: &str, provider: Option<&ProviderGuard>) -> AgentConfig {
+    let base = provider
+        .map(|provider| provider.agent_config(test_model(api_key)))
+        .unwrap_or_else(|| common::agent_config(test_model(api_key)));
     AgentConfig {
         model: test_model(api_key),
         system_prompt: Some("Be helpful.".into()),
         max_turns: Some(5),
         stream_options: None,
-        ..common::agent_config(test_model(api_key))
+        ..base
     }
 }
 
@@ -90,7 +93,7 @@ async fn single_turn_text_response() {
     let provider = Arc::new(TestProvider::new(vec![text_turn("Hello, world!")]));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
 
     let stream = agent.prompt("hi");
     let events: Vec<_> = stream.collect().await;
@@ -118,7 +121,7 @@ async fn single_turn_text_response() {
 async fn llm_events_stream_before_provider_done() {
     let (release_tx, release_rx) = oneshot::channel::<()>();
     let release_rx = Arc::new(Mutex::new(Some(release_rx)));
-    let mut config = test_config("live-stream-provider");
+    let mut config = test_config("live-stream-provider", None);
     config.provider_streamer = Some(Arc::new(move |_model, _context, _opts| {
         let release_rx = release_rx.clone();
         Box::pin(async_stream::stream! {
@@ -176,7 +179,7 @@ async fn follow_up_queued_during_provider_turn_is_not_lost_and_continues() {
     let (started_tx, mut started_rx) = mpsc::unbounded_channel::<()>();
     let (release_tx, release_rx) = oneshot::channel::<()>();
     let release_rx = Arc::new(Mutex::new(Some(release_rx)));
-    let mut config = test_config("live-follow-up-provider");
+    let mut config = test_config("live-follow-up-provider", None);
     config.provider_streamer = Some(Arc::new(move |_model, context, _opts| {
         let call = calls_for_streamer.fetch_add(1, Ordering::SeqCst) + 1;
         let started_tx = started_tx.clone();
@@ -244,7 +247,7 @@ async fn steer_queued_during_tool_turn_is_not_lost_before_next_provider_call() {
     let calls_for_streamer = calls.clone();
     let saw_steer = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let saw_steer_for_streamer = saw_steer.clone();
-    let mut config = test_config("live-steer-tool");
+    let mut config = test_config("live-steer-tool", None);
     config.provider_streamer = Some(Arc::new(move |_model, context, _opts| {
         let call = calls_for_streamer.fetch_add(1, Ordering::SeqCst) + 1;
         let saw_steer_for_streamer = saw_steer_for_streamer.clone();
@@ -322,7 +325,7 @@ async fn provider_override_set_during_inflight_turn_survives_current_writeback()
     let release_rx = Arc::new(Mutex::new(Some(release_rx)));
     let observed_system_prompts = Arc::new(Mutex::new(Vec::new()));
     let observed_for_streamer = observed_system_prompts.clone();
-    let mut config = test_config("override-race-provider");
+    let mut config = test_config("override-race-provider", None);
     config.system_prompt = None;
     config.provider_streamer = Some(Arc::new(move |_model, context, _opts| {
         let call = calls_for_streamer.fetch_add(1, Ordering::SeqCst) + 1;
@@ -405,7 +408,7 @@ async fn tool_use_turn_executes_tool() {
     ]));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
 
     let tool = AgentTool {
         name: "echo".into(),
@@ -457,7 +460,7 @@ async fn tool_update_events_stream_before_tool_end() {
     ]));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let mut config = test_config(api_key);
+    let mut config = test_config(api_key, Some(&_provider_guard));
     config.tool_execution = ToolExecutionMode::Sequential;
     let agent = Agent::new(config);
     agent.add_tool(AgentTool {
@@ -516,7 +519,7 @@ async fn unknown_tool_yields_error_content_and_continues() {
     ]));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
 
     let stream = agent.prompt("use nonexistent tool");
     let events: Vec<_> = stream.collect().await;
@@ -556,7 +559,7 @@ async fn max_turns_exceeded_yields_error() {
     let provider = Arc::new(TestProvider::new(turns));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let mut config = test_config(api_key);
+    let mut config = test_config(api_key, Some(&_provider_guard));
     config.max_turns = Some(2);
 
     let agent = Agent::new(config);
@@ -603,7 +606,7 @@ async fn unlimited_max_turns_runs_to_natural_completion() {
     let provider = Arc::new(TestProvider::new(turns));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let mut config = test_config(api_key);
+    let mut config = test_config(api_key, Some(&_provider_guard));
     config.max_turns = None;
 
     let agent = Agent::new(config);
@@ -648,7 +651,7 @@ async fn abort_mid_turn_yields_error() {
     let provider = Arc::new(TestProvider::new(vec![text_turn("Hello")]));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
 
     let stream = agent.prompt("hi");
     agent.abort();
@@ -677,7 +680,7 @@ async fn provider_error_event_preserves_error_message() {
     }]));
     let _provider_guard = ProviderGuard::register(api_key, provider);
 
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
 
     let stream = agent.prompt("hi");
     let events: Vec<_> = stream.collect().await;
@@ -694,7 +697,7 @@ async fn provider_error_event_preserves_error_message() {
 async fn run_returns_error_when_no_messages() {
     let api_key = "test-run-empty";
     let _provider_guard = ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![])));
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
     let result = agent.run();
     assert!(result.is_err());
     let err = result.err().unwrap();
@@ -705,7 +708,7 @@ async fn run_returns_error_when_no_messages() {
 async fn run_returns_error_when_last_message_is_assistant() {
     let api_key = "test-run-assistant-tail";
     let _provider_guard = ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![])));
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
     agent.add_message(AgentMessage::UserText {
         message_id: "u".into(),
         text: "hi".into(),
@@ -725,7 +728,7 @@ async fn run_succeeds_when_last_message_is_user() {
     let api_key = "test-run-user-tail";
     let _provider_guard =
         ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![text_turn("ok")])));
-    let agent = Agent::new(test_config(api_key));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
     agent.add_message(AgentMessage::UserText {
         message_id: "u".into(),
         text: "hi".into(),

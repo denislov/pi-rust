@@ -1,15 +1,15 @@
-#![allow(dead_code, deprecated)]
+#![allow(dead_code)]
 
 use async_stream::stream;
 use pi_agent_core::{AgentConfig, ProviderStreamer};
 use pi_ai::providers::faux::FauxResponse;
-use pi_ai::registry::ApiProvider;
+use pi_ai::registry::{AiClient, ApiProvider};
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 /// A scripted LLM response for one turn.
 pub struct ScriptedTurn {
@@ -34,55 +34,45 @@ impl TestProvider {
     }
 }
 
-static PROVIDER_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
-
-pub struct ProviderGuard<'a> {
-    _lock: MutexGuard<'a, ()>,
-    previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+pub struct ProviderGuard {
+    ai_client: AiClient,
 }
 
-impl ProviderGuard<'static> {
+impl ProviderGuard {
     pub fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
         Self::register_many(vec![(api.into(), provider)])
     }
 
     pub fn register_many(providers: Vec<(String, Arc<dyn ApiProvider>)>) -> Self {
-        let lock = PROVIDER_REGISTRY_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut previous = Vec::with_capacity(providers.len());
+        let ai_client = AiClient::new();
         for (api, provider) in providers {
-            let prior = pi_ai::registry::lookup(&api);
-            pi_ai::registry::register(&api, provider);
-            previous.push((api, prior));
+            ai_client.register_provider(api, provider);
         }
-        Self {
-            _lock: lock,
-            previous,
-        }
+        Self { ai_client }
     }
-}
 
-impl Drop for ProviderGuard<'_> {
-    fn drop(&mut self) {
-        for (api, previous) in self.previous.drain(..).rev() {
-            match previous {
-                Some(provider) => pi_ai::registry::register(&api, provider),
-                None => pi_ai::registry::unregister(&api),
-            }
-        }
+    pub fn provider_streamer(&self) -> ProviderStreamer {
+        let ai_client = self.ai_client.clone();
+        Arc::new(move |model, context, options| ai_client.stream_model(model, context, options))
+    }
+
+    pub fn ai_client(&self) -> AiClient {
+        self.ai_client.clone()
+    }
+
+    pub fn agent_config(&self, model: Model) -> AgentConfig {
+        let mut config = AgentConfig::new(model);
+        self.install(&mut config);
+        config
+    }
+
+    pub fn install(&self, config: &mut AgentConfig) {
+        config.provider_streamer = Some(self.provider_streamer());
     }
 }
 
 pub fn agent_config(model: Model) -> AgentConfig {
-    let mut config = AgentConfig::new(model);
-    config.provider_streamer = Some(global_test_provider_streamer());
-    config
-}
-
-#[allow(deprecated)]
-pub fn global_test_provider_streamer() -> ProviderStreamer {
-    Arc::new(|model, context, options| pi_ai::stream_model(model, context, options))
+    AgentConfig::new(model)
 }
 
 impl ApiProvider for TestProvider {

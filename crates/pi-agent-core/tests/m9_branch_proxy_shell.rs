@@ -161,7 +161,7 @@ async fn branch_summary_generation_uses_faux_provider_and_adds_preamble() {
             replace_instructions: false,
             reserve_tokens: 16_384,
         },
-        Some(common::global_test_provider_streamer()),
+        Some(_provider_guard.provider_streamer()),
     )
     .await
     .unwrap();

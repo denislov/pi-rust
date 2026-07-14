@@ -25,7 +25,7 @@ fn faux_model(api: &str) -> Model {
     }
 }
 
-fn register_simple_text(api: &str, text: &str) -> ProviderGuard<'static> {
+fn register_simple_text(api: &str, text: &str) -> ProviderGuard {
     ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![FauxCall {

@@ -628,7 +628,13 @@ async fn runtime_compaction_node_uses_configured_provider_streamer_without_globa
 #[tokio::test]
 async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
     let api = "agent-turn-flow-runtime-compaction";
-    let mut config = common::agent_config(common::faux_model_with_window(api, 100));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("summary of old context", StopReason::Stop),
+        ])),
+    );
+    let mut config = _provider_guard.agent_config(common::faux_model_with_window(api, 100));
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings {
             enabled: true,
@@ -641,13 +647,6 @@ async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
     let agent = Agent::new(config);
     agent.add_message(user_msg("old_1", &"old context ".repeat(40)));
     agent.add_message(user_msg("old_2", &"more old context ".repeat(40)));
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(FauxProvider::with_call_queue(vec![
-            FauxProvider::text_call("summary of old context", StopReason::Stop),
-        ])),
-    );
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("maybe_compact_runtime_context").unwrap();
@@ -689,6 +688,15 @@ async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
 async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
     let api = "agent-turn-flow-execute-tool";
     let mut config = common::agent_config(common::faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({"text": "hello"}),
+        )])),
+    );
+    _provider_guard.install(&mut config);
     config.tool_execution = ToolExecutionMode::Sequential;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
@@ -704,15 +712,6 @@ async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
                 .to_string())
         },
     ));
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
-            "call_1",
-            "echo",
-            serde_json::json!({"text": "hello"}),
-        )])),
-    );
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -764,6 +763,15 @@ async fn execute_tools_node_honors_before_hook_block() {
     let api = "agent-turn-flow-execute-before-hook";
     let calls = Arc::new(AtomicUsize::new(0));
     let mut config = common::agent_config(common::faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+    _provider_guard.install(&mut config);
     config.tool_execution = ToolExecutionMode::Sequential;
     config.hooks.before_tool_call = Some(Arc::new(|ctx| {
         assert_eq!(ctx.tool_name, "echo");
@@ -792,15 +800,6 @@ async fn execute_tools_node_honors_before_hook_block() {
             })
         }),
     });
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
-            "call_1",
-            "echo",
-            serde_json::json!({}),
-        )])),
-    );
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -844,6 +843,15 @@ async fn execute_tools_node_honors_before_hook_block() {
 async fn execute_tools_node_honors_after_hook_result_update() {
     let api = "agent-turn-flow-execute-after-hook";
     let mut config = common::agent_config(common::faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+    _provider_guard.install(&mut config);
     config.tool_execution = ToolExecutionMode::Sequential;
     config.hooks.after_tool_call = Some(Arc::new(|ctx| {
         assert_eq!(ctx.tool_name, "echo");
@@ -868,15 +876,6 @@ async fn execute_tools_node_honors_after_hook_result_update() {
         serde_json::json!({"type": "object"}),
         |_| async { Ok("original".to_string()) },
     ));
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
-            "call_1",
-            "echo",
-            serde_json::json!({}),
-        )])),
-    );
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -924,6 +923,15 @@ async fn execute_tools_node_honors_after_hook_result_update() {
 async fn execute_tools_node_emits_tool_update_events_before_end() {
     let api = "agent-turn-flow-execute-tool-update";
     let mut config = common::agent_config(common::faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+    _provider_guard.install(&mut config);
     config.tool_execution = ToolExecutionMode::Sequential;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
@@ -947,15 +955,6 @@ async fn execute_tools_node_emits_tool_update_events_before_end() {
             })
         }),
     });
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
-            "call_1",
-            "echo",
-            serde_json::json!({}),
-        )])),
-    );
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -1008,6 +1007,15 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
     let prepare_calls = Arc::new(AtomicUsize::new(0));
     let prepare_calls_for_hook = prepare_calls.clone();
     let mut config = common::agent_config(common::faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
+            "call_1",
+            "echo",
+            serde_json::json!({}),
+        )])),
+    );
+    _provider_guard.install(&mut config);
     config.tool_execution = ToolExecutionMode::Sequential;
     config.hooks.after_tool_call = Some(Arc::new(|_| {
         Box::pin(async move {
@@ -1034,15 +1042,6 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
         serde_json::json!({"type": "object"}),
         |_| async { Ok("ok".to_string()) },
     ));
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
-            "call_1",
-            "echo",
-            serde_json::json!({}),
-        )])),
-    );
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -1092,6 +1091,18 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
 async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant_order() {
     let api = "agent-turn-flow-execute-parallel-tools";
     let mut config = common::agent_config(common::faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(common::TestProvider::new(vec![two_tool_use_turn(
+            "call_slow",
+            "slow",
+            serde_json::json!({}),
+            "call_fast",
+            "fast",
+            serde_json::json!({}),
+        )])),
+    );
+    _provider_guard.install(&mut config);
     config.tool_execution = ToolExecutionMode::Parallel;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use both tools"));
@@ -1108,18 +1119,6 @@ async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant
         "fast_result",
         probe,
     ));
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(common::TestProvider::new(vec![two_tool_use_turn(
-            "call_slow",
-            "slow",
-            serde_json::json!({}),
-            "call_fast",
-            "fast",
-            serde_json::json!({}),
-        )])),
-    );
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -1194,10 +1193,6 @@ async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant
 async fn execute_tools_node_records_unknown_tool_as_error_result() {
     let api = "agent-turn-flow-execute-unknown-tool";
     let mut config = common::agent_config(common::faux_model(api));
-    config.tool_execution = ToolExecutionMode::Sequential;
-    let agent = Agent::new(config);
-    agent.add_message(user_msg("user_0", "use the tool"));
-
     let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
@@ -1206,6 +1201,10 @@ async fn execute_tools_node_records_unknown_tool_as_error_result() {
             serde_json::json!({}),
         )])),
     );
+    _provider_guard.install(&mut config);
+    config.tool_execution = ToolExecutionMode::Sequential;
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -1257,16 +1256,15 @@ async fn execute_tools_node_records_unknown_tool_as_error_result() {
 #[tokio::test]
 async fn provider_stream_node_records_llm_events_and_final_assistant_message() {
     let api = "agent-turn-flow-provider-stream";
-    let config = common::agent_config(common::faux_model(api));
-    let agent = Agent::new(config);
-    agent.add_message(user_msg("user_0", "hello"));
-
     let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("final answer", StopReason::Stop),
         ])),
     );
+    let config = _provider_guard.agent_config(common::faux_model(api));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -1297,11 +1295,10 @@ async fn provider_stream_node_records_llm_events_and_final_assistant_message() {
 #[tokio::test]
 async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
     let api = "agent-turn-flow-provider-error";
-    let config = common::agent_config(common::faux_model(api));
+    let _provider_guard = ProviderGuard::register(api, Arc::new(common::TestProvider::new(vec![])));
+    let config = _provider_guard.agent_config(common::faux_model(api));
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
-
-    let _provider_guard = ProviderGuard::register(api, Arc::new(common::TestProvider::new(vec![])));
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -1329,16 +1326,15 @@ async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
 #[tokio::test]
 async fn decide_node_finishes_text_response_and_appends_assistant_message() {
     let api = "agent-turn-flow-decide-done";
-    let config = common::agent_config(common::faux_model(api));
-    let agent = Agent::new(config);
-    agent.add_message(user_msg("user_0", "hello"));
-
     let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("final answer", StopReason::Stop),
         ])),
     );
+    let config = _provider_guard.agent_config(common::faux_model(api));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "hello"));
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();
@@ -1378,10 +1374,6 @@ async fn decide_node_finishes_text_response_and_appends_assistant_message() {
 #[tokio::test]
 async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
     let api = "agent-turn-flow-decide-tools";
-    let config = common::agent_config(common::faux_model(api));
-    let agent = Agent::new(config);
-    agent.add_message(user_msg("user_0", "use the tool"));
-
     let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(common::TestProvider::new(vec![common::tool_use_turn(
@@ -1390,6 +1382,9 @@ async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
             serde_json::json!({"text": "hello"}),
         )])),
     );
+    let config = _provider_guard.agent_config(common::faux_model(api));
+    let agent = Agent::new(config);
+    agent.add_message(user_msg("user_0", "use the tool"));
 
     let mut context = AgentTurnContext::from_agent(&agent);
     let mut flow = Flow::new("prepare_context").unwrap();

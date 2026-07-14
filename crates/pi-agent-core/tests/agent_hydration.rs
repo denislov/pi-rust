@@ -15,7 +15,7 @@ async fn prompt_starts_after_hydrated_messages() {
             "second answer",
         )])),
     );
-    let mut config = common::agent_config(faux_model(api));
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.system_prompt = Some("system".into());
     config.max_turns = Some(5);
     let agent = Agent::with_messages(

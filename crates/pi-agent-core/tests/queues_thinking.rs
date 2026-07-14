@@ -19,7 +19,13 @@ fn non_reasoning_model(api: &str) -> Model {
 #[tokio::test]
 async fn steer_injects_user_message_before_next_model_call() {
     let api = "steer-test";
-    let mut config = common::agent_config(faux_model(api));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("I see the steered message.", StopReason::Stop),
+        ])),
+    );
+    let mut config = _provider_guard.agent_config(faux_model(api));
     config.steering_mode = QueueMode::All;
     config.max_turns = Some(5);
 
@@ -27,13 +33,6 @@ async fn steer_injects_user_message_before_next_model_call() {
 
     // Queue a steer message before prompt
     agent.steer("steered message");
-
-    let _provider_guard = ProviderGuard::register(
-        api,
-        Arc::new(FauxProvider::with_call_queue(vec![
-            FauxProvider::text_call("I see the steered message.", StopReason::Stop),
-        ])),
-    );
 
     let stream = agent.prompt("initial");
     let events: Vec<_> = stream.collect().await;
@@ -64,12 +63,6 @@ async fn steer_injects_user_message_before_next_model_call() {
 #[tokio::test]
 async fn follow_up_continues_after_stop() {
     let api = "followup-test";
-    let mut config = common::agent_config(faux_model(api));
-    config.follow_up_mode = QueueMode::All;
-    config.max_turns = Some(5);
-
-    let agent = Agent::new(config);
-
     let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
@@ -77,6 +70,11 @@ async fn follow_up_continues_after_stop() {
             FauxProvider::text_call("Follow-up response.", StopReason::Stop),
         ])),
     );
+    let mut config = _provider_guard.agent_config(faux_model(api));
+    config.follow_up_mode = QueueMode::All;
+    config.max_turns = Some(5);
+
+    let agent = Agent::new(config);
 
     // Set up follow-up before first prompt
     agent.follow_up("follow up question");
@@ -107,12 +105,6 @@ async fn follow_up_continues_after_stop() {
 #[tokio::test]
 async fn one_at_a_time_drains_one_steering_message() {
     let api = "one-at-a-time";
-    let mut config = common::agent_config(faux_model(api));
-    config.steering_mode = QueueMode::OneAtATime;
-    config.max_turns = Some(5);
-
-    let agent = Agent::new(config);
-
     let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
@@ -120,6 +112,11 @@ async fn one_at_a_time_drains_one_steering_message() {
             FauxProvider::text_call("seen steer 2", StopReason::Stop),
         ])),
     );
+    let mut config = _provider_guard.agent_config(faux_model(api));
+    config.steering_mode = QueueMode::OneAtATime;
+    config.max_turns = Some(5);
+
+    let agent = Agent::new(config);
 
     agent.steer("steer 1");
     agent.steer("steer 2");
@@ -145,17 +142,16 @@ async fn one_at_a_time_drains_one_steering_message() {
 #[tokio::test]
 async fn clear_queues_removes_all_queued_messages() {
     let api = "clear-queues";
-    let mut config = common::agent_config(faux_model(api));
-    config.max_turns = Some(3);
-
-    let agent = Agent::new(config);
-
     let _provider_guard = ProviderGuard::register(
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::text_call("response", StopReason::Stop),
         ])),
     );
+    let mut config = _provider_guard.agent_config(faux_model(api));
+    config.max_turns = Some(3);
+
+    let agent = Agent::new(config);
 
     agent.steer("steer msg");
     agent.follow_up("followup msg");
