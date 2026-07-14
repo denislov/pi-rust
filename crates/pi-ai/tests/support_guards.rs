@@ -3,7 +3,7 @@ mod support;
 use std::sync::Arc;
 
 use async_stream::stream;
-use pi_ai::registry::ApiProvider;
+use pi_ai::api::ApiProvider;
 use pi_ai::stream::EventStream;
 use pi_ai::types::{
     AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,

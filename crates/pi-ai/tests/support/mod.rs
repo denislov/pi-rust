@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pi_ai::registry::{AiClient, ApiProvider};
+use pi_ai::api::{AiClient, ApiProvider};
 
 #[allow(dead_code)]
 static ENV_LOCK: Mutex<()> = Mutex::new(());

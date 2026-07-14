@@ -2,8 +2,8 @@ mod support;
 
 use bytes::Bytes;
 use futures::stream;
+use pi_ai::api::{ApiProvider, ProviderRegistry, register_builtins_into};
 use pi_ai::providers::mistral;
-use pi_ai::registry::ApiProvider;
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StopReason, StreamOptions, ThinkingConfig, Tool,
@@ -230,7 +230,7 @@ async fn mistral_provider_missing_key_returns_error_event() {
 
 #[test]
 fn builtins_register_mistral_api() {
-    let registry = pi_ai::registry::ProviderRegistry::new();
-    pi_ai::providers::register_builtins_into(&registry);
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
     assert!(registry.lookup("mistral-conversations").is_some());
 }

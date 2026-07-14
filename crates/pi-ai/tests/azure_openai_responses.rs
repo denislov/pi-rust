@@ -2,8 +2,8 @@ mod support;
 
 use bytes::Bytes;
 use futures::stream;
+use pi_ai::api::{ApiProvider, ProviderRegistry, register_builtins_into};
 use pi_ai::providers::azure_openai_responses;
-use pi_ai::registry::ApiProvider;
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StreamOptions,
@@ -149,7 +149,7 @@ async fn azure_provider_missing_key_returns_error_event() {
 
 #[test]
 fn builtins_register_azure_openai_responses_api() {
-    let registry = pi_ai::registry::ProviderRegistry::new();
-    pi_ai::providers::register_builtins_into(&registry);
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
     assert!(registry.lookup("azure-openai-responses").is_some());
 }

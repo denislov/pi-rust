@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::stream;
+use pi_ai::api::{ProviderRegistry, register_builtins_into};
 use pi_ai::providers::google;
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput, StopReason,
@@ -77,8 +78,8 @@ async fn google_fixture_maps_thinking_tool_and_done() {
 
 #[test]
 fn builtins_register_google_api() {
-    let registry = pi_ai::registry::ProviderRegistry::new();
-    pi_ai::providers::register_builtins_into(&registry);
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
     assert!(registry.lookup("google-generative-ai").is_some());
 }
 

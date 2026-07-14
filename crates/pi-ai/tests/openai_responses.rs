@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::stream;
+use pi_ai::api::{ProviderRegistry, register_builtins_into};
 use pi_ai::providers::openai::responses;
 use pi_ai::types::{AssistantMessageEvent, ContentBlock, Model, ModelCost, ModelInput, StopReason};
 fn test_model() -> Model {
@@ -75,8 +76,8 @@ async fn responses_fixture_maps_text_tool_and_done() {
 
 #[test]
 fn builtins_register_openai_responses_api() {
-    let registry = pi_ai::registry::ProviderRegistry::new();
-    pi_ai::providers::register_builtins_into(&registry);
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
     assert!(registry.lookup("openai-responses").is_some());
 }
 

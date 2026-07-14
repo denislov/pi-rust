@@ -1,7 +1,7 @@
 mod support;
 
+use pi_ai::api::{ApiProvider, ProviderRegistry, register_builtins_into};
 use pi_ai::providers::bedrock;
-use pi_ai::registry::ApiProvider;
 use pi_ai::types::{
     AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost, ModelInput,
     StopReason, StreamOptions, Tool,
@@ -306,7 +306,7 @@ async fn bedrock_provider_missing_credentials_returns_error_event() {
 
 #[test]
 fn builtins_register_bedrock_api() {
-    let registry = pi_ai::registry::ProviderRegistry::new();
-    pi_ai::providers::register_builtins_into(&registry);
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
     assert!(registry.lookup("bedrock-converse-stream").is_some());
 }

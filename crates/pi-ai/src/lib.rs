@@ -6,8 +6,7 @@ pub mod images;
 pub mod models;
 #[doc(hidden)]
 pub mod providers;
-#[doc(hidden)]
-pub mod registry;
+mod registry;
 #[doc(hidden)]
 pub mod stream;
 #[doc(hidden)]
