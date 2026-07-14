@@ -471,6 +471,31 @@ impl CodingAgentClientConnection {
         }
     }
 
+    pub fn reconnect_from_cursor(
+        &self,
+        cursor: &CodingAgentSnapshotCursor,
+    ) -> Result<CodingAgentReconnect, CodingSessionError> {
+        if cursor.stream_id != self.snapshot.session.session_id {
+            return Err(CodingSessionError::Input {
+                message: format!(
+                    "snapshot cursor belongs to stream {}, expected {}",
+                    cursor.stream_id, self.snapshot.session.session_id
+                ),
+            });
+        }
+        if cursor.snapshot_protocol_major != UI_SNAPSHOT_PROTOCOL_VERSION.major {
+            return Err(CodingSessionError::UnsupportedProtocolVersion {
+                family: UI_SNAPSHOT_PROTOCOL_VERSION.family.into(),
+                requested: format!(
+                    "{}.{}.{}",
+                    UI_SNAPSHOT_PROTOCOL_VERSION.family, cursor.snapshot_protocol_major, 0
+                ),
+                supported: UI_SNAPSHOT_PROTOCOL_VERSION.to_string(),
+            });
+        }
+        self.reconnect(cursor.last_event_sequence)
+    }
+
     pub fn set_prompt_draft(
         &self,
         id: CodingAgentDraftId,

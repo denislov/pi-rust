@@ -1109,6 +1109,41 @@ async fn client_connection_replays_unacknowledged_delivery_and_ack_is_explicit()
 }
 
 #[tokio::test]
+async fn reconnect_from_cursor_validates_stream_and_snapshot_major() {
+    let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let connection = session
+        .connect(CodingAgentClientId::new("cursor-validation-client"))
+        .unwrap();
+    let cursor = connection.state().unwrap().cursor;
+    assert!(matches!(
+        connection.reconnect_from_cursor(&cursor),
+        Ok(pi_coding_agent::api::CodingAgentReconnect::Replayed { .. })
+    ));
+
+    let mut wrong_stream = cursor.clone();
+    wrong_stream.stream_id = "other-session".into();
+    assert_eq!(
+        connection
+            .reconnect_from_cursor(&wrong_stream)
+            .unwrap_err()
+            .code(),
+        "input"
+    );
+
+    let mut wrong_major = cursor;
+    wrong_major.snapshot_protocol_major += 1;
+    assert_eq!(
+        connection
+            .reconnect_from_cursor(&wrong_major)
+            .unwrap_err()
+            .code(),
+        "unsupported_protocol_version"
+    );
+}
+
+#[tokio::test]
 async fn submission_lease_drop_preserves_draft_and_releases_exclusivity() {
     let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
         .await
