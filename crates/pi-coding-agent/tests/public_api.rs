@@ -2,10 +2,16 @@ mod support;
 
 use std::collections::HashMap;
 use std::fs;
+use std::sync::{Arc, Mutex};
 
 use pi_agent_core::AgentResources;
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::types::{Model, ModelCost, ModelInput};
+use pi_ai::registry::ApiProvider;
+use pi_ai::stream::EventStream;
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
+    StopReason, StreamOptions,
+};
 use pi_coding_agent::api::{
     AgentInvocationOptions, AgentInvocationOutcome, AgentProfile, AgentTeamMemberOutcome,
     AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CapabilityStatus, CliArgs,
@@ -24,22 +30,22 @@ use pi_coding_agent::api::{
     CodingAgentProductEventReceiver, CodingAgentProductEventReplacement,
     CodingAgentProductEventTerminalOperation, CodingAgentProductEventTerminalOperationKind,
     CodingAgentProductEventTerminalStatus, CodingAgentProductEventUsage,
-    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSession,
-    CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
-    CodingAgentSessionProductEvent, CodingAgentSessionSummary, CodingAgentSessionView,
-    CodingAgentShutdownOutcome, CodingAgentSnapshot, CodingAgentSnapshotCursor,
-    CodingAgentSubmittedEventDurability, CodingAgentSubmittedTerminalAnchor,
-    CodingAgentTeamProductEvent, CodingAgentTerminalUncertainty, CodingAgentToolProductEvent,
-    CodingAgentWorkflowProductEvent, CodingDiagnostic, CodingDiagnosticSeverity,
-    CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
-    DetectionConfidence, DetectionSource, ModelRotation, ModelRotationEntry,
-    PendingDelegationConfirmation, PrintModeOptions, ProfileDiagnostic, ProfileId,
-    PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
-    ProtocolDelegationFoldedBlock, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
-    ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor,
-    ResolvedTheme, ResourceLoadOptions, RpcCapabilities, RpcCapabilityStatus, RpcCommand,
-    RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata, RpcResponse,
-    RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent,
+    CodingAgentRuntimeShutdownHandle, CodingAgentSession, CodingAgentSessionExport,
+    CodingAgentSessionExportItem, CodingAgentSessionOptions, CodingAgentSessionProductEvent,
+    CodingAgentSessionSummary, CodingAgentSessionView, CodingAgentShutdownOutcome,
+    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingAgentSubmittedEventDurability,
+    CodingAgentSubmittedTerminalAnchor, CodingAgentTeamProductEvent,
+    CodingAgentTerminalUncertainty, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+    CodingDiagnostic, CodingDiagnosticSeverity, CodingSessionError, ColorValue,
+    CompactionProtocolResult, CompactionReason, ContextFile, DetectionConfidence, DetectionSource,
+    ModelRotation, ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions,
+    ProfileDiagnostic, ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode,
+    PromptTurnOptions, PromptTurnOutcome, ProtocolDelegationFoldedBlock, ProtocolEvent,
+    ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS,
+    ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions, RpcCapabilities,
+    RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata,
+    RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
     SelfHealingEditRequest, SessionMode, StreamingBehavior, TeamProfile, TerminalTheme, ThemeBg,
@@ -773,6 +779,117 @@ async fn detach_wakes_a_blocked_reconnect_receiver_without_leaking_an_event() {
         CodingSessionError::Lifecycle {
             reason: CodingAgentLifecycleRejection::Detached
         }
+    );
+}
+
+struct ShutdownGateProvider {
+    started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+impl ApiProvider for ShutdownGateProvider {
+    fn stream(&self, model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        let started = self.started.lock().unwrap().take();
+        let release = self.release.lock().unwrap().take();
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            if let Some(started) = started {
+                started.send(()).unwrap();
+            }
+            if let Some(release) = release {
+                release.await.unwrap();
+            }
+            let mut message = AssistantMessage::empty("shutdown-gate", &model_id);
+            message.provider = Some("shutdown-gate".into());
+            message.content.push(ContentBlock::Text {
+                text: "drained".into(),
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
+#[tokio::test]
+async fn shutdown_drains_admitted_work_before_lifecycle_event_and_receiver_close() {
+    let api = "public-api-shutdown-gate";
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(ShutdownGateProvider {
+            started: Mutex::new(Some(started_tx)),
+            release: Mutex::new(Some(release_rx)),
+        }),
+    );
+    let prompt = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+        prompt: "drain me".into(),
+        model: model(api),
+        api_key: None,
+        auth_diagnostics: Vec::new(),
+        system_prompt: Some("test".into()),
+        max_turns: Some(1),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text("drain me".into()),
+    });
+    let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+        .await
+        .unwrap();
+    let shutdown: CodingAgentRuntimeShutdownHandle = session.runtime_shutdown_handle();
+    let mut events = session.subscribe_product_events_public();
+    let running = tokio::spawn(async move {
+        let outcome = session.run(CodingAgentOperation::Prompt(prompt)).await;
+        (session, outcome)
+    });
+    started_rx.await.unwrap();
+
+    shutdown.request_shutdown();
+    release_tx.send(()).unwrap();
+    let (mut session, outcome) = running.await.unwrap();
+    assert!(matches!(
+        outcome.unwrap(),
+        CodingAgentOperationOutcome::Prompt(_)
+    ));
+    assert_eq!(
+        session.shutdown().await.unwrap(),
+        CodingAgentShutdownOutcome::ShutDown
+    );
+
+    let mut saw_prompt_terminal = false;
+    loop {
+        let event = events.recv().await.unwrap();
+        match event.event() {
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptCompleted { .. },
+            ) => saw_prompt_terminal = true,
+            CodingAgentProductEventKind::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => {
+                assert!(
+                    saw_prompt_terminal,
+                    "shutdown preceded admitted terminal event"
+                );
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        events.recv().await.unwrap_err(),
+        CodingSessionError::Cancelled
+    );
+    assert_eq!(
+        session.shutdown().await.unwrap(),
+        CodingAgentShutdownOutcome::AlreadyShutDown
     );
 }
 
