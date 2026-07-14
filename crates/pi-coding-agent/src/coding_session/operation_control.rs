@@ -228,6 +228,7 @@ struct ActiveOperationIdentity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum CompactCancellationRejection {
     NoActiveOperation,
     ActiveOperationNotCompact,
@@ -235,10 +236,12 @@ pub(crate) enum CompactCancellationRejection {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub(crate) struct CompactCancellationHandle {
     shared: Arc<Mutex<OperationStateInner>>,
 }
 
+#[cfg(test)]
 impl CompactCancellationHandle {
     pub(crate) fn cancel(&self, operation_id: &str) -> Result<(), CompactCancellationRejection> {
         let shared = self.shared.lock().expect("operation state lock poisoned");
@@ -370,6 +373,7 @@ impl OperationControl {
         self.state.begin(kind, operation_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn compact_cancellation_handle(&self) -> CompactCancellationHandle {
         CompactCancellationHandle {
             shared: Arc::clone(&self.state.shared),

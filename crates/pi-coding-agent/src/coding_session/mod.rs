@@ -691,12 +691,6 @@ impl CodingAgentSession {
         Ok(CodingAgentShutdownOutcome::ShutDown)
     }
 
-    pub(crate) fn compact_cancellation_handle(
-        &self,
-    ) -> operation_control::CompactCancellationHandle {
-        self.operation_control.compact_cancellation_handle()
-    }
-
     fn emit_pending_startup_recovery_markers(&self) {
         let markers = {
             let mut markers = self.startup_recovery_markers.lock().unwrap();
@@ -6625,7 +6619,7 @@ runtime = "lua"
                 &operation,
             )
             .unwrap();
-        let cancellation = session.compact_cancellation_handle();
+        let cancellation = session.operation_control.compact_cancellation_handle();
         let task = tokio::spawn(async move {
             let result = session.run(operation).await;
             (session, result)

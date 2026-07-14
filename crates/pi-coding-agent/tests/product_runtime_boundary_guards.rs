@@ -190,7 +190,6 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "fork_session",
             "hydrate_current",
             "subscribe_product_events",
-            "compact_cancellation_handle",
             "ui_snapshot",
             "connect_client",
             "product_events_after",
