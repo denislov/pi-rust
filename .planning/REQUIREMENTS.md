@@ -32,8 +32,8 @@
 
 ### Boundary Hardening
 
-- [ ] **GUARD-01**: First-party adapter root ownership is independently discoverable or otherwise fail-closed against new unlisted adapter roots.
-- [ ] **GUARD-02**: External compile-fail fixtures bind failures to the expected forbidden symbol or span, not only broad diagnostic categories.
+- [x] **GUARD-01**: First-party adapter root ownership is independently discoverable or otherwise fail-closed against new unlisted adapter roots.
+- [x] **GUARD-02**: External compile-fail fixtures bind failures to the expected forbidden symbol or span, not only broad diagnostic categories.
 
 ## Future Requirements
 
@@ -66,8 +66,8 @@
 | CLIENT-04 | Phase 9 | Complete |
 | CONTROL-01 | Phase 8 | Complete |
 | CONTROL-02 | Phase 9 | Complete |
-| GUARD-01 | Phase 9 | Pending |
-| GUARD-02 | Phase 9 | Pending |
+| GUARD-01 | Phase 9 | Complete |
+| GUARD-02 | Phase 9 | Complete |
 
 **Coverage:** 14 v1 requirements, all mapped to a phase.
 

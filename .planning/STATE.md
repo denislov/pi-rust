@@ -4,17 +4,17 @@ milestone: v1.1
 milestone_name: Typed Product Events and Client Lifecycle Contract
 current_phase: 09
 current_phase_name: lifecycle-association-guards-and-closure
-status: executing
-stopped_at: Completed 09-06-PLAN.md
-last_updated: "2026-07-14T09:24:36.365Z"
+status: verifying
+stopped_at: Completed 09-08-PLAN.md
+last_updated: "2026-07-14T09:53:29.791Z"
 last_activity: 2026-07-14
-last_activity_desc: Completed Phase 09 Plan 06 RPC lifecycle projection
+last_activity_desc: Completed Phase 09 Plan 08 runtime boundary closure
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 23
-  completed_plans: 22
-  percent: 75
+  completed_plans: 23
+  percent: 100
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 
 ## Current Position
 
-Phase: 09 (lifecycle-association-guards-and-closure) — EXECUTING
+Phase: 09 (lifecycle-association-guards-and-closure) — VERIFYING
 Plan: 8 of 8
-Status: Ready to execute
-Last activity: 2026-07-14 — Completed Phase 09 Plan 06 RPC lifecycle projection
+Status: Phase complete — ready for verification
+Last activity: 2026-07-14 — Completed Phase 09 Plan 08 runtime boundary closure
 
 ## Performance Metrics
 
@@ -89,6 +89,7 @@ Last activity: 2026-07-14 — Completed Phase 09 Plan 06 RPC lifecycle projectio
 | Phase 09 P05 | 29min | 2 tasks | 12 files |
 | Phase 09 P06 | 16min | 2 tasks | 9 files |
 | Phase 09 P07 | 24 min | 2 tasks | 3 files |
+| Phase 09 P08 | 23 min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -153,6 +154,9 @@ Recent decisions affecting current work:
 - [Phase 09]: Allow exact submitted terminal finalization during ShuttingDown while continuing to reject ordinary client mutation and all post-ShutDown mutation. — Admitted work must publish exact terminal evidence during drain, while completed shutdown must remain closed to mutation.
 - [Phase 09]: Keep embedded interactive-loop exit detach-only; reserve runtime shutdown for the process-facing owner boundary. — Closing one UI must not terminate shared admitted work.
 - [Phase 09]: Return the unique CodingAgentSession owner through LoopResult before invoking shutdown Phase B. — Only the restored process owner has authority to drain and finalize runtime shutdown.
+- [Phase 09]: 09-08: Discover adapter candidates recursively before exact three-class ownership classification. — New production boundaries must fail closed rather than escape a fixed root list.
+- [Phase 09]: 09-08: Accept only the first rustc error when code, primary main.rs span, forbidden path/symbol, and fragments all match. — Incidental compiler failures cannot prove a forbidden API boundary.
+- [Phase 09]: 09-08: Keep Compact cancellation crate-private and exact-id scoped; expose only Phase A request authority through the shutdown handle. — Cancellation and final shutdown remain owner authority, not generic public client control.
 
 ### Pending Todos
 
@@ -167,15 +171,15 @@ None yet.
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| v1.1 | Typed `ProductEvent` payload convergence and compatibility subscription deletion | Active | Milestone kickoff |
-| v1.1 | Client lifecycle contract over connect, replay, recovery, control, detach, and shutdown | Active | Milestone kickoff |
+| v1.1 | Typed `ProductEvent` payload convergence and compatibility subscription deletion | Complete | Milestone kickoff |
+| v1.1 | Client lifecycle contract over connect, replay, recovery, control, detach, and shutdown | Complete | Milestone kickoff |
 
 ## Session Continuity
 
-Last session: 2026-07-14T09:23:54.178Z
-Stopped at: Completed 09-06-PLAN.md
+Last session: 2026-07-14T09:53:29.785Z
+Stopped at: Completed 09-08-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Verify Phase 09 and milestone v1.1 closure evidence.
