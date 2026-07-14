@@ -1769,6 +1769,40 @@ fn runtime_admission_has_no_direct_operation_control_bypass() {
     );
 }
 
+#[test]
+fn delegated_child_flows_require_scheduler_lineage_admission() {
+    let scan = SourceScan::new();
+    for relative in [
+        "src/coding_session/agent_invocation_flow.rs",
+        "src/coding_session/agent_team_flow.rs",
+    ] {
+        let source = fs::read_to_string(scan.crate_root.join(relative))
+            .expect("read delegated child flow source");
+        let production = production_source(&sanitize_rust_source(&source));
+        assert!(
+            production.contains("OperationScheduler::admit_child("),
+            "delegated child flow must admit its child capability snapshot through the scheduler: {relative}"
+        );
+        assert!(
+            production.contains("ActorId::ChildOperation("),
+            "delegated child flow must construct an explicit parent lineage actor: {relative}"
+        );
+    }
+
+    let session_source = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
+        .expect("read coding session source");
+    let session_production = production_source(&sanitize_rust_source(&session_source));
+    for required in [
+        ".invoke_agent_inner(options, snapshot.operation_id.clone())",
+        ".invoke_team_inner(options, snapshot.operation_id.clone())",
+    ] {
+        assert!(
+            session_production.contains(required),
+            "canonical root dispatch must pass its admitted operation id to child flow: {required}"
+        );
+    }
+}
+
 fn discover_adapter_candidates(scan: &SourceScan) -> HashSet<String> {
     let sources = rust_files_under(&scan.crate_root.join("src"))
         .into_iter()

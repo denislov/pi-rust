@@ -14,12 +14,14 @@ use super::delegation::{
 };
 use super::event_service::EventService;
 use super::flow_service::FlowService;
+use super::operation_control::OperationKind;
 use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
 use super::profiles::{AgentProfile, ProfileId, ProfileKind, ProfileRegistry};
 use super::prompt::{
     CodingDiagnostic, PromptTurnContext, PromptTurnIds, PromptTurnOptions, PromptTurnOutcome,
 };
+use super::scheduler::OperationScheduler;
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::PromptInvocation;
@@ -238,7 +240,9 @@ pub(crate) struct AgentInvocationContext {
     prompt_control_receiver: Option<PromptControlReceiver>,
     prompt_outcome: Option<PromptTurnOutcome>,
     parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
+    scheduler_parent_operation_id: Option<String>,
     child_capability_snapshot: Option<OperationCapabilitySnapshot>,
+    child_admission: Option<super::intent_router::OperationPermit>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
 }
@@ -264,7 +268,9 @@ impl AgentInvocationContext {
             prompt_control_receiver: None,
             prompt_outcome: None,
             parent_capability_snapshot: None,
+            scheduler_parent_operation_id: None,
             child_capability_snapshot: None,
+            child_admission: None,
             pending_delegation_confirmations: Vec::new(),
             failure_error: None,
         }
@@ -275,6 +281,11 @@ impl AgentInvocationContext {
         snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         self.parent_capability_snapshot = Some(snapshot);
+        self
+    }
+
+    pub(crate) fn with_scheduler_parent_operation_id(mut self, operation_id: String) -> Self {
+        self.scheduler_parent_operation_id = Some(operation_id);
         self
     }
 
@@ -390,7 +401,7 @@ impl AgentInvocationContext {
             child_context.set_prompt_control_receiver(receiver);
         }
         child_context.enable_live_events(self.event_service.clone());
-        let capability_snapshot = match self.parent_capability_snapshot.as_ref() {
+        let mut capability_snapshot = match self.parent_capability_snapshot.as_ref() {
             Some(parent) => capability_snapshot_for_delegated_profile(
                 parent,
                 self.child_operation_id.clone(),
@@ -399,6 +410,20 @@ impl AgentInvocationContext {
             ),
             None => OperationCapabilitySnapshot::permissive(self.child_operation_id.clone()),
         };
+        if self.parent_capability_snapshot.is_none() {
+            capability_snapshot.actor = ActorId::ChildOperation(
+                self.scheduler_parent_operation_id
+                    .clone()
+                    .unwrap_or_else(|| self.operation_id.clone()),
+            );
+        }
+        self.child_admission = Some(
+            OperationScheduler::admit_child(
+                OperationKind::AgentInvocation,
+                capability_snapshot.clone(),
+            )
+            .map_err(|rejection| rejection.into_error())?,
+        );
         child_context.set_capability_snapshot(capability_snapshot);
         self.child_context = Some(child_context);
         Ok(())

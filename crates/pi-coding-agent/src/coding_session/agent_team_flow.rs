@@ -12,6 +12,7 @@ use super::delegation::{
 };
 use super::event_service::EventService;
 use super::flow_service::FlowService;
+use super::operation_control::OperationKind;
 use super::plugin_service::PluginService;
 use super::profiles::{
     AgentProfile, ProfileId, ProfileKind, ProfileRegistry, TeamProfile, TeamSupervisor,
@@ -20,6 +21,7 @@ use super::prompt::{
     CodingDiagnostic, DelegationRequest, PromptTurnContext, PromptTurnIds, PromptTurnOptions,
     PromptTurnOutcome,
 };
+use super::scheduler::OperationScheduler;
 use super::session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use super::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::PromptInvocation;
@@ -245,6 +247,7 @@ pub(crate) struct AgentTeamContext {
     supervisor_result: Option<AgentTeamMemberOutcome>,
     final_text: Option<String>,
     parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
+    scheduler_parent_operation_id: Option<String>,
     child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
@@ -271,6 +274,7 @@ impl AgentTeamContext {
             supervisor_result: None,
             final_text: None,
             parent_capability_snapshot: None,
+            scheduler_parent_operation_id: None,
             child_capability_snapshot: None,
             pending_delegation_confirmations: Vec::new(),
             failure_error: None,
@@ -282,6 +286,11 @@ impl AgentTeamContext {
         snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         self.parent_capability_snapshot = Some(snapshot);
+        self
+    }
+
+    pub(crate) fn with_scheduler_parent_operation_id(mut self, operation_id: String) -> Self {
+        self.scheduler_parent_operation_id = Some(operation_id);
         self
     }
 
@@ -460,7 +469,7 @@ impl AgentTeamContext {
         child_context
             .set_non_persistent_session(format!("agent_team_{}", child_operation_id), Vec::new());
         child_context.enable_live_events(self.event_service.clone());
-        let capability_snapshot = match self.parent_capability_snapshot.as_ref() {
+        let mut capability_snapshot = match self.parent_capability_snapshot.as_ref() {
             Some(parent) => capability_snapshot_for_delegated_profile(
                 parent,
                 child_operation_id.clone(),
@@ -469,6 +478,16 @@ impl AgentTeamContext {
             ),
             None => OperationCapabilitySnapshot::permissive(child_operation_id.clone()),
         };
+        if self.parent_capability_snapshot.is_none() {
+            capability_snapshot.actor = ActorId::ChildOperation(
+                self.scheduler_parent_operation_id
+                    .clone()
+                    .unwrap_or_else(|| self.operation_id.clone()),
+            );
+        }
+        let _child_admission =
+            OperationScheduler::admit_child(OperationKind::AgentTeam, capability_snapshot.clone())
+                .map_err(|rejection| rejection.into_error())?;
         child_context.set_capability_snapshot(capability_snapshot);
 
         let mut finished_outcome = None;

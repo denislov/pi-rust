@@ -1,6 +1,7 @@
 use super::CodingSessionError;
 use super::agent_invocation_flow::{AgentInvocationContext, AgentInvocationOptions};
 use super::agent_team_flow::{AgentTeamContext, AgentTeamOptions};
+use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::delegation::{DelegationLineageEntry, PendingDelegationConfirmationState};
 use super::event_service::EventService;
 use super::flow_service::FlowService;
@@ -38,6 +39,7 @@ impl DelegationExecutionService {
         prompt_options: PromptTurnOptions,
         child_delegation_depth: usize,
         delegation_lineage: Vec<DelegationLineageEntry>,
+        parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
     ) -> ApprovedDelegationExecutionOutcome {
         let mut context = AgentInvocationContext::new(
             AgentInvocationOptions::new(
@@ -51,6 +53,9 @@ impl DelegationExecutionService {
             plugin_service,
             event_service.clone(),
         );
+        if let Some(snapshot) = parent_capability_snapshot {
+            context = context.with_parent_capability_snapshot(snapshot);
+        }
         let child_operation_id = context.operation_id().to_owned();
         event_service.emit_delegation_started(request, child_operation_id.clone());
         let result = flow_service.run_agent_invocation(&mut context).await;
@@ -90,6 +95,7 @@ impl DelegationExecutionService {
         prompt_options: PromptTurnOptions,
         child_delegation_depth: usize,
         delegation_lineage: Vec<DelegationLineageEntry>,
+        parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
     ) -> ApprovedDelegationExecutionOutcome {
         let mut context = AgentTeamContext::new(
             AgentTeamOptions::new(
@@ -103,6 +109,9 @@ impl DelegationExecutionService {
             plugin_service,
             event_service.clone(),
         );
+        if let Some(snapshot) = parent_capability_snapshot {
+            context = context.with_parent_capability_snapshot(snapshot);
+        }
         let child_operation_id = context.operation_id().to_owned();
         event_service.emit_delegation_started(request, child_operation_id.clone());
         let result = flow_service.run_agent_team(&mut context).await;

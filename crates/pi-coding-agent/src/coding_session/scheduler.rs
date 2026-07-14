@@ -1,5 +1,5 @@
 use super::CodingSessionError;
-use super::capability_snapshot::OperationCapabilitySnapshot;
+use super::capability_snapshot::{ActorId, OperationCapabilitySnapshot};
 use super::intent_router::{OperationPermit, QueryIntent, QueryIntentMetadata};
 use super::operation::{OperationAdmission, OperationClass, OperationDispatchMode};
 use super::operation_control::{OperationControl, OperationKind};
@@ -56,6 +56,18 @@ impl OperationScheduler {
         intent.metadata()
     }
 
+    pub(crate) fn admit_child(
+        kind: OperationKind,
+        capability_snapshot: OperationCapabilitySnapshot,
+    ) -> Result<OperationPermit, AdmissionRejection> {
+        match &capability_snapshot.actor {
+            ActorId::ChildOperation(parent_id) if !parent_id.is_empty() => Ok(
+                OperationPermit::unguarded(kind, OperationClass::Child, capability_snapshot),
+            ),
+            _ => Err(AdmissionRejection::ChildLineageMissing { kind }),
+        }
+    }
+
     pub(crate) fn classify(
         kind: OperationKind,
         class: OperationClass,
@@ -84,6 +96,9 @@ pub(crate) enum AdmissionRejection {
         actual: OperationDispatchMode,
     },
     Control(CodingSessionError),
+    ChildLineageMissing {
+        kind: OperationKind,
+    },
 }
 
 impl AdmissionRejection {
@@ -102,6 +117,12 @@ impl AdmissionRejection {
                 ),
             },
             Self::Control(error) => error,
+            Self::ChildLineageMissing { kind } => CodingSessionError::UnsupportedCapability {
+                capability: format!(
+                    "{} child operation is missing a valid parent lineage",
+                    kind.as_str()
+                ),
+            },
         }
     }
 }
@@ -183,5 +204,25 @@ mod tests {
         let admission = admission(OperationClass::RuntimeWrite, OperationDispatchMode::Async);
         assert_eq!(admission.metadata.origin, OperationOrigin::ClientRoot);
         assert_eq!(admission.metadata.class, OperationClass::RuntimeWrite);
+    }
+
+    #[test]
+    fn child_admission_accepts_only_nonempty_parent_lineage() {
+        let mut child = OperationCapabilitySnapshot::permissive("child-op");
+        child.actor = ActorId::ChildOperation("parent-op".into());
+        let permit = OperationScheduler::admit_child(OperationKind::AgentInvocation, child)
+            .expect("child actor with parent lineage should be admitted");
+        assert!(!permit.is_guarded());
+        assert_eq!(permit.class(), OperationClass::Child);
+
+        let root = OperationCapabilitySnapshot::permissive("root-op");
+        let rejection = OperationScheduler::admit_child(OperationKind::AgentInvocation, root)
+            .expect_err("root actor must not enter the child admission path");
+        assert!(matches!(
+            rejection,
+            AdmissionRejection::ChildLineageMissing {
+                kind: OperationKind::AgentInvocation
+            }
+        ));
     }
 }

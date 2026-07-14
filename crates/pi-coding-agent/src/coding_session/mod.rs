@@ -1372,6 +1372,7 @@ impl CodingAgentSession {
         operation_id: String,
         tool_call_id: String,
         now: String,
+        parent_capability_snapshot: OperationCapabilitySnapshot,
     ) -> Result<(), CodingSessionError> {
         let mut ids = SystemIdGenerator;
         let mut pending = self.delegation_confirmation_service.approve_pending(
@@ -1398,6 +1399,7 @@ impl CodingAgentSession {
                         pending.prompt_options,
                         pending.child_delegation_depth,
                         pending.delegation_lineage,
+                        Some(parent_capability_snapshot.clone()),
                     )
                     .await
             }
@@ -1412,6 +1414,7 @@ impl CodingAgentSession {
                         pending.prompt_options,
                         pending.child_delegation_depth,
                         pending.delegation_lineage,
+                        Some(parent_capability_snapshot),
                     )
                     .await
             }
@@ -1582,12 +1585,14 @@ impl CodingAgentSession {
                         outcome.result.map(OperationOutcome::SelfHealingEdit)
                     }
                     Operation::AgentInvocation(options) => {
-                        let result = self.invoke_agent_inner(options).await;
+                        let result = self
+                            .invoke_agent_inner(options, snapshot.operation_id.clone())
+                            .await;
                         self.operation_control.clear_prompt_control_receiver();
                         result.map(OperationOutcome::AgentInvocation)
                     }
                     Operation::AgentTeam(options) => self
-                        .invoke_team_inner(options)
+                        .invoke_team_inner(options, snapshot.operation_id.clone())
                         .await
                         .map(OperationOutcome::AgentTeam),
                     Operation::Export(_)
@@ -1608,6 +1613,7 @@ impl CodingAgentSession {
                             admission
                                 .admitted_at
                                 .expect("delegation approval admission time is resolved"),
+                            snapshot.clone(),
                         )
                         .await
                         .map(|_| OperationOutcome::DelegationApproval),
@@ -1746,6 +1752,7 @@ impl CodingAgentSession {
     async fn invoke_agent_inner(
         &mut self,
         options: AgentInvocationOptions,
+        scheduler_parent_operation_id: String,
     ) -> Result<AgentInvocationOutcome, CodingSessionError> {
         let prompt_control_receiver = self.operation_control.take_prompt_control_receiver();
         let mut context = AgentInvocationContext::new(
@@ -1753,7 +1760,8 @@ impl CodingAgentSession {
             self.profile_registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
-        );
+        )
+        .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
         if let Some(receiver) = prompt_control_receiver {
             context.set_prompt_control_receiver(receiver);
         }
@@ -1763,13 +1771,15 @@ impl CodingAgentSession {
     async fn invoke_team_inner(
         &mut self,
         options: AgentTeamOptions,
+        scheduler_parent_operation_id: String,
     ) -> Result<AgentTeamOutcome, CodingSessionError> {
         let mut context = AgentTeamContext::new(
             options,
             self.profile_registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
-        );
+        )
+        .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
         self.flow_service.run_agent_team(&mut context).await
     }
 
@@ -1779,6 +1789,7 @@ impl CodingAgentSession {
         decisions: &[DelegationAuthorizationDecision],
         prompt_options: PromptTurnOptions,
     ) -> Result<(), CodingSessionError> {
+        let parent_capability_snapshot = context.capability_snapshot().cloned();
         for decision in decisions {
             match decision {
                 DelegationAuthorizationDecision::Approved {
@@ -1798,6 +1809,7 @@ impl CodingAgentSession {
                                     prompt_options.clone(),
                                     *child_delegation_depth,
                                     delegation_lineage_for_request(&[], request),
+                                    parent_capability_snapshot.clone(),
                                 )
                                 .await
                         }
@@ -1812,6 +1824,7 @@ impl CodingAgentSession {
                                     prompt_options.clone(),
                                     *child_delegation_depth,
                                     delegation_lineage_for_request(&[], request),
+                                    parent_capability_snapshot.clone(),
                                 )
                                 .await
                         }
