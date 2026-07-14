@@ -16,7 +16,7 @@
 |---|---|---|---|
 | M0 | 完成 | contract inventory、session compatibility fixtures、dead-code inventory、architecture gates | 持续保持 gates 通过 |
 | M1 | 完成 | WP1.1/WP1.2 已完成；scoped provider runtime、单一 agent loop、lower-level facade 收窄、`pi-coding-agent` root deprecated re-export 删除 | 保持 facade boundary 不回退 |
-| M2 | 进行中 | WP2.1 admission descriptor 已统一 class/dispatch/kind 合同（`c3df909`），admission record 已保存 operation identity、capability generation 和 root/child lineage（`e4c8b2a`）；WP2.2 scheduler core 已接入 canonical dispatchers，提供 typed rejection（`68cc0dc`、`788238d`）；prompt/compact/async vertical slice 已迁移（`4e8515b`） | 迁移 workflow、invocation/delegation、plugin/runtime-write、session-navigation slices |
+| M2 | 进行中 | WP2.1 admission descriptor 已统一 class/dispatch/kind 合同（`c3df909`），admission record 已保存 operation identity、capability generation 和 root/child lineage（`e4c8b2a`）；WP2.2 scheduler core 已接入 canonical dispatchers，提供 typed rejection（`68cc0dc`、`788238d`）；prompt/compact/async vertical slice 已迁移（`4e8515b`）；invocation/delegation 与 profile/runtime slice 已由 canonical operation 集成测试覆盖 | 完成 workflow/control 与 session-navigation slices，并把 child admission 从 lineage 记录推进到 scheduler 实体约束 |
 | M3-M7 | 未开始 | - | 按依赖顺序执行 |
 
 已提交检查点：
@@ -71,6 +71,7 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --test product_runtime_boundary_guards runtime_admission_has_no_direct_operation_control_bypass -- --exact`：admission bypass boundary guard 通过。
 - `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --no-fail-fast`：20 个 product boundary guard 通过。
 - `cargo test -p pi-coding-agent --lib operation --no-fail-fast`：96 个 coding-session operation/admission 测试通过。
+- `cargo test -p pi-coding-agent --test agent_invocation --test agent_team_flow --test delegation_execution --test agent_profile_runtime --no-fail-fast`：30 个 invocation/team/delegation/profile runtime 测试通过。
 
 ## 激进方案决策
 
