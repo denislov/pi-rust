@@ -45,6 +45,7 @@
 - `788238d`：将 `run_sync_operation`、`run_sync_mut_operation`、`run_operation` 三个 canonical dispatcher 直接迁移到 `OperationScheduler::admit`，删除 `IntentRouter::admit_operation`/`begin` 第二 admission 入口，并更新契约测试。
 - `4e8515b`：删除剩余 `IntentRouter` operation admission 测试入口，统一 scheduler 的 dispatch mismatch 错误上下文，并以完整 coding-session 测试验证 vertical slice。
 - `f31ede0`：新增 product runtime boundary guard，递归剥离 test-only 源码后禁止 scheduler/operation-control 所有者之外的直接 `begin` admission 绕行，并锁定三条 canonical dispatcher 的 scheduler 调用数量。
+- `4aed69a`：修正 scheduler dispatch mismatch 错误，明确报告 required/received dispatcher，保持 fail-closed rejection 的可诊断性。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -67,6 +68,7 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --lib intent_router`：14 个既有 admission/control 测试通过。
 - `cargo test -p pi-coding-agent --lib operation`：94 个 coding-session 单元测试通过。
 - `cargo test -p pi-coding-agent --test product_runtime_boundary_guards runtime_admission_has_no_direct_operation_control_bypass -- --exact`：admission bypass boundary guard 通过。
+- `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --no-fail-fast`：20 个 product boundary guard 通过。
 
 ## 激进方案决策
 
