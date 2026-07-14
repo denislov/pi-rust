@@ -355,7 +355,8 @@ fn coding_session_error_message(error: CodingSessionError) -> String {
         version @ CodingSessionError::UnsupportedProtocolVersion { .. } => version.to_string(),
         other @ (CodingSessionError::StaleClientConnection { .. }
         | CodingSessionError::SubmissionPreparationBusy
-        | CodingSessionError::ClientCapacityExceeded { .. }) => other.to_string(),
+        | CodingSessionError::ClientCapacityExceeded { .. }
+        | CodingSessionError::Lifecycle { .. }) => other.to_string(),
     }
 }
 

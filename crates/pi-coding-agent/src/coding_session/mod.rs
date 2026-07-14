@@ -53,7 +53,7 @@ pub(crate) use context::{
     CodingAgentSessionTree, CodingAgentSessionUsageSummary,
 };
 pub use delegation::PendingDelegationConfirmation;
-pub use error::CodingSessionError;
+pub use error::{CodingAgentLifecycleRejection, CodingSessionError};
 pub use event::CodingAgentEvent;
 #[allow(unused_imports)]
 pub(crate) use event::{ProductEvent, ProductEventSequence};
@@ -89,12 +89,15 @@ pub use public_operation::{
 pub use public_projection::{
     CodingAgentClientConnection, CodingAgentClientId, CodingAgentConnectionGeneration,
     CodingAgentControlId, CodingAgentControlKind, CodingAgentControlReceipt,
-    CodingAgentControlRejection, CodingAgentControlRejectionReason, CodingAgentDraft,
-    CodingAgentDraftId, CodingAgentDraftKind, CodingAgentFreshSnapshotRecovery,
-    CodingAgentMutationRejection, CodingAgentProductEventReceiver, CodingAgentPromptControl,
-    CodingAgentReconnect, CodingAgentReconnectDelivery, CodingAgentReconnectReceiver,
-    CodingAgentRecoveryReason, CodingAgentSnapshot, CodingAgentSnapshotCursor,
-    CodingAgentSubmissionLease, CodingAgentSubmittedOperation, CodingAgentSubmittedOperationStatus,
+    CodingAgentControlRejection, CodingAgentControlRejectionReason, CodingAgentDetachOutcome,
+    CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind, CodingAgentFreshSnapshotRecovery,
+    CodingAgentMutationRejection, CodingAgentOutcomeAcknowledgementId,
+    CodingAgentProductEventReceiver, CodingAgentPromptControl, CodingAgentReconnect,
+    CodingAgentReconnectDelivery, CodingAgentReconnectReceiver, CodingAgentRecoveryReason,
+    CodingAgentShutdownOutcome, CodingAgentSnapshot, CodingAgentSnapshotCursor,
+    CodingAgentSubmissionLease, CodingAgentSubmittedEventDurability, CodingAgentSubmittedOperation,
+    CodingAgentSubmittedOperationStatus, CodingAgentSubmittedTerminalAnchor,
+    CodingAgentTerminalUncertainty,
 };
 pub use self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,

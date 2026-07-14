@@ -13,9 +13,10 @@ use pi_coding_agent::api::{
     CodingAgentAgentProductEvent, CodingAgentCapabilities, CodingAgentCapabilityProductEvent,
     CodingAgentClientConnection, CodingAgentClientId, CodingAgentControlId, CodingAgentControlKind,
     CodingAgentControlRejectionReason, CodingAgentDelegationEventContext,
-    CodingAgentDelegationProductEvent, CodingAgentDiagnosticProductEvent, CodingAgentDraft,
-    CodingAgentDraftId, CodingAgentDraftKind, CodingAgentMessageProductEvent, CodingAgentOperation,
-    CodingAgentOperationOutcome, CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome,
+    CodingAgentDelegationProductEvent, CodingAgentDetachOutcome, CodingAgentDiagnosticProductEvent,
+    CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind, CodingAgentLifecycleRejection,
+    CodingAgentMessageProductEvent, CodingAgentOperation, CodingAgentOperationOutcome,
+    CodingAgentOutcomeAcknowledgementId, CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome,
     CodingAgentProductEvent, CodingAgentProductEventCapabilityRevocation,
     CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
     CodingAgentProductEventDurability, CodingAgentProductEventError, CodingAgentProductEventFamily,
@@ -26,17 +27,19 @@ use pi_coding_agent::api::{
     CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSession,
     CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionOptions,
     CodingAgentSessionProductEvent, CodingAgentSessionSummary, CodingAgentSessionView,
-    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingAgentTeamProductEvent,
-    CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent, CodingDiagnostic,
-    CodingDiagnosticSeverity, CodingSessionError, ColorValue, CompactionProtocolResult,
-    CompactionReason, ContextFile, DetectionConfidence, DetectionSource, ModelRotation,
-    ModelRotationEntry, PendingDelegationConfirmation, PrintModeOptions, ProfileDiagnostic,
-    ProfileId, PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions,
-    PromptTurnOutcome, ProtocolDelegationFoldedBlock, ProtocolEvent,
-    ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS,
-    ResolveError, ResolvedColor, ResolvedTheme, ResourceLoadOptions, RpcCapabilities,
-    RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata,
-    RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
+    CodingAgentShutdownOutcome, CodingAgentSnapshot, CodingAgentSnapshotCursor,
+    CodingAgentSubmittedEventDurability, CodingAgentSubmittedTerminalAnchor,
+    CodingAgentTeamProductEvent, CodingAgentTerminalUncertainty, CodingAgentToolProductEvent,
+    CodingAgentWorkflowProductEvent, CodingDiagnostic, CodingDiagnosticSeverity,
+    CodingSessionError, ColorValue, CompactionProtocolResult, CompactionReason, ContextFile,
+    DetectionConfidence, DetectionSource, ModelRotation, ModelRotationEntry,
+    PendingDelegationConfirmation, PrintModeOptions, ProfileDiagnostic, ProfileId,
+    PromptInvocation, PromptRunOptions, PromptTurnMode, PromptTurnOptions, PromptTurnOutcome,
+    ProtocolDelegationFoldedBlock, ProtocolEvent, ProtocolSelfHealingEditCheckOutput,
+    ProtocolSelfHealingEditReplacement, REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor,
+    ResolvedTheme, ResourceLoadOptions, RpcCapabilities, RpcCapabilityStatus, RpcCommand,
+    RpcDelegationCapabilityStatus, RpcDelegationRenderingMetadata, RpcResponse,
+    RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
     SelfHealingEditRequest, SessionMode, StreamingBehavior, TeamProfile, TerminalTheme, ThemeBg,
@@ -47,6 +50,101 @@ use pi_coding_agent::api::{
     parse_osc11_background_color, render_diagnostics, resolve, resolve_resource_paths,
 };
 use support::{EnvGuard, ProviderGuard};
+
+#[test]
+fn lifecycle_values_are_exhaustive_and_importable() {
+    let detach = [
+        CodingAgentDetachOutcome::Detached,
+        CodingAgentDetachOutcome::AlreadyDetached,
+        CodingAgentDetachOutcome::StaleGeneration,
+    ];
+    let shutdown = [
+        CodingAgentShutdownOutcome::ShutDown,
+        CodingAgentShutdownOutcome::AlreadyShutDown,
+    ];
+    let rejections = [
+        CodingAgentLifecycleRejection::Detached,
+        CodingAgentLifecycleRejection::StaleGeneration,
+        CodingAgentLifecycleRejection::RuntimeShutDown,
+    ];
+    assert_eq!(detach.len(), 3);
+    assert_eq!(shutdown.len(), 2);
+    assert_eq!(
+        rejections.map(CodingAgentLifecycleRejection::code),
+        ["detached", "stale_generation", "runtime_shut_down"]
+    );
+
+    let acknowledgement: CodingAgentOutcomeAcknowledgementId =
+        serde_json::from_str(r#""outcome_1""#).unwrap();
+    assert_eq!(acknowledgement.as_str(), "outcome_1");
+    let anchors = [
+        CodingAgentSubmittedTerminalAnchor::ProductEvent {
+            sequence: 41,
+            durability: CodingAgentSubmittedEventDurability::Durable,
+        },
+        CodingAgentSubmittedTerminalAnchor::OutcomeOnly { acknowledgement },
+        CodingAgentSubmittedTerminalAnchor::TerminalUncertain {
+            operation_id: "op_uncertain".into(),
+            recovery: CodingAgentTerminalUncertainty::RecoveryRequired,
+        },
+    ];
+    assert_eq!(anchors.len(), 3);
+}
+
+#[test]
+fn lifecycle_serialization_is_stable_and_authority_free() {
+    assert_eq!(
+        serde_json::to_value(CodingAgentDetachOutcome::AlreadyDetached).unwrap(),
+        serde_json::json!("already_detached")
+    );
+    assert_eq!(
+        serde_json::to_value(CodingAgentShutdownOutcome::AlreadyShutDown).unwrap(),
+        serde_json::json!("already_shut_down")
+    );
+    assert_eq!(
+        serde_json::to_value(CodingAgentLifecycleRejection::RuntimeShutDown).unwrap(),
+        serde_json::json!("runtime_shut_down")
+    );
+
+    let acknowledgement: CodingAgentOutcomeAcknowledgementId =
+        serde_json::from_str(r#""ack_1""#).unwrap();
+    let values = [
+        serde_json::to_value(CodingAgentSubmittedTerminalAnchor::ProductEvent {
+            sequence: 7,
+            durability: CodingAgentSubmittedEventDurability::Uncertain,
+        })
+        .unwrap(),
+        serde_json::to_value(CodingAgentSubmittedTerminalAnchor::OutcomeOnly { acknowledgement })
+            .unwrap(),
+        serde_json::to_value(CodingAgentSubmittedTerminalAnchor::TerminalUncertain {
+            operation_id: "op_7".into(),
+            recovery: CodingAgentTerminalUncertainty::RecoveryRequired,
+        })
+        .unwrap(),
+    ];
+    assert_eq!(
+        values,
+        [
+            serde_json::json!({"kind":"product_event","sequence":7,"durability":"uncertain"}),
+            serde_json::json!({"kind":"outcome_only","acknowledgement":"ack_1"}),
+            serde_json::json!({"kind":"terminal_uncertain","operation_id":"op_7","recovery":"recovery_required"}),
+        ]
+    );
+    let serialized = serde_json::to_string(&values).unwrap();
+    for forbidden in [
+        "coordinator",
+        "generation",
+        "signature",
+        "session_id",
+        "pending_session_write",
+        "receiver",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "leaked {forbidden}: {serialized}"
+        );
+    }
+}
 
 #[test]
 fn stable_api_signature_closure_is_importable() {

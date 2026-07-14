@@ -63,6 +63,71 @@ pub struct CodingAgentSubmittedOperation {
     pub status: CodingAgentSubmittedOperationStatus,
 }
 
+/// Result of ending one connection generation without stopping runtime work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingAgentDetachOutcome {
+    Detached,
+    AlreadyDetached,
+    StaleGeneration,
+}
+
+/// Result of draining and closing the product runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingAgentShutdownOutcome {
+    ShutDown,
+    AlreadyShutDown,
+}
+
+/// Public durability evidence for a root terminal event.
+///
+/// This deliberately omits session identifiers and pending-write internals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingAgentSubmittedEventDurability {
+    Durable,
+    Uncertain,
+}
+
+/// Opaque identity used to acknowledge an outcome-only submission.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CodingAgentOutcomeAcknowledgementId(String);
+
+impl CodingAgentOutcomeAcknowledgementId {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Recovery disposition when no authoritative root terminal event was established.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingAgentTerminalUncertainty {
+    RecoveryRequired,
+}
+
+/// Exact public evidence that makes a submitted operation terminal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum CodingAgentSubmittedTerminalAnchor {
+    ProductEvent {
+        sequence: u64,
+        durability: CodingAgentSubmittedEventDurability,
+    },
+    OutcomeOnly {
+        acknowledgement: CodingAgentOutcomeAcknowledgementId,
+    },
+    TerminalUncertain {
+        operation_id: String,
+        recovery: CodingAgentTerminalUncertainty,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CodingAgentRecoveryReason {

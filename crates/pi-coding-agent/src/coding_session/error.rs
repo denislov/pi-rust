@@ -2,6 +2,29 @@ use super::self_healing_edit_flow::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditRepairAttempt,
 };
 use crate::error::CliError;
+use serde::{Deserialize, Serialize};
+
+/// Stable reason why client mutation authority is no longer valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingAgentLifecycleRejection {
+    #[error("client connection is detached")]
+    Detached,
+    #[error("client connection generation is stale")]
+    StaleGeneration,
+    #[error("runtime is shut down")]
+    RuntimeShutDown,
+}
+
+impl CodingAgentLifecycleRejection {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Detached => "detached",
+            Self::StaleGeneration => "stale_generation",
+            Self::RuntimeShutDown => "runtime_shut_down",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CodingSessionError {
@@ -64,6 +87,10 @@ pub enum CodingSessionError {
     SubmissionPreparationBusy,
     #[error("client capacity exceeded: {limit}")]
     ClientCapacityExceeded { limit: usize },
+    #[error("lifecycle rejection: {reason}")]
+    Lifecycle {
+        reason: CodingAgentLifecycleRejection,
+    },
 }
 
 impl CodingSessionError {
@@ -89,6 +116,7 @@ impl CodingSessionError {
             Self::StaleClientConnection { .. } => "stale_client_connection",
             Self::SubmissionPreparationBusy => "submission_preparation_busy",
             Self::ClientCapacityExceeded { .. } => "client_capacity_exceeded",
+            Self::Lifecycle { reason } => reason.code(),
         }
     }
 }
@@ -131,9 +159,8 @@ impl From<CodingSessionError> for CliError {
             }
             other @ (CodingSessionError::StaleClientConnection { .. }
             | CodingSessionError::SubmissionPreparationBusy
-            | CodingSessionError::ClientCapacityExceeded { .. }) => {
-                CliError::SessionFailure(other.to_string())
-            }
+            | CodingSessionError::ClientCapacityExceeded { .. }
+            | CodingSessionError::Lifecycle { .. }) => CliError::SessionFailure(other.to_string()),
         }
     }
 }
