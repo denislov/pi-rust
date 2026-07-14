@@ -399,6 +399,111 @@ fn client_connection_is_stateful_but_not_a_dispatcher_or_service_escape_hatch() 
     }
 }
 
+#[test]
+fn public_lifecycle_values_are_curated_without_authority_leaks() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let lib_source = fs::read_to_string(crate_root.join("src/lib.rs"))
+        .expect("pi-coding-agent lib.rs should be readable");
+    let projection = fs::read_to_string(crate_root.join("src/coding_session/public_projection.rs"))
+        .expect("public projection should be readable");
+    let errors = fs::read_to_string(crate_root.join("src/coding_session/error.rs"))
+        .expect("coding session errors should be readable");
+    let api_module = module_body(&lib_source, "pub mod api")
+        .expect("stable api module should have a balanced body");
+    let exported_identifiers = api_module
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|identifier| !identifier.is_empty())
+        .collect::<BTreeSet<_>>();
+
+    for required in [
+        "CodingAgentDetachOutcome",
+        "CodingAgentShutdownOutcome",
+        "CodingAgentLifecycleRejection",
+        "CodingAgentSubmittedEventDurability",
+        "CodingAgentOutcomeAcknowledgementId",
+        "CodingAgentSubmittedTerminalAnchor",
+        "CodingAgentTerminalUncertainty",
+    ] {
+        assert!(
+            exported_identifiers.contains(required),
+            "stable api omitted adjacent lifecycle value {required}"
+        );
+    }
+
+    for forbidden in [
+        "SnapshotCoordinator",
+        "ClientHandle",
+        "ClientGeneration",
+        "EventService",
+        "ProductEventReceiver",
+        "OperationControl",
+        "Sender",
+        "Receiver",
+        "HashMap",
+        "BTreeMap",
+        "VecDeque",
+        "LifecycleEpoch",
+        "ReceiptSignature",
+    ] {
+        assert!(
+            !exported_identifiers.contains(forbidden),
+            "stable lifecycle api leaked internal authority {forbidden}"
+        );
+    }
+
+    let acknowledgement = projection
+        .split("pub struct CodingAgentOutcomeAcknowledgementId")
+        .nth(1)
+        .expect("opaque outcome acknowledgement should exist")
+        .split("pub enum CodingAgentTerminalUncertainty")
+        .next()
+        .expect("terminal uncertainty should follow acknowledgement");
+    assert!(acknowledgement.starts_with("(String);"));
+    assert!(!acknowledgement.contains("pub fn new("));
+    assert!(!acknowledgement.contains("pub fn generation("));
+    assert!(!acknowledgement.contains("pub fn signature("));
+
+    for source in [&projection, &errors] {
+        for forbidden in ["format!(\"{:?}\"", "format!(\"{:#?}\""] {
+            assert!(
+                !source.contains(forbidden),
+                "stable lifecycle identity/code must not use Debug formatting: {forbidden}"
+            );
+        }
+    }
+
+    for stable_code in [
+        "\"detached\"",
+        "\"stale_generation\"",
+        "\"runtime_shut_down\"",
+    ] {
+        assert!(
+            errors.contains(stable_code),
+            "lifecycle rejection omitted explicit stable code {stable_code}"
+        );
+    }
+
+    let connection = projection
+        .split("impl CodingAgentClientConnection")
+        .nth(1)
+        .expect("public connection implementation should exist")
+        .split("pub struct CodingAgentReconnectReceiver")
+        .next()
+        .expect("reconnect receiver should follow connection");
+    for forbidden in [
+        "pub async fn run(",
+        "pub async fn submit(",
+        "pub fn dispatch(",
+        "pub fn detach_client(",
+        "pub fn shutdown_client(",
+    ] {
+        assert!(
+            !connection.contains(forbidden),
+            "connection leaked lifecycle/operation authority through {forbidden}"
+        );
+    }
+}
+
 fn module_body<'a>(source: &'a str, declaration: &str) -> Option<&'a str> {
     let declaration_start = source.find(declaration)?;
     let body_start = declaration_start + source[declaration_start..].find('{')?;
