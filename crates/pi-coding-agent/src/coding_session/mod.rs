@@ -363,24 +363,6 @@ fn submitted_terminal_status(
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ProductEventReplayHandle {
-    event_service: EventService,
-}
-
-impl ProductEventReplayHandle {
-    fn new(event_service: EventService) -> Self {
-        Self { event_service }
-    }
-
-    pub(crate) fn product_events_after(
-        &self,
-        cursor: ProductEventSequence,
-    ) -> Result<Vec<ProductEvent>, CodingSessionError> {
-        self.event_service.product_events_after(cursor)
-    }
-}
-
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
     let cwd = options
         .cwd()
@@ -730,11 +712,6 @@ impl CodingAgentSession {
                 marker.reason,
             );
         }
-    }
-
-    pub(crate) fn product_event_replay_handle(&self) -> ProductEventReplayHandle {
-        self.emit_pending_startup_recovery_markers();
-        ProductEventReplayHandle::new(self.event_service.clone())
     }
 
     pub fn snapshot(&self) -> CodingAgentSnapshot {

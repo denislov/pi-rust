@@ -1286,37 +1286,7 @@ fn prompt_outcome_leaf_id(outcome: &crate::coding_session::PromptTurnOutcome) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding_session::{
-        ClientDraft, CodingAgentEvent, CodingAgentSessionOptions, CodingSessionError, ProductEvent,
-        ProductEventReplayHandle, ProductEventSequence, PromptTurnOutcome, SubmittedOperation,
-    };
-    use crate::runtime::CliRunOptions;
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
-
-    #[derive(Default)]
-    struct TestWriter {
-        bytes: Vec<u8>,
-    }
-
-    impl tokio::io::AsyncWrite for TestWriter {
-        fn poll_write(
-            mut self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-            buf: &[u8],
-        ) -> Poll<std::io::Result<usize>> {
-            self.bytes.extend_from_slice(buf);
-            Poll::Ready(Ok(buf.len()))
-        }
-
-        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-            Poll::Ready(Ok(()))
-        }
-
-        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-            Poll::Ready(Ok(()))
-        }
-    }
+    use crate::coding_session::{CodingAgentEvent, CodingAgentSessionOptions};
 
     #[cfg(any())]
     fn state_with_running_prompt_replay(replay: ProductEventReplayHandle) -> RpcState {
