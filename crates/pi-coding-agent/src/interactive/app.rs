@@ -71,11 +71,25 @@ pub async fn run_interactive_mode(parsed: CliArgs, options: CliRunOptions) -> Cl
 
     let terminal = ProcessTerminal::new();
     match run_interactive_loop_with_input(parsed, options, terminal, InputPump::from_stdin).await {
-        Ok(result) => CliOutput {
-            exit_code: result.exit_code,
-            stdout: String::new(),
-            stderr: String::new(),
-        },
+        Ok(mut result) => {
+            let shutdown_error = if let Some(mut session) = result.coding_session.take() {
+                session.shutdown().await.err()
+            } else {
+                None
+            };
+            match shutdown_error {
+                Some(error) => CliOutput {
+                    exit_code: 1,
+                    stdout: String::new(),
+                    stderr: format!("{error}\n"),
+                },
+                None => CliOutput {
+                    exit_code: result.exit_code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+            }
+        }
         Err(error) => CliOutput {
             exit_code: 1,
             stdout: String::new(),

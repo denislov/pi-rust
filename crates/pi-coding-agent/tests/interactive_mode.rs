@@ -1343,7 +1343,10 @@ async fn scripted_interactive_name_updates_footer_session_label() {
 #[test]
 fn embedded_interactive_lifecycle_is_detach_only_and_owner_shutdown_is_top_level() {
     let loop_source = include_str!("../src/interactive/loop.rs");
+    let app_source = include_str!("../src/interactive/app.rs");
     assert!(loop_source.contains("detach_interactive_client"));
     assert!(loop_source.contains("connection.detach()"));
     assert!(!loop_source.contains("session.shutdown().await"));
+    assert!(app_source.contains("session.shutdown().await"));
+    assert!(app_source.contains("result.coding_session.take()"));
 }
