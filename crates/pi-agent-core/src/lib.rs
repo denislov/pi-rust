@@ -1,10 +1,5 @@
 #[doc(hidden)]
 pub mod agent;
-#[deprecated(
-    note = "use Agent::run() for the public low-level stream or AgentTurnFlow for the internal flow runtime"
-)]
-#[doc(hidden)]
-pub mod agent_loop;
 #[doc(hidden)]
 pub mod agent_turn_flow;
 mod ai_runtime;
