@@ -1576,6 +1576,47 @@ fn adapter_scanner_fixture_matrix_is_sanitized_and_structural() {
 }
 
 #[test]
+fn adapter_discovery_fixture_rejects_unclassified_and_stale_ownership() {
+    let sources = [
+        (
+            "src/protocol/new_transport.rs",
+            "pub async fn run_new_transport(session: &mut CodingAgentSession) { session.run(CodingAgentOperation::Prompt(todo!())).await; }",
+        ),
+        (
+            "src/protocol/comment_only.rs",
+            r#"// CodingAgentSession::run(CodingAgentOperation)
+               const TEXT: &str = "CodingAgentClientConnection";"#,
+        ),
+        (
+            "src/helpers/near_miss.rs",
+            "fn run_modeled_value() -> usize { 1 }",
+        ),
+        (
+            "src/protocol/test_only.rs",
+            "#[cfg(test)] mod tests { fn adapter(session: &mut CodingAgentSession) { session.run(todo!()); } }",
+        ),
+    ];
+    let discovered = discover_adapter_candidates_from_sources(&sources);
+    assert_eq!(
+        discovered,
+        HashSet::from(["src/protocol/new_transport.rs".to_owned()])
+    );
+
+    let unclassified = validate_adapter_classifications(&discovered, &[]);
+    assert!(unclassified.iter().any(|violation| violation.contains("unclassified")));
+
+    let stale = validate_adapter_classifications(
+        &HashSet::new(),
+        &[AdapterClassification {
+            path: "src/protocol/removed.rs",
+            ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+            rationale: "legacy transport boundary",
+        }],
+    );
+    assert!(stale.iter().any(|violation| violation.contains("stale")));
+}
+
+#[test]
 fn session_method_inventory_accepts_multiline_impl_and_signature() {
     let fixture = tempfile::tempdir().expect("create session method fixture");
     let source_path = fixture.path().join("session.rs");
