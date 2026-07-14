@@ -31,6 +31,7 @@ mod public_event;
 mod public_operation;
 mod public_projection;
 mod runtime_service;
+mod scheduler;
 mod self_healing_edit_flow;
 mod self_healing_edit_service;
 mod session_log;

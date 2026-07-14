@@ -6,6 +6,7 @@ use super::operation::{OperationAdmission, OperationClass, OperationDispatchMode
 use super::operation_control::{
     OperationControl, OperationGuard, OperationKind, PromptControlHandle,
 };
+use super::scheduler::OperationScheduler;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +69,7 @@ impl QueryIntent {
 }
 
 impl OperationPermit {
-    fn guarded(
+    pub(crate) fn guarded(
         kind: OperationKind,
         class: OperationClass,
         guard: OperationGuard,
@@ -89,7 +90,7 @@ impl OperationPermit {
         }
     }
 
-    fn unguarded(
+    pub(crate) fn unguarded(
         kind: OperationKind,
         class: OperationClass,
         capability_snapshot: OperationCapabilitySnapshot,
@@ -180,29 +181,8 @@ impl IntentRouter {
         admission: &OperationAdmission,
         expected: OperationDispatchMode,
     ) -> Result<OperationPermit, CodingSessionError> {
-        Self::validate_dispatch_mode(admission, expected)?;
-
-        if admission.metadata.class == OperationClass::ReadOnly {
-            return Ok(OperationPermit::unguarded(
-                admission.kind,
-                admission.metadata.class,
-                admission.capability_snapshot.clone(),
-            ));
-        }
-
-        control
-            .begin(
-                admission.kind,
-                admission.capability_snapshot.operation_id.clone(),
-            )
-            .map(|guard| {
-                OperationPermit::guarded(
-                    admission.kind,
-                    admission.metadata.class,
-                    guard,
-                    admission.capability_snapshot.clone(),
-                )
-            })
+        OperationScheduler::admit(control, admission, expected)
+            .map_err(|rejection| rejection.into_error())
     }
     pub(crate) fn prompt_control_handle(
         control: &mut OperationControl,
@@ -220,9 +200,8 @@ impl IntentRouter {
         control: &OperationControl,
         intent: QueryIntent,
     ) -> QueryIntentMetadata {
-        let metadata = intent.metadata();
+        let metadata = OperationScheduler::admit_query(control, intent);
         debug_assert_eq!(metadata.class, OperationClass::Query);
-        let _ = control;
         metadata
     }
 
