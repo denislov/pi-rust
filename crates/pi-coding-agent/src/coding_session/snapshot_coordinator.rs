@@ -22,10 +22,24 @@ pub(crate) struct ClientHandle {
     pub(crate) generation: ClientGeneration,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SubmittedEventDurability {
+    Durable,
+    Uncertain,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TerminalAcknowledgementAnchor {
-    pub(crate) operation_id: String,
-    pub(crate) terminal_sequence: u64,
+pub(crate) enum SubmittedTerminalAnchor {
+    ProductEvent {
+        sequence: u64,
+        durability: SubmittedEventDurability,
+    },
+    OutcomeOnly {
+        acknowledgement: super::public_projection::CodingAgentOutcomeAcknowledgementId,
+    },
+    TerminalUncertain {
+        operation_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +55,7 @@ pub(crate) enum SubmittedOperationStatus {
     Terminal {
         operation_id: String,
         kind: OperationKind,
-        anchor: TerminalAcknowledgementAnchor,
+        anchor: SubmittedTerminalAnchor,
         status: ProductEventTerminalStatus,
     },
 }
@@ -701,9 +715,16 @@ impl SnapshotCoordinator {
             return Ok(record.acknowledged_sequence);
         }
         record.acknowledged_sequence = sequence;
-        if let Some(SubmittedOperationStatus::Terminal { anchor, .. }) = &record.submitted_operation
+        if let Some(SubmittedOperationStatus::Terminal {
+            anchor:
+                SubmittedTerminalAnchor::ProductEvent {
+                    sequence: terminal_sequence,
+                    ..
+                },
+            ..
+        }) = &record.submitted_operation
         {
-            if sequence >= anchor.terminal_sequence {
+            if sequence >= *terminal_sequence {
                 record.submitted_operation = None;
             }
         }
@@ -713,11 +734,23 @@ impl SnapshotCoordinator {
     pub(crate) fn acknowledge_outcome(
         &self,
         handle: &ClientHandle,
-        _acknowledgement: &super::public_projection::CodingAgentOutcomeAcknowledgementId,
+        acknowledgement: &super::public_projection::CodingAgentOutcomeAcknowledgementId,
     ) -> Result<(), ClientRegistryError> {
-        let state = self.state.lock().unwrap();
-        Self::validate_client(&state, handle)?;
-        Err(ClientRegistryError::InvalidInput)
+        let mut state = self.state.lock().unwrap();
+        let record = Self::record(&mut state, handle)?;
+        match &record.submitted_operation {
+            Some(SubmittedOperationStatus::Terminal {
+                anchor:
+                    SubmittedTerminalAnchor::OutcomeOnly {
+                        acknowledgement: stored,
+                    },
+                ..
+            }) if stored == acknowledgement => {
+                record.submitted_operation = None;
+                Ok(())
+            }
+            _ => Err(ClientRegistryError::InvalidInput),
+        }
     }
 
     pub(crate) fn set_prompt_draft(
@@ -807,7 +840,7 @@ impl SnapshotCoordinator {
         handle: &ClientHandle,
         operation_id: String,
         kind: OperationKind,
-        terminal_sequence: u64,
+        anchor: SubmittedTerminalAnchor,
         status: ProductEventTerminalStatus,
     ) -> Result<(), ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
@@ -833,10 +866,7 @@ impl SnapshotCoordinator {
         record.submitted_operation = Some(SubmittedOperationStatus::Terminal {
             operation_id: operation_id.clone(),
             kind,
-            anchor: TerminalAcknowledgementAnchor {
-                operation_id,
-                terminal_sequence,
-            },
+            anchor,
             status,
         });
         Ok(())
@@ -1086,7 +1116,10 @@ mod tests {
                 &second,
                 "op-active".into(),
                 OperationKind::Prompt,
-                9,
+                SubmittedTerminalAnchor::ProductEvent {
+                    sequence: 9,
+                    durability: SubmittedEventDurability::Durable,
+                },
                 ProductEventTerminalStatus::Completed,
             )
             .unwrap();

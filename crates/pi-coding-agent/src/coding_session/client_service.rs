@@ -81,7 +81,10 @@ impl ClientService {
             handle,
             operation_id,
             kind,
-            sequence,
+            super::snapshot_coordinator::SubmittedTerminalAnchor::ProductEvent {
+                sequence,
+                durability: super::snapshot_coordinator::SubmittedEventDurability::Durable,
+            },
             super::event::ProductEventTerminalStatus::Completed,
         )
     }

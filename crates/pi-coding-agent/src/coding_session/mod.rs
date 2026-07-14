@@ -191,9 +191,8 @@ pub(crate) enum SubmissionLeaseLifecycle {
 #[derive(Debug)]
 struct PendingSubmissionLease {
     handle: snapshot_coordinator::ClientHandle,
-    draft_id: String,
-    kind: String,
-    text: String,
+    descriptor: public_operation::OperationDescriptor,
+    prompt_fingerprint: Option<(String, String)>,
     lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
 }
 
@@ -203,19 +202,27 @@ struct SubmissionCommitGuard {
     handle: snapshot_coordinator::ClientHandle,
     lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
     operation_id: Option<String>,
-    kind: operation_control::OperationKind,
+    descriptor: public_operation::OperationDescriptor,
     finished: bool,
 }
 
 impl SubmissionCommitGuard {
     fn commit(&mut self, operation_id: String) -> Result<(), CodingSessionError> {
         self.coordinator
-            .mark_submitted(&self.handle, operation_id.clone(), self.kind)
+            .mark_submitted(
+                &self.handle,
+                operation_id.clone(),
+                self.descriptor.submitted_kind,
+            )
             .map_err(|error| CodingSessionError::Input {
                 message: error.to_string(),
             })?;
         self.coordinator
-            .mark_running(&self.handle, operation_id.clone(), self.kind)
+            .mark_running(
+                &self.handle,
+                operation_id.clone(),
+                self.descriptor.submitted_kind,
+            )
             .map_err(|error| CodingSessionError::Input {
                 message: error.to_string(),
             })?;
@@ -226,11 +233,32 @@ impl SubmissionCommitGuard {
 
     fn finish(&mut self, status: event::ProductEventTerminalStatus) {
         if let Some(operation_id) = &self.operation_id {
+            let anchor = match self.descriptor.association {
+                public_operation::OperationAssociationClass::TerminalAssociated => {
+                    snapshot_coordinator::SubmittedTerminalAnchor::ProductEvent {
+                        sequence: self.coordinator.current_event_sequence(),
+                        durability: snapshot_coordinator::SubmittedEventDurability::Durable,
+                    }
+                }
+                public_operation::OperationAssociationClass::OutcomeOnly => {
+                    snapshot_coordinator::SubmittedTerminalAnchor::OutcomeOnly {
+                        acknowledgement:
+                            public_projection::CodingAgentOutcomeAcknowledgementId::new(format!(
+                                "outcome:{operation_id}"
+                            )),
+                    }
+                }
+                public_operation::OperationAssociationClass::NotApplicable => {
+                    snapshot_coordinator::SubmittedTerminalAnchor::TerminalUncertain {
+                        operation_id: operation_id.clone(),
+                    }
+                }
+            };
             let _ = self.coordinator.mark_terminal(
                 &self.handle,
                 operation_id.clone(),
-                self.kind,
-                self.coordinator.current_event_sequence(),
+                self.descriptor.submitted_kind,
+                anchor,
                 status,
             );
         }
@@ -348,14 +376,19 @@ impl CodingAgentSession {
         &mut self,
         operation: CodingAgentOperation,
     ) -> Result<CodingAgentOperationOutcome, CodingSessionError> {
+        let descriptor = operation.descriptor();
         let fingerprint = operation.submission_fingerprint();
-        let submission = self.consume_submission_lease(fingerprint.as_ref());
+        let submission = self.consume_submission_lease(descriptor, fingerprint.as_ref());
         let operation = operation.into_internal(self.default_plugin_load_options.clone());
         let dispatch_mode = operation.metadata().dispatch_mode;
         let outcome = match dispatch_mode {
             OperationDispatchMode::Async => self.run_operation(operation, submission).await?,
-            OperationDispatchMode::SyncReadOnly => self.run_sync_operation(operation)?,
-            OperationDispatchMode::SyncMutable => self.run_sync_mut_operation(operation)?,
+            OperationDispatchMode::SyncReadOnly => {
+                self.run_sync_operation(operation, submission)?
+            }
+            OperationDispatchMode::SyncMutable => {
+                self.run_sync_mut_operation(operation, submission)?
+            }
         };
         Ok(CodingAgentOperationOutcome::from_internal(outcome))
     }
@@ -363,9 +396,8 @@ impl CodingAgentSession {
     fn install_submission_lease(
         &mut self,
         handle: snapshot_coordinator::ClientHandle,
-        draft_id: String,
-        kind: String,
-        text: String,
+        descriptor: public_operation::OperationDescriptor,
+        prompt_fingerprint: Option<(String, String)>,
     ) -> Result<Arc<Mutex<SubmissionLeaseLifecycle>>, CodingSessionError> {
         if let Some(pending) = &self.pending_submission {
             let lifecycle = *pending.lifecycle.lock().unwrap();
@@ -378,9 +410,8 @@ impl CodingAgentSession {
         let lifecycle = Arc::new(Mutex::new(SubmissionLeaseLifecycle::Prepared));
         self.pending_submission = Some(PendingSubmissionLease {
             handle,
-            draft_id,
-            kind,
-            text,
+            descriptor,
+            prompt_fingerprint,
             lifecycle: lifecycle.clone(),
         });
         Ok(lifecycle)
@@ -388,6 +419,7 @@ impl CodingAgentSession {
 
     fn consume_submission_lease(
         &mut self,
+        descriptor: public_operation::OperationDescriptor,
         fingerprint: Option<&(String, String)>,
     ) -> Option<SubmissionCommitGuard> {
         let pending = self.pending_submission.as_ref()?;
@@ -395,21 +427,17 @@ impl CodingAgentSession {
             self.pending_submission = None;
             return None;
         }
-        let Some((kind, text)) = fingerprint else {
-            return None;
-        };
-        if &pending.kind != kind || &pending.text != text {
+        if pending.descriptor != descriptor || pending.prompt_fingerprint.as_ref() != fingerprint {
             return None;
         }
         let pending = self.pending_submission.take().unwrap();
-        let _ = pending.draft_id;
         *pending.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Consuming;
         Some(SubmissionCommitGuard {
             coordinator: self.snapshot_coordinator.clone(),
             handle: pending.handle,
             lifecycle: pending.lifecycle,
             operation_id: None,
-            kind: operation_control::OperationKind::Prompt,
+            descriptor,
             finished: false,
         })
     }
@@ -872,6 +900,7 @@ impl CodingAgentSession {
     fn run_sync_operation(
         &self,
         operation: Operation,
+        mut submission: Option<SubmissionCommitGuard>,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
         let operation_permit = IntentRouter::admit_operation(
@@ -879,8 +908,11 @@ impl CodingAgentSession {
             &admission,
             OperationDispatchMode::SyncReadOnly,
         )?;
+        if let Some(guard) = submission.as_mut() {
+            guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
+        }
 
-        match operation {
+        let result = match operation {
             Operation::Export(options) => self
                 .export_current_inner(options, operation_permit.capability_snapshot())
                 .map(OperationOutcome::Export),
@@ -908,12 +940,21 @@ impl CodingAgentSession {
             | Operation::SetDefaultAgentProfile { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
+        };
+        if let Some(guard) = submission.as_mut() {
+            guard.finish(if result.is_ok() {
+                event::ProductEventTerminalStatus::Completed
+            } else {
+                event::ProductEventTerminalStatus::Failed
+            });
         }
+        result
     }
 
     fn run_sync_mut_operation(
         &mut self,
         operation: Operation,
+        mut submission: Option<SubmissionCommitGuard>,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
         let operation_permit = IntentRouter::admit_operation(
@@ -921,8 +962,11 @@ impl CodingAgentSession {
             &admission,
             OperationDispatchMode::SyncMutable,
         )?;
+        if let Some(guard) = submission.as_mut() {
+            guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
+        }
 
-        match operation {
+        let result = match operation {
             Operation::RejectDelegationConfirmation {
                 operation_id,
                 tool_call_id,
@@ -1010,7 +1054,15 @@ impl CodingAgentSession {
             | Operation::SelfHealingEdit(_)
             | Operation::AgentInvocation(_)
             | Operation::AgentTeam(_) => Err(IntentRouter::unsupported_dispatch(&admission)),
+        };
+        if let Some(guard) = submission.as_mut() {
+            guard.finish(if result.is_ok() {
+                event::ProductEventTerminalStatus::Completed
+            } else {
+                event::ProductEventTerminalStatus::Failed
+            });
         }
+        result
     }
 
     fn export_current_inner(
@@ -3045,7 +3097,7 @@ runtime = "lua"
             .unwrap();
         let operation = Operation::Export(ExportOptions::view());
 
-        let error = session.run_sync_operation(operation).unwrap_err();
+        let error = session.run_sync_operation(operation, None).unwrap_err();
 
         assert_eq!(error.code(), "unsupported_capability");
         assert_eq!(
@@ -3066,7 +3118,7 @@ runtime = "lua"
             .unwrap();
 
         let error = session
-            .run_sync_operation(Operation::Export(ExportOptions::view()))
+            .run_sync_operation(Operation::Export(ExportOptions::view()), None)
             .unwrap_err();
 
         assert_eq!(error.code(), "unsupported_capability");
@@ -3578,7 +3630,7 @@ runtime = "lua"
             args: serde_json::Value::Null,
         };
 
-        let error = session.run_sync_operation(operation).unwrap_err();
+        let error = session.run_sync_operation(operation, None).unwrap_err();
 
         assert_eq!(error.code(), "plugin");
         assert_eq!(
@@ -3602,7 +3654,7 @@ runtime = "lua"
             args: serde_json::Value::Null,
         };
 
-        let error = session.run_sync_operation(operation).unwrap_err();
+        let error = session.run_sync_operation(operation, None).unwrap_err();
 
         assert_eq!(
             error,

@@ -53,6 +53,7 @@ pub enum CodingAgentSubmittedOperationStatus {
     Running,
     Terminal {
         status: CodingAgentProductEventTerminalStatus,
+        anchor: CodingAgentSubmittedTerminalAnchor,
     },
 }
 
@@ -512,16 +513,20 @@ impl CodingAgentClientConnection {
         draft_id: CodingAgentDraftId,
         operation: &super::CodingAgentOperation,
     ) -> Result<CodingAgentSubmissionLease, CodingSessionError> {
-        let Some((kind, text)) = operation.submission_fingerprint() else {
-            return Err(CodingSessionError::Input {
-                message: "submission preparation requires a text Prompt operation".into(),
-            });
-        };
         let handle = self.handle();
-        self.coordinator
-            .validate_prompt_draft(&handle, &draft_id.0, &text)
-            .map_err(|error| registry_error(&self.client_id, error))?;
-        let shared = session.install_submission_lease(handle, draft_id.0, kind, text)?;
+        let descriptor = operation.descriptor();
+        let prompt_fingerprint = operation.submission_fingerprint();
+        if descriptor.submitted_kind == super::operation_control::OperationKind::Prompt {
+            let Some((_, text)) = prompt_fingerprint.as_ref() else {
+                return Err(CodingSessionError::Input {
+                    message: "Prompt submission preparation requires a text invocation".into(),
+                });
+            };
+            self.coordinator
+                .validate_prompt_draft(&handle, &draft_id.0, text)
+                .map_err(|error| registry_error(&self.client_id, error))?;
+        }
+        let shared = session.install_submission_lease(handle, descriptor, prompt_fingerprint)?;
         let operation_id = format!("client:{}:{}", self.client_id.as_str(), self.generation.0);
         Ok(CodingAgentSubmissionLease {
             operation_id,
@@ -726,13 +731,38 @@ fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
         SubmittedOperationStatus::Terminal {
             operation_id,
             kind,
+            anchor,
             status,
-            ..
         } => CodingAgentSubmittedOperation {
             operation_id,
             kind: kind.as_str().into(),
             status: CodingAgentSubmittedOperationStatus::Terminal {
                 status: status.into(),
+                anchor: match anchor {
+                    super::snapshot_coordinator::SubmittedTerminalAnchor::ProductEvent {
+                        sequence,
+                        durability,
+                    } => CodingAgentSubmittedTerminalAnchor::ProductEvent {
+                        sequence,
+                        durability: match durability {
+                            super::snapshot_coordinator::SubmittedEventDurability::Durable => {
+                                CodingAgentSubmittedEventDurability::Durable
+                            }
+                            super::snapshot_coordinator::SubmittedEventDurability::Uncertain => {
+                                CodingAgentSubmittedEventDurability::Uncertain
+                            }
+                        },
+                    },
+                    super::snapshot_coordinator::SubmittedTerminalAnchor::OutcomeOnly {
+                        acknowledgement,
+                    } => CodingAgentSubmittedTerminalAnchor::OutcomeOnly { acknowledgement },
+                    super::snapshot_coordinator::SubmittedTerminalAnchor::TerminalUncertain {
+                        operation_id,
+                    } => CodingAgentSubmittedTerminalAnchor::TerminalUncertain {
+                        operation_id,
+                        recovery: CodingAgentTerminalUncertainty::RecoveryRequired,
+                    },
+                },
             },
         },
     });
