@@ -16,7 +16,7 @@
 
 - [x] **COMPAT-01**: RPC, interactive, JSON/print, and first-party tests consume typed product events without production calls to `compatibility_event()`.
 - [x] **COMPAT-02**: Compatibility event receivers, legacy subscriptions, and compatibility storage are deleted or narrowed to test-only migration fixtures after behavior-preserving coverage passes.
-- [ ] **COMPAT-03**: Event ordering, sequence identity, replay, durability, control multiplexing, `PartialCommit`, and external adapter responses remain behavior-compatible during migration.
+- [x] **COMPAT-03**: Event ordering, sequence identity, replay, durability, control multiplexing, `PartialCommit`, and external adapter responses remain behavior-compatible during migration.
 
 ### Client Lifecycle
 
@@ -59,7 +59,7 @@
 | EVENT-03 | Phase 6 | Complete |
 | COMPAT-01 | Phase 7 | Complete |
 | COMPAT-02 | Phase 7 | Complete |
-| COMPAT-03 | Phase 9 | Pending |
+| COMPAT-03 | Phase 9 | Complete |
 | CLIENT-01 | Phase 8 | Complete |
 | CLIENT-02 | Phase 8 | Complete |
 | CLIENT-03 | Phase 8 | Complete |
