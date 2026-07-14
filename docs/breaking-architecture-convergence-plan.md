@@ -17,7 +17,8 @@
 | M0 | 完成 | contract inventory、session compatibility fixtures、dead-code inventory、architecture gates | 持续保持 gates 通过 |
 | M1 | 完成 | WP1.1/WP1.2 已完成；scoped provider runtime、单一 agent loop、lower-level facade 收窄、`pi-coding-agent` root deprecated re-export 删除 | 保持 facade boundary 不回退 |
 | M2 | 进行中 | WP2.1 admission descriptor 已统一 class/dispatch/kind 合同（`c3df909`），admission record 已保存 operation identity、capability generation 和 root/child lineage（`e4c8b2a`）；WP2.2 scheduler core 已接入 canonical dispatchers，提供 typed rejection（`68cc0dc`、`788238d`）；prompt/compact/async vertical slice 已迁移（`4e8515b`）；invocation/delegation 与 profile/runtime slice 已由 canonical operation 集成测试覆盖，delegated child operation 已进入 scheduler lineage admission（`60b61c1`） | 完成 workflow/control 与 session-navigation slices，扩展 child permit 到 cancellation/terminal association |
-| M3-M7 | 未开始 | - | 按依赖顺序执行 |
+| M3 | 进行中 | WP3.1 event/manifest decoder 已改为 explicit schema/version dispatch；v2 event 缺失 `session_sequence` 仍可兼容 replay，unknown decoder fail closed 并提供恢复建议（`88ddab4`） | 定义 sequence/CAS/idempotency 与 partial commit 合同，扩展故障注入矩阵 |
+| M4-M7 | 未开始 | - | 按依赖顺序执行 |
 
 已提交检查点：
 
@@ -48,6 +49,7 @@
 - `4aed69a`：修正 scheduler dispatch mismatch 错误，明确报告 required/received dispatcher，保持 fail-closed rejection 的可诊断性。
 - `e4c8b2a`：扩展 `OperationAdmission` identity contract，保存 operation id、capability generation、root/parent lineage，并接入可校验的 idempotency key 字段。
 - `60b61c1`：新增 scheduler child admission，要求 delegated child snapshot 持有非空 parent lineage；将 frozen parent snapshot 注入 direct invocation、自动 delegation 与 pending approval execution，同时分离 identity lineage 与 capability inheritance，避免收紧直接 invocation 的 profile 权限。
+- `88ddab4`：将 manifest/event 读取改为显式 schema/version decoder dispatch；保留 v1 manifest 与 v2 event（含无 `session_sequence`）兼容，unknown decoder fail closed 并输出 schema/version/event id/recovery context。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -75,6 +77,7 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --test agent_invocation --test agent_team_flow --test delegation_execution --test agent_profile_runtime --no-fail-fast`：30 个 invocation/team/delegation/profile runtime 测试通过。
 - `cargo test -p pi-coding-agent --test agent_invocation --test agent_team_flow --test delegation_execution --no-fail-fast`：28 个 root/child/delegation 行为测试通过。
 - `cargo test -p pi-coding-agent --test product_runtime_boundary_guards delegated_child_flows_require_scheduler_lineage_admission -- --exact`：child scheduler lineage boundary guard 通过。
+- `cargo test -p pi-coding-agent --lib session_log::store --no-fail-fast`：15 个 manifest/event decoder、sequence 与 store 测试通过。
 
 ## 激进方案决策
 
