@@ -4,6 +4,7 @@ use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use super::error::CodingAgentLifecycleRejection;
 use super::event::{ProductEvent, ProductEventSequence, ProductEventTerminalStatus};
 use super::operation_control::{OperationKind, PromptControlHandle};
+use super::public_operation::{OperationDescriptor, OperationRootTerminalEvidence};
 use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -47,16 +48,20 @@ pub(crate) enum SubmittedOperationStatus {
     Accepted {
         operation_id: String,
         kind: OperationKind,
+        descriptor: OperationDescriptor,
     },
     Running {
         operation_id: String,
         kind: OperationKind,
+        descriptor: OperationDescriptor,
     },
     Terminal {
         operation_id: String,
         kind: OperationKind,
+        descriptor: OperationDescriptor,
         anchor: SubmittedTerminalAnchor,
         status: ProductEventTerminalStatus,
+        root_count: u8,
     },
 }
 
@@ -478,14 +483,6 @@ impl SnapshotCoordinator {
             .is_some_and(|record| record.generation == handle.generation)
     }
 
-    pub(crate) fn current_event_sequence(&self) -> u64 {
-        self.state
-            .lock()
-            .unwrap()
-            .next_event_sequence
-            .saturating_sub(1)
-    }
-
     pub(crate) fn install_projection(
         &self,
         session: CodingAgentSessionView,
@@ -794,16 +791,19 @@ impl SnapshotCoordinator {
         &self,
         handle: &ClientHandle,
         operation_id: String,
-        kind: OperationKind,
+        descriptor: OperationDescriptor,
     ) -> Result<(), ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
         let record = Self::record(&mut state, handle)?;
         if record.submitted_operation.is_some() {
             return Err(ClientRegistryError::SubmittedRegression);
         }
-        record.submitted_operation =
-            Some(SubmittedOperationStatus::Accepted { operation_id, kind });
-        if kind == OperationKind::Prompt {
+        record.submitted_operation = Some(SubmittedOperationStatus::Accepted {
+            operation_id,
+            kind: descriptor.submitted_kind,
+            descriptor,
+        });
+        if descriptor.submitted_kind == OperationKind::Prompt {
             record.prompt_draft = None;
         }
         Ok(())
@@ -821,10 +821,12 @@ impl SnapshotCoordinator {
             Some(SubmittedOperationStatus::Accepted {
                 operation_id: stored_id,
                 kind: stored_kind,
+                descriptor,
             }) if stored_id == &operation_id && *stored_kind == kind => {
                 record.submitted_operation = Some(SubmittedOperationStatus::Running {
                     operation_id: operation_id.clone(),
                     kind,
+                    descriptor: *descriptor,
                 });
                 Ok(())
             }
@@ -840,6 +842,7 @@ impl SnapshotCoordinator {
         handle: &ClientHandle,
         operation_id: String,
         kind: OperationKind,
+        descriptor: OperationDescriptor,
         anchor: SubmittedTerminalAnchor,
         status: ProductEventTerminalStatus,
     ) -> Result<(), ClientRegistryError> {
@@ -856,9 +859,11 @@ impl SnapshotCoordinator {
             Some(SubmittedOperationStatus::Accepted {
                 operation_id: stored_id,
                 kind: stored_kind,
+                ..
             } | SubmittedOperationStatus::Running {
                 operation_id: stored_id,
                 kind: stored_kind,
+                ..
             }) if stored_id == &operation_id && *stored_kind == kind
         ) {
             return Err(ClientRegistryError::SubmittedRegression);
@@ -866,10 +871,163 @@ impl SnapshotCoordinator {
         record.submitted_operation = Some(SubmittedOperationStatus::Terminal {
             operation_id: operation_id.clone(),
             kind,
+            descriptor,
             anchor,
             status,
+            root_count: 0,
         });
         Ok(())
+    }
+
+    pub(crate) fn observe_root_terminal_in_state(
+        state: &mut SnapshotState,
+        source: &super::event::CodingAgentEvent,
+        event: &ProductEvent,
+    ) {
+        let Some(operation_id) = event.operation_id() else {
+            return;
+        };
+        let Some(status) = event.terminal_status() else {
+            return;
+        };
+        for record in state.clients.values_mut() {
+            let (stored_id, descriptor) = match record.submitted_operation.as_ref() {
+                Some(SubmittedOperationStatus::Accepted {
+                    operation_id,
+                    descriptor,
+                    ..
+                })
+                | Some(SubmittedOperationStatus::Running {
+                    operation_id,
+                    descriptor,
+                    ..
+                })
+                | Some(SubmittedOperationStatus::Terminal {
+                    operation_id,
+                    descriptor,
+                    ..
+                }) => (operation_id, *descriptor),
+                None => continue,
+            };
+            if stored_id != operation_id {
+                continue;
+            }
+            let Some(evidence) = root_evidence(source, descriptor.submitted_kind) else {
+                continue;
+            };
+            if !descriptor.permitted_root_evidence.contains(&evidence) {
+                continue;
+            }
+            match record.submitted_operation.as_mut() {
+                Some(SubmittedOperationStatus::Terminal { root_count, .. }) => {
+                    *root_count = root_count.saturating_add(1);
+                }
+                Some(SubmittedOperationStatus::Accepted { .. })
+                | Some(SubmittedOperationStatus::Running { .. }) => {
+                    let durability = match source {
+                        super::event::CodingAgentEvent::PromptFailed {
+                            error: super::CodingSessionError::PartialCommit { .. },
+                            ..
+                        } => SubmittedEventDurability::Uncertain,
+                        _ => SubmittedEventDurability::Durable,
+                    };
+                    record.submitted_operation = Some(SubmittedOperationStatus::Terminal {
+                        operation_id: operation_id.to_owned(),
+                        kind: descriptor.submitted_kind,
+                        descriptor,
+                        anchor: SubmittedTerminalAnchor::ProductEvent {
+                            sequence: event.sequence().get(),
+                            durability,
+                        },
+                        status,
+                        root_count: 1,
+                    });
+                }
+                None => {}
+            }
+        }
+    }
+
+    pub(crate) fn finalize_terminal_association(
+        &self,
+        handle: &ClientHandle,
+        operation_id: &str,
+        descriptor: OperationDescriptor,
+        fallback_status: ProductEventTerminalStatus,
+    ) -> Result<(), ClientRegistryError> {
+        let mut state = self.state.lock().unwrap();
+        Self::validate_runtime(&state)?;
+        let record = state
+            .clients
+            .get_mut(&handle.id)
+            .ok_or(ClientRegistryError::SubmittedRegression)?;
+        match record.submitted_operation.as_mut() {
+            Some(SubmittedOperationStatus::Terminal {
+                operation_id: stored_id,
+                descriptor: stored_descriptor,
+                root_count,
+                ..
+            }) if stored_id == operation_id && *stored_descriptor == descriptor => {
+                if *root_count == 1 {
+                    Ok(())
+                } else {
+                    Err(ClientRegistryError::TerminalCardinality { count: *root_count })
+                }
+            }
+            Some(SubmittedOperationStatus::Accepted {
+                operation_id: stored_id,
+                descriptor: stored_descriptor,
+                ..
+            })
+            | Some(SubmittedOperationStatus::Running {
+                operation_id: stored_id,
+                descriptor: stored_descriptor,
+                ..
+            }) if stored_id == operation_id && *stored_descriptor == descriptor => {
+                record.submitted_operation = Some(SubmittedOperationStatus::Terminal {
+                    operation_id: operation_id.to_owned(),
+                    kind: descriptor.submitted_kind,
+                    descriptor,
+                    anchor: SubmittedTerminalAnchor::TerminalUncertain {
+                        operation_id: operation_id.to_owned(),
+                    },
+                    status: fallback_status,
+                    root_count: 0,
+                });
+                Ok(())
+            }
+            _ => Err(ClientRegistryError::SubmittedRegression),
+        }
+    }
+}
+
+fn root_evidence(
+    source: &super::event::CodingAgentEvent,
+    admitted_kind: OperationKind,
+) -> Option<OperationRootTerminalEvidence> {
+    use super::event::CodingAgentEvent;
+    use OperationRootTerminalEvidence as Evidence;
+    match source {
+        CodingAgentEvent::PromptCompleted { .. } => Some(Evidence::PromptCompleted),
+        CodingAgentEvent::PromptFailed { .. } if admitted_kind == OperationKind::Compact => {
+            Some(Evidence::CompactPromptFailed)
+        }
+        CodingAgentEvent::PromptFailed { .. } => Some(Evidence::PromptFailed),
+        CodingAgentEvent::PromptAborted { .. } => Some(Evidence::PromptAborted),
+        CodingAgentEvent::SessionCompactionCompleted { .. } => Some(Evidence::CompactionCompleted),
+        CodingAgentEvent::SelfHealingEditCompleted { .. } => {
+            Some(Evidence::SelfHealingEditCompleted)
+        }
+        CodingAgentEvent::SelfHealingEditFailed { .. } => Some(Evidence::SelfHealingEditFailed),
+        CodingAgentEvent::AgentInvocationCompleted { .. } => {
+            Some(Evidence::AgentInvocationCompleted)
+        }
+        CodingAgentEvent::AgentInvocationFailed { .. } => Some(Evidence::AgentInvocationFailed),
+        CodingAgentEvent::AgentInvocationAborted { .. } => Some(Evidence::AgentInvocationAborted),
+        CodingAgentEvent::AgentTeamCompleted { .. } => Some(Evidence::AgentTeamCompleted),
+        CodingAgentEvent::AgentTeamFailed { .. } => Some(Evidence::AgentTeamFailed),
+        CodingAgentEvent::AgentTeamAborted { .. } => Some(Evidence::AgentTeamAborted),
+        _ => None,
     }
 }
 
@@ -906,6 +1064,8 @@ pub(crate) enum ClientRegistryError {
     InvalidInput,
     #[error("submitted operation transition regressed")]
     SubmittedRegression,
+    #[error("submitted terminal root cardinality was {count}, expected exactly one")]
+    TerminalCardinality { count: u8 },
 }
 
 #[cfg(test)]
@@ -917,6 +1077,20 @@ mod tests {
             id: id.into(),
             kind,
             text: format!("{id}-text"),
+        }
+    }
+
+    fn prompt_descriptor() -> OperationDescriptor {
+        OperationDescriptor {
+            submitted_kind: OperationKind::Prompt,
+            outcome_family: super::super::public_operation::OperationOutcomeFamily::Prompt,
+            association:
+                super::super::public_operation::OperationAssociationClass::TerminalAssociated,
+            permitted_root_evidence: &[
+                OperationRootTerminalEvidence::PromptCompleted,
+                OperationRootTerminalEvidence::PromptFailed,
+                OperationRootTerminalEvidence::PromptAborted,
+            ],
         }
     }
 
@@ -975,7 +1149,7 @@ mod tests {
             )
             .unwrap();
         coordinator
-            .mark_submitted(&first, "op-1".into(), OperationKind::Prompt)
+            .mark_submitted(&first, "op-1".into(), prompt_descriptor())
             .unwrap();
 
         assert_eq!(
@@ -1035,7 +1209,7 @@ mod tests {
             Err(detached.clone())
         );
         assert_eq!(
-            coordinator.mark_submitted(&handle, "op".into(), OperationKind::Prompt),
+            coordinator.mark_submitted(&handle, "op".into(), prompt_descriptor()),
             Err(detached.clone())
         );
         let state = coordinator.state.lock().unwrap();
@@ -1065,7 +1239,7 @@ mod tests {
         let id = ClientConnectionId::new("active-prompt-client");
         let first = coordinator.connect_or_takeover(id.clone()).unwrap();
         coordinator
-            .mark_submitted(&first, "op-active".into(), OperationKind::Prompt)
+            .mark_submitted(&first, "op-active".into(), prompt_descriptor())
             .unwrap();
         coordinator
             .mark_running(&first, "op-active".into(), OperationKind::Prompt)
@@ -1116,6 +1290,7 @@ mod tests {
                 &second,
                 "op-active".into(),
                 OperationKind::Prompt,
+                prompt_descriptor(),
                 SubmittedTerminalAnchor::ProductEvent {
                     sequence: 9,
                     durability: SubmittedEventDurability::Durable,

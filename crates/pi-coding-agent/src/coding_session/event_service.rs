@@ -294,6 +294,7 @@ impl EventService {
             terminal_status,
             durability,
         );
+        SnapshotCoordinator::observe_root_terminal_in_state(&mut state, &event, &product_event);
         self.retain_product_event(&mut state, product_event.clone());
         drop(state);
         let _ = self.product_sender.send(product_event.clone());

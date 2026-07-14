@@ -716,14 +716,16 @@ fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
         })
         .collect();
     snapshot.submitted_operation = state.submitted_operation.map(|submitted| match submitted {
-        SubmittedOperationStatus::Accepted { operation_id, kind } => {
-            CodingAgentSubmittedOperation {
-                operation_id,
-                kind: kind.as_str().into(),
-                status: CodingAgentSubmittedOperationStatus::Accepted,
-            }
-        }
-        SubmittedOperationStatus::Running { operation_id, kind } => CodingAgentSubmittedOperation {
+        SubmittedOperationStatus::Accepted {
+            operation_id, kind, ..
+        } => CodingAgentSubmittedOperation {
+            operation_id,
+            kind: kind.as_str().into(),
+            status: CodingAgentSubmittedOperationStatus::Accepted,
+        },
+        SubmittedOperationStatus::Running {
+            operation_id, kind, ..
+        } => CodingAgentSubmittedOperation {
             operation_id,
             kind: kind.as_str().into(),
             status: CodingAgentSubmittedOperationStatus::Running,
@@ -733,6 +735,7 @@ fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
             kind,
             anchor,
             status,
+            ..
         } => CodingAgentSubmittedOperation {
             operation_id,
             kind: kind.as_str().into(),

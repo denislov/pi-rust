@@ -8,6 +8,7 @@ use pi_agent_core::compaction::estimate::estimate_tokens;
 use pi_agent_core::compaction::summarize::summarize_with_provider_streamer;
 use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::types::{AssistantMessage, ContentBlock, StreamOptions};
+use tokio_util::sync::CancellationToken;
 
 use super::CodingSessionError;
 use super::capability_snapshot::OperationCapabilitySnapshot;
@@ -97,6 +98,7 @@ enum ManualCompactionNodeKind {
 pub(crate) struct ManualCompactionOptions {
     runtime: RuntimeSnapshot,
     custom_instructions: Option<String>,
+    cancellation: Option<CancellationToken>,
 }
 
 impl ManualCompactionOptions {
@@ -104,6 +106,7 @@ impl ManualCompactionOptions {
         Self {
             runtime,
             custom_instructions: None,
+            cancellation: None,
         }
     }
 
@@ -129,11 +132,17 @@ impl ManualCompactionOptions {
         Ok(Self {
             runtime,
             custom_instructions,
+            cancellation: None,
         })
     }
 
     pub(crate) fn with_custom_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.custom_instructions = Some(instructions.into());
+        self
+    }
+
+    pub(crate) fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = Some(cancellation);
         self
     }
 
@@ -143,6 +152,10 @@ impl ManualCompactionOptions {
 
     fn custom_instructions(&self) -> Option<&str> {
         self.custom_instructions.as_deref()
+    }
+
+    pub(crate) fn cancellation(&self) -> Option<CancellationToken> {
+        self.cancellation.clone()
     }
 }
 
@@ -229,6 +242,10 @@ impl ManualCompactionContext {
 
     pub(crate) fn operation_id(&self) -> &str {
         &self.operation_id
+    }
+
+    pub(crate) fn options(&self) -> &ManualCompactionOptions {
+        &self.options
     }
 
     pub(crate) fn turn_id(&self) -> &str {
@@ -520,8 +537,11 @@ fn default_action() -> Result<Action, String> {
 }
 
 fn flow_error(error: FlowError) -> CodingSessionError {
-    CodingSessionError::Flow {
-        message: error.to_string(),
+    match error {
+        FlowError::Cancelled => CodingSessionError::Cancelled,
+        other => CodingSessionError::Flow {
+            message: other.to_string(),
+        },
     }
 }
 
@@ -548,6 +568,40 @@ mod tests {
         PersistedContentBlock, SessionEventData, SessionEventEnvelope,
     };
     use crate::coding_session::session_service::SessionService;
+
+    #[tokio::test]
+    async fn compact_cancellation_maps_flow_cancelled_to_typed_error() {
+        let api = "manual-compaction-flow-cancelled";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("unused summary")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut service = SessionService::create(
+            &CodingAgentSessionOptions::new()
+                .with_session_id("sess_manual_compaction_cancelled")
+                .with_session_log_root(temp.path()),
+        )
+        .unwrap();
+        record_prompt(&mut service);
+        let replay = service.replay().unwrap();
+        let snapshot = OperationCapabilitySnapshot::permissive("op_cancelled");
+        let transaction = service.begin_manual_compaction_transaction(&snapshot);
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let mut context = ManualCompactionContext::new(
+            ManualCompactionOptions::new(compact_runtime(api)).with_cancellation(cancellation),
+            replay,
+            transaction,
+            snapshot,
+        );
+
+        let error = super::super::flow_service::FlowService::new()
+            .run_manual_compaction_graph(&mut context)
+            .await
+            .unwrap_err();
+        assert_eq!(error, CodingSessionError::Cancelled);
+    }
     use crate::coding_session::{CodingAgentSessionOptions, PromptTurnOptions};
     use crate::prompt_options::PromptRunOptions;
     use crate::runtime::{PromptInvocation, SessionRunOptions};
@@ -657,13 +711,14 @@ mod tests {
         .unwrap();
         let active_leaf = record_prompt(&mut service);
         let replay = service.replay().unwrap();
-        let transaction = service.begin_manual_compaction_transaction();
+        let snapshot = OperationCapabilitySnapshot::permissive("op_test");
+        let transaction = service.begin_manual_compaction_transaction(&snapshot);
         let mut context = ManualCompactionContext::new(
             ManualCompactionOptions::new(compact_runtime(api))
                 .with_custom_instructions("keep decisions"),
             replay,
             transaction,
-            OperationCapabilitySnapshot::permissive("op_test"),
+            snapshot,
         );
         let flow = ManualCompactionFlow::new().unwrap();
 

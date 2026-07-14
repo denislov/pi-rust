@@ -413,23 +413,29 @@ impl SessionService {
         &self,
         snapshot: &OperationCapabilitySnapshot,
     ) -> PromptTurnTransaction {
-        TurnTransaction::begin_with_runtime_generation(
+        TurnTransaction::begin_admitted_with_runtime_generation(
             &self.store,
             self.handle.clone(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::Prompt,
             snapshot.persisted_runtime_generation_ref(),
+            snapshot.operation_id.clone(),
         )
     }
 
-    pub(crate) fn begin_manual_compaction_transaction(&self) -> PromptTurnTransaction {
-        TurnTransaction::begin(
+    pub(crate) fn begin_manual_compaction_transaction(
+        &self,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> PromptTurnTransaction {
+        TurnTransaction::begin_admitted_with_runtime_generation(
             &self.store,
             self.handle.clone(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::ManualCompaction,
+            snapshot.persisted_runtime_generation_ref(),
+            snapshot.operation_id.clone(),
         )
     }
 
@@ -677,10 +683,15 @@ impl SessionService {
             operation_id.clone(),
         )];
         transaction.commit(None)?;
-        self.store.update_manifest(
-            &self.handle,
-            ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
-        )?;
+        self.store
+            .update_manifest(
+                &self.handle,
+                ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
+            )
+            .map_err(|error| CodingSessionError::PartialCommit {
+                operation_id: operation_id.clone(),
+                message: error.to_string(),
+            })?;
         self.handle = self.store.open_session_id(&session_id)?;
         events.push(EventService::session_write_committed_event(
             operation_id,

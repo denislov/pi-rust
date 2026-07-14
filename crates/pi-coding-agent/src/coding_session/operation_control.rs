@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use super::CodingSessionError;
 use super::snapshot_coordinator::SnapshotCoordinator;
@@ -91,8 +92,55 @@ pub(crate) fn prompt_control_channel() -> (PromptControlHandle, PromptControlRec
 
 #[derive(Debug, Clone)]
 pub(crate) struct OperationState {
-    active: Arc<Mutex<Option<OperationKind>>>,
+    shared: Arc<Mutex<OperationStateInner>>,
     snapshot_coordinator: Arc<SnapshotCoordinator>,
+}
+
+#[derive(Debug)]
+struct OperationStateInner {
+    active: Option<ActiveOperationIdentity>,
+    next_generation: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveOperationIdentity {
+    kind: OperationKind,
+    operation_id: String,
+    generation: u64,
+    cancellation: Option<CancellationToken>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompactCancellationRejection {
+    NoActiveOperation,
+    ActiveOperationNotCompact,
+    OperationMismatch,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompactCancellationHandle {
+    shared: Arc<Mutex<OperationStateInner>>,
+}
+
+impl CompactCancellationHandle {
+    pub(crate) fn cancel(&self, operation_id: &str) -> Result<(), CompactCancellationRejection> {
+        let shared = self.shared.lock().expect("operation state lock poisoned");
+        let Some(active) = shared.active.as_ref() else {
+            return Err(CompactCancellationRejection::NoActiveOperation);
+        };
+        if active.kind != OperationKind::Compact {
+            return Err(CompactCancellationRejection::ActiveOperationNotCompact);
+        }
+        if active.operation_id != operation_id {
+            return Err(CompactCancellationRejection::OperationMismatch);
+        }
+        active
+            .cancellation
+            .as_ref()
+            .expect("active Compact identity must carry cancellation")
+            .cancel();
+        Ok(())
+    }
 }
 
 impl OperationState {
@@ -104,39 +152,67 @@ impl OperationState {
         snapshot_coordinator: Arc<SnapshotCoordinator>,
     ) -> Self {
         Self {
-            active: Arc::new(Mutex::new(None)),
+            shared: Arc::new(Mutex::new(OperationStateInner {
+                active: None,
+                next_generation: 1,
+            })),
             snapshot_coordinator,
         }
     }
 
     pub(crate) fn active(&self) -> Option<OperationKind> {
-        *self.active.lock().expect("operation state lock poisoned")
+        self.shared
+            .lock()
+            .expect("operation state lock poisoned")
+            .active
+            .as_ref()
+            .map(|active| active.kind)
     }
 
     pub(crate) fn ensure_idle(&self) -> Result<(), CodingSessionError> {
-        if let Some(active) = *self.active.lock().expect("operation state lock poisoned") {
+        if let Some(active) = self
+            .shared
+            .lock()
+            .expect("operation state lock poisoned")
+            .active
+            .as_ref()
+        {
             return Err(CodingSessionError::Busy {
-                operation: active.as_str().into(),
+                operation: active.kind.as_str().into(),
             });
         }
 
         Ok(())
     }
 
-    pub(crate) fn begin(&self, kind: OperationKind) -> Result<OperationGuard, CodingSessionError> {
-        let mut active = self.active.lock().expect("operation state lock poisoned");
-        if let Some(active) = *active {
+    pub(crate) fn begin(
+        &self,
+        kind: OperationKind,
+        operation_id: String,
+    ) -> Result<OperationGuard, CodingSessionError> {
+        let mut shared = self.shared.lock().expect("operation state lock poisoned");
+        if let Some(active) = shared.active.as_ref() {
             return Err(CodingSessionError::Busy {
-                operation: active.as_str().into(),
+                operation: active.kind.as_str().into(),
             });
         }
-        *active = Some(kind);
-        drop(active);
+        let generation = shared.next_generation;
+        shared.next_generation = shared.next_generation.saturating_add(1);
+        let cancellation = (kind == OperationKind::Compact).then(CancellationToken::new);
+        shared.active = Some(ActiveOperationIdentity {
+            kind,
+            operation_id,
+            generation,
+            cancellation: cancellation.clone(),
+        });
+        drop(shared);
         self.snapshot_coordinator.set_active_operation(Some(kind));
         Ok(OperationGuard {
-            active: Arc::clone(&self.active),
+            shared: Arc::clone(&self.shared),
             snapshot_coordinator: Arc::clone(&self.snapshot_coordinator),
             kind,
+            generation,
+            cancellation,
         })
     }
 }
@@ -171,8 +247,18 @@ impl OperationControl {
         self.state.ensure_idle()
     }
 
-    pub(crate) fn begin(&self, kind: OperationKind) -> Result<OperationGuard, CodingSessionError> {
-        self.state.begin(kind)
+    pub(crate) fn begin(
+        &self,
+        kind: OperationKind,
+        operation_id: String,
+    ) -> Result<OperationGuard, CodingSessionError> {
+        self.state.begin(kind, operation_id)
+    }
+
+    pub(crate) fn compact_cancellation_handle(&self) -> CompactCancellationHandle {
+        CompactCancellationHandle {
+            shared: Arc::clone(&self.state.shared),
+        }
     }
 
     pub(crate) fn prompt_control_handle(
@@ -209,19 +295,31 @@ impl OperationControl {
 #[derive(Debug)]
 #[must_use = "dropping OperationGuard clears the active operation"]
 pub(crate) struct OperationGuard {
-    active: Arc<Mutex<Option<OperationKind>>>,
+    shared: Arc<Mutex<OperationStateInner>>,
     snapshot_coordinator: Arc<SnapshotCoordinator>,
     kind: OperationKind,
+    generation: u64,
+    cancellation: Option<CancellationToken>,
+}
+
+impl OperationGuard {
+    pub(crate) fn cancellation_token(&self) -> Option<CancellationToken> {
+        self.cancellation.clone()
+    }
 }
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        let Ok(mut active) = self.active.lock() else {
+        let Ok(mut shared) = self.shared.lock() else {
             return;
         };
-        if *active == Some(self.kind) {
-            *active = None;
-            drop(active);
+        if shared
+            .active
+            .as_ref()
+            .is_some_and(|active| active.kind == self.kind && active.generation == self.generation)
+        {
+            shared.active = None;
+            drop(shared);
             self.snapshot_coordinator.set_active_operation(None);
         }
     }
@@ -232,10 +330,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn compact_cancellation_handle_is_exact_and_fail_closed() {
+        let state = OperationState::new();
+        let handle = CompactCancellationHandle {
+            shared: Arc::clone(&state.shared),
+        };
+
+        assert_eq!(
+            handle.cancel("op-compact"),
+            Err(CompactCancellationRejection::NoActiveOperation)
+        );
+        let guard = state
+            .begin(OperationKind::Compact, "op-compact".into())
+            .unwrap();
+        let token = guard.cancellation_token().unwrap();
+        assert_eq!(
+            handle.cancel("op-stale"),
+            Err(CompactCancellationRejection::OperationMismatch)
+        );
+        assert!(!token.is_cancelled());
+        handle.cancel("op-compact").unwrap();
+        assert!(token.is_cancelled());
+        drop(guard);
+
+        let prompt = state
+            .begin(OperationKind::Prompt, "op-prompt".into())
+            .unwrap();
+        assert_eq!(
+            handle.cancel("op-prompt"),
+            Err(CompactCancellationRejection::ActiveOperationNotCompact)
+        );
+        drop(prompt);
+    }
+
+    #[test]
     fn operation_guard_sets_active_operation_and_drop_clears_it() {
         let state = OperationState::new();
 
-        let guard = state.begin(OperationKind::Prompt).unwrap();
+        let guard = state
+            .begin(OperationKind::Prompt, "op_test".into())
+            .unwrap();
 
         assert_eq!(state.active(), Some(OperationKind::Prompt));
 
@@ -249,7 +383,7 @@ mod tests {
         let state = OperationState::new();
 
         let result: Result<(), CodingSessionError> = (|| {
-            let _guard = state.begin(OperationKind::Compact)?;
+            let _guard = state.begin(OperationKind::Compact, "op_test".into())?;
             Err(CodingSessionError::Flow {
                 message: "node failed".into(),
             })
@@ -262,9 +396,13 @@ mod tests {
     #[test]
     fn begin_reports_current_operation_when_busy() {
         let state = OperationState::new();
-        let _guard = state.begin(OperationKind::PluginLoad).unwrap();
+        let _guard = state
+            .begin(OperationKind::PluginLoad, "op_test".into())
+            .unwrap();
 
-        let error = state.begin(OperationKind::Prompt).unwrap_err();
+        let error = state
+            .begin(OperationKind::Prompt, "op_test".into())
+            .unwrap_err();
 
         assert_eq!(
             error,
@@ -326,7 +464,9 @@ mod tests {
     #[test]
     fn operation_control_rejects_prompt_handle_while_busy_or_pending() {
         let mut control = OperationControl::new();
-        let _guard = control.begin(OperationKind::PluginLoad).unwrap();
+        let _guard = control
+            .begin(OperationKind::PluginLoad, "op_test".into())
+            .unwrap();
 
         assert_eq!(
             control.prompt_control_handle().unwrap_err(),

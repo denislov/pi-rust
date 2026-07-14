@@ -159,7 +159,6 @@ async fn terminal_association_uses_the_exact_compact_root_event() {
 #[tokio::test]
 async fn partial_commit_association_records_terminal_uncertain_without_fabrication() {
     use std::os::unix::fs::PermissionsExt;
-
     let api = "operation-association-partial";
     let _provider = ProviderGuard::register(
         api,
@@ -188,10 +187,11 @@ async fn partial_commit_association_records_terminal_uncertain_without_fabricati
         .unwrap();
 
     let session_dir = temp.path().join("sess_partial");
-    let original_permissions = std::fs::metadata(&session_dir).unwrap().permissions();
-    std::fs::set_permissions(&session_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let manifest_path = session_dir.join("session.json");
+    let original_permissions = std::fs::metadata(&manifest_path).unwrap().permissions();
+    std::fs::set_permissions(&manifest_path, std::fs::Permissions::from_mode(0o444)).unwrap();
     let result = session.run(operation).await;
-    std::fs::set_permissions(&session_dir, original_permissions).unwrap();
+    std::fs::set_permissions(&manifest_path, original_permissions).unwrap();
     let error = result.expect_err("manifest replacement should fail after durable append");
     let operation_id = match error {
         pi_coding_agent::api::CodingSessionError::PartialCommit { operation_id, .. } => {

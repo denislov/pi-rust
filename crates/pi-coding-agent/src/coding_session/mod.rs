@@ -209,11 +209,7 @@ struct SubmissionCommitGuard {
 impl SubmissionCommitGuard {
     fn commit(&mut self, operation_id: String) -> Result<(), CodingSessionError> {
         self.coordinator
-            .mark_submitted(
-                &self.handle,
-                operation_id.clone(),
-                self.descriptor.submitted_kind,
-            )
+            .mark_submitted(&self.handle, operation_id.clone(), self.descriptor)
             .map_err(|error| CodingSessionError::Input {
                 message: error.to_string(),
             })?;
@@ -231,38 +227,53 @@ impl SubmissionCommitGuard {
         Ok(())
     }
 
-    fn finish(&mut self, status: event::ProductEventTerminalStatus) {
+    fn finish(
+        &mut self,
+        status: event::ProductEventTerminalStatus,
+    ) -> Result<(), CodingSessionError> {
         if let Some(operation_id) = &self.operation_id {
-            let anchor = match self.descriptor.association {
+            match self.descriptor.association {
                 public_operation::OperationAssociationClass::TerminalAssociated => {
-                    snapshot_coordinator::SubmittedTerminalAnchor::ProductEvent {
-                        sequence: self.coordinator.current_event_sequence(),
-                        durability: snapshot_coordinator::SubmittedEventDurability::Durable,
-                    }
+                    self.coordinator
+                        .finalize_terminal_association(
+                            &self.handle,
+                            operation_id,
+                            self.descriptor,
+                            status,
+                        )
+                        .map_err(|error| CodingSessionError::Session {
+                            message: error.to_string(),
+                        })?;
                 }
                 public_operation::OperationAssociationClass::OutcomeOnly => {
-                    snapshot_coordinator::SubmittedTerminalAnchor::OutcomeOnly {
+                    let anchor = snapshot_coordinator::SubmittedTerminalAnchor::OutcomeOnly {
                         acknowledgement:
                             public_projection::CodingAgentOutcomeAcknowledgementId::new(format!(
                                 "outcome:{operation_id}"
                             )),
-                    }
+                    };
+                    self.coordinator
+                        .mark_terminal(
+                            &self.handle,
+                            operation_id.clone(),
+                            self.descriptor.submitted_kind,
+                            self.descriptor,
+                            anchor,
+                            status,
+                        )
+                        .map_err(|error| CodingSessionError::Session {
+                            message: error.to_string(),
+                        })?;
                 }
                 public_operation::OperationAssociationClass::NotApplicable => {
-                    snapshot_coordinator::SubmittedTerminalAnchor::TerminalUncertain {
-                        operation_id: operation_id.clone(),
-                    }
+                    return Err(CodingSessionError::Session {
+                        message: "submitted operation has no finalization contract".into(),
+                    });
                 }
-            };
-            let _ = self.coordinator.mark_terminal(
-                &self.handle,
-                operation_id.clone(),
-                self.descriptor.submitted_kind,
-                anchor,
-                status,
-            );
+            }
         }
         self.finished = true;
+        Ok(())
     }
 }
 
@@ -272,7 +283,7 @@ impl Drop for SubmissionCommitGuard {
             return;
         }
         if self.operation_id.is_some() {
-            self.finish(event::ProductEventTerminalStatus::Aborted);
+            let _ = self.finish(event::ProductEventTerminalStatus::Aborted);
         } else {
             *self.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Abandoned;
         }
@@ -568,6 +579,12 @@ impl CodingAgentSession {
 
     pub fn subscribe_product_events_public(&self) -> CodingAgentProductEventReceiver {
         CodingAgentProductEventReceiver::new(self.subscribe_product_events())
+    }
+
+    pub(crate) fn compact_cancellation_handle(
+        &self,
+    ) -> operation_control::CompactCancellationHandle {
+        self.operation_control.compact_cancellation_handle()
     }
 
     fn emit_pending_startup_recovery_markers(&self) {
@@ -946,7 +963,7 @@ impl CodingAgentSession {
                 event::ProductEventTerminalStatus::Completed
             } else {
                 event::ProductEventTerminalStatus::Failed
-            });
+            })?;
         }
         result
     }
@@ -1060,7 +1077,7 @@ impl CodingAgentSession {
                 event::ProductEventTerminalStatus::Completed
             } else {
                 event::ProductEventTerminalStatus::Failed
-            });
+            })?;
         }
         result
     }
@@ -1293,6 +1310,7 @@ impl CodingAgentSession {
             guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
         }
         let snapshot = operation_permit.capability_snapshot().clone();
+        let operation_cancellation = operation_permit.cancellation_token();
 
         let result = match operation {
             Operation::Prompt(options) => {
@@ -1314,7 +1332,10 @@ impl CodingAgentSession {
                 result.map(OperationOutcome::Prompt)
             }
             Operation::ManualCompaction(options) => {
-                let options = ManualCompactionOptions::from_prompt_turn_options(&options)?;
+                let mut options = ManualCompactionOptions::from_prompt_turn_options(&options)?;
+                if let Some(cancellation) = operation_cancellation {
+                    options = options.with_cancellation(cancellation);
+                }
                 let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
                     return Err(CodingSessionError::UnsupportedCapability {
                         capability: "manual compaction without persistent session".into(),
@@ -1434,7 +1455,7 @@ impl CodingAgentSession {
                 event::ProductEventTerminalStatus::Completed
             } else {
                 event::ProductEventTerminalStatus::Failed
-            });
+            })?;
         }
         result
     }
@@ -3114,7 +3135,7 @@ runtime = "lua"
             .unwrap();
         let _guard = session
             .operation_control
-            .begin(OperationKind::Prompt)
+            .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
         let error = session
@@ -3214,7 +3235,7 @@ runtime = "lua"
             .unwrap();
         let _guard = session
             .operation_control
-            .begin(OperationKind::Prompt)
+            .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
         let error = session
@@ -3238,7 +3259,7 @@ runtime = "lua"
             .unwrap();
         let _guard = session
             .operation_control
-            .begin(OperationKind::Prompt)
+            .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
         let error = session
@@ -3647,7 +3668,7 @@ runtime = "lua"
             .unwrap();
         let _guard = session
             .operation_control
-            .begin(OperationKind::Prompt)
+            .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
         let operation = Operation::PluginCommand {
             command_id: "missing.command".into(),
@@ -3741,7 +3762,7 @@ runtime = "lua"
             .unwrap();
         let _operation = session
             .operation_control
-            .begin(OperationKind::Prompt)
+            .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
         let operation = Operation::ApproveDelegationConfirmation {
             operation_id: "missing_op".into(),
@@ -3773,7 +3794,7 @@ runtime = "lua"
             .push(pending_delegation_confirmation_state(ProfileKind::Agent));
         let _operation = session
             .operation_control
-            .begin(OperationKind::Prompt)
+            .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
         let error = session
@@ -5119,6 +5140,104 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn compact_cancellation_reaches_canonical_run_and_preserves_operation_id() {
+        let seed_api = "coding-session-compact-cancellation-seed";
+        let seed_provider = crate::test_support::ProviderGuard::register(
+            seed_api,
+            Arc::new(FauxProvider::simple_text("seed answer")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_compact_cancellation")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        prompt_outcome(
+            session
+                .run(CodingAgentOperation::Prompt(prompt_options(
+                    seed_api,
+                    "seed question",
+                )))
+                .await
+                .unwrap(),
+        );
+        drop(seed_provider);
+
+        let compact_api = "coding-session-compact-cancellation";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let _provider = crate::test_support::ProviderGuard::register(
+            compact_api,
+            Arc::new(BlockingTwoTurnProvider::new(
+                contexts, started_tx, release_rx,
+            )),
+        );
+        let connection = session
+            .connect(public_projection::CodingAgentClientId::new(
+                "compact-cancellation-client",
+            ))
+            .unwrap();
+        let operation = CodingAgentOperation::Compact(compact_options(compact_api, None));
+        let lease = connection
+            .prepare_submission(
+                &mut session,
+                public_projection::CodingAgentDraftId("unused".into()),
+                &operation,
+            )
+            .unwrap();
+        let cancellation = session.compact_cancellation_handle();
+        let task = tokio::spawn(async move {
+            let result = session.run(operation).await;
+            (session, result)
+        });
+
+        started_rx.await.unwrap();
+        let submitted = connection
+            .state()
+            .unwrap()
+            .submitted_operation
+            .expect("running Compact submission");
+        assert!(matches!(
+            submitted.status,
+            public_projection::CodingAgentSubmittedOperationStatus::Running
+        ));
+        assert_eq!(
+            cancellation.cancel("stale-operation"),
+            Err(operation_control::CompactCancellationRejection::OperationMismatch)
+        );
+        cancellation.cancel(&submitted.operation_id).unwrap();
+        release_tx.send(()).unwrap();
+
+        let (_session, result) = task.await.unwrap();
+        let outcome = compact_outcome(result.unwrap());
+        assert!(matches!(
+            &outcome,
+            PromptTurnOutcome::Failed {
+                operation_id,
+                error: CodingSessionError::Cancelled,
+                ..
+            } if operation_id == &submitted.operation_id
+        ));
+        drop(lease);
+        let terminal = connection
+            .state()
+            .unwrap()
+            .submitted_operation
+            .expect("cancelled Compact terminal state");
+        assert_eq!(terminal.operation_id, submitted.operation_id);
+        assert!(matches!(
+            terminal.status,
+            public_projection::CodingAgentSubmittedOperationStatus::Terminal {
+                status: public_event::CodingAgentProductEventTerminalStatus::Failed,
+                anchor: public_projection::CodingAgentSubmittedTerminalAnchor::ProductEvent { .. },
+            }
+        ));
+    }
+
+    #[tokio::test]
     async fn compact_summary_failure_records_failure_without_folding_replay() {
         let api = "coding-session-compact-summary-failure";
         let _provider_guard = crate::test_support::ProviderGuard::register(
@@ -5501,7 +5620,7 @@ runtime = "lua"
         .unwrap();
         let _operation = session
             .operation_control
-            .begin(OperationKind::Prompt)
+            .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
         let output = temp.path().join("session.html");
 

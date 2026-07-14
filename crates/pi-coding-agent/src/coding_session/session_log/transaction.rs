@@ -91,6 +91,26 @@ where
         runtime_generation: PersistedRuntimeGenerationRef,
     ) -> Self {
         let operation_id = ids.next_operation_id();
+        Self::begin_admitted_with_runtime_generation(
+            store,
+            handle,
+            ids,
+            clock,
+            operation,
+            runtime_generation,
+            operation_id,
+        )
+    }
+
+    pub(crate) fn begin_admitted_with_runtime_generation(
+        store: &SessionLogStore,
+        handle: SessionHandle,
+        mut ids: G,
+        clock: C,
+        operation: OperationKind,
+        runtime_generation: PersistedRuntimeGenerationRef,
+        operation_id: String,
+    ) -> Self {
         let turn_id = ids.next_turn_id();
         let mut transaction = Self {
             store: store.clone(),

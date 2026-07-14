@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use pi_agent_core::flow::{Flow, FlowOutcome};
+use pi_agent_core::flow::{Flow, FlowOutcome, FlowRunOptions};
 
 use super::CodingSessionError;
 use super::agent_invocation_flow::{
@@ -208,7 +208,16 @@ impl FlowService {
         &self,
         ctx: &mut ManualCompactionContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
-        self.manual_compaction_flow()?.run(ctx).await
+        let cancel = ctx.options().cancellation();
+        self.manual_compaction_flow()?
+            .run_with_options(
+                ctx,
+                FlowRunOptions {
+                    cancel,
+                    ..Default::default()
+                },
+            )
+            .await
     }
 
     pub(crate) async fn run_manual_compaction(

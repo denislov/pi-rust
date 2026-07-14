@@ -58,9 +58,10 @@ impl ClientService {
         &self,
         handle: &ClientHandle,
         operation_id: String,
-        kind: OperationKind,
+        descriptor: super::public_operation::OperationDescriptor,
     ) -> Result<(), ClientRegistryError> {
-        self.coordinator.mark_submitted(handle, operation_id, kind)
+        self.coordinator
+            .mark_submitted(handle, operation_id, descriptor)
     }
     pub(crate) fn mark_running(
         &self,
@@ -74,13 +75,14 @@ impl ClientService {
         &self,
         handle: &ClientHandle,
         operation_id: String,
-        kind: OperationKind,
+        descriptor: super::public_operation::OperationDescriptor,
         sequence: u64,
     ) -> Result<(), ClientRegistryError> {
         self.coordinator.mark_terminal(
             handle,
             operation_id,
-            kind,
+            descriptor.submitted_kind,
+            descriptor,
             super::snapshot_coordinator::SubmittedTerminalAnchor::ProductEvent {
                 sequence,
                 durability: super::snapshot_coordinator::SubmittedEventDurability::Durable,
@@ -105,7 +107,9 @@ mod tests {
         assert_eq!(second.generation.0, 2);
         assert_eq!(
             service.acknowledge(&first, 1),
-            Err(ClientRegistryError::StaleClient)
+            Err(ClientRegistryError::Lifecycle(
+                super::super::error::CodingAgentLifecycleRejection::StaleGeneration
+            ))
         );
         assert_eq!(service.acknowledge(&second, 1), Ok(1));
     }

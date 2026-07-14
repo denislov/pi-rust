@@ -6,6 +6,7 @@ use super::operation::{OperationAdmission, OperationClass, OperationDispatchMode
 use super::operation_control::{
     OperationControl, OperationGuard, OperationKind, PromptControlHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ControlIntent {
@@ -39,6 +40,7 @@ pub(crate) struct QueryIntentMetadata {
 pub(crate) struct OperationPermit {
     guard: Option<OperationGuard>,
     capability_snapshot: OperationCapabilitySnapshot,
+    cancellation: Option<CancellationToken>,
     #[cfg(test)]
     kind: OperationKind,
     #[cfg(test)]
@@ -72,12 +74,14 @@ impl OperationPermit {
         guard: OperationGuard,
         capability_snapshot: OperationCapabilitySnapshot,
     ) -> Self {
+        let cancellation = guard.cancellation_token();
         #[cfg(not(test))]
         let _ = (kind, class);
 
         Self {
             guard: Some(guard),
             capability_snapshot,
+            cancellation,
             #[cfg(test)]
             kind,
             #[cfg(test)]
@@ -96,6 +100,7 @@ impl OperationPermit {
         Self {
             guard: None,
             capability_snapshot,
+            cancellation: None,
             #[cfg(test)]
             kind,
             #[cfg(test)]
@@ -106,6 +111,10 @@ impl OperationPermit {
     #[allow(dead_code)]
     pub(crate) fn capability_snapshot(&self) -> &OperationCapabilitySnapshot {
         &self.capability_snapshot
+    }
+
+    pub(crate) fn cancellation_token(&self) -> Option<CancellationToken> {
+        self.cancellation.clone()
     }
 
     #[cfg(test)]
@@ -160,7 +169,10 @@ impl IntentRouter {
     ) -> Result<OperationGuard, CodingSessionError> {
         Self::validate_dispatch_mode(admission, expected)?;
 
-        control.begin(admission.kind)
+        control.begin(
+            admission.kind,
+            admission.capability_snapshot.operation_id.clone(),
+        )
     }
 
     pub(crate) fn admit_operation(
@@ -178,16 +190,20 @@ impl IntentRouter {
             ));
         }
 
-        control.begin(admission.kind).map(|guard| {
-            OperationPermit::guarded(
+        control
+            .begin(
                 admission.kind,
-                admission.metadata.class,
-                guard,
-                admission.capability_snapshot.clone(),
+                admission.capability_snapshot.operation_id.clone(),
             )
-        })
+            .map(|guard| {
+                OperationPermit::guarded(
+                    admission.kind,
+                    admission.metadata.class,
+                    guard,
+                    admission.capability_snapshot.clone(),
+                )
+            })
     }
-
     pub(crate) fn prompt_control_handle(
         control: &mut OperationControl,
         intent: ControlIntent,
@@ -249,7 +265,9 @@ mod tests {
     #[test]
     fn intent_router_prompt_control_handle_rejects_busy_or_pending_receiver() {
         let mut control = OperationControl::new();
-        let guard = control.begin(OperationKind::PluginLoad).unwrap();
+        let guard = control
+            .begin(OperationKind::PluginLoad, "op_test".into())
+            .unwrap();
 
         assert_eq!(
             IntentRouter::prompt_control_handle(&mut control, ControlIntent::PromptControl)
@@ -326,7 +344,9 @@ mod tests {
     #[test]
     fn intent_router_admits_queries_while_root_operation_is_busy() {
         let control = OperationControl::new();
-        let guard = control.begin(OperationKind::Prompt).unwrap();
+        let guard = control
+            .begin(OperationKind::Prompt, "op_test".into())
+            .unwrap();
 
         let admission =
             IntentRouter::admit_query(&control, QueryIntent::PendingDelegationConfirmations);
@@ -346,7 +366,9 @@ mod tests {
         let operation = Operation::Export(ExportOptions::view());
         let admission = IntentRouter::static_admission(&operation).unwrap();
         let control = OperationControl::new();
-        let guard = control.begin(OperationKind::Prompt).unwrap();
+        let guard = control
+            .begin(OperationKind::Prompt, "op_test".into())
+            .unwrap();
 
         let permit = IntentRouter::admit_operation(
             &control,
@@ -508,8 +530,7 @@ mod tests {
 
         assert!(
             !session_source.contains("fn set_default_agent_profile_id(")
-                && session_source
-                    .contains("SyncMutable => self.run_sync_mut_operation(operation)?"),
+                && session_source.contains("self.run_sync_mut_operation(operation, submission)?"),
             "default-profile mutation should be owned by the canonical run dispatcher"
         );
         assert!(
