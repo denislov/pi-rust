@@ -5,16 +5,16 @@ milestone_name: Typed Product Events and Client Lifecycle Contract
 current_phase: 09
 current_phase_name: lifecycle-association-guards-and-closure
 status: executing
-stopped_at: Completed 09-04-PLAN.md
-last_updated: "2026-07-14T07:20:22.852Z"
+stopped_at: Completed 09-05-PLAN.md
+last_updated: "2026-07-14T07:55:04.516Z"
 last_activity: 2026-07-14
-last_activity_desc: Completed Phase 09 Plan 04 exact operation association and Compact cancellation
+last_activity_desc: Completed Phase 09 Plan 05 two-phase runtime shutdown and lifecycle event
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 23
-  completed_plans: 19
-  percent: 83
+  completed_plans: 20
+  percent: 87
 ---
 
 # Project State
@@ -29,15 +29,15 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 09 (lifecycle-association-guards-and-closure) — EXECUTING
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
-Last activity: 2026-07-14 — Completed Phase 09 Plan 04 exact operation association and Compact cancellation
+Last activity: 2026-07-14 — Completed Phase 09 Plan 05 two-phase runtime shutdown and lifecycle event
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 34
+- Total plans completed: 35
 - Average duration: -
 - Total execution time: 0.0 hours
 
@@ -86,6 +86,7 @@ Last activity: 2026-07-14 — Completed Phase 09 Plan 04 exact operation associa
 | Phase 09 P02 | 10min | 1 tasks | 1 files |
 | Phase 09 P03 | 17min | 2 tasks | 6 files |
 | Phase 09 P04 | 1h 32m | 2 tasks | 18 files |
+| Phase 09 P05 | 29min | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -143,6 +144,8 @@ Recent decisions affecting current work:
 - [Phase 09]: Use the existing SnapshotCoordinator submitted record as the exact root-evidence authority updated inside EventService publication, avoiding retained-history scans or a second index. — This keeps exact evidence and submitted lifecycle mutation in one coordinator transaction.
 - [Phase 09]: Bind persistent and transient workflow operation ids to the admitted capability snapshot id so durable facts, outcomes, events, and submitted state share one identity. — A single admitted identity eliminates sequence guessing and makes PartialCommit attribution exact.
 - [Phase 09]: Keep Compact cancellation crate-private and exact-id scoped; preserve PromptFailed compatibility while CodingSessionError::Cancelled distinguishes the typed failure. — This reaches canonical flow cancellation without expanding the stable public API or weakening event compatibility.
+- [Phase 09]: Keep shutdown as two explicit phases: a cloneable coordinator-only request handle closes authority, while the restored unique session owner drains and finalizes. — This prevents owner duplication, cancellation of admitted work, and lifecycle publication from shared request handles.
+- [Phase 09]: Close product receivers from coordinator lifecycle state after publishing Runtime.ShutDown. — Cloned EventService and client handles must not keep delivery alive or truncate the final lifecycle event.
 
 ### Pending Todos
 
@@ -162,8 +165,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-14T07:20:22.846Z
-Stopped at: Completed 09-04-PLAN.md
+Last session: 2026-07-14T07:54:16.163Z
+Stopped at: Completed 09-05-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
