@@ -19,7 +19,7 @@
 | M2 | 进行中 | WP2.1 admission descriptor 已统一 class/dispatch/kind 合同（`c3df909`），admission record 已保存 operation identity、capability generation 和 root/child lineage（`e4c8b2a`）；WP2.2 scheduler core 已接入 canonical dispatchers，提供 typed rejection（`68cc0dc`、`788238d`）；prompt/compact/async vertical slice 已迁移（`4e8515b`）；invocation/delegation 与 profile/runtime slice 已由 canonical operation 集成测试覆盖，delegated child operation 已进入 scheduler lineage admission（`60b61c1`） | 完成 workflow/control 与 session-navigation slices，扩展 child permit 到 cancellation/terminal association |
 | M3 | 进行中 | WP3.1 event/manifest decoder 已改为 explicit schema/version dispatch；v2 event 缺失 `session_sequence` 仍可兼容 replay，unknown decoder fail closed 并提供恢复建议（`88ddab4`）；WP3.2 已强制 durable sequence 从 1 连续递增，legacy 无 sequence 行按逻辑行号归一化（`b6e1218`） | 定义 append CAS/idempotency 与 partial commit 合同，扩展故障注入矩阵 |
 | M4 | 进行中 | WP4.3 已移除 `capability_snapshot.rs` 文件级 dead-code suppression，删除无 production consumer 的 plugin actor、tool-name enumeration、filesystem/shell require helpers 及测试 helper（`e2f3265`）；WP4.2 删除未实现的 `CancelMatchingOperations` revocation mode，public event/protocol 只保留真实支持的 `FutureOnly`（`0730e44`） | 审计 raw service capability escape，完成 generation/revocation 与 snapshot audit 统一 |
-| M5 | 进行中 | WP5.1 已删除 `CodingAgentProductEvent` 顶层 deprecated `family`/`kind` 字符串字段，public wire 仅保留 typed event family/payload kind；测试消费者改为 typed family + kind 查询（`1f09f1f`）。WP5.2 public snapshot cursor 已增加稳定 `stream_id`（`6f3df8c`）和 `snapshot_protocol_major`（`134e374`），fresh snapshot 与 reconnect replay 统一填充 session identity/version；canonical `reconnect_from_cursor` 已校验 stream/major 并复用 atomic recovery boundary（`ea11a09`） | 补 reconnect/backpressure 并完成剩余 adapter 收敛 |
+| M5 | 进行中 | WP5.1 已删除 `CodingAgentProductEvent` 顶层 deprecated `family`/`kind` 字符串字段，public wire 仅保留 typed event family/payload kind；测试消费者改为 typed family + kind 查询（`1f09f1f`）。WP5.2 public snapshot cursor 已增加稳定 `stream_id`（`6f3df8c`）、`snapshot_protocol_major`（`134e374`）并统一使用 camelCase wire shape；fresh snapshot 与 reconnect replay 统一填充 session identity/version，RPC prompt 已删除裸 `afterSnapshotSequence` 并要求完整 cursor（`b03a0bc`）；canonical `reconnect_from_cursor` 已校验 stream/major 并复用 atomic recovery boundary（`ea11a09`） | 补 reconnect/backpressure、terminal/control 优先级并完成剩余 adapter 收敛 |
 | M6-M7 | 未开始 | - | 按依赖顺序执行 |
 
 已提交检查点：
@@ -59,6 +59,7 @@
 - `134e374`：为 public snapshot cursor 增加 `snapshot_protocol_major`，fresh/replay 使用同一 `UI_SNAPSHOT_PROTOCOL_VERSION`，让独立 cursor 消费者可执行 major boundary 校验。
 - `ea11a09`：新增 `CodingAgentClientConnection::reconnect_from_cursor`，拒绝错误 stream 或 snapshot major，并将合法 cursor 路由到既有 atomic replay/live recovery boundary。
 - `1f09f1f`：删除 `CodingAgentProductEvent` 顶层 deprecated `family`/`kind` 字符串字段，迁移 invocation/team/delegation/profile 测试辅助函数到 typed family + kind 断言。
+- `b03a0bc`：RPC prompt 删除裸 `afterSnapshotSequence`，改用完整 `afterSnapshotCursor`（stream identity、snapshot major、event sequence、capability generation），并统一调用 `reconnect_from_cursor`。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -96,6 +97,7 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --test public_api reconnect_from_cursor_validates_stream_and_snapshot_major -- --exact`：cursor stream/version validation 通过。
 - `cargo test -p pi-coding-agent --test product_event_contract --test agent_invocation --test agent_team_flow --test agent_profile_session --test delegation_execution --no-fail-fast`：31 个 typed ProductEvent consumer/contract 测试通过。
 - `cargo test -p pi-coding-agent --test protocol_events --test public_api --test interactive_event_bridge --no-fail-fast`：71 个 protocol/public/interactive event 测试通过。
+- `cargo test -p pi-coding-agent --lib protocol::rpc --test public_api --no-fail-fast`：RPC cursor wire-shape、reconnect boundary 与 public cursor validation 测试通过。
 
 ## 激进方案决策
 
