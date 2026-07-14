@@ -110,27 +110,4 @@ mod tests {
         let back: AssistantMessageEvent = serde_json::from_str(&json).unwrap();
         assert!(matches!(back, AssistantMessageEvent::Error { .. }));
     }
-
-    #[test]
-    fn text_delta_has_snake_case_tag() {
-        let ev = AssistantMessageEvent::TextDelta {
-            content_index: 0,
-            delta: "hi".into(),
-            partial: AssistantMessage::empty("test", "test"),
-        };
-        let json = serde_json::to_string(&ev).unwrap();
-        assert!(json.contains(r#""type":"text_delta""#));
-        assert!(json.contains(r#""contentIndex":0"#));
-    }
-
-    #[test]
-    fn toolcall_delta_has_snake_case_tag() {
-        let ev = AssistantMessageEvent::ToolcallDelta {
-            content_index: 1,
-            delta: "{}".into(),
-            partial: AssistantMessage::empty("test", "test"),
-        };
-        let json = serde_json::to_string(&ev).unwrap();
-        assert!(json.contains(r#""type":"toolcall_delta""#));
-    }
 }

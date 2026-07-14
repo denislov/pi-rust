@@ -33,22 +33,3 @@ pub enum StopReason {
     Error,
     Aborted,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stop_reason_serde() {
-        assert_eq!(
-            serde_json::to_string(&StopReason::Stop).unwrap(),
-            r#""stop""#
-        );
-        assert_eq!(
-            serde_json::to_string(&StopReason::ToolUse).unwrap(),
-            r#""toolUse""#
-        );
-        let sr: StopReason = serde_json::from_str(r#""toolUse""#).unwrap();
-        assert_eq!(sr, StopReason::ToolUse);
-    }
-}

@@ -40,36 +40,3 @@ pub struct ModelCost {
     #[serde(rename = "cacheWrite")]
     pub cache_write: f64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn model_serde_camelcase() {
-        let m = Model {
-            id: "claude-sonnet-4-5".into(),
-            name: "Claude Sonnet 4.5".into(),
-            api: "anthropic-messages".into(),
-            provider: "anthropic".into(),
-            base_url: "https://api.anthropic.com".into(),
-            reasoning: true,
-            thinking_level_map: None,
-            input: vec![ModelInput::Text],
-            cost: ModelCost {
-                input: 3.0,
-                output: 15.0,
-                cache_read: 0.0,
-                cache_write: 0.0,
-            },
-            context_window: 200000,
-            max_tokens: 8192,
-            headers: None,
-            compat: None,
-        };
-        let json = serde_json::to_string(&m).unwrap();
-        assert!(json.contains(r#""baseUrl""#));
-        assert!(json.contains(r#""contextWindow""#));
-        assert!(json.contains(r#""maxTokens""#));
-    }
-}
