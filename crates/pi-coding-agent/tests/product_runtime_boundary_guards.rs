@@ -1730,7 +1730,9 @@ fn runtime_admission_has_no_direct_operation_control_bypass() {
     let session_source = fs::read_to_string(&session_path).expect("read coding session source");
     let session_production = production_source(&sanitize_rust_source(&session_source));
     assert_eq!(
-        session_production.matches("OperationScheduler::admit(").count(),
+        session_production
+            .matches("OperationScheduler::admit(")
+            .count(),
         3,
         "canonical sync/async dispatchers must all route through typed scheduler admission"
     );
@@ -1756,12 +1758,7 @@ fn runtime_admission_has_no_direct_operation_control_bypass() {
             let owner = relative.ends_with("src/coding_session/scheduler.rs")
                 || relative.ends_with("src/coding_session/operation_control.rs");
             if !owner {
-                violations.push(format!(
-                    "{}:{}: {}",
-                    relative,
-                    line_no + 1,
-                    line.trim()
-                ));
+                violations.push(format!("{}:{}: {}", relative, line_no + 1, line.trim()));
             }
         }
     }
