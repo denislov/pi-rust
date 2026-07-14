@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Typed Product Events and Client Lifecycle Contract
-current_phase: 9
-current_phase_name: Lifecycle Association, Guards, and Closure
+current_phase: 09
+current_phase_name: lifecycle-association-guards-and-closure
 status: executing
-stopped_at: Phase 9 context gathered
-last_updated: "2026-07-13T18:39:47.382Z"
-last_activity: 2026-07-13
-last_activity_desc: Phase 8 complete, transitioned to Phase 9
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-07-14T04:58:16.813Z"
+last_activity: 2026-07-14
+last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 15
-  completed_plans: 15
-  percent: 75
+  total_plans: 23
+  completed_plans: 16
+  percent: 70
 ---
 
 # Project State
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Every first-party live-session product operation follows one typed, admitted, behavior-preserving runtime path through `CodingAgentSession::run`.
-**Current focus:** Phase 08 — Client Connection, Replay, and Scoped Control
+**Current focus:** Phase 09 — lifecycle-association-guards-and-closure
 
 ## Current Position
 
-Phase: 9 — Lifecycle Association, Guards, and Closure
-Plan: Not started
+Phase: 09 (lifecycle-association-guards-and-closure) — EXECUTING
+Plan: 2 of 8
 Status: Ready to execute
-Last activity: 2026-07-13 — Phase 8 complete, transitioned to Phase 9
+Last activity: 2026-07-14 — Phase 09 execution started
 
 ## Performance Metrics
 
@@ -82,6 +82,7 @@ Last activity: 2026-07-13 — Phase 8 complete, transitioned to Phase 9
 | Phase 06 P03 | 8min | 2 tasks | 3 files |
 | Phase 08 P04 | 10min | 2 tasks | 7 files |
 | Phase 08 P05 | 9min | 3 tasks | 7 files |
+| Phase 09 P01 | 58 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -128,6 +129,9 @@ Recent decisions affecting current work:
 - [Phase 08]: Keep broadcast transport outside snapshot authority and send only after coordinator transaction release. — Receiver work cannot invert the coordinator lock or observe a pre-commit cursor.
 - [Phase 08]: Keep CodingAgentClientConnection as a generation-scoped Arc coordinator handle with state/preparation methods but no dispatcher.
 - [Phase 08]: Commit submission provenance only after canonical IntentRouter admission returns the operation id; precommit drop preserves the draft.
+- [Phase 09]: Represent submitted terminal evidence as an exhaustive tagged anchor: ProductEvent, OutcomeOnly, or TerminalUncertain. — Separate acknowledgement domains cannot collapse into a guessed event sequence.
+- [Phase 09]: Keep outcome acknowledgement identity opaque and free of generation/signature authority. — Runtime validation, not public construction, remains authoritative.
+- [Phase 09]: Project submitted event durability as Durable or Uncertain. — Session identity and pending-write implementation details remain private.
 
 ### Pending Todos
 
@@ -147,9 +151,9 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-13T18:39:47.334Z
-Stopped at: Phase 9 context gathered
-Resume file: .planning/phases/09-lifecycle-association-guards-and-closure/09-CONTEXT.md
+Last session: 2026-07-14T04:58:16.805Z
+Stopped at: Completed 09-01-PLAN.md
+Resume file: None
 
 ## Operator Next Steps
 

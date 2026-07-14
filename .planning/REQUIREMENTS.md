@@ -23,12 +23,12 @@
 - [x] **CLIENT-01**: A public client connection can obtain a snapshot cursor and resume retained product events from that cursor.
 - [x] **CLIENT-02**: A stale cursor produces a typed fresh-snapshot-required/event-gap result, and reconnect behavior distinguishes resumable history from required snapshot recovery.
 - [x] **CLIENT-03**: Public client state exposes submitted-operation identity/status and client-local draft semantics without exposing internal services or queues.
-- [ ] **CLIENT-04**: Client detach/close and runtime shutdown have explicit idempotent behavior and do not corrupt session ownership or event publication.
+- [x] **CLIENT-04**: Client detach/close and runtime shutdown have explicit idempotent behavior and do not corrupt session ownership or event publication.
 
 ### Control And Association
 
 - [x] **CONTROL-01**: A scoped public control contract supports existing abort, steer, and follow-up semantics without placing control signals into the ordinary operation queue.
-- [ ] **CONTROL-02**: Operation id, submitted client operation, terminal product event, and terminal outcome association is explicit and tested for every operation that exposes terminal semantics.
+- [x] **CONTROL-02**: Operation id, submitted client operation, terminal product event, and terminal outcome association is explicit and tested for every operation that exposes terminal semantics.
 
 ### Boundary Hardening
 
@@ -63,9 +63,9 @@
 | CLIENT-01 | Phase 8 | Complete |
 | CLIENT-02 | Phase 8 | Complete |
 | CLIENT-03 | Phase 8 | Complete |
-| CLIENT-04 | Phase 9 | Pending |
+| CLIENT-04 | Phase 9 | Complete |
 | CONTROL-01 | Phase 8 | Complete |
-| CONTROL-02 | Phase 9 | Pending |
+| CONTROL-02 | Phase 9 | Complete |
 | GUARD-01 | Phase 9 | Pending |
 | GUARD-02 | Phase 9 | Pending |
 
