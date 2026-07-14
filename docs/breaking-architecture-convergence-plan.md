@@ -111,6 +111,7 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --no-fail-fast`：21 个 facade/runtime boundary guard 通过。
 - `cargo test -p pi-coding-agent --lib plugin_load --no-fail-fast`：18 个 plugin-load/canonical operation 测试通过。
 - `cargo test -p pi-coding-agent --lib operation --quiet`：96 个 operation/admission 测试通过。
+- `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：删除 session pass-through 后全量 coding-agent tests 通过（701 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）。
 
 ## 激进方案决策
 
