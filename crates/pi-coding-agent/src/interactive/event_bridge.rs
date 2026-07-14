@@ -92,11 +92,6 @@ impl UiProjection {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn last_sequence(&self) -> ProductEventSequence {
-        self.last_sequence
-    }
-
     pub(crate) fn apply_product_event(&mut self, event: &ProductEvent) {
         if event.sequence() <= self.last_sequence {
             return;
@@ -674,7 +669,7 @@ mod tests {
         let snapshot = snapshot(ProductEventSequence::new(7), "sess_projection").await;
         let mut projection = UiProjection::from_snapshot(snapshot);
 
-        assert_eq!(projection.last_sequence(), ProductEventSequence::new(7));
+        assert_eq!(projection.last_sequence, ProductEventSequence::new(7));
         assert!(projection.drain().is_empty());
         assert!(projection.drain().is_empty());
     }
@@ -687,7 +682,7 @@ mod tests {
 
         projection.apply_product_event(&assistant_delta_event(7, "duplicate"));
 
-        assert_eq!(projection.last_sequence(), ProductEventSequence::new(7));
+        assert_eq!(projection.last_sequence, ProductEventSequence::new(7));
         assert!(projection.drain().is_empty());
     }
 
@@ -699,7 +694,7 @@ mod tests {
 
         projection.apply_product_event(&assistant_delta_event(6, "stale"));
 
-        assert_eq!(projection.last_sequence(), ProductEventSequence::new(7));
+        assert_eq!(projection.last_sequence, ProductEventSequence::new(7));
         assert!(projection.drain().is_empty());
     }
 
@@ -731,7 +726,7 @@ mod tests {
         projection.apply_product_event(&first);
         projection.apply_product_event(&second);
 
-        assert_eq!(projection.last_sequence(), ProductEventSequence::new(4));
+        assert_eq!(projection.last_sequence, ProductEventSequence::new(4));
         assert_eq!(
             projection.drain(),
             vec![
