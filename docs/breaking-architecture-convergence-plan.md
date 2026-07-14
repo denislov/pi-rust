@@ -2,9 +2,11 @@
 
 > 目标版本：Rust crates `0.2.0`，live protocol family major `2`
 >
-> 基线提交：`ae367e2 chore: checkpoint crate sources`
+> 基线提交：`605bb8a chore: checkpoint crates before breaking convergence`
 >
-> 状态：执行中（M0 已完成，M1 进行中）
+> 策略：激进清理（允许 Rust API、live protocol 和 product event surface breaking）
+>
+> 状态：执行中（M0/M1 已完成，M2 进行中）
 >
 > 依据：`docs/architecture.md`、`docs/code-cleanup-strategies.md` 和 2026-07-15 工作区源码
 
@@ -13,8 +15,9 @@
 | Milestone | 状态 | 已落地内容 | 下一退出条件 |
 |---|---|---|---|
 | M0 | 完成 | contract inventory、session compatibility fixtures、dead-code inventory、architecture gates | 持续保持 gates 通过 |
-| M1 | 进行中 | WP1.1 scoped provider runtime 与 WP1.2 单一 agent loop 已完成；product global test bridge 已删除 | 完成 WP1.3 lower-level facade 收窄 |
-| M2-M7 | 未开始 | - | 按依赖顺序执行 |
+| M1 | 完成 | WP1.1/WP1.2 已完成；scoped provider runtime、单一 agent loop、lower-level facade 收窄、`pi-coding-agent` root deprecated re-export 删除 | 保持 facade boundary 不回退 |
+| M2 | 进行中 | WP2.1 admission descriptor 已统一 class/dispatch/kind 合同（`c3df909`）；WP2.2 scheduler core 已接入 canonical dispatchers，提供 typed rejection（`68cc0dc`、`788238d`）；prompt/compact/async vertical slice 已迁移（`4e8515b`） | 迁移 workflow、invocation/delegation、plugin/runtime-write、session-navigation slices |
+| M3-M7 | 未开始 | - | 按依赖顺序执行 |
 
 已提交检查点：
 
@@ -26,8 +29,24 @@
 - `377d1f5`：由 `CodingAgentSession` 持有并向 operation runtime 注入 scoped `AiClient`。
 - `6554f63`：将 scoped `AiClient` 贯穿 CLI、print/JSON、RPC 和 interactive adapters。
 - `80d2b86`：删除 product global provider test bridge，并将全部 product provider fixtures 迁到 scoped client。
+- `605bb8a`：暂存并提交 `crates/` 全部代码变更，作为激进清理和 breaking release 的回滚检查点。
+- `2842ce8`：迁移 `pi-ai` provider 测试到 `pi_ai::api`，将 `registry` 模块收窄为 crate-private 实现。
+- `7dcb1f0`：删除 4 个仅验证 serde derive 命名/标签的低价值单元测试，保留集成 round-trip 与 wire-shape 覆盖。
+- `7ff5707`：删除 interactive `UiProjection::last_sequence()` 未使用 accessor，测试直接验证 projection cursor。
+- `b80b6f0`：将 Flow 和 transcript 合同集中到 `pi_agent_core::api`，迁移 product/test consumers，并把两个模块改为 crate-private。
+- `a7277db`：迁移 resource consumers 到 `pi_agent_core::api`，将 `resources` 模块改为 crate-private。
+- `e1db230`：迁移 `DiagnosticSeverity` consumers 到 `pi_agent_core::api`，将 `types` 模块改为 crate-private。
+- `6550ed9`：将 branch summary、proxy、shell output、truncate、session context 合同集中到 `pi_agent_core::api`，迁移测试消费者并隐藏实现模块。
+- `601b486`：将 compaction estimate/prepare/summarize 合同集中到 `pi_agent_core::api`，迁移 product/test consumers 并隐藏 `compaction` 模块。
+- `a966da3`：将 AgentTurnContext、AgentTurnFlow 及节点合同集中到 `pi_agent_core::api`，迁移行为测试并隐藏 `agent_turn_flow` 模块；具体节点暂因测试隔离需求保留。
+- `e629a8d`：迁移仓内所有 root deprecated API consumers 到 `pi_coding_agent::api` 或 owner module，删除 `CliArgs`、`CliError`、`CliRunOptions`、`run_cli`、`run_print_mode`、`builtin_tools` 等 root-level compatibility re-export，并将 API boundary guard 改为验证删除结果。
+- `c3df909`：将 `CodingAgentOperation` descriptor 与内部 `Operation::metadata()` 的 admission class、dispatch mode、submitted kind 统一校验，建立 M2 scheduler 前的单一 operation contract 基线。
+- `68cc0dc`：新增 `OperationScheduler` 和 `AdmissionRejection`，让 operation admission 统一经过 scheduler；read-only busy bypass、typed busy rejection、dispatch mismatch fail-closed、query classification 均有单元测试。
+- `788238d`：将 `run_sync_operation`、`run_sync_mut_operation`、`run_operation` 三个 canonical dispatcher 直接迁移到 `OperationScheduler::admit`，删除 `IntentRouter::admit_operation`/`begin` 第二 admission 入口，并更新契约测试。
+- `4e8515b`：删除剩余 `IntentRouter` operation admission 测试入口，统一 scheduler 的 dispatch mismatch 错误上下文，并以完整 coding-session 测试验证 vertical slice。
+- `f31ede0`：新增 product runtime boundary guard，递归剥离 test-only 源码后禁止 scheduler/operation-control 所有者之外的直接 `begin` admission 绕行，并锁定三条 canonical dispatcher 的 scheduler 调用数量。
 
-M1 当前状态：WP1.1 和 WP1.2 已完成，WP1.3 进行中。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；`pi-coding-agent` 源码与测试不再读写 deprecated global provider registry。剩余风险集中在 lower-level compatibility facade：删除 `pi-ai` global registry helpers、旧 SSE/retry paths 和 `pi-agent-core` 过度导出前，必须先迁移所有下游调用并保持 boundary/public-API gates 通过。
+M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
 本阶段验证：
 
@@ -36,6 +55,35 @@ M1 当前状态：WP1.1 和 WP1.2 已完成，WP1.3 进行中。`CodingAgentSess
 - `cargo test -p pi-coding-agent --tests --no-fail-fast`
 - `git diff --check`
 - product provider registry boundary guards：源码和测试中的 global registry mutation caller 为 `0`
+- `cargo test -p pi-ai --tests --no-fail-fast`：64 个单元测试及全部集成测试通过。
+- `cargo test -p pi-agent-core --test public_api --test flow --test session_wire --test session_context`：24 个测试通过。
+- `cargo test -p pi-coding-agent --test interactive_sessions --test protocol_events --test product_runtime_boundary_guards`：62 个测试通过。
+- `cargo test -p pi-agent-core --test resources --test sourced_resources`：12 个测试通过。
+- `cargo test -p pi-agent-core --test m9_branch_proxy_shell --test session_context`：10 个测试通过。
+- `cargo test -p pi-agent-core --test compaction`：12 个测试通过。
+- `cargo test -p pi-agent-core --test agent_turn_flow`：23 个测试通过。
+- `cargo test -p pi-coding-agent --test api_boundary_guards --test args --test protocol_args --test session_args --test interactive_args --test bin_startup`：44 个测试通过。
+- `cargo test -p pi-coding-agent --lib scheduler`：4 个 scheduler admission 测试通过。
+- `cargo test -p pi-coding-agent --lib intent_router`：14 个既有 admission/control 测试通过。
+- `cargo test -p pi-coding-agent --lib operation`：94 个 coding-session 单元测试通过。
+- `cargo test -p pi-coding-agent --test product_runtime_boundary_guards runtime_admission_has_no_direct_operation_control_bypass -- --exact`：admission bypass boundary guard 通过。
+
+## 激进方案决策
+
+本计划采用 `docs/code-cleanup-strategies.md` 中的激进方案，并将三份 crate 审阅报告中的删除项纳入架构收敛，而不是单独做“按行数删代码”的清理。执行顺序固定为 replacement-first：先建立新合同和消费者，再删除旧表面。
+
+首批激进删除范围：
+
+- `pi-ai`：删除 `anthropic::sse` 重复实现、`transport::retry` 透传模块、serde derive 低价值测试及重复 retry 测试；在所有调用迁移后删除 global registry helpers。
+- `pi-agent-core`：删除旧 monolithic agent loop、旧 provider request preparation、未接入 Flow 的兼容节点和 legacy wrapper；删除仅验证源码形状的迁移护栏，保留能表达运行时合同的测试。
+- `pi-coding-agent`：删除未消费的 plugin extension 类型、平行 compatibility event、root-level deprecated re-export、重复 guard/test support 和 facade pass-through；保留仍被 session log、snapshot、plugin tool path 消费的类型。
+
+激进方案的硬约束：
+
+1. 任何删除必须有 replacement consumer、API/protocol diff 和回归测试；不能以 `#[allow(dead_code)]` 消失作为完成条件。
+2. Rust API breaking、live protocol major `2` 和 product event v2 在同一 release train 中协调，但 durable session decoder 必须先于 writer 升级落地。
+3. `0.1.x` 只保留 maintenance 分支；`0.2.0-rc.1` 后冻结支持 API 和 wire schema，不在核心 runtime 保留隐式 v1 fallback。
+4. 每个删除批次必须可单独回滚；禁止把 durable schema 原地重写和 compatibility API 删除放进同一个不可逆提交。
 
 ## 1. 项目目标
 
