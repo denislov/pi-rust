@@ -6,15 +6,15 @@ current_phase: 09
 current_phase_name: lifecycle-association-guards-and-closure
 status: executing
 stopped_at: Completed 09-06-PLAN.md
-last_updated: "2026-07-14T08:17:41.337Z"
+last_updated: "2026-07-14T09:24:36.365Z"
 last_activity: 2026-07-14
 last_activity_desc: Completed Phase 09 Plan 06 RPC lifecycle projection
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 23
-  completed_plans: 21
-  percent: 91
+  completed_plans: 22
+  percent: 75
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 09 (lifecycle-association-guards-and-closure) — EXECUTING
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Ready to execute
 Last activity: 2026-07-14 — Completed Phase 09 Plan 06 RPC lifecycle projection
 
@@ -88,6 +88,7 @@ Last activity: 2026-07-14 — Completed Phase 09 Plan 06 RPC lifecycle projectio
 | Phase 09 P04 | 1h 32m | 2 tasks | 18 files |
 | Phase 09 P05 | 29min | 2 tasks | 12 files |
 | Phase 09 P06 | 16min | 2 tasks | 9 files |
+| Phase 09 P07 | 24 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -150,6 +151,8 @@ Recent decisions affecting current work:
 - [Phase 09]: Keep lifecycle wire values additive and independently typed; do not add lifecycle fields to existing protocol or response envelopes. — Dedicated payloads preserve every existing external RPC and protocol shape while making lifecycle behavior explicit.
 - [Phase 09]: Capture the opaque runtime shutdown handle before every asynchronous RPC owner move and retain only pending response correlation in adapter state. — The handle requests Phase A without duplicating the unique owner or storing adapter-local lifecycle truth.
 - [Phase 09]: Allow exact submitted terminal finalization during ShuttingDown while continuing to reject ordinary client mutation and all post-ShutDown mutation. — Admitted work must publish exact terminal evidence during drain, while completed shutdown must remain closed to mutation.
+- [Phase 09]: Keep embedded interactive-loop exit detach-only; reserve runtime shutdown for the process-facing owner boundary. — Closing one UI must not terminate shared admitted work.
+- [Phase 09]: Return the unique CodingAgentSession owner through LoopResult before invoking shutdown Phase B. — Only the restored process owner has authority to drain and finalize runtime shutdown.
 
 ### Pending Todos
 
@@ -169,7 +172,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-14T08:17:15.707Z
+Last session: 2026-07-14T09:23:54.178Z
 Stopped at: Completed 09-06-PLAN.md
 Resume file: None
 
