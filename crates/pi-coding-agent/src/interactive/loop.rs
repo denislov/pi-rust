@@ -9,7 +9,7 @@ use pi_tui::{
 
 use crate::api::CodingAgentPluginLoadOutcome;
 use crate::coding_session::{
-    CodingAgentSession, ProfileId, PromptTurnOptions, PromptTurnOutcome,
+    CodingAgentClientId, CodingAgentSession, ProfileId, PromptTurnOptions, PromptTurnOutcome,
     SelfHealingEditModelRepairOptions, SelfHealingEditRequest,
 };
 use crate::input::{self, ProcessedPromptInput};
@@ -110,6 +110,21 @@ fn print_exit_resume_hint(active_session_path: Option<&std::path::Path>) {
 pub(super) struct LoopResult<T: Terminal> {
     pub(super) tui: Tui<T>,
     pub(super) exit_code: i32,
+    pub(super) coding_session: Option<CodingAgentSession>,
+}
+
+fn detach_interactive_client(
+    session: &CodingAgentSession,
+    connection: &mut Option<crate::coding_session::CodingAgentClientConnection>,
+) {
+    if connection.is_none() {
+        *connection = session
+            .connect(CodingAgentClientId::new("interactive"))
+            .ok();
+    }
+    if let Some(connection) = connection.take() {
+        let _ = connection.detach();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,7 +255,11 @@ where
     }
 
     match (loop_result, stop_result) {
-        (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
+        (Ok((exit_code, coding_session)), Ok(())) => Ok(LoopResult {
+            tui,
+            exit_code,
+            coding_session,
+        }),
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
     }
@@ -287,7 +306,11 @@ where
     }
 
     match (loop_result, stop_result) {
-        (Ok(exit_code), Ok(())) => Ok(LoopResult { tui, exit_code }),
+        (Ok((exit_code, session)), Ok(())) => Ok(LoopResult {
+            tui,
+            exit_code,
+            coding_session: session,
+        }),
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
     }
@@ -344,7 +367,7 @@ async fn run_started_interactive_loop<T, C>(
     parsed: &CliArgs,
     options: &CliRunOptions,
     clock: &C,
-) -> Result<i32, CliError>
+) -> Result<(i32, Option<CodingAgentSession>), CliError>
 where
     T: Terminal,
     C: InteractiveClock + ?Sized,
@@ -352,6 +375,7 @@ where
     let mut stdin_buffer = StdinBuffer::new();
     let mut running: Option<PromptTask> = None;
     let mut coding_session: Option<CodingAgentSession> = None;
+    let mut client_connection = None;
     let mut ui_projection = UiProjection::new();
     let mut input_open = true;
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
@@ -395,7 +419,12 @@ where
                             clock.now(),
                         )? {
                             LoopControl::Continue(_) => {}
-                            LoopControl::Exit => return Ok(0),
+                            LoopControl::Exit => {
+                                if let Some(session) = coding_session.as_ref() {
+                                    detach_interactive_client(session, &mut client_connection);
+                                }
+                                return Ok((0, coding_session));
+                            }
                         }
                     }
                 }
@@ -418,7 +447,12 @@ where
                                 LoopControl::Continue(_) => {
                                     input.mark_processed(&chunk);
                                 }
-                                LoopControl::Exit => return Ok(0),
+                                LoopControl::Exit => {
+                                    if let Some(session) = coding_session.as_ref() {
+                                        detach_interactive_client(session, &mut client_connection);
+                                    }
+                                    return Ok((0, coding_session));
+                                }
                             }
                         }
                         None => {
@@ -478,6 +512,11 @@ where
                         &mut prompt_context.session_target,
                     )?;
                     if let Some(session) = coding_session.as_ref() {
+                        if client_connection.is_none() {
+                            client_connection = session
+                                .connect(CodingAgentClientId::new("interactive"))
+                                .ok();
+                        }
                         prompt_context.default_agent_profile_id =
                             session.view().default_agent_profile_id.clone();
                     }
@@ -495,7 +534,10 @@ where
         } else {
             if !input_open {
                 flush_pending_render(tui, &mut render_scheduler, clock.now())?;
-                return Ok(0);
+                if let Some(session) = coding_session.as_ref() {
+                    detach_interactive_client(session, &mut client_connection);
+                }
+                return Ok((0, coding_session));
             }
 
             let render_delay = pending_render_delay(&render_scheduler, clock.now());
@@ -520,7 +562,12 @@ where
                             clock.now(),
                         )? {
                             LoopControl::Continue(_) => {}
-                            LoopControl::Exit => return Ok(0),
+                            LoopControl::Exit => {
+                                if let Some(session) = coding_session.as_ref() {
+                                    detach_interactive_client(session, &mut client_connection);
+                                }
+                                return Ok((0, coding_session));
+                            }
                         }
                     }
                 }
@@ -540,11 +587,19 @@ where
                             clock.now(),
                         )? {
                             LoopControl::Continue(_) => {}
-                            LoopControl::Exit => return Ok(0),
+                            LoopControl::Exit => {
+                                if let Some(session) = coding_session.as_ref() {
+                                    detach_interactive_client(session, &mut client_connection);
+                                }
+                                return Ok((0, coding_session));
+                            }
                         }
                         if running.is_none() {
                             flush_pending_render(tui, &mut render_scheduler, clock.now())?;
-                            return Ok(0);
+                            if let Some(session) = coding_session.as_ref() {
+                                detach_interactive_client(session, &mut client_connection);
+                            }
+                            return Ok((0, coding_session));
                         }
                         tokio::task::yield_now().await;
                         continue;
@@ -565,7 +620,12 @@ where
                         LoopControl::Continue(_) => {
                             input.mark_processed(&chunk);
                         }
-                        LoopControl::Exit => return Ok(0),
+                        LoopControl::Exit => {
+                            if let Some(session) = coding_session.as_ref() {
+                                detach_interactive_client(session, &mut client_connection);
+                            }
+                            return Ok((0, coding_session));
+                        }
                     }
                     if running.is_some() {
                         tokio::task::yield_now().await;
