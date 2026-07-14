@@ -4,7 +4,7 @@ use super::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use super::error::CodingSessionError;
 use super::event_service::{EventService, ProductEventReceiver, ProductEventRecovery};
 use super::public_event::{CodingAgentProductEvent, CodingAgentProductEventTerminalStatus};
-use crate::protocol::version::ProtocolFamilyVersion;
+use crate::protocol::version::{ProtocolFamilyVersion, UI_SNAPSHOT_PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -343,6 +343,7 @@ impl CodingAgentSubmissionLease {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodingAgentSnapshotCursor {
     pub stream_id: String,
+    pub snapshot_protocol_major: u32,
     pub last_event_sequence: u64,
     pub capability_generation: u64,
 }
@@ -437,6 +438,7 @@ impl CodingAgentClientConnection {
                     .collect(),
                 cursor: CodingAgentSnapshotCursor {
                     stream_id: self.snapshot.session.session_id.clone(),
+                    snapshot_protocol_major: UI_SNAPSHOT_PROTOCOL_VERSION.major,
                     last_event_sequence: boundary.replayed_through.get(),
                     capability_generation: boundary.capability_generation,
                 },
@@ -1009,6 +1011,7 @@ impl From<UiSnapshot> for CodingAgentSnapshot {
         Self {
             cursor: CodingAgentSnapshotCursor {
                 stream_id: snapshot.session.session_id.clone(),
+                snapshot_protocol_major: UI_SNAPSHOT_PROTOCOL_VERSION.major,
                 last_event_sequence: snapshot.cursor.last_event_sequence.get(),
                 capability_generation: snapshot.cursor.capability_generation.get(),
             },
