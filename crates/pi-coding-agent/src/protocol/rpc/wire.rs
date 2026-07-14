@@ -1,4 +1,4 @@
-use crate::CliError;
+use crate::error::CliError;
 use crate::protocol::jsonl::serialize_json_line;
 use crate::protocol::types::RpcResponse;
 use serde::Serialize;

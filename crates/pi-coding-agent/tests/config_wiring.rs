@@ -5,7 +5,7 @@ use support::EnvGuard;
 
 #[test]
 fn select_model_uses_default_model_when_no_flag() {
-    use pi_coding_agent::{CliArgs, select_model};
+    use pi_coding_agent::api::{CliArgs, select_model};
     let args = CliArgs::default(); // args.model is None
     // default_model resolves via lookup_model; use a known built-in id.
     let model = select_model(&args, None, Some("claude-sonnet-4-5"), None).expect("model");
@@ -64,7 +64,7 @@ fn config_auth_resolution_prefers_env_over_auth_file() {
 
 #[test]
 fn runtime_setting_helpers_consume_session_dir_and_context_flag() {
-    use pi_coding_agent::{effective_no_context_files, effective_session_dir, parse_args};
+    use pi_coding_agent::api::{effective_no_context_files, effective_session_dir, parse_args};
 
     let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
     let mut settings = config::settings::PartialSettings {

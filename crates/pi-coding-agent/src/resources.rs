@@ -1,4 +1,4 @@
-use crate::CliError;
+use crate::error::CliError;
 use crate::theme::{ResolvedColor, ThemeColor, ThemeJson};
 use pi_agent_core::api::DiagnosticSeverity;
 use pi_agent_core::api::{AgentResources, PromptTemplate, ResourceDiagnostic, Skill};

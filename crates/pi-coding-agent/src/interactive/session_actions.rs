@@ -6,11 +6,11 @@ use pi_agent_core::api::{SessionTreeNode, create_timestamp};
 #[cfg(test)]
 use pi_ai::api::{ContentBlock, StopReason};
 
-use crate::CliError;
 use crate::coding_session::{
     CodingAgentSession, CodingAgentSessionHydration, CodingAgentSessionOptions,
     CodingAgentSessionTranscriptItem,
 };
+use crate::error::CliError;
 use crate::interactive::transcript::TranscriptItem;
 use crate::runtime::{SessionMode, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;

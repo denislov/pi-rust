@@ -416,7 +416,7 @@ fn root_public_modules_are_marked_migration_private() {
 }
 
 #[test]
-fn root_reexports_are_explicit_compatibility_surface() {
+fn root_reexports_are_removed_after_breaking_facade_migration() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lib_source = fs::read_to_string(crate_root.join("src/lib.rs"))
         .expect("pi-coding-agent lib.rs should be readable");
@@ -432,20 +432,12 @@ fn root_reexports_are_explicit_compatibility_surface() {
         if !trimmed.starts_with("pub use ") {
             continue;
         }
-        let previous_non_empty = before_api_lines[..index]
-            .iter()
-            .rev()
-            .find(|candidate| !candidate.trim().is_empty())
-            .map(|candidate| candidate.trim());
-        if previous_non_empty != Some("#[deprecated(note = \"use pi_coding_agent::api instead\")]")
-        {
-            violations.push(format!("{}: {}", index + 1, trimmed));
-        }
+        violations.push(format!("{}: {}", index + 1, trimmed));
     }
 
     assert!(
         violations.is_empty(),
-        "root reexports should be explicitly deprecated compatibility surface; stable users should import pi_coding_agent::api:\n{}",
+        "root reexports must be removed after the 0.2 breaking facade migration; stable users import pi_coding_agent::api:\n{}",
         violations.join("\n")
     );
 }

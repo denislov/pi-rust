@@ -1,4 +1,4 @@
-use pi_coding_agent::{CliError, CliMode, parse_args};
+use pi_coding_agent::api::{CliError, CliMode, parse_args};
 
 #[test]
 fn print_flag_selects_print_mode() {

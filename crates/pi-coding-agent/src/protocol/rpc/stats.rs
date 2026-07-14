@@ -195,11 +195,11 @@ struct RpcSessionProjection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CliRunOptions;
     use crate::coding_session::{
         CodingAgentClientId, CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind,
         CodingAgentSession, CodingAgentSessionOptions,
     };
+    use crate::runtime::CliRunOptions;
 
     fn serialized_session_state(state: &RpcState) -> Value {
         serde_json::to_value(state.session_state()).expect("session state serializes")

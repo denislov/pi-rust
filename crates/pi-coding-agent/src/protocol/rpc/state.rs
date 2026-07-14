@@ -1,16 +1,19 @@
+use crate::args::CliArgs;
+use crate::error::CliError;
 use crate::protocol::rpc::event_queue::RpcQueuedProductEvent;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::types::{RpcDetachStatus, RpcNegotiatedProtocolState};
 use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION};
+use crate::runtime::{CliRunOptions, select_model};
 use crate::{
-    CliArgs, CliError, CliRunOptions, coding_session::AgentInvocationOutcome,
-    coding_session::AgentTeamOutcome, coding_session::CodingAgentClientConnection,
-    coding_session::CodingAgentClientId, coding_session::CodingAgentDetachOutcome,
-    coding_session::CodingAgentDraft, coding_session::CodingAgentDraftId,
-    coding_session::CodingAgentDraftKind, coding_session::CodingAgentPromptControl,
-    coding_session::CodingAgentSession, coding_session::CodingSessionError,
-    coding_session::OperationIdempotencyKey, coding_session::OperationKind,
-    coding_session::ProductEventSequence, coding_session::PromptTurnOutcome, config, select_model,
+    coding_session::AgentInvocationOutcome, coding_session::AgentTeamOutcome,
+    coding_session::CodingAgentClientConnection, coding_session::CodingAgentClientId,
+    coding_session::CodingAgentDetachOutcome, coding_session::CodingAgentDraft,
+    coding_session::CodingAgentDraftId, coding_session::CodingAgentDraftKind,
+    coding_session::CodingAgentPromptControl, coding_session::CodingAgentSession,
+    coding_session::CodingSessionError, coding_session::OperationIdempotencyKey,
+    coding_session::OperationKind, coding_session::ProductEventSequence,
+    coding_session::PromptTurnOutcome, config,
 };
 use pi_agent_core::api::StoredAgentMessage;
 use pi_agent_core::api::{QueueMode, ThinkingLevel};

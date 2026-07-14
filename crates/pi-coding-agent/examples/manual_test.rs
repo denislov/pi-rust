@@ -14,7 +14,7 @@
 use pi_ai::api::AiClient;
 use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_coding_agent::{PrintModeOptions, run_print_mode};
+use pi_coding_agent::api::{PrintModeOptions, PromptInvocation, run_print_mode};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -81,7 +81,7 @@ async fn main() {
         tool_execution: None,
         resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
-        invocation: pi_coding_agent::PromptInvocation::Text(invocation_text),
+        invocation: PromptInvocation::Text(invocation_text),
     };
 
     match run_print_mode(opts).await {

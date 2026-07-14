@@ -1,4 +1,4 @@
-use crate::CliError;
+use crate::error::CliError;
 use base64::Engine;
 use image::{GenericImageView, ImageFormat};
 use pi_ai::api::ContentBlock;

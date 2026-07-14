@@ -1,4 +1,4 @@
-use pi_coding_agent::{CliRunOptions, run_cli_with_options};
+use pi_coding_agent::api::{CliRunOptions, run_cli_with_options};
 
 #[tokio::test]
 async fn default_invocation_routes_to_interactive_instead_of_unsupported_mode() {

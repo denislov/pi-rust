@@ -8,10 +8,12 @@ use pi_tui::{
 };
 
 use crate::api::CodingAgentPluginLoadOutcome;
+use crate::args::CliArgs;
 use crate::coding_session::{
     CodingAgentClientId, CodingAgentSession, ProfileId, PromptTurnOptions, PromptTurnOutcome,
     SelfHealingEditModelRepairOptions, SelfHealingEditRequest,
 };
+use crate::error::CliError;
 use crate::input::{self, ProcessedPromptInput};
 use crate::interactive::app::{
     PromptContext, build_prompt_context, resolve_prompt_api_key, session_label,
@@ -33,9 +35,9 @@ use crate::interactive::session_actions::{
 };
 use crate::interactive::{TranscriptItem, UiEvent};
 use crate::prompt_options::PromptRunOptions;
+use crate::runtime::CliRunOptions;
 use crate::runtime::PromptInvocation;
 use crate::session::ResolvedSessionTarget;
-use crate::{CliArgs, CliError, CliRunOptions};
 
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);

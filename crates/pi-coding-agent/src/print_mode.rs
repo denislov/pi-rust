@@ -1,9 +1,9 @@
-use crate::CliError;
 use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     CodingAgentSession, CodingAgentSessionOptions, CodingSessionError, PromptTurnOptions,
     PromptTurnOutcome,
 };
+use crate::error::CliError;
 use crate::prompt_options::PromptRunOptions;
 use crate::runtime::{PromptInvocation, SessionMode, SessionRunOptions};
 use crate::session::{ResolvedSessionTarget, resolve_session_dir};

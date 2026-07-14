@@ -1,4 +1,4 @@
-use crate::CliError;
+use crate::error::CliError;
 use globset::{Glob, GlobMatcher};
 use pi_agent_core::api::ThinkingLevel;
 

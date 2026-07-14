@@ -5,7 +5,7 @@ use pi_agent_core::api::{
 };
 use pi_ai::api::StopReason;
 use pi_ai::providers::faux::{FauxProvider, FauxResponse};
-use pi_coding_agent::CliArgs;
+use pi_coding_agent::api::CliArgs;
 use pi_coding_agent::interactive::test_harness::{
     run_scripted_interactive_with_args_and_session_dir, run_scripted_interactive_with_session_dir,
     run_scripted_interactive_with_session_dir_and_waits,

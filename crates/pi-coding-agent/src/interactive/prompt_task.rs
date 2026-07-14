@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::CliError;
 use crate::api::{
     BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
     CodingAgentPluginLoadOutcome,
@@ -10,6 +9,7 @@ use crate::coding_session::{
     CodingAgentSessionOptions, CodingSessionError, ProductEvent, ProfileId, PromptTurnOptions,
     PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
 };
+use crate::error::CliError;
 use crate::interactive::event_bridge::CodingEventBridge;
 use crate::interactive::root::{
     PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,

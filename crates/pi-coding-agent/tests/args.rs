@@ -1,6 +1,6 @@
-use pi_coding_agent::{CliError, parse_args};
+use pi_coding_agent::api::{CliArgs, CliError, parse_args};
 
-fn parse(values: &[&str]) -> Result<pi_coding_agent::CliArgs, CliError> {
+fn parse(values: &[&str]) -> Result<CliArgs, CliError> {
     parse_args(values.iter().map(|value| value.to_string()))
 }
 

@@ -1,4 +1,6 @@
+use crate::args::CliArgs;
 use crate::config::{self, Config, ConfigPaths};
+use crate::error::CliError;
 use crate::input::{self, ProcessedPromptInput};
 use crate::prompt_options::PromptRunOptions;
 use crate::resources::{self, LoadedResources};
@@ -8,7 +10,6 @@ use crate::runtime::{
 };
 use crate::session::ResolvedSessionTarget;
 use crate::tools::{self, ToolFilter};
-use crate::{CliArgs, CliError};
 use pi_agent_core::api::DiagnosticSeverity as ResourceDiagnosticSeverity;
 use pi_agent_core::api::{AgentResources, ResourceDiagnostic};
 use pi_ai::api::AiClient;

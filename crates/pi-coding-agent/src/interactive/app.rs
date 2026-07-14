@@ -15,7 +15,9 @@ use pi_ai::api::{Model, ProviderAuthDiagnostic};
 use pi_tui::{Component, InputEvent, Terminal, visible_width};
 use pi_tui::{KeybindingsManager, ProcessTerminal, TuiTheme, dark_theme, light_theme};
 
+use crate::args::CliArgs;
 use crate::coding_session::{ProfileId, ProfileRegistry, ProfileRegistryOptions};
+use crate::error::CliError;
 #[cfg(test)]
 use crate::interactive::clipboard::ClipboardSink;
 use crate::interactive::input::InputPump;
@@ -44,9 +46,10 @@ use crate::interactive::slash::{
 #[cfg(test)]
 use crate::interactive::{Transcript, TranscriptItem, UiEvent};
 use crate::request::resolve_cli_context;
+use crate::runtime::CliRunOptions;
 use crate::runtime::{SessionMode, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
-use crate::{CliArgs, CliError, CliOutput, CliRunOptions, config, resources};
+use crate::{CliOutput, config, resources};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InteractiveModeOptions {

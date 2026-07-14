@@ -8,7 +8,7 @@ use pi_ai::api::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_ai::providers::faux::{FauxCall, FauxResponse, FauxToolCall};
-use pi_coding_agent::{PrintModeOptions, builtin_tools, run_print_mode};
+use pi_coding_agent::api::{PrintModeOptions, PromptInvocation, builtin_tools, run_print_mode};
 use std::sync::{Arc, Mutex};
 use support::ProviderGuard;
 use tempfile::tempdir;
@@ -156,7 +156,7 @@ async fn run_scripted_read(
         tool_execution: None,
         resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
-        invocation: pi_coding_agent::PromptInvocation::Text("read it".into()),
+        invocation: PromptInvocation::Text("read it".into()),
     })
     .await
     .unwrap()
@@ -164,7 +164,7 @@ async fn run_scripted_read(
 
 #[test]
 fn builtin_tools_has_seven() {
-    let tools = pi_coding_agent::builtin_tools(std::path::PathBuf::from("."));
+    let tools = builtin_tools(std::path::PathBuf::from("."));
     let names: Vec<_> = tools.iter().map(|t| t.name.clone()).collect();
     assert_eq!(
         names,
@@ -275,7 +275,7 @@ async fn grep_builtin_tool_success_is_sent_back_to_model() {
         tool_execution: None,
         resources: pi_agent_core::api::AgentResources::default(),
         settings: None,
-        invocation: pi_coding_agent::PromptInvocation::Text("search".into()),
+        invocation: PromptInvocation::Text("search".into()),
     })
     .await
     .unwrap();

@@ -1,4 +1,5 @@
-use crate::{CliArgs, CliError};
+use crate::args::CliArgs;
+use crate::error::CliError;
 use pi_agent_core::api::{
     AgentConfig, AgentResources, AgentTool, CompactionConfig, CompactionSettings, ThinkingLevel,
     ToolExecutionMode,

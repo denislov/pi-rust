@@ -1,4 +1,3 @@
-use crate::CliError;
 use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::coding_session::{
     AgentInvocationOptions, AgentTeamOptions, CodingAgentControlId, CodingAgentDraft,
@@ -7,6 +6,7 @@ use crate::coding_session::{
     OperationIdempotencyKey, OperationKind, ProductEvent, ProductEventReceiver,
     ProductEventSequence, ProfileId, ProfileKind, PromptTurnMode, PromptTurnOptions,
 };
+use crate::error::CliError;
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::commands::{has_images, rpc_pending_delegation_confirmation};
 use crate::protocol::rpc::event_queue::{RpcProductEventQueue, RpcQueuedProductEvent};
@@ -1286,11 +1286,11 @@ fn prompt_outcome_leaf_id(outcome: &crate::coding_session::PromptTurnOutcome) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CliRunOptions;
     use crate::coding_session::{
         ClientDraft, CodingAgentEvent, CodingAgentSessionOptions, CodingSessionError, ProductEvent,
         ProductEventReplayHandle, ProductEventSequence, PromptTurnOutcome, SubmittedOperation,
     };
+    use crate::runtime::CliRunOptions;
     use std::pin::Pin;
     use std::task::{Context, Poll};
 

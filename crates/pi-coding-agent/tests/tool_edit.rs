@@ -1,6 +1,6 @@
 use pi_agent_core::api::AgentToolOutput;
 use pi_ai::api::ContentBlock;
-use pi_coding_agent::builtin_tools;
+use pi_coding_agent::api::builtin_tools;
 use pi_coding_agent::tools::edit::edit_execute;
 use tempfile::tempdir;
 

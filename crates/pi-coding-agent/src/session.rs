@@ -1,4 +1,5 @@
-use crate::{CliError, runtime::SessionRunOptions};
+use crate::error::CliError;
+use crate::runtime::SessionRunOptions;
 use std::path::{Path, PathBuf};
 
 pub fn encode_cwd(path: &Path) -> String {

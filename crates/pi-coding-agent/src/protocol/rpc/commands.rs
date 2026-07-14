@@ -1,4 +1,3 @@
-use crate::CliError;
 use crate::api::{CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome};
 use crate::coding_session::{
     AgentProfile, CodingAgentControlId, CodingAgentSession, CodingAgentSessionOptions,
@@ -9,6 +8,7 @@ use crate::coding_session::{
     SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
     SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
 };
+use crate::error::CliError;
 use crate::prompt_options::PromptRunOptions;
 use crate::protocol::rpc::events::RpcCodingEventAdapter;
 use crate::protocol::rpc::state::RpcState;

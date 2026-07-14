@@ -1,6 +1,6 @@
-use pi_coding_agent::parse_args;
+use pi_coding_agent::api::{CliArgs, CliError, help_text, parse_args};
 
-fn parse(values: &[&str]) -> Result<pi_coding_agent::CliArgs, pi_coding_agent::CliError> {
+fn parse(values: &[&str]) -> Result<CliArgs, CliError> {
     parse_args(values.iter().map(|value| value.to_string()))
 }
 
@@ -32,7 +32,7 @@ fn rejects_no_session_with_session_target() {
 
 #[test]
 fn help_mentions_session_flags() {
-    let help = pi_coding_agent::help_text();
+    let help = help_text();
     assert!(help.contains("--continue"));
     assert!(help.contains("--session <path|id>"));
     assert!(help.contains("--no-session"));

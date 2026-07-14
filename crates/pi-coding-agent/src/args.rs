@@ -1,4 +1,4 @@
-use crate::CliError;
+use crate::error::CliError;
 use pi_agent_core::api::{ThinkingLevel, ToolExecutionMode};
 use std::str::FromStr;
 

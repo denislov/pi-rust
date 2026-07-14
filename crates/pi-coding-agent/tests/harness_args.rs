@@ -1,5 +1,5 @@
 use pi_agent_core::api::{ThinkingLevel, ToolExecutionMode};
-use pi_coding_agent::parse_args;
+use pi_coding_agent::api::{help_text, parse_args};
 
 #[test]
 fn parses_thinking_flag() {
@@ -87,7 +87,7 @@ fn rejects_invalid_thinking_value() {
 
 #[test]
 fn help_mentions_m4_flags() {
-    let text = pi_coding_agent::help_text();
+    let text = help_text();
     assert!(text.contains("--thinking"));
     assert!(text.contains("--tool-execution"));
     assert!(text.contains("--skills"));

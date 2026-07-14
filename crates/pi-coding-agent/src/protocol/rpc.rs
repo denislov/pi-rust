@@ -6,9 +6,10 @@ mod state;
 mod stats;
 mod wire;
 
+use crate::api::CliRunOptions;
+use crate::error::CliError;
 use crate::protocol::jsonl::JsonlLineReader;
 use crate::protocol::types::{RpcCommand, RpcResponse};
-use crate::{CliError, CliRunOptions};
 use event_queue::RpcQueuedProductEvent;
 use serde_json::Value;
 use state::{CodingOperationTaskResult, RpcState, RunningPrompt};
