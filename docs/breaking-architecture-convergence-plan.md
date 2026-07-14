@@ -63,6 +63,7 @@
 - `8faa190`：RPC ProductEvent queue 拆分 data/control lanes，overflow recovery 不再与普通 delta 竞争同一满队列；增加 data lane 满载时 control 优先交付测试，并更新 RPC boundary guard。
 - `2f6ae07`：迁移 print、harness print 和 runtime 集成测试到 `pi_coding_agent::api` 稳定 facade，清除已删除 root compatibility exports 的测试消费者。
 - `a6982fd`：删除仅被 `#[cfg(any())]` replay 测试使用、无生产消费者的 `ProductEventReplayHandle` 及其 RPC test seam，减少 runtime dead-code surface。
+- `3785330`：同步 product runtime boundary method ledger，明确删除 replay seam 后的 stable facade 允许方法集合。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
