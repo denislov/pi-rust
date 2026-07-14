@@ -5,7 +5,7 @@ use super::event::{
     PersistedDelegationStatus, PersistedToolResult, SessionEventData, SessionEventEnvelope,
 };
 use crate::coding_session::profiles::{ProfileId, ProfileKind};
-use pi_agent_core::compaction::estimate::calculate_context_tokens;
+use pi_agent_core::api::calculate_context_tokens;
 use pi_ai::api::Usage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

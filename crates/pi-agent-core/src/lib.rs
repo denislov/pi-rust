@@ -4,8 +4,7 @@ pub mod agent;
 pub mod agent_turn_flow;
 mod ai_runtime;
 mod branch_summary;
-#[doc(hidden)]
-pub mod compaction;
+mod compaction;
 #[doc(hidden)]
 pub mod convert;
 #[doc(hidden)]
@@ -39,6 +38,14 @@ pub mod api {
         BranchPreparation, BranchSummaryOptions, BranchSummaryResult, CollectEntriesResult,
         FileOperations, collect_entries_for_branch_summary, generate_branch_summary,
         generate_branch_summary_with_provider_streamer, prepare_branch_entries,
+    };
+    pub use crate::compaction::estimate::{
+        ContextUsageEstimate, calculate_context_tokens, estimate_context_tokens, estimate_tokens,
+    };
+    pub use crate::compaction::prepare::{prepare_compaction, should_compact};
+    pub use crate::compaction::summarize::{
+        build_summarization_context, serialize_conversation, summarize,
+        summarize_with_provider_streamer,
     };
     pub use crate::env::{
         ExecOptions, ExecutionEnv, ExecutionOutput, FileInfo, FileKind, FileSystem,

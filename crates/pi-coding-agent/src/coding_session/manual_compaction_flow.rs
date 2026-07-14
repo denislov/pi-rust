@@ -5,8 +5,7 @@ use std::pin::Pin;
 
 use pi_agent_core::api::AgentMessage;
 use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
-use pi_agent_core::compaction::estimate::estimate_tokens;
-use pi_agent_core::compaction::summarize::summarize_with_provider_streamer;
+use pi_agent_core::api::{estimate_tokens, summarize_with_provider_streamer};
 use pi_ai::api::{AssistantMessage, ContentBlock, StreamOptions};
 use tokio_util::sync::CancellationToken;
 
