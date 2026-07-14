@@ -1,7 +1,6 @@
 #[doc(hidden)]
 pub mod agent;
-#[doc(hidden)]
-pub mod agent_turn_flow;
+mod agent_turn_flow;
 mod ai_runtime;
 mod branch_summary;
 mod compaction;
@@ -34,6 +33,16 @@ mod types;
 /// tool, hook, resource, and environment contracts.
 pub mod api {
     pub use crate::agent::Agent;
+    pub use crate::agent_turn_flow::{
+        AgentTurnContext, AgentTurnFlow, AgentTurnProviderRequestOverride,
+        ApplyBeforeProviderRequestHookNode, DecideAfterAssistantNode, DecideStopOrToolsNode,
+        DrainQueuedInputNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
+        MaybePrepareNextTurnNode, PendingToolCall, PrepareContextNode, PrepareProviderRequestNode,
+        ProviderStreamNode, RuntimeCompactionState, StartTurnNode,
+        apply_before_provider_request_hook, decide_after_assistant, decide_stop_or_tools,
+        drain_queued_input, execute_tools, maybe_compact_runtime_context, maybe_prepare_next_turn,
+        prepare_context, prepare_provider_request, start_turn, stream_provider,
+    };
     pub use crate::branch_summary::{
         BranchPreparation, BranchSummaryOptions, BranchSummaryResult, CollectEntriesResult,
         FileOperations, collect_entries_for_branch_summary, generate_branch_summary,

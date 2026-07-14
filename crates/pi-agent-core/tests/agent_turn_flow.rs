@@ -2,12 +2,6 @@ mod common;
 
 use common::ProviderGuard;
 use futures::StreamExt;
-use pi_agent_core::agent_turn_flow::{
-    AgentTurnContext, ApplyBeforeProviderRequestHookNode, DecideAfterAssistantNode,
-    DecideStopOrToolsNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
-    MaybePrepareNextTurnNode, PrepareContextNode, PrepareProviderRequestNode, ProviderStreamNode,
-    StartTurnNode,
-};
 use pi_agent_core::api::{Action, Flow};
 use pi_agent_core::api::{
     AfterToolCallResult, Agent, AgentEvent, AgentMessage, AgentResources, AgentTool,
@@ -15,6 +9,12 @@ use pi_agent_core::api::{
     QueueMode, Skill, ToolExecutionMode,
 };
 use pi_agent_core::api::{AgentLoopTurnUpdate, BeforeProviderRequestResult};
+use pi_agent_core::api::{
+    AgentTurnContext, ApplyBeforeProviderRequestHookNode, DecideAfterAssistantNode,
+    DecideStopOrToolsNode, ExecuteToolsNode, MaybeCompactRuntimeContextNode,
+    MaybePrepareNextTurnNode, PrepareContextNode, PrepareProviderRequestNode, ProviderStreamNode,
+    StartTurnNode,
+};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, StopReason,
     StreamOptions,
@@ -37,7 +37,7 @@ const AGENT_TURN_FLOW_REMAINING_TOOL_ADVANCE: Duration =
 #[test]
 fn agent_turn_flow_exposes_real_graph_shape() {
     assert_eq!(
-        pi_agent_core::agent_turn_flow::AgentTurnFlow::node_ids(),
+        pi_agent_core::api::AgentTurnFlow::node_ids(),
         &[
             "start_turn",
             "drain_queued_input",
@@ -1462,7 +1462,7 @@ async fn decide_after_assistant_tool_use_without_calls_routes_to_tools() {
         .unwrap()
         .add_node(
             "drain_queued_input",
-            pi_agent_core::agent_turn_flow::DrainQueuedInputNode,
+            pi_agent_core::api::DrainQueuedInputNode,
         )
         .unwrap()
         .edge_on(
