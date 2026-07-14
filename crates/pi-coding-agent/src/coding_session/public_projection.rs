@@ -342,6 +342,7 @@ impl CodingAgentSubmissionLease {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodingAgentSnapshotCursor {
+    pub stream_id: String,
     pub last_event_sequence: u64,
     pub capability_generation: u64,
 }
@@ -435,6 +436,7 @@ impl CodingAgentClientConnection {
                     .map(CodingAgentProductEvent::from_internal)
                     .collect(),
                 cursor: CodingAgentSnapshotCursor {
+                    stream_id: self.snapshot.session.session_id.clone(),
                     last_event_sequence: boundary.replayed_through.get(),
                     capability_generation: boundary.capability_generation,
                 },
@@ -1006,6 +1008,7 @@ impl From<UiSnapshot> for CodingAgentSnapshot {
     fn from(snapshot: UiSnapshot) -> Self {
         Self {
             cursor: CodingAgentSnapshotCursor {
+                stream_id: snapshot.session.session_id.clone(),
                 last_event_sequence: snapshot.cursor.last_event_sequence.get(),
                 capability_generation: snapshot.cursor.capability_generation.get(),
             },
