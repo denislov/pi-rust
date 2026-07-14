@@ -4,9 +4,27 @@
 >
 > 基线提交：`ae367e2 chore: checkpoint crate sources`
 >
-> 状态：待执行
+> 状态：执行中（M0 已完成，M1 进行中）
 >
 > 依据：`docs/architecture.md`、`docs/code-cleanup-strategies.md` 和 2026-07-15 工作区源码
+
+## 执行快照（2026-07-15）
+
+| Milestone | 状态 | 已落地内容 | 下一退出条件 |
+|---|---|---|---|
+| M0 | 完成 | contract inventory、session compatibility fixtures、dead-code inventory、architecture gates | 持续保持 gates 通过 |
+| M1 | 进行中 | core 强制 injected provider streamer；旧 monolithic agent loop 已删除；scoped registry 并行隔离测试已建立 | product runtime 删除 global test bridge；lower-level facade 收窄 |
+| M2-M7 | 未开始 | - | 按依赖顺序执行 |
+
+已提交检查点：
+
+- `e561134`：建立 architecture convergence baseline。
+- `0544b97`：删除 retired agent loop。
+- `8e36a8a`：`pi-agent-core` 强制 scoped provider streaming。
+- `465f236`：修正 product Flow 测试的显式 provider 注入。
+- `7354cae`：证明两个同名 API 的并行 scoped registry 无串扰。
+
+M1 当前剩余风险是 `pi-coding-agent::RuntimeService` 在 test/debug 构建下仍可从 deprecated global registry 填充临时 `AiClient`。在 CLI、RPC、interactive 和 session owner 完成显式 `AiClient` 传递、测试夹具迁移完成之前，不得删除该桥接，也不得将 WP1.1 标记完成。
 
 ## 1. 项目目标
 
@@ -67,7 +85,7 @@ small stable crate facades
 - TUI 仍直接调用 `ui_snapshot`、`view`、hydration 和部分 session internals；client-local 与 runtime-owned state 尚未完全隔离。
 - session manifest/event validator 目前只接受单一版本，尚未形成显式 decoder matrix。
 - production build 仍报告 replay/client/cancellation/snapshot 相关 dead-code warning，说明部分目标能力只有建模或测试路径。
-- 仓内全 targets 基线因缺失 `docs/product-event-contract.md` 失败。
+- provider 测试夹具仍大量依赖 global registry guard，阻碍 product runtime 删除 test/debug compatibility bridge。
 
 ## 4. Breaking Release 策略
 
