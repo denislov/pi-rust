@@ -322,6 +322,7 @@ mod tests {
     use super::super::intent_router::IntentRouter;
     use super::super::operation_control::OperationControl;
     use super::super::plugin_load_flow::PluginLoadOptions;
+    use super::super::scheduler::OperationScheduler;
     use super::super::self_healing_edit_flow::{
         SelfHealingEditReplacement, SelfHealingEditRequest,
     };
@@ -541,13 +542,14 @@ mod tests {
         let admission = IntentRouter::static_admission(&operation).unwrap();
         let control = OperationControl::new();
 
-        let error =
-            IntentRouter::begin(&control, &admission, OperationDispatchMode::Async).unwrap_err();
+        let error = OperationScheduler::admit(&control, &admission, OperationDispatchMode::Async)
+            .unwrap_err()
+            .into_error();
 
         assert_eq!(
             error,
             CodingSessionError::UnsupportedCapability {
-                capability: "plugin_command operation requires read-only sync dispatcher".into(),
+                capability: "plugin_command operation was sent to the wrong dispatcher (requires read-only sync)".into(),
             }
         );
         assert_eq!(control.active(), None);
@@ -563,12 +565,14 @@ mod tests {
         let control = OperationControl::new();
 
         let guard =
-            IntentRouter::begin(&control, &admission, OperationDispatchMode::SyncReadOnly).unwrap();
+            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
+                .unwrap();
 
         assert_eq!(control.active(), Some(OperationKind::PluginCommand));
         assert_eq!(
-            IntentRouter::begin(&control, &admission, OperationDispatchMode::SyncReadOnly)
-                .unwrap_err(),
+            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly,)
+                .unwrap_err()
+                .into_error(),
             CodingSessionError::Busy {
                 operation: "plugin_command".into(),
             }

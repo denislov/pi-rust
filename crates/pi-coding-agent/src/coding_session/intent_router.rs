@@ -162,28 +162,6 @@ impl IntentRouter {
         ))
     }
 
-    #[cfg(test)]
-    pub(crate) fn begin(
-        control: &OperationControl,
-        admission: &OperationAdmission,
-        expected: OperationDispatchMode,
-    ) -> Result<OperationGuard, CodingSessionError> {
-        Self::validate_dispatch_mode(admission, expected)?;
-
-        control.begin(
-            admission.kind,
-            admission.capability_snapshot.operation_id.clone(),
-        )
-    }
-
-    pub(crate) fn admit_operation(
-        control: &OperationControl,
-        admission: &OperationAdmission,
-        expected: OperationDispatchMode,
-    ) -> Result<OperationPermit, CodingSessionError> {
-        OperationScheduler::admit(control, admission, expected)
-            .map_err(|rejection| rejection.into_error())
-    }
     pub(crate) fn prompt_control_handle(
         control: &mut OperationControl,
         intent: ControlIntent,
@@ -203,16 +181,6 @@ impl IntentRouter {
         let metadata = OperationScheduler::admit_query(control, intent);
         debug_assert_eq!(metadata.class, OperationClass::Query);
         metadata
-    }
-
-    fn validate_dispatch_mode(
-        admission: &OperationAdmission,
-        expected: OperationDispatchMode,
-    ) -> Result<(), CodingSessionError> {
-        if admission.metadata.dispatch_mode != expected {
-            return Err(Self::unsupported_dispatch(admission));
-        }
-        Ok(())
     }
 
     pub(crate) fn unsupported_dispatch(admission: &OperationAdmission) -> CodingSessionError {
@@ -349,12 +317,10 @@ mod tests {
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
-        let permit = IntentRouter::admit_operation(
-            &control,
-            &admission,
-            OperationDispatchMode::SyncReadOnly,
-        )
-        .unwrap();
+        let permit =
+            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
+                .map_err(|rejection| rejection.into_error())
+                .unwrap();
 
         assert_eq!(permit.kind(), OperationKind::Export);
         assert_eq!(permit.class(), OperationClass::ReadOnly);
@@ -375,12 +341,10 @@ mod tests {
         let admission = IntentRouter::static_admission(&operation).unwrap();
         let control = OperationControl::new();
 
-        let permit = IntentRouter::admit_operation(
-            &control,
-            &admission,
-            OperationDispatchMode::SyncReadOnly,
-        )
-        .unwrap();
+        let permit =
+            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
+                .map_err(|rejection| rejection.into_error())
+                .unwrap();
 
         assert_eq!(permit.kind(), OperationKind::PluginCommand);
         assert_eq!(permit.class(), OperationClass::NonSessionRoot);
@@ -422,12 +386,10 @@ mod tests {
         let admission =
             OperationAdmission::new(OperationKind::Export, metadata, None, snapshot.clone());
 
-        let permit = IntentRouter::admit_operation(
-            &control,
-            &admission,
-            OperationDispatchMode::SyncReadOnly,
-        )
-        .unwrap();
+        let permit =
+            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
+                .map_err(|rejection| rejection.into_error())
+                .unwrap();
 
         assert_eq!(permit.capability_snapshot(), &snapshot);
     }
@@ -468,12 +430,10 @@ mod tests {
             snapshot.clone(),
         );
 
-        let permit = IntentRouter::admit_operation(
-            &control,
-            &admission,
-            OperationDispatchMode::SyncReadOnly,
-        )
-        .unwrap();
+        let permit =
+            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
+                .map_err(|rejection| rejection.into_error())
+                .unwrap();
 
         assert!(permit.is_guarded());
         assert_eq!(permit.capability_snapshot(), &snapshot);
@@ -518,11 +478,8 @@ mod tests {
             "public run should own sync-mutable operation dispatch"
         );
         assert!(
-            session_source
-                .matches("IntentRouter::admit_operation(")
-                .count()
-                >= 3,
-            "the three canonical dispatchers should admit through IntentRouter"
+            session_source.matches("OperationScheduler::admit(").count() >= 3,
+            "the three canonical dispatchers should admit through OperationScheduler"
         );
         for expected in [
             "Self::ForkSession { .. } => OperationMetadata::new(",

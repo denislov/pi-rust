@@ -140,6 +140,7 @@ use plugin_load_service::PluginLoadService;
 use plugin_service::PluginService;
 use prompt::{PromptTurnContext, PromptTurnIds};
 use runtime_service::RuntimeService;
+use scheduler::OperationScheduler;
 pub(crate) use self_healing_edit_flow::{
     ModelSelfHealingEditRepairStrategy, SelfHealingEditContext, SelfHealingEditFlow,
     SelfHealingEditOptions, SelfHealingEditRepairStrategy,
@@ -1052,11 +1053,12 @@ impl CodingAgentSession {
         mut submission: Option<SubmissionCommitGuard>,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
-        let operation_permit = IntentRouter::admit_operation(
+        let operation_permit = OperationScheduler::admit(
             &self.operation_control,
             &admission,
             OperationDispatchMode::SyncReadOnly,
-        )?;
+        )
+        .map_err(|rejection| rejection.into_error())?;
         if let Some(guard) = submission.as_mut() {
             guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
         }
@@ -1102,11 +1104,12 @@ impl CodingAgentSession {
         mut submission: Option<SubmissionCommitGuard>,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
-        let operation_permit = IntentRouter::admit_operation(
+        let operation_permit = OperationScheduler::admit(
             &self.operation_control,
             &admission,
             OperationDispatchMode::SyncMutable,
-        )?;
+        )
+        .map_err(|rejection| rejection.into_error())?;
         if let Some(guard) = submission.as_mut() {
             guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
         }
@@ -1433,11 +1436,12 @@ impl CodingAgentSession {
             self.runtime_service.install_provider_runtime(runtime);
         }
         let admission = self.resolve_operation_admission(&operation)?;
-        let operation_permit = IntentRouter::admit_operation(
+        let operation_permit = OperationScheduler::admit(
             &self.operation_control,
             &admission,
             OperationDispatchMode::Async,
-        )?;
+        )
+        .map_err(|rejection| rejection.into_error())?;
         if let Some(guard) = submission.as_mut() {
             guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
         }
