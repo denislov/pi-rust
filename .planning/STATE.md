@@ -5,16 +5,16 @@ milestone_name: Typed Product Events and Client Lifecycle Contract
 current_phase: 09
 current_phase_name: lifecycle-association-guards-and-closure
 status: executing
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-07-14T05:13:45.660Z"
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-07-14T05:38:48.487Z"
 last_activity: 2026-07-14
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 23
-  completed_plans: 17
-  percent: 74
+  completed_plans: 18
+  percent: 75
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 09 (lifecycle-association-guards-and-closure) — EXECUTING
-Plan: 3 of 8
+Plan: 4 of 8
 Status: Ready to execute
 Last activity: 2026-07-14 — Phase 09 execution started
 
@@ -84,6 +84,7 @@ Last activity: 2026-07-14 — Phase 09 execution started
 | Phase 08 P05 | 9min | 3 tasks | 7 files |
 | Phase 09 P01 | 58 min | 2 tasks | 7 files |
 | Phase 09 P02 | 10min | 1 tasks | 1 files |
+| Phase 09 P03 | 17min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -135,6 +136,9 @@ Recent decisions affecting current work:
 - [Phase 09]: Project submitted event durability as Durable or Uncertain. — Session identity and pending-write implementation details remain private.
 - [Phase 09]: Represent Compact failure with dedicated CompactPromptFailed evidence so PromptCompleted remains excluded from Compact root association. — Exact branch-specific evidence prevents compatibility events from being promoted by generic terminal status.
 - [Phase 09]: Derive TerminalAssociated versus OutcomeOnly from the closed permitted-evidence set while retaining NotApplicable as a zero-row guard. — The descriptor stays exhaustive while controls remain outside CodingAgentOperation.
+- [Phase 09]: Keep reconnectable client contents in place and model detach as connection validity, not record deletion or operation cancellation. — Detach must preserve client-local facts and session-owned work for same-id reconnect.
+- [Phase 09]: Use a coordinator-owned lifecycle epoch with watch notification so blocked receivers wake without moving transport authority into ClientService. — The epoch closes blocked receiver races while SnapshotCoordinator remains the sole lifecycle authority.
+- [Phase 09]: Allow session-owned terminal finalization after detach while rejecting connection-owned mutation through the shared lifecycle gate. — Active Prompt work outlives a connection generation and must retain its authoritative terminal state.
 
 ### Pending Todos
 
@@ -154,8 +158,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-14T05:13:45.653Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-07-14T05:37:53.720Z
+Stopped at: Completed 09-03-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
