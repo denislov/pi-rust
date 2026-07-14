@@ -1,0 +1,680 @@
+mod support;
+
+use async_stream::stream;
+use pi_ai::api::{
+    AiClient, AnthropicMessagesCompat, ApiProvider, AssistantImages, AssistantMessage,
+    AssistantMessageEvent, CacheControlFormat, ContentBlock, Context, Cost,
+    EnvProviderAuthResolver, EventStream, ImageContent, ImageInput, ImageOutput, ImagesContext,
+    ImagesModel, ImagesModelCost, ImagesModelOutput, ImagesUsage, Message, Model, ModelCompat,
+    ModelCost, ModelInput, OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting,
+    ProviderAuth, ProviderAuthDiagnostic, ProviderAuthResolver, ProviderError, ProviderErrorKind,
+    ProviderPayloadHook, ProviderPayloadHookFuture, ProviderRegistry, ProviderResponseHook,
+    ProviderResponseHookFuture, ProviderResponseInfo, ProviderStreamHooks, RetryConfig, StopReason,
+    StreamOptions, TextContent, ThinkingConfig, ThinkingFormat, ThinkingLevelMap,
+    ThinkingLevelValue, Tool, Usage, VercelGatewayRouting, all_models, builtin_provider_apis,
+    calculate_cost, complete, env_api_key, get_model, get_models, get_providers,
+    is_retryable_status, lookup_model, parse_retry_after_ms, register_builtins_into,
+};
+use std::sync::{Arc, Mutex};
+use support::EnvGuard;
+
+#[test]
+fn public_api_symbols_are_importable_from_api_facade() {
+    let _ = all_models as fn() -> &'static [Model];
+    let _ = get_models as fn(&str) -> Vec<Model>;
+    let _ = get_providers as fn() -> Vec<String>;
+    let _ = get_model as fn(&str, &str) -> Option<Model>;
+    let _ = lookup_model as fn(&str) -> Option<Model>;
+    let _ = calculate_cost as fn(&Model, &mut Usage);
+    let _ = env_api_key as fn(&str) -> Option<String>;
+    let _ = builtin_provider_apis as fn() -> &'static [&'static str];
+
+    #[allow(clippy::too_many_arguments)]
+    fn accepts_types(
+        _assistant: Option<AssistantMessage>,
+        _event: Option<AssistantMessageEvent>,
+        _content: Option<ContentBlock>,
+        _context: Option<Context>,
+        _cost: Option<Cost>,
+        _image_content: Option<ImageContent>,
+        _image_input: Option<ImageInput>,
+        _image_output: Option<ImageOutput>,
+        _images: Option<AssistantImages>,
+        _images_context: Option<ImagesContext>,
+        _images_cost: Option<ImagesModelCost>,
+        _images_model: Option<ImagesModel>,
+        _images_output: Option<ImagesModelOutput>,
+        _images_usage: Option<ImagesUsage>,
+        _message: Option<Message>,
+        _model_compat: Option<ModelCompat>,
+        _model_cost: Option<ModelCost>,
+        _model_input: Option<ModelInput>,
+        _openai_completions_compat: Option<OpenAICompletionsCompat>,
+        _openrouter_routing: Option<OpenRouterRouting>,
+        _provider_payload_hook: Option<ProviderPayloadHook>,
+        _provider_payload_future: Option<ProviderPayloadHookFuture>,
+        _provider_auth_diagnostic: Option<ProviderAuthDiagnostic>,
+        _provider_info: Option<ProviderResponseInfo>,
+        _provider_response_hook: Option<ProviderResponseHook>,
+        _provider_response_future: Option<ProviderResponseHookFuture>,
+        _hooks: Option<ProviderStreamHooks>,
+        _stop: Option<StopReason>,
+        _options: Option<StreamOptions>,
+        _text_content: Option<TextContent>,
+        _thinking: Option<ThinkingConfig>,
+        _thinking_format: Option<ThinkingFormat>,
+        _thinking_level_map: Option<ThinkingLevelMap>,
+        _thinking_level_value: Option<ThinkingLevelValue>,
+        _tool: Option<Tool>,
+        _usage: Option<Usage>,
+        _vercel_gateway_routing: Option<VercelGatewayRouting>,
+        _cache_control_format: Option<CacheControlFormat>,
+        _stream: Option<EventStream>,
+    ) {
+    }
+
+    accepts_types(
+        None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None,
+    );
+
+    let _ = complete;
+}
+
+#[test]
+fn retry_policy_helpers_are_importable_from_api_facade() {
+    let options = StreamOptions {
+        max_retries: Some(3),
+        timeout_ms: Some(2_000),
+        max_retry_delay_ms: Some(1_500),
+        ..StreamOptions::default()
+    };
+    let retry_config = RetryConfig::from_options(Some(&options));
+
+    assert_eq!(retry_config.max_retries, 3);
+    assert_eq!(retry_config.timeout_ms, Some(2_000));
+    assert_eq!(retry_config.max_retry_delay_ms, 1_500);
+    assert!(is_retryable_status(429));
+    assert!(is_retryable_status(503));
+    assert!(!is_retryable_status(404));
+    assert_eq!(parse_retry_after_ms(Some("1.25"), &retry_config), Ok(1_250));
+    assert!(
+        parse_retry_after_ms(Some("2"), &retry_config)
+            .unwrap_err()
+            .contains("exceeds max_retry_delay_ms")
+    );
+}
+
+#[test]
+fn provider_error_surface_is_importable_from_api_facade() {
+    let error = ProviderError::http_status(
+        "openai-responses",
+        "gpt-test",
+        "openai",
+        429,
+        "rate limited".into(),
+    );
+
+    assert_eq!(error.kind, ProviderErrorKind::HttpStatus);
+    assert_eq!(error.api, "openai-responses");
+    assert_eq!(error.provider.as_deref(), Some("openai"));
+    assert_eq!(error.model.as_deref(), Some("gpt-test"));
+    assert_eq!(error.status, Some(429));
+    assert_eq!(error.body.as_deref(), Some("rate limited"));
+    assert!(error.to_string().contains("HTTP 429"));
+}
+
+#[test]
+fn compat_surface_is_importable_from_api_facade() {
+    let anthropic = ModelCompat::AnthropicMessages(AnthropicMessagesCompat {
+        supports_temperature: Some(true),
+        supports_cache_control_on_tools: Some(false),
+        ..AnthropicMessagesCompat::default()
+    });
+    let ModelCompat::AnthropicMessages(anthropic_compat) = anthropic else {
+        panic!("expected anthropic messages compat");
+    };
+    assert_eq!(anthropic_compat.supports_temperature, Some(true));
+    assert_eq!(
+        anthropic_compat.supports_cache_control_on_tools,
+        Some(false)
+    );
+
+    let responses = ModelCompat::OpenAIResponses(OpenAIResponsesCompat {
+        send_session_id_header: Some(true),
+        supports_long_cache_retention: Some(true),
+    });
+    let ModelCompat::OpenAIResponses(responses_compat) = responses else {
+        panic!("expected openai responses compat");
+    };
+    assert_eq!(responses_compat.send_session_id_header, Some(true));
+    assert_eq!(responses_compat.supports_long_cache_retention, Some(true));
+
+    let thinking_map = ThinkingLevelMap {
+        high: Some(ThinkingLevelValue::String("provider-high".into())),
+        low: Some(ThinkingLevelValue::Null),
+        ..ThinkingLevelMap::default()
+    };
+    assert_eq!(thinking_map.resolve("high"), Some("provider-high".into()));
+    assert_eq!(thinking_map.resolve("low"), None);
+    assert_eq!(thinking_map.resolve("medium"), Some("medium".into()));
+
+    let compat = ModelCompat::OpenAICompletions(OpenAICompletionsCompat {
+        thinking_format: Some(ThinkingFormat::OpenRouter),
+        cache_control_format: Some(CacheControlFormat::Anthropic),
+        open_router_routing: Some(OpenRouterRouting {
+            allow_fallbacks: Some(false),
+            ..OpenRouterRouting::default()
+        }),
+        vercel_gateway_routing: Some(VercelGatewayRouting {
+            only: Some(vec!["openai".into()]),
+            ..VercelGatewayRouting::default()
+        }),
+        ..OpenAICompletionsCompat::default()
+    });
+    let ModelCompat::OpenAICompletions(openai_compat) = compat else {
+        panic!("expected openai completions compat");
+    };
+    assert_eq!(
+        openai_compat.thinking_format,
+        Some(ThinkingFormat::OpenRouter)
+    );
+    assert_eq!(
+        openai_compat.cache_control_format,
+        Some(CacheControlFormat::Anthropic)
+    );
+    assert_eq!(
+        openai_compat
+            .open_router_routing
+            .and_then(|routing| routing.allow_fallbacks),
+        Some(false)
+    );
+    assert_eq!(
+        openai_compat
+            .vercel_gateway_routing
+            .and_then(|routing| routing.only)
+            .unwrap(),
+        vec!["openai".to_string()]
+    );
+}
+
+#[test]
+fn builtins_can_register_into_scoped_provider_registry() {
+    let registry = ProviderRegistry::new();
+    assert!(registry.lookup("openai-responses").is_none());
+
+    register_builtins_into(&registry);
+
+    for api in builtin_provider_apis() {
+        assert!(
+            registry.lookup(api).is_some(),
+            "expected built-in api {api} to be registered into the scoped registry"
+        );
+    }
+}
+
+#[test]
+fn builtin_provider_catalog_matches_scoped_registration_set() {
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
+
+    let expected = builtin_provider_apis()
+        .iter()
+        .map(|api| (*api).to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(registry.registered_apis(), expected);
+}
+
+#[test]
+fn scoped_ai_client_can_register_builtin_providers_directly() {
+    let client = AiClient::new();
+    assert!(client.lookup_provider("openai-responses").is_none());
+
+    client.register_builtins();
+
+    let expected = builtin_provider_apis()
+        .iter()
+        .map(|api| (*api).to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(client.provider_registry().registered_apis(), expected);
+    for api in builtin_provider_apis() {
+        assert!(
+            client.lookup_provider(api).is_some(),
+            "expected built-in api {api} to be registered into the scoped AiClient"
+        );
+    }
+}
+
+#[test]
+fn builtin_provider_catalog_is_stable_and_sorted() {
+    assert_eq!(
+        builtin_provider_apis(),
+        &[
+            "anthropic-messages",
+            "azure-openai-responses",
+            "bedrock-converse-stream",
+            "deepseek-chat-completions",
+            "google-generative-ai",
+            "mistral-conversations",
+            "openai-codex-responses",
+            "openai-completions",
+            "openai-responses",
+        ]
+    );
+}
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn scoped_ai_client_streams_without_global_registration() {
+    let client = AiClient::new();
+    let model = scoped_model("scoped-only-api", "scoped-provider");
+    client.register_provider(
+        "scoped-only-api",
+        Arc::new(StaticProvider::new("scoped response")),
+    );
+
+    let message = complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+    assert_eq!(message_text(&message), "scoped response");
+
+    let global_error = complete(pi_ai::stream_model(&model, empty_context(), None))
+        .await
+        .unwrap_err();
+    assert!(global_error.contains("unknown provider api: scoped-only-api"));
+}
+
+#[tokio::test]
+async fn scoped_ai_client_uses_injected_auth_resolver_without_stream_options() {
+    let seen_api_key = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(StaticAuthResolver));
+    let model = scoped_model("scoped-auth-none-api", "scoped-provider");
+    client.register_provider(
+        "scoped-auth-none-api",
+        Arc::new(StaticProvider::recording(
+            "auth response",
+            Arc::clone(&seen_api_key),
+        )),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        seen_api_key.lock().unwrap().as_deref(),
+        Some("scoped-key:scoped-provider")
+    );
+}
+
+#[tokio::test]
+async fn scoped_ai_client_uses_injected_auth_resolver() {
+    let seen_api_key = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(StaticAuthResolver));
+    let model = scoped_model("scoped-auth-api", "scoped-provider");
+    client.register_provider(
+        "scoped-auth-api",
+        Arc::new(StaticProvider::recording(
+            "auth response",
+            Arc::clone(&seen_api_key),
+        )),
+    );
+
+    complete(client.stream_model(&model, empty_context(), Some(StreamOptions::default())))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        seen_api_key.lock().unwrap().as_deref(),
+        Some("scoped-key:scoped-provider")
+    );
+}
+
+#[tokio::test]
+async fn env_auth_resolver_applies_azure_runtime_material_for_model() {
+    let env = EnvGuard::new(&[
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_BASE_URL",
+        "AZURE_OPENAI_RESOURCE_NAME",
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+    ]);
+    env.set("AZURE_OPENAI_API_KEY", "azure-env-key");
+    env.set("AZURE_OPENAI_API_VERSION", "2026-02-01");
+    env.remove("AZURE_OPENAI_BASE_URL");
+    env.set("AZURE_OPENAI_RESOURCE_NAME", "env-resource");
+    env.set(
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        "other-model=other-deployment,gpt-4o=gpt-4o-env",
+    );
+
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(EnvProviderAuthResolver));
+    let mut model = scoped_model("env-azure-auth-api", "azure-openai-responses");
+    model.id = "gpt-4o".into();
+    client.register_provider(
+        "env-azure-auth-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive resolver-populated stream options");
+    assert_eq!(options.api_key.as_deref(), Some("azure-env-key"));
+    assert_eq!(options.azure_api_version.as_deref(), Some("2026-02-01"));
+    assert_eq!(options.azure_resource_name.as_deref(), Some("env-resource"));
+    assert_eq!(options.azure_deployment_name.as_deref(), Some("gpt-4o-env"));
+    let diagnostics = options
+        .auth_diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics,
+        vec![
+            ("api_key", "AZURE_OPENAI_API_KEY"),
+            ("azure_api_version", "AZURE_OPENAI_API_VERSION"),
+            ("azure_resource_name", "AZURE_OPENAI_RESOURCE_NAME"),
+            ("azure_deployment_name", "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",),
+        ]
+    );
+    let diagnostic_json = serde_json::to_string(&options.auth_diagnostics).unwrap();
+    assert!(!diagnostic_json.contains("azure-env-key"));
+    assert!(!diagnostic_json.contains("env-resource"));
+    assert!(!diagnostic_json.contains("gpt-4o-env"));
+}
+
+#[tokio::test]
+async fn env_auth_resolver_applies_bedrock_bearer_token_for_model() {
+    let env = EnvGuard::new(&["AWS_BEARER_TOKEN_BEDROCK"]);
+    env.set("AWS_BEARER_TOKEN_BEDROCK", "bedrock-env-token");
+
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(EnvProviderAuthResolver));
+    let model = scoped_model("env-bedrock-auth-api", "amazon-bedrock");
+    client.register_provider(
+        "env-bedrock-auth-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive resolver-populated stream options");
+    assert_eq!(
+        options.bedrock_bearer_token.as_deref(),
+        Some("bedrock-env-token")
+    );
+    let diagnostics = options
+        .auth_diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics,
+        vec![("bedrock_bearer_token", "AWS_BEARER_TOKEN_BEDROCK")]
+    );
+    let diagnostic_json = serde_json::to_string(&options.auth_diagnostics).unwrap();
+    assert!(!diagnostic_json.contains("bedrock-env-token"));
+}
+
+#[tokio::test]
+async fn env_auth_resolver_applies_bedrock_sigv4_material_for_model() {
+    let env = EnvGuard::new(&[
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_PROFILE",
+    ]);
+    env.set("AWS_REGION", "us-west-2");
+    env.set("AWS_DEFAULT_REGION", "us-east-1");
+    env.set("AWS_ACCESS_KEY_ID", "bedrock-access");
+    env.set("AWS_SECRET_ACCESS_KEY", "bedrock-secret");
+    env.set("AWS_SESSION_TOKEN", "bedrock-session");
+    env.remove("AWS_PROFILE");
+
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(EnvProviderAuthResolver));
+    let model = scoped_model("env-bedrock-sigv4-api", "amazon-bedrock");
+    client.register_provider(
+        "env-bedrock-sigv4-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive resolver-populated stream options");
+    assert!(options.api_key.is_none());
+    assert_eq!(options.bedrock_region.as_deref(), Some("us-west-2"));
+    assert_eq!(
+        options.bedrock_access_key_id.as_deref(),
+        Some("bedrock-access")
+    );
+    assert_eq!(
+        options.bedrock_secret_access_key.as_deref(),
+        Some("bedrock-secret")
+    );
+    assert_eq!(
+        options.bedrock_session_token.as_deref(),
+        Some("bedrock-session")
+    );
+    let diagnostics = options
+        .auth_diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics,
+        vec![
+            ("bedrock_region", "AWS_REGION"),
+            ("bedrock_access_key_id", "AWS_ACCESS_KEY_ID"),
+            ("bedrock_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
+            ("bedrock_session_token", "AWS_SESSION_TOKEN"),
+        ]
+    );
+    let diagnostic_json = serde_json::to_string(&options.auth_diagnostics).unwrap();
+    assert!(!diagnostic_json.contains("bedrock-access"));
+    assert!(!diagnostic_json.contains("bedrock-secret"));
+    assert!(!diagnostic_json.contains("bedrock-session"));
+}
+
+#[tokio::test]
+async fn scoped_ai_client_applies_injected_auth_material() {
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(RichAuthResolver));
+    let model = scoped_model("scoped-auth-material-api", "scoped-provider");
+    client.register_provider(
+        "scoped-auth-material-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(
+        &model,
+        empty_context(),
+        Some(StreamOptions {
+            headers: Some(serde_json::json!({
+                "x-explicit": "user",
+                "x-auth": "explicit-overrides-auth",
+            })),
+            azure_api_version: Some("2026-01-01".into()),
+            ..StreamOptions::default()
+        }),
+    ))
+    .await
+    .unwrap();
+
+    let options = seen_options
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("provider should receive stream options");
+    assert_eq!(options.api_key.as_deref(), Some("rich-key:scoped-provider"));
+    assert_eq!(
+        options.azure_base_url.as_deref(),
+        Some("https://scoped-resource.openai.azure.com/openai/v1")
+    );
+    assert_eq!(options.azure_api_version.as_deref(), Some("2026-01-01"));
+    assert_eq!(options.bedrock_region.as_deref(), Some("us-test-1"));
+    assert_eq!(
+        options.bedrock_bearer_token.as_deref(),
+        Some("bedrock-token")
+    );
+    let headers = options
+        .headers
+        .as_ref()
+        .and_then(|headers| headers.as_object())
+        .expect("merged auth headers should be an object");
+    assert_eq!(headers["x-auth"], "explicit-overrides-auth");
+    assert_eq!(headers["x-extra"], "auth-extra");
+    assert_eq!(headers["x-explicit"], "user");
+}
+
+struct StaticAuthResolver;
+
+impl ProviderAuthResolver for StaticAuthResolver {
+    fn resolve_api_key(&self, provider: &str) -> Option<String> {
+        Some(format!("scoped-key:{provider}"))
+    }
+}
+
+struct RichAuthResolver;
+
+impl ProviderAuthResolver for RichAuthResolver {
+    fn resolve_auth(&self, provider: &str) -> ProviderAuth {
+        ProviderAuth {
+            api_key: Some(format!("rich-key:{provider}")),
+            headers: Some(serde_json::json!({
+                "x-auth": "auth-default",
+                "x-extra": "auth-extra",
+            })),
+            azure_base_url: Some("https://scoped-resource.openai.azure.com/openai/v1".into()),
+            azure_api_version: Some("2025-12-01".into()),
+            bedrock_region: Some("us-test-1".into()),
+            bedrock_bearer_token: Some("bedrock-token".into()),
+            ..ProviderAuth::default()
+        }
+    }
+}
+
+struct StaticProvider {
+    text: &'static str,
+    seen_api_key: Option<Arc<Mutex<Option<String>>>>,
+}
+
+impl StaticProvider {
+    fn new(text: &'static str) -> Self {
+        Self {
+            text,
+            seen_api_key: None,
+        }
+    }
+
+    fn recording(text: &'static str, seen_api_key: Arc<Mutex<Option<String>>>) -> Self {
+        Self {
+            text,
+            seen_api_key: Some(seen_api_key),
+        }
+    }
+}
+
+impl ApiProvider for StaticProvider {
+    fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+        if let Some(seen_api_key) = &self.seen_api_key {
+            *seen_api_key.lock().unwrap() = opts.as_ref().and_then(|opts| opts.api_key.clone());
+        }
+        let text = self.text.to_string();
+        let mut message = AssistantMessage::empty(&model.api, &model.id);
+        message.content.push(ContentBlock::Text {
+            text,
+            text_signature: None,
+        });
+        Box::pin(stream! {
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
+struct RecordingOptionsProvider {
+    seen_options: Arc<Mutex<Option<StreamOptions>>>,
+}
+
+impl ApiProvider for RecordingOptionsProvider {
+    fn stream(&self, model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+        *self.seen_options.lock().unwrap() = opts;
+        let mut message = AssistantMessage::empty(&model.api, &model.id);
+        message.content.push(ContentBlock::Text {
+            text: "recorded".into(),
+            text_signature: None,
+        });
+        Box::pin(stream! {
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
+fn empty_context() -> Context {
+    Context {
+        system_prompt: None,
+        messages: vec![],
+        tools: None,
+    }
+}
+
+fn scoped_model(api: &str, provider: &str) -> Model {
+    Model {
+        id: "scoped-model".into(),
+        name: "Scoped Model".into(),
+        api: api.into(),
+        provider: provider.into(),
+        base_url: String::new(),
+        reasoning: false,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost::default(),
+        context_window: 8_000,
+        max_tokens: 1_024,
+        headers: None,
+        compat: None,
+    }
+}
+
+fn message_text(message: &AssistantMessage) -> &str {
+    match &message.content[0] {
+        ContentBlock::Text { text, .. } => text.as_str(),
+        _ => panic!("expected text content"),
+    }
+}

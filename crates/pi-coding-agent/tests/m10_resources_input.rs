@@ -1,0 +1,604 @@
+mod support;
+
+use pi_agent_core::ThinkingLevel;
+use pi_ai::EventStream;
+use pi_ai::registry::ApiProvider;
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
+    StopReason, StreamOptions,
+};
+use pi_coding_agent::input::{
+    ImageProcessingOptions, ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
+    process_at_file_references_with_options, process_at_file_references_with_processing_options,
+};
+use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
+use pi_coding_agent::models::parse_model_rotation;
+use pi_coding_agent::parse_args;
+use pi_coding_agent::resources::{
+    ResourceLoadOptions, discover_context_files, load_cli_resources_with_options,
+};
+use pi_coding_agent::runtime::select_model;
+use pi_coding_agent::tools::{ToolFilter, builtin_tools, filter_tools};
+use pi_coding_agent::{PrintModeOptions, PromptInvocation, run_print_mode};
+use std::sync::{Arc, Mutex};
+use support::ProviderGuard;
+
+#[test]
+fn discovers_global_and_ancestor_context_files_in_priority_order() {
+    let temp = tempfile::tempdir().unwrap();
+    let global = temp.path().join("global");
+    let root = temp.path().join("repo");
+    let child = root.join("crates/app");
+    std::fs::create_dir_all(&global).unwrap();
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::write(global.join("AGENTS.md"), "global").unwrap();
+    std::fs::write(root.join("AGENTS.md"), "root").unwrap();
+    std::fs::write(root.join("crates").join("CLAUDE.md"), "crates").unwrap();
+    std::fs::write(child.join("AGENTS.md"), "child").unwrap();
+
+    let files = discover_context_files(&child, &global, false);
+    let contents: Vec<_> = files.iter().map(|file| file.content.as_str()).collect();
+    assert_eq!(contents, vec!["global", "root", "crates", "child"]);
+
+    assert!(discover_context_files(&child, &global, true).is_empty());
+}
+
+#[test]
+fn resource_loader_uses_default_paths_and_disable_switches() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("work");
+    let agent_dir = temp.path().join("agent");
+    let skill_dir = agent_dir.join("skills/rust");
+    let prompt_dir = agent_dir.join("prompt-templates");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::create_dir_all(&prompt_dir).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: rust\ndescription: Rust help\n---\nUse Rust.",
+    )
+    .unwrap();
+    std::fs::write(
+        prompt_dir.join("review.md"),
+        "---\nname: review\ndescription: Review\n---\nReview $ARGUMENTS",
+    )
+    .unwrap();
+
+    let loaded =
+        load_cli_resources_with_options(&[], &[], &cwd, &agent_dir, ResourceLoadOptions::default())
+            .unwrap();
+    assert_eq!(loaded.skills[0].name, "rust");
+    assert_eq!(loaded.prompt_templates[0].name, "review");
+
+    let loaded = load_cli_resources_with_options(
+        &[],
+        &[],
+        &cwd,
+        &agent_dir,
+        ResourceLoadOptions {
+            no_skills: true,
+            no_prompt_templates: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(loaded.skills.is_empty());
+    assert!(loaded.prompt_templates.is_empty());
+}
+
+#[test]
+fn resource_loader_includes_settings_paths_and_prompt_alias_defaults() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("work");
+    let agent_dir = temp.path().join("agent");
+    let settings_skill_dir = temp.path().join("settings-skills").join("go");
+    let settings_prompt_dir = temp.path().join("settings-prompts");
+    let default_prompt_alias_dir = agent_dir.join("prompts");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(&settings_skill_dir).unwrap();
+    std::fs::create_dir_all(&settings_prompt_dir).unwrap();
+    std::fs::create_dir_all(&default_prompt_alias_dir).unwrap();
+    std::fs::write(
+        settings_skill_dir.join("SKILL.md"),
+        "---\nname: go\ndescription: Go help\n---\nUse Go.",
+    )
+    .unwrap();
+    std::fs::write(
+        settings_prompt_dir.join("summarize.md"),
+        "---\nname: summarize\ndescription: Summarize\n---\nSummarize $ARGUMENTS",
+    )
+    .unwrap();
+    std::fs::write(
+        default_prompt_alias_dir.join("alias.md"),
+        "---\nname: alias\ndescription: Alias\n---\nAlias $ARGUMENTS",
+    )
+    .unwrap();
+
+    let loaded = load_cli_resources_with_options(
+        &[],
+        &[],
+        &cwd,
+        &agent_dir,
+        ResourceLoadOptions {
+            skill_paths: vec![temp.path().join("settings-skills").display().to_string()],
+            prompt_paths: vec![settings_prompt_dir.display().to_string()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert!(loaded.skills.iter().any(|skill| skill.name == "go"));
+    let template_names: Vec<_> = loaded
+        .prompt_templates
+        .iter()
+        .map(|template| template.name.as_str())
+        .collect();
+    assert!(template_names.contains(&"summarize"));
+    assert!(template_names.contains(&"alias"));
+}
+
+#[test]
+fn resource_loader_discovers_themes_and_honors_no_themes() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("work");
+    let agent_dir = temp.path().join("agent");
+    let default_theme_dir = agent_dir.join("themes");
+    let settings_theme_dir = temp.path().join("settings-themes");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(&default_theme_dir).unwrap();
+    std::fs::create_dir_all(&settings_theme_dir).unwrap();
+    std::fs::write(
+        default_theme_dir.join("dark.json"),
+        r##"{"name":"dark","colors":{"text":"#ffffff"}}"##,
+    )
+    .unwrap();
+    std::fs::write(
+        settings_theme_dir.join("quiet.json"),
+        r##"{"name":"quiet","colors":{"text":"#eeeeee"}}"##,
+    )
+    .unwrap();
+
+    let loaded = load_cli_resources_with_options(
+        &[],
+        &[],
+        &cwd,
+        &agent_dir,
+        ResourceLoadOptions {
+            theme_paths: vec![settings_theme_dir.display().to_string()],
+            theme: Some("quiet".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let theme_names: Vec<_> = loaded
+        .themes
+        .iter()
+        .map(|theme| theme.name.as_str())
+        .collect();
+    assert!(theme_names.contains(&"dark"));
+    assert!(theme_names.contains(&"quiet"));
+    assert_eq!(
+        loaded.selected_theme.as_ref().map(|t| t.name.as_str()),
+        Some("quiet")
+    );
+
+    let loaded = load_cli_resources_with_options(
+        &[],
+        &[],
+        &cwd,
+        &agent_dir,
+        ResourceLoadOptions {
+            no_themes: true,
+            theme_paths: vec![settings_theme_dir.display().to_string()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(loaded.themes.is_empty());
+    assert!(loaded.selected_theme.is_none());
+}
+
+#[test]
+fn at_file_references_expand_text_and_images() {
+    let temp = tempfile::tempdir().unwrap();
+    let text_path = temp.path().join("note.txt");
+    let png_path = temp.path().join("tiny.png");
+    std::fs::write(&text_path, "alpha\nbeta").unwrap();
+    std::fs::write(
+        &png_path,
+        [
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', b'i', b'm', b'g',
+        ],
+    )
+    .unwrap();
+
+    let prompt = format!(
+        "inspect @{} and @{}",
+        text_path.display(),
+        png_path.display()
+    );
+    let processed = process_at_file_references(&prompt, temp.path()).unwrap();
+
+    assert!(processed.text.contains("inspect"));
+    assert!(processed.text.contains("<file name="));
+    assert!(processed.text.contains("alpha\nbeta"));
+    assert_eq!(processed.images.len(), 1);
+    assert_eq!(processed.images[0].mime_type, "image/png");
+    assert!(processed.images[0].data.starts_with("iVBOR"));
+    assert!(
+        processed
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Image { .. }))
+    );
+}
+
+#[test]
+fn image_file_references_resize_large_images() {
+    let temp = tempfile::tempdir().unwrap();
+    let png_path = temp.path().join("wide.png");
+    let mut image = image::RgbImage::new(4, 2);
+    for pixel in image.pixels_mut() {
+        *pixel = image::Rgb([255, 0, 0]);
+    }
+    image.save(&png_path).unwrap();
+
+    let processed = process_at_file_references_with_options(
+        &format!("@{}", png_path.display()),
+        temp.path(),
+        ImageResizeOptions {
+            max_dimension: 2,
+            enabled: true,
+        },
+    )
+    .unwrap();
+
+    let data = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &processed.images[0].data,
+    )
+    .unwrap();
+    let resized = image::load_from_memory(&data).unwrap();
+    assert_eq!((resized.width(), resized.height()), (2, 1));
+    assert!(processed.text.contains("resized from 4x2 to 2x1"));
+}
+
+#[test]
+fn image_file_references_preserve_original_when_resize_is_disabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let png_path = temp.path().join("wide.png");
+    let mut image = image::RgbImage::new(4, 2);
+    for pixel in image.pixels_mut() {
+        *pixel = image::Rgb([0, 255, 0]);
+    }
+    image.save(&png_path).unwrap();
+
+    let processed = process_at_file_references_with_processing_options(
+        &format!("@{}", png_path.display()),
+        temp.path(),
+        ImageProcessingOptions {
+            resize: ImageResizeOptions {
+                max_dimension: 2,
+                enabled: false,
+            },
+            block_images: false,
+        },
+    )
+    .unwrap();
+
+    let data = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &processed.images[0].data,
+    )
+    .unwrap();
+    let original = image::load_from_memory(&data).unwrap();
+    assert_eq!((original.width(), original.height()), (4, 2));
+    assert!(!processed.text.contains("resized from"));
+}
+
+#[test]
+fn image_file_references_are_blocked_when_image_input_is_disabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let png_path = temp.path().join("blocked.png");
+    std::fs::write(
+        &png_path,
+        [
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', b'i', b'm', b'g',
+        ],
+    )
+    .unwrap();
+
+    let processed = process_at_file_references_with_processing_options(
+        &format!("inspect @{}", png_path.display()),
+        temp.path(),
+        ImageProcessingOptions {
+            resize: ImageResizeOptions {
+                max_dimension: 2,
+                enabled: true,
+            },
+            block_images: true,
+        },
+    )
+    .unwrap();
+
+    assert!(processed.images.is_empty());
+    assert!(processed.text.contains("inspect"));
+    assert!(processed.text.contains("[Image reading is disabled.]"));
+    assert!(
+        !processed
+            .content
+            .iter()
+            .any(|block| { matches!(block, ContentBlock::Image { .. }) })
+    );
+}
+
+#[test]
+fn at_file_references_support_quoted_paths_with_spaces() {
+    let temp = tempfile::tempdir().unwrap();
+    let text_path = temp.path().join("notes with spaces.txt");
+    std::fs::write(&text_path, "spaced content").unwrap();
+
+    let processed =
+        process_at_file_references(r#"read @"notes with spaces.txt" now"#, temp.path()).unwrap();
+
+    assert!(processed.text.contains("read"));
+    assert!(processed.text.contains("spaced content"));
+    assert!(processed.text.contains("now"));
+}
+
+fn faux_model(api: &str) -> Model {
+    Model {
+        id: "m10-faux-model".into(),
+        name: "M10 Faux".into(),
+        api: api.into(),
+        provider: "faux".into(),
+        base_url: String::new(),
+        reasoning: false,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text, ModelInput::Image],
+        cost: ModelCost::default(),
+        context_window: 10_000,
+        max_tokens: 1_000,
+        headers: None,
+        compat: None,
+    }
+}
+
+struct RecordingProvider {
+    contexts: Arc<Mutex<Vec<Context>>>,
+}
+
+impl ApiProvider for RecordingProvider {
+    fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        self.contexts.lock().unwrap().push(ctx);
+        let model_id = model.id.clone();
+        Box::pin(futures::stream::iter(vec![AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: {
+                let mut message = AssistantMessage::empty("recording", &model_id);
+                message.content.push(ContentBlock::Text {
+                    text: "ok".into(),
+                    text_signature: None,
+                });
+                message.stop_reason = StopReason::Stop;
+                message
+            },
+        }]))
+    }
+}
+
+#[tokio::test]
+async fn multimodal_prompt_content_reaches_provider_context() {
+    let api = "m10-multimodal-provider";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(RecordingProvider {
+            contexts: contexts.clone(),
+        }),
+    );
+
+    let output = run_print_mode(PrintModeOptions {
+        prompt: "inspect image".into(),
+        model: faux_model(api),
+        api_key: None,
+        system_prompt: None,
+        max_turns: Some(1),
+        tools: Vec::new(),
+        register_builtins: false,
+        session: None,
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: pi_agent_core::AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Content(vec![
+            ContentBlock::Text {
+                text: "inspect image".into(),
+                text_signature: None,
+            },
+            ContentBlock::Image {
+                data: "iVBORw0KGgo=".into(),
+                mime_type: "image/png".into(),
+            },
+        ]),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(output, "ok");
+    let contexts = contexts.lock().unwrap();
+    let first_message = contexts[0].messages.first().expect("first message");
+    let content = match first_message {
+        pi_ai::types::Message::User { content } => content,
+        _ => panic!("expected user message"),
+    };
+    assert!(content.iter().any(
+        |block| matches!(block, ContentBlock::Image { mime_type, .. } if mime_type == "image/png")
+    ));
+}
+
+#[tokio::test]
+async fn interactive_prompt_file_image_reaches_provider_context() {
+    let temp = tempfile::tempdir().unwrap();
+    let png_path = temp.path().join("inline.png");
+    image::RgbImage::from_pixel(1, 1, image::Rgb([0, 0, 255]))
+        .save(&png_path)
+        .unwrap();
+
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(RecordingProvider {
+        contexts: contexts.clone(),
+    });
+    let input = format!("inspect @{}\r", png_path.display());
+
+    run_scripted_interactive_with_provider_chunks(provider, vec![input.as_str()])
+        .await
+        .unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    let first_message = contexts[0].messages.first().expect("first message");
+    let content = match first_message {
+        pi_ai::types::Message::User { content } => content,
+        _ => panic!("expected user message"),
+    };
+    assert!(content.iter().any(
+        |block| matches!(block, ContentBlock::Image { mime_type, .. } if mime_type == "image/png")
+    ));
+}
+
+#[test]
+fn stdin_prompt_is_appended_with_separator() {
+    assert_eq!(
+        merge_stdin_prompt("summarize", Some("stdin text")),
+        "summarize\n\nstdin text"
+    );
+    assert_eq!(merge_stdin_prompt("", Some("stdin text")), "stdin text");
+    assert_eq!(merge_stdin_prompt("prompt", None), "prompt");
+}
+
+#[test]
+fn parses_models_rotation_globs_and_thinking_levels() {
+    let rotation = parse_model_rotation("claude-*:high,deepseek-chat:low").unwrap();
+    assert_eq!(rotation.entries.len(), 2);
+    assert_eq!(rotation.entries[0].pattern, "claude-*");
+    assert_eq!(rotation.entries[0].thinking, Some(ThinkingLevel::High));
+    assert_eq!(rotation.entries[1].pattern, "deepseek-chat");
+    assert!(rotation.matches("claude-sonnet-4-5"));
+    assert!(!rotation.matches("gpt-4"));
+}
+
+#[test]
+fn models_rotation_and_provider_select_matching_model() {
+    let args = parse_args(
+        [
+            "-p",
+            "hello",
+            "--provider",
+            "anthropic",
+            "--models",
+            "*sonnet*",
+        ]
+        .map(String::from)
+        .to_vec(),
+    )
+    .unwrap();
+
+    let model = select_model(&args, None, None, None).unwrap();
+
+    assert_eq!(model.provider, "anthropic");
+    assert!(
+        model.id.contains("sonnet") || model.name.to_ascii_lowercase().contains("sonnet"),
+        "{} / {}",
+        model.id,
+        model.name
+    );
+}
+
+#[test]
+fn parses_m10_cli_flags_and_filters_tools() {
+    let args = parse_args(
+        [
+            "-p",
+            "hello",
+            "--provider",
+            "anthropic",
+            "--append-system-prompt",
+            "A",
+            "--append-system-prompt",
+            "B",
+            "--tools",
+            "read,bash",
+            "--exclude-tools",
+            "bash",
+            "--models",
+            "claude-*:high",
+            "--no-context-files",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-themes",
+            "--verbose",
+            "--offline",
+        ]
+        .map(String::from)
+        .to_vec(),
+    )
+    .unwrap();
+
+    assert_eq!(args.provider.as_deref(), Some("anthropic"));
+    assert_eq!(args.append_system_prompt, vec!["A", "B"]);
+    assert_eq!(args.tools, vec!["read", "bash"]);
+    assert_eq!(args.exclude_tools, vec!["bash"]);
+    assert_eq!(args.models.as_deref(), Some("claude-*:high"));
+    assert!(args.no_context_files);
+    assert!(args.no_skills);
+    assert!(args.no_prompt_templates);
+    assert!(args.no_themes);
+    assert!(args.verbose);
+    assert!(args.offline);
+
+    let tools = builtin_tools(tempfile::tempdir().unwrap().path().to_path_buf());
+    let filtered = filter_tools(
+        tools,
+        &ToolFilter {
+            allow: vec!["read".into(), "bash".into()],
+            deny: vec!["bash".into()],
+            no_tools: false,
+            no_builtin_tools: false,
+        },
+    );
+    let names: Vec<_> = filtered.iter().map(|tool| tool.name.as_str()).collect();
+    assert_eq!(names, vec!["read"]);
+
+    let none = filter_tools(
+        filtered,
+        &ToolFilter {
+            no_tools: true,
+            ..Default::default()
+        },
+    );
+    assert!(none.is_empty());
+}
+
+#[test]
+fn no_builtin_tools_keeps_custom_tools() {
+    let mut tools = builtin_tools(tempfile::tempdir().unwrap().path().to_path_buf());
+    tools.push(pi_agent_core::AgentTool::new_text(
+        "custom",
+        "custom tool",
+        serde_json::json!({"type":"object"}),
+        |_| async { Ok("custom".to_string()) },
+    ));
+
+    let filtered = filter_tools(
+        tools,
+        &ToolFilter {
+            no_builtin_tools: true,
+            ..Default::default()
+        },
+    );
+
+    let names: Vec<_> = filtered.iter().map(|tool| tool.name.as_str()).collect();
+    assert_eq!(names, vec!["custom"]);
+}

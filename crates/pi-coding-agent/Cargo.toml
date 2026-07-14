@@ -1,0 +1,35 @@
+[package]
+name = "pi-coding-agent"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+test-harness = []
+
+[dependencies]
+dirs = "6"
+base64 = "0.22"
+futures = "0.3"
+globset = "0.4"
+ignore = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+mlua = { version = "0.10", features = ["lua54", "vendored", "send", "serialize"] }
+notify = "7"
+pi-agent-core = { path = "../pi-agent-core" }
+pi-ai = { path = "../pi-ai" }
+pi-tui = { path = "../pi-tui" }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"] }
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "time", "io-util", "io-std", "sync", "test-util"] }
+tokio-util = "0.7"
+toml = "0.8"
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+async-stream = "0.3"
+tempfile = "3"

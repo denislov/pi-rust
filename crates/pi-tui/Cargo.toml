@@ -1,0 +1,13 @@
+[package]
+name = "pi-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22"
+bitflags = "2"
+crossterm = "0.28"
+pulldown-cmark = "0.12"
+thiserror = "2"
+unicode-segmentation = "1"
+unicode-width = "0.2"

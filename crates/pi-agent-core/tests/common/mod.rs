@@ -1,0 +1,266 @@
+#![allow(dead_code, deprecated)]
+
+use async_stream::stream;
+use pi_ai::providers::faux::FauxResponse;
+use pi_ai::registry::ApiProvider;
+use pi_ai::stream::EventStream;
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
+    StopReason, StreamOptions,
+};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// A scripted LLM response for one turn.
+pub struct ScriptedTurn {
+    pub events: Vec<AssistantMessageEvent>,
+    pub stop_reason: StopReason,
+    pub response_id: String,
+    pub model_name: String,
+}
+
+/// Test ApiProvider that replays scripted turns from a queue.
+pub struct TestProvider {
+    pub turns: Mutex<Vec<ScriptedTurn>>,
+    pub stream_options: Mutex<Vec<Option<StreamOptions>>>,
+}
+
+impl TestProvider {
+    pub fn new(turns: Vec<ScriptedTurn>) -> Self {
+        Self {
+            turns: Mutex::new(turns),
+            stream_options: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+static PROVIDER_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
+
+pub struct ProviderGuard<'a> {
+    _lock: MutexGuard<'a, ()>,
+    previous: Vec<(String, Option<Arc<dyn ApiProvider>>)>,
+}
+
+impl ProviderGuard<'static> {
+    pub fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
+        Self::register_many(vec![(api.into(), provider)])
+    }
+
+    pub fn register_many(providers: Vec<(String, Arc<dyn ApiProvider>)>) -> Self {
+        let lock = PROVIDER_REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut previous = Vec::with_capacity(providers.len());
+        for (api, provider) in providers {
+            let prior = pi_ai::registry::lookup(&api);
+            pi_ai::registry::register(&api, provider);
+            previous.push((api, prior));
+        }
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+impl Drop for ProviderGuard<'_> {
+    fn drop(&mut self) {
+        for (api, previous) in self.previous.drain(..).rev() {
+            match previous {
+                Some(provider) => pi_ai::registry::register(&api, provider),
+                None => pi_ai::registry::unregister(&api),
+            }
+        }
+    }
+}
+
+impl ApiProvider for TestProvider {
+    fn stream(&self, _model: &Model, _ctx: Context, opts: Option<StreamOptions>) -> EventStream {
+        self.stream_options.lock().unwrap().push(opts);
+        let turn = {
+            let mut turns = self.turns.lock().unwrap();
+            if turns.is_empty() {
+                return Box::pin(stream! {
+                    let mut msg = AssistantMessage::empty("test", "test-model");
+                    msg.error_message = Some("no more scripted turns".into());
+                    msg.stop_reason = StopReason::Error;
+                    yield AssistantMessageEvent::Error {
+                        reason: StopReason::Error,
+                        message: msg,
+                    };
+                });
+            }
+            turns.remove(0)
+        };
+
+        let content = turn
+            .events
+            .last()
+            .map(|e| match e {
+                AssistantMessageEvent::Start { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::TextStart { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::TextDelta { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::TextEnd { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ThinkingStart { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ThinkingDelta { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ThinkingEnd { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ToolcallStart { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ToolcallDelta { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::ToolcallEnd { partial, .. } => partial.content.clone(),
+                AssistantMessageEvent::Done { message, .. } => message.content.clone(),
+                AssistantMessageEvent::Error { .. } => vec![],
+            })
+            .unwrap_or_default();
+
+        Box::pin(stream! {
+            for event in &turn.events {
+                yield event.clone();
+            }
+
+            let msg = AssistantMessage {
+                content,
+                api: "test".into(),
+                provider: Some("test".into()),
+                model: turn.model_name.clone(),
+                response_model: None,
+                response_id: Some(turn.response_id.clone()),
+                usage: Default::default(),
+                stop_reason: turn.stop_reason.clone(),
+                error_message: None,
+                diagnostics: None,
+                timestamp: 0,
+            };
+            yield AssistantMessageEvent::Done {
+                reason: turn.stop_reason,
+                message: msg,
+            };
+        })
+    }
+}
+
+/// Helper: create a simple text-response turn.
+pub fn text_turn(text: &str) -> ScriptedTurn {
+    let text_block = ContentBlock::Text {
+        text: text.into(),
+        text_signature: None,
+    };
+    let mut msg = AssistantMessage::empty("test", "test-model");
+    msg.content.push(text_block.clone());
+    let partial = msg.clone();
+
+    ScriptedTurn {
+        events: vec![
+            AssistantMessageEvent::Start {
+                content_index: None,
+                partial: partial.clone(),
+            },
+            AssistantMessageEvent::TextStart {
+                content_index: 0,
+                partial: {
+                    let mut p = partial.clone();
+                    p.content = vec![text_block.clone()];
+                    p
+                },
+            },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: text.into(),
+                partial: partial.clone(),
+            },
+            AssistantMessageEvent::TextEnd {
+                content_index: 0,
+                partial: partial.clone(),
+            },
+        ],
+        stop_reason: StopReason::Stop,
+        response_id: "resp_1".into(),
+        model_name: "test-model".into(),
+    }
+}
+
+/// Helper: create a tool-use turn.
+pub fn tool_use_turn(tool_id: &str, tool_name: &str, arguments: serde_json::Value) -> ScriptedTurn {
+    let tool_block = ContentBlock::ToolCall {
+        id: tool_id.into(),
+        name: tool_name.into(),
+        arguments: arguments.clone(),
+        thought_signature: None,
+    };
+    let mut msg = AssistantMessage::empty("test", "test-model");
+    msg.content.push(tool_block.clone());
+    let partial = msg.clone();
+
+    let json_str = arguments.to_string();
+
+    ScriptedTurn {
+        events: vec![
+            AssistantMessageEvent::Start {
+                content_index: None,
+                partial: partial.clone(),
+            },
+            AssistantMessageEvent::ToolcallStart {
+                content_index: 0,
+                partial: {
+                    let mut p = partial.clone();
+                    p.content = vec![ContentBlock::ToolCall {
+                        id: tool_id.into(),
+                        name: tool_name.into(),
+                        arguments: serde_json::json!({}),
+                        thought_signature: None,
+                    }];
+                    p
+                },
+            },
+            AssistantMessageEvent::ToolcallDelta {
+                content_index: 0,
+                delta: json_str,
+                partial: partial.clone(),
+            },
+            AssistantMessageEvent::ToolcallEnd {
+                content_index: 0,
+                partial: partial.clone(),
+            },
+        ],
+        stop_reason: StopReason::ToolUse,
+        response_id: "resp_tool".into(),
+        model_name: "test-model".into(),
+    }
+}
+
+pub fn faux_model(api: &str) -> Model {
+    faux_model_with_window(api, 0)
+}
+
+/// Like [`faux_model`] but with an explicit `context_window`. The default
+/// [`faux_model`] keeps `context_window: 0` (never auto-compacts under the
+/// context-window-gated trigger); tests that exercise auto compaction should
+/// pick a window appropriate to their scenario.
+pub fn faux_model_with_window(api: &str, context_window: u32) -> Model {
+    Model {
+        id: "faux-model".into(),
+        name: "Faux Model".into(),
+        api: api.into(),
+        provider: "faux".into(),
+        base_url: String::new(),
+        reasoning: false,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost {
+            input: 0.0,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        },
+        context_window,
+        max_tokens: 0,
+        headers: None,
+        compat: None,
+    }
+}
+
+pub fn faux_text_turn(text: &str) -> FauxResponse {
+    FauxResponse {
+        text_deltas: vec![text.to_string()],
+        thinking_deltas: vec![],
+        tool_calls: vec![],
+    }
+}
