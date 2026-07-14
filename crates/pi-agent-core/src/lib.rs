@@ -23,8 +23,7 @@ mod loop_runtime;
 pub mod proxy;
 #[doc(hidden)]
 pub mod queues;
-#[doc(hidden)]
-pub mod resources;
+mod resources;
 #[doc(hidden)]
 pub mod session_context;
 #[doc(hidden)]

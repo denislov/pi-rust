@@ -46,7 +46,7 @@ pub(super) fn expand_skill_command(text: &str, skills: &[Skill]) -> String {
         return text.to_string();
     };
 
-    pi_agent_core::resources::format_skill_invocation(
+    pi_agent_core::api::format_skill_invocation(
         &skill.name,
         &skill.location,
         &skill.content,
