@@ -2,7 +2,7 @@ use super::CodingSessionError;
 use super::capability_snapshot::OperationCapabilitySnapshot;
 #[cfg(test)]
 use super::operation::Operation;
-use super::operation::{OperationAdmission, OperationClass, OperationDispatchMode};
+use super::operation::{OperationAdmission, OperationClass};
 use super::operation_control::{
     OperationControl, OperationGuard, OperationKind, PromptControlHandle,
 };
@@ -198,6 +198,7 @@ impl IntentRouter {
 mod tests {
     use super::*;
     use crate::coding_session::export_flow::ExportOptions;
+    use crate::coding_session::operation::OperationDispatchMode;
     use crate::coding_session::operation::{Operation, OperationClass};
     use crate::coding_session::operation_control::{OperationKind, PromptControlCommand};
 

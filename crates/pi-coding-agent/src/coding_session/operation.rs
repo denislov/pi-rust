@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(
             error,
             CodingSessionError::UnsupportedCapability {
-                capability: "plugin_command operation was sent to the wrong dispatcher (requires read-only sync)".into(),
+                capability: "plugin_command operation was sent to the wrong dispatcher (requires async, received read-only sync)".into(),
             }
         );
         assert_eq!(control.active(), None);
