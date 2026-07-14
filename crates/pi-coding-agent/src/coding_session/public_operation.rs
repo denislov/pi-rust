@@ -218,6 +218,7 @@ mod tests {
     use crate::coding_session::context::CodingAgentSessionSummary;
     use crate::coding_session::export_flow::ExportOutcome;
     use crate::coding_session::operation::OperationDispatchMode;
+    use crate::coding_session::operation_control::OperationKind;
     use crate::coding_session::plugin_service::PluginDiagnostic;
     use crate::plugins::PluginCapabilities;
     use crate::runtime::PromptInvocation;
@@ -267,6 +268,9 @@ mod tests {
         expected_internal: ExpectedInternalOperationVariant,
         expected_dispatch: OperationDispatchMode,
         expected_outcome: ExpectedPublicOutcomeFamily,
+        expected_submitted_kind: OperationKind,
+        expected_association: OperationAssociationClass,
+        expected_root_evidence: &'static [OperationRootTerminalEvidence],
     }
 
     struct OutcomeProjectionCase {
@@ -287,6 +291,13 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::Prompt,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::Prompt,
+                expected_submitted_kind: OperationKind::Prompt,
+                expected_association: OperationAssociationClass::TerminalAssociated,
+                expected_root_evidence: &[
+                    OperationRootTerminalEvidence::PromptCompleted,
+                    OperationRootTerminalEvidence::PromptFailed,
+                    OperationRootTerminalEvidence::PromptAborted,
+                ],
             },
             OperationContractCase {
                 public_variant: "Compact",
@@ -294,6 +305,12 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::ManualCompaction,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::Compact,
+                expected_submitted_kind: OperationKind::Compact,
+                expected_association: OperationAssociationClass::TerminalAssociated,
+                expected_root_evidence: &[
+                    OperationRootTerminalEvidence::CompactionCompleted,
+                    OperationRootTerminalEvidence::CompactPromptFailed,
+                ],
             },
             OperationContractCase {
                 public_variant: "BranchSummary",
@@ -307,6 +324,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::BranchSummary,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::BranchSummary,
+                expected_submitted_kind: OperationKind::BranchSummary,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "SelfHealingEdit",
@@ -319,6 +339,12 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::SelfHealingEdit,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::SelfHealingEdit,
+                expected_submitted_kind: OperationKind::SelfHealingEdit,
+                expected_association: OperationAssociationClass::TerminalAssociated,
+                expected_root_evidence: &[
+                    OperationRootTerminalEvidence::SelfHealingEditCompleted,
+                    OperationRootTerminalEvidence::SelfHealingEditFailed,
+                ],
             },
             OperationContractCase {
                 public_variant: "InvokeAgent",
@@ -332,6 +358,13 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::AgentInvocation,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::AgentInvocation,
+                expected_submitted_kind: OperationKind::AgentInvocation,
+                expected_association: OperationAssociationClass::TerminalAssociated,
+                expected_root_evidence: &[
+                    OperationRootTerminalEvidence::AgentInvocationCompleted,
+                    OperationRootTerminalEvidence::AgentInvocationFailed,
+                    OperationRootTerminalEvidence::AgentInvocationAborted,
+                ],
             },
             OperationContractCase {
                 public_variant: "InvokeTeam",
@@ -345,6 +378,13 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::AgentTeam,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::AgentTeam,
+                expected_submitted_kind: OperationKind::AgentTeam,
+                expected_association: OperationAssociationClass::TerminalAssociated,
+                expected_root_evidence: &[
+                    OperationRootTerminalEvidence::AgentTeamCompleted,
+                    OperationRootTerminalEvidence::AgentTeamFailed,
+                    OperationRootTerminalEvidence::AgentTeamAborted,
+                ],
             },
             OperationContractCase {
                 public_variant: "PluginLoad",
@@ -352,6 +392,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::PluginLoad,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::PluginLoad,
+                expected_submitted_kind: OperationKind::PluginLoad,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "PluginCommand",
@@ -362,6 +405,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::PluginCommand,
                 expected_dispatch: OperationDispatchMode::SyncReadOnly,
                 expected_outcome: ExpectedPublicOutcomeFamily::PluginCommand,
+                expected_submitted_kind: OperationKind::PluginCommand,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "SetDefaultAgentProfile",
@@ -371,6 +417,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::SetDefaultAgentProfile,
                 expected_dispatch: OperationDispatchMode::SyncMutable,
                 expected_outcome: ExpectedPublicOutcomeFamily::DefaultAgentProfileChanged,
+                expected_submitted_kind: OperationKind::SetDefaultAgentProfile,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "ApproveDelegation",
@@ -381,6 +430,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::ApproveDelegationConfirmation,
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::DelegationApproved,
+                expected_submitted_kind: OperationKind::DelegationConfirmation,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "RejectDelegation",
@@ -392,6 +444,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::RejectDelegationConfirmation,
                 expected_dispatch: OperationDispatchMode::SyncMutable,
                 expected_outcome: ExpectedPublicOutcomeFamily::DelegationRejected,
+                expected_submitted_kind: OperationKind::DelegationConfirmation,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "ForkSession",
@@ -401,6 +456,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::ForkSession,
                 expected_dispatch: OperationDispatchMode::SyncMutable,
                 expected_outcome: ExpectedPublicOutcomeFamily::SessionForked,
+                expected_submitted_kind: OperationKind::ForkSession,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "SwitchActiveLeaf",
@@ -410,6 +468,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::SwitchActiveLeaf,
                 expected_dispatch: OperationDispatchMode::SyncMutable,
                 expected_outcome: ExpectedPublicOutcomeFamily::ActiveLeafSwitched,
+                expected_submitted_kind: OperationKind::SwitchActiveLeaf,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "ExportCurrent",
@@ -417,6 +478,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::ExportView,
                 expected_dispatch: OperationDispatchMode::SyncReadOnly,
                 expected_outcome: ExpectedPublicOutcomeFamily::Export,
+                expected_submitted_kind: OperationKind::Export,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "ExportCurrentHtml",
@@ -426,6 +490,9 @@ mod tests {
                 expected_internal: ExpectedInternalOperationVariant::ExportHtml,
                 expected_dispatch: OperationDispatchMode::SyncReadOnly,
                 expected_outcome: ExpectedPublicOutcomeFamily::ExportHtml,
+                expected_submitted_kind: OperationKind::Export,
+                expected_association: OperationAssociationClass::OutcomeOnly,
+                expected_root_evidence: &[],
             },
         ]
     }
@@ -665,6 +732,34 @@ mod tests {
         }
     }
 
+    fn descriptor_outcome_family(family: ExpectedPublicOutcomeFamily) -> OperationOutcomeFamily {
+        match family {
+            ExpectedPublicOutcomeFamily::Prompt => OperationOutcomeFamily::Prompt,
+            ExpectedPublicOutcomeFamily::Compact => OperationOutcomeFamily::Compact,
+            ExpectedPublicOutcomeFamily::BranchSummary => OperationOutcomeFamily::BranchSummary,
+            ExpectedPublicOutcomeFamily::SelfHealingEdit => OperationOutcomeFamily::SelfHealingEdit,
+            ExpectedPublicOutcomeFamily::AgentInvocation => OperationOutcomeFamily::AgentInvocation,
+            ExpectedPublicOutcomeFamily::AgentTeam => OperationOutcomeFamily::AgentTeam,
+            ExpectedPublicOutcomeFamily::PluginLoad => OperationOutcomeFamily::PluginLoad,
+            ExpectedPublicOutcomeFamily::PluginCommand => OperationOutcomeFamily::PluginCommand,
+            ExpectedPublicOutcomeFamily::DefaultAgentProfileChanged => {
+                OperationOutcomeFamily::DefaultAgentProfileChanged
+            }
+            ExpectedPublicOutcomeFamily::DelegationApproved => {
+                OperationOutcomeFamily::DelegationApproved
+            }
+            ExpectedPublicOutcomeFamily::DelegationRejected => {
+                OperationOutcomeFamily::DelegationRejected
+            }
+            ExpectedPublicOutcomeFamily::SessionForked => OperationOutcomeFamily::SessionForked,
+            ExpectedPublicOutcomeFamily::ActiveLeafSwitched => {
+                OperationOutcomeFamily::ActiveLeafSwitched
+            }
+            ExpectedPublicOutcomeFamily::Export => OperationOutcomeFamily::Export,
+            ExpectedPublicOutcomeFamily::ExportHtml => OperationOutcomeFamily::ExportHtml,
+        }
+    }
+
     fn branch_summary_reuse_flag(reuse: BranchSummaryReusePolicy) -> bool {
         let operation = CodingAgentOperation::BranchSummary {
             options: PromptTurnOptions::new(PromptInvocation::Text("summarize".into())),
@@ -719,6 +814,47 @@ mod tests {
                 case.public_variant
             );
         }
+    }
+
+    #[test]
+    fn association_matrix_classifies_all_public_operations_exactly_once() {
+        let cases = operation_contract_cases();
+        let mut public_variants = HashSet::new();
+        let mut terminal_associated = 0;
+        let mut outcome_only = 0;
+        let mut not_applicable = 0;
+
+        for case in &cases {
+            assert!(
+                public_variants.insert(case.public_variant),
+                "duplicate public operation row: {}",
+                case.public_variant
+            );
+            let operation = (case.build_operation)();
+            let descriptor = operation.descriptor();
+            assert_eq!(descriptor.submitted_kind, case.expected_submitted_kind);
+            assert_eq!(
+                descriptor.outcome_family,
+                descriptor_outcome_family(case.expected_outcome)
+            );
+            assert_eq!(descriptor.association, case.expected_association);
+            assert_eq!(
+                descriptor.permitted_root_evidence, case.expected_root_evidence,
+                "{} root evidence",
+                case.public_variant
+            );
+            match descriptor.association {
+                OperationAssociationClass::TerminalAssociated => terminal_associated += 1,
+                OperationAssociationClass::OutcomeOnly => outcome_only += 1,
+                OperationAssociationClass::NotApplicable => not_applicable += 1,
+            }
+        }
+
+        assert_eq!(cases.len(), 15);
+        assert_eq!(public_variants.len(), 15);
+        assert_eq!(terminal_associated, 5);
+        assert_eq!(outcome_only, 10);
+        assert_eq!(not_applicable, 0);
     }
 
     #[test]
