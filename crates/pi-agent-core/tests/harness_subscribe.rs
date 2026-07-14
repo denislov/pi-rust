@@ -2,7 +2,7 @@ mod common;
 
 use common::ProviderGuard;
 use futures::StreamExt;
-use pi_agent_core::{AgentConfig, AgentHarness, AgentHarnessEvent, AgentHarnessHooks};
+use pi_agent_core::{AgentHarness, AgentHarnessEvent, AgentHarnessHooks};
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::types::{Model, ModelCost, ModelInput, StopReason};
 use std::sync::{Arc, Mutex};
@@ -44,7 +44,7 @@ async fn subscribe_observes_all_harness_events() {
     let api = "subscribe-all";
     let _provider_guard = register_simple_text(api, "hi");
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
 
@@ -75,7 +75,7 @@ async fn subscribe_guard_drop_removes_listener() {
     let api = "subscribe-drop";
     let _provider_guard = register_simple_text(api, "hi");
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
 
@@ -97,7 +97,7 @@ async fn on_context_appends_to_existing_hook_chain() {
     let api = "on-context";
     let _provider_guard = register_simple_text(api, "hi");
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
 
     let initial_seen = Arc::new(Mutex::new(false));
@@ -130,7 +130,7 @@ async fn phase_starts_idle_and_returns_to_idle_after_prompt() {
 
     let api = "phase-idle";
     let _provider_guard = register_simple_text(api, "ok");
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
 
@@ -145,7 +145,7 @@ async fn phase_is_turn_during_active_prompt() {
 
     let api = "phase-turn";
     let _provider_guard = register_simple_text(api, "ok");
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
 
@@ -171,7 +171,7 @@ async fn abort_returns_cleared_queue_messages() {
 
     let api = "abort-queues";
     let _provider_guard = register_simple_text(api, "ok");
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
 
@@ -199,7 +199,7 @@ async fn abort_with_empty_queues_returns_empty_lists() {
 
     let api = "abort-empty";
     let _provider_guard = register_simple_text(api, "ok");
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config);
 

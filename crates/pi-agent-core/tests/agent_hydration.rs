@@ -2,7 +2,7 @@ mod common;
 
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage};
+use pi_agent_core::{Agent, AgentEvent, AgentMessage};
 use pi_ai::providers::faux::FauxProvider;
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ async fn prompt_starts_after_hydrated_messages() {
             "second answer",
         )])),
     );
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.system_prompt = Some("system".into());
     config.max_turns = Some(5);
     let agent = Agent::with_messages(

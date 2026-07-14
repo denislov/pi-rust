@@ -4,9 +4,7 @@ use common::{ProviderGuard, faux_model_with_window};
 use futures::StreamExt;
 use pi_agent_core::compaction::estimate::estimate_tokens;
 use pi_agent_core::compaction::prepare::{prepare_compaction, should_compact};
-use pi_agent_core::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings,
-};
+use pi_agent_core::{Agent, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{ContentBlock, StopReason, StreamOptions};
 use std::sync::Arc;
@@ -149,7 +147,7 @@ async fn runtime_compaction_summarizes_before_provider_request() {
     // Small context window so the context-window-gated trigger fires for
     // this fixture-sized conversation (default `faux_model` has
     // `context_window: 0`, which never auto-compacts).
-    let mut config = AgentConfig::new(faux_model_with_window(api, 100));
+    let mut config = common::agent_config(faux_model_with_window(api, 100));
     config.max_turns = Some(3);
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings {
@@ -196,7 +194,7 @@ async fn runtime_compaction_summarizes_before_provider_request() {
 async fn runtime_compaction_forwards_stream_options_to_summarization() {
     let api = "runtime-compaction-api-key";
     // Small context window so the context-window-gated trigger fires.
-    let mut config = AgentConfig::new(faux_model_with_window(api, 100));
+    let mut config = common::agent_config(faux_model_with_window(api, 100));
     config.max_turns = Some(3);
     config.stream_options = Some(StreamOptions {
         api_key: Some("test-api-key".to_string()),
@@ -256,7 +254,7 @@ async fn runtime_compaction_does_not_trigger_on_large_context_model() {
     // compaction must NOT fire. Regression for the "compacts at ~1% usage"
     // bug where the trigger ignored the active model's context window.
     let api = "runtime-no-compact-large";
-    let mut config = AgentConfig::new(faux_model_with_window(api, 1_000_000));
+    let mut config = common::agent_config(faux_model_with_window(api, 1_000_000));
     config.max_turns = Some(3);
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings::default(),
@@ -298,7 +296,7 @@ async fn runtime_compaction_triggers_near_context_limit() {
     // 100,000 - 16,384 = 83,616 trigger threshold, so compaction fires and
     // the summary is emitted before the final provider turn.
     let api = "runtime-compact-near-limit";
-    let mut config = AgentConfig::new(faux_model_with_window(api, 100_000));
+    let mut config = common::agent_config(faux_model_with_window(api, 100_000));
     config.max_turns = Some(3);
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings::default(),
@@ -331,7 +329,7 @@ async fn runtime_compaction_zero_context_window_never_compacts() {
     // compact, even when the estimate is large. Mirrors the `should_compact`
     // `context_window > 0` guard.
     let api = "runtime-no-compact-zero-window";
-    let mut config = AgentConfig::new(faux_model_with_window(api, 0));
+    let mut config = common::agent_config(faux_model_with_window(api, 0));
     config.max_turns = Some(3);
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings::default(),

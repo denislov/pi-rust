@@ -1,9 +1,7 @@
 mod common;
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
-use pi_agent_core::{
-    Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput, ToolExecutionMode,
-};
+use pi_agent_core::{Agent, AgentEvent, AgentTool, AgentToolOutput, ToolExecutionMode};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::registry::ApiProvider;
 use pi_ai::types::{ContentBlock, StopReason};
@@ -139,7 +137,7 @@ async fn parallel_tools_share_one_virtual_delay_while_sequential_tools_wait_per_
     let api_par = "parallel-faster-par";
     let api_seq = "parallel-faster-seq";
 
-    let mut config_par = AgentConfig::new(faux_model(api_par));
+    let mut config_par = common::agent_config(faux_model(api_par));
     config_par.tool_execution = ToolExecutionMode::Parallel;
     config_par.max_turns = Some(5);
 
@@ -179,7 +177,7 @@ async fn parallel_tools_share_one_virtual_delay_while_sequential_tools_wait_per_
     parallel_end_events.sort();
     assert_eq!(parallel_end_events, vec!["fast", "slow"]);
 
-    let mut config_seq = AgentConfig::new(faux_model(api_seq));
+    let mut config_seq = common::agent_config(faux_model(api_seq));
     config_seq.tool_execution = ToolExecutionMode::Sequential;
     config_seq.max_turns = Some(5);
 
@@ -218,7 +216,7 @@ async fn parallel_tools_share_one_virtual_delay_while_sequential_tools_wait_per_
 #[tokio::test(start_paused = true)]
 async fn parallel_tool_results_are_appended_in_assistant_order() {
     let api = "parallel-order";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     config.max_turns = Some(5);
 
@@ -253,7 +251,7 @@ async fn parallel_tool_results_are_appended_in_assistant_order() {
 #[tokio::test(start_paused = true)]
 async fn parallel_tool_end_events_are_emitted_in_completion_order() {
     let api = "parallel-event-order";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     config.max_turns = Some(5);
 
@@ -285,7 +283,7 @@ async fn parallel_tool_end_events_are_emitted_in_completion_order() {
 #[tokio::test(start_paused = true)]
 async fn per_tool_sequential_override_forces_batch_sequential() {
     let api = "parallel-override";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     config.max_turns = Some(5);
 

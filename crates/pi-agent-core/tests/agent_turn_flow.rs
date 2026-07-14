@@ -11,7 +11,7 @@ use pi_agent_core::agent_turn_flow::{
 use pi_agent_core::api::{AgentLoopTurnUpdate, BeforeProviderRequestResult};
 use pi_agent_core::flow::{Action, Flow};
 use pi_agent_core::{
-    AfterToolCallResult, Agent, AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool,
+    AfterToolCallResult, Agent, AgentEvent, AgentMessage, AgentResources, AgentTool,
     AgentToolOutput, BeforeToolCallResult, CompactionConfig, CompactionSettings, PromptTemplate,
     QueueMode, Skill, ToolExecutionMode,
 };
@@ -198,7 +198,7 @@ fn agent_turn_context_snapshots_agent_state_without_draining_queues() {
             location: "/prompts/review.md".into(),
         }],
     };
-    let mut config = AgentConfig::new(common::faux_model("test-api"));
+    let mut config = common::agent_config(common::faux_model("test-api"));
     config.system_prompt = Some("system rules".into());
     config.max_turns = Some(3);
     config.resources = resources;
@@ -248,7 +248,7 @@ fn agent_turn_context_snapshots_agent_state_without_draining_queues() {
 
 #[tokio::test]
 async fn prepare_context_node_builds_provider_request_from_context_snapshot() {
-    let mut config = AgentConfig::new(common::faux_model("test-api"));
+    let mut config = common::agent_config(common::faux_model("test-api"));
     config.system_prompt = Some("system rules".into());
     config.stream_options = Some(StreamOptions {
         temperature: Some(0.2),
@@ -295,7 +295,7 @@ async fn prepare_context_node_builds_provider_request_from_context_snapshot() {
 
 #[tokio::test]
 async fn start_turn_node_emits_turn_start_and_enforces_max_turns() {
-    let mut config = AgentConfig::new(common::faux_model("start-turn-node"));
+    let mut config = common::agent_config(common::faux_model("start-turn-node"));
     config.max_turns = Some(1);
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
@@ -324,7 +324,7 @@ async fn start_turn_node_emits_turn_start_and_enforces_max_turns() {
 
 #[tokio::test]
 async fn provider_request_node_emits_before_provider_request_after_hook_update() {
-    let mut config = AgentConfig::new(common::faux_model("provider-request-hook"));
+    let mut config = common::agent_config(common::faux_model("provider-request-hook"));
     config.stream_options = Some(StreamOptions {
         max_tokens: Some(12),
         ..Default::default()
@@ -397,7 +397,7 @@ async fn provider_request_node_emits_before_provider_request_after_hook_update()
 
 #[tokio::test]
 async fn provider_request_node_applies_override_once_and_preserves_cancel() {
-    let mut config = AgentConfig::new(common::faux_model("provider-request-override"));
+    let mut config = common::agent_config(common::faux_model("provider-request-override"));
     config.stream_options = Some(StreamOptions {
         max_tokens: Some(12),
         ..Default::default()
@@ -468,7 +468,7 @@ async fn provider_request_node_applies_override_once_and_preserves_cancel() {
 async fn maybe_prepare_next_turn_drains_follow_up_before_done() {
     let prepare_calls = Arc::new(AtomicUsize::new(0));
     let prepare_calls_for_hook = prepare_calls.clone();
-    let mut config = AgentConfig::new(common::faux_model("maybe-prepare-next-turn"));
+    let mut config = common::agent_config(common::faux_model("maybe-prepare-next-turn"));
     config.follow_up_mode = QueueMode::OneAtATime;
     config.hooks.prepare_next_turn = Some(Arc::new(move |ctx| {
         prepare_calls_for_hook.fetch_add(1, Ordering::SeqCst);
@@ -528,7 +528,7 @@ async fn maybe_prepare_next_turn_drains_follow_up_before_done() {
 async fn agent_run_uses_configured_provider_streamer_without_global_registry() {
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_for_streamer = calls.clone();
-    let mut config = AgentConfig::new(common::faux_model("scoped-provider-streamer-only"));
+    let mut config = common::agent_config(common::faux_model("scoped-provider-streamer-only"));
     config.provider_streamer = Some(Arc::new(move |model, _context, _opts| {
         assert_eq!(model.api, "scoped-provider-streamer-only");
         calls_for_streamer.fetch_add(1, Ordering::SeqCst);
@@ -570,7 +570,7 @@ async fn agent_run_uses_configured_provider_streamer_without_global_registry() {
 async fn runtime_compaction_node_uses_configured_provider_streamer_without_global_registry() {
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_for_streamer = calls.clone();
-    let mut config = AgentConfig::new(common::faux_model_with_window(
+    let mut config = common::agent_config(common::faux_model_with_window(
         "runtime-compaction-scoped-provider-streamer-only",
         100,
     ));
@@ -628,7 +628,7 @@ async fn runtime_compaction_node_uses_configured_provider_streamer_without_globa
 #[tokio::test]
 async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
     let api = "agent-turn-flow-runtime-compaction";
-    let mut config = AgentConfig::new(common::faux_model_with_window(api, 100));
+    let mut config = common::agent_config(common::faux_model_with_window(api, 100));
     config.compaction = Some(CompactionConfig {
         settings: CompactionSettings {
             enabled: true,
@@ -688,7 +688,7 @@ async fn runtime_compaction_node_summarizes_and_updates_context_messages() {
 #[tokio::test]
 async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
     let api = "agent-turn-flow-execute-tool";
-    let mut config = AgentConfig::new(common::faux_model(api));
+    let mut config = common::agent_config(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Sequential;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
@@ -763,7 +763,7 @@ async fn execute_tools_node_runs_sequential_tool_and_appends_result_message() {
 async fn execute_tools_node_honors_before_hook_block() {
     let api = "agent-turn-flow-execute-before-hook";
     let calls = Arc::new(AtomicUsize::new(0));
-    let mut config = AgentConfig::new(common::faux_model(api));
+    let mut config = common::agent_config(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Sequential;
     config.hooks.before_tool_call = Some(Arc::new(|ctx| {
         assert_eq!(ctx.tool_name, "echo");
@@ -843,7 +843,7 @@ async fn execute_tools_node_honors_before_hook_block() {
 #[tokio::test]
 async fn execute_tools_node_honors_after_hook_result_update() {
     let api = "agent-turn-flow-execute-after-hook";
-    let mut config = AgentConfig::new(common::faux_model(api));
+    let mut config = common::agent_config(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Sequential;
     config.hooks.after_tool_call = Some(Arc::new(|ctx| {
         assert_eq!(ctx.tool_name, "echo");
@@ -923,7 +923,7 @@ async fn execute_tools_node_honors_after_hook_result_update() {
 #[tokio::test]
 async fn execute_tools_node_emits_tool_update_events_before_end() {
     let api = "agent-turn-flow-execute-tool-update";
-    let mut config = AgentConfig::new(common::faux_model(api));
+    let mut config = common::agent_config(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Sequential;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
@@ -1007,7 +1007,7 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
     let should_stop_calls_for_hook = should_stop_calls.clone();
     let prepare_calls = Arc::new(AtomicUsize::new(0));
     let prepare_calls_for_hook = prepare_calls.clone();
-    let mut config = AgentConfig::new(common::faux_model(api));
+    let mut config = common::agent_config(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Sequential;
     config.hooks.after_tool_call = Some(Arc::new(|_| {
         Box::pin(async move {
@@ -1091,7 +1091,7 @@ async fn execute_tools_node_finishes_when_all_tool_results_terminate() {
 #[tokio::test(start_paused = true)]
 async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant_order() {
     let api = "agent-turn-flow-execute-parallel-tools";
-    let mut config = AgentConfig::new(common::faux_model(api));
+    let mut config = common::agent_config(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Parallel;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use both tools"));
@@ -1193,7 +1193,7 @@ async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant
 #[tokio::test]
 async fn execute_tools_node_records_unknown_tool_as_error_result() {
     let api = "agent-turn-flow-execute-unknown-tool";
-    let mut config = AgentConfig::new(common::faux_model(api));
+    let mut config = common::agent_config(common::faux_model(api));
     config.tool_execution = ToolExecutionMode::Sequential;
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
@@ -1257,7 +1257,7 @@ async fn execute_tools_node_records_unknown_tool_as_error_result() {
 #[tokio::test]
 async fn provider_stream_node_records_llm_events_and_final_assistant_message() {
     let api = "agent-turn-flow-provider-stream";
-    let config = AgentConfig::new(common::faux_model(api));
+    let config = common::agent_config(common::faux_model(api));
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
 
@@ -1297,7 +1297,7 @@ async fn provider_stream_node_records_llm_events_and_final_assistant_message() {
 #[tokio::test]
 async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
     let api = "agent-turn-flow-provider-error";
-    let config = AgentConfig::new(common::faux_model(api));
+    let config = common::agent_config(common::faux_model(api));
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
 
@@ -1329,7 +1329,7 @@ async fn provider_stream_node_maps_missing_done_to_agent_error_event() {
 #[tokio::test]
 async fn decide_node_finishes_text_response_and_appends_assistant_message() {
     let api = "agent-turn-flow-decide-done";
-    let config = AgentConfig::new(common::faux_model(api));
+    let config = common::agent_config(common::faux_model(api));
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "hello"));
 
@@ -1378,7 +1378,7 @@ async fn decide_node_finishes_text_response_and_appends_assistant_message() {
 #[tokio::test]
 async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
     let api = "agent-turn-flow-decide-tools";
-    let config = AgentConfig::new(common::faux_model(api));
+    let config = common::agent_config(common::faux_model(api));
     let agent = Agent::new(config);
     agent.add_message(user_msg("user_0", "use the tool"));
 
@@ -1438,7 +1438,8 @@ async fn decide_after_assistant_tool_use_without_calls_routes_to_tools() {
     let should_stop_calls_for_hook = should_stop_calls.clone();
     let prepare_calls = Arc::new(AtomicUsize::new(0));
     let prepare_calls_for_hook = prepare_calls.clone();
-    let mut config = AgentConfig::new(common::faux_model("agent-turn-flow-decide-empty-tool-use"));
+    let mut config =
+        common::agent_config(common::faux_model("agent-turn-flow-decide-empty-tool-use"));
     config.hooks.should_stop_after_turn = Some(Arc::new(move |_| {
         should_stop_calls_for_hook.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move { Ok(false) })

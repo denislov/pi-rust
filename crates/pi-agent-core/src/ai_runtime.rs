@@ -1,6 +1,9 @@
 use crate::types::ProviderStreamer;
+use async_stream::stream;
 use pi_ai::stream::EventStream;
-use pi_ai::types::{Context, Model, StreamOptions};
+use pi_ai::types::{
+    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
+};
 
 pub(crate) fn stream_model_with_provider_streamer(
     model: &Model,
@@ -10,15 +13,24 @@ pub(crate) fn stream_model_with_provider_streamer(
 ) -> EventStream {
     match provider_streamer {
         Some(provider_streamer) => provider_streamer(model, context, options),
-        None => stream_model_with_global_runtime(model, context, options),
+        None => missing_provider_streamer(model),
     }
 }
 
-#[allow(deprecated)]
-pub(crate) fn stream_model_with_global_runtime(
-    model: &Model,
-    context: Context,
-    options: Option<StreamOptions>,
-) -> EventStream {
-    pi_ai::stream_model(model, context, options)
+fn missing_provider_streamer(model: &Model) -> EventStream {
+    let model_id = model.id.clone();
+    let provider = model.provider.clone();
+    Box::pin(stream! {
+        let mut message = AssistantMessage::empty("unconfigured", &model_id);
+        message.provider = Some(provider);
+        message.stop_reason = StopReason::Error;
+        message.error_message = Some(
+            "provider streamer is required; inject a scoped provider runtime into AgentConfig"
+                .into(),
+        );
+        yield AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message,
+        };
+    })
 }

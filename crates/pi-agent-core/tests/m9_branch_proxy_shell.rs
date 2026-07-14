@@ -3,7 +3,7 @@ mod common;
 use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::branch_summary::{
-    BranchSummaryOptions, collect_entries_for_branch_summary, generate_branch_summary,
+    BranchSummaryOptions, collect_entries_for_branch_summary,
     generate_branch_summary_with_provider_streamer, prepare_branch_entries,
 };
 use pi_agent_core::proxy::{
@@ -147,7 +147,7 @@ async fn branch_summary_generation_uses_faux_provider_and_adds_preamble() {
         }])),
     );
 
-    let result = generate_branch_summary(
+    let result = generate_branch_summary_with_provider_streamer(
         &[user_entry(
             "u1",
             None,
@@ -161,6 +161,7 @@ async fn branch_summary_generation_uses_faux_provider_and_adds_preamble() {
             replace_instructions: false,
             reserve_tokens: 16_384,
         },
+        Some(common::global_test_provider_streamer()),
     )
     .await
     .unwrap();

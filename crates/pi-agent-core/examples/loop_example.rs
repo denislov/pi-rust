@@ -1,24 +1,18 @@
-// global provider runtime compatibility example.
-// This example exercises Agent::run()/Agent::prompt(), which currently reaches
-// providers through pi-agent-core's global AI runtime compatibility boundary.
-// Direct provider-facing examples should prefer scoped
-// pi_ai::api::ProviderRegistry/AiClient.
-
 use futures::StreamExt;
 use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
+use pi_ai::api::AiClient;
 use pi_ai::providers::faux::FauxProvider;
-use pi_ai::registry;
 use pi_ai::types::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
 use std::sync::Arc;
 
-#[allow(deprecated)]
 #[tokio::main]
 async fn main() {
     let provider = Arc::new(FauxProvider::with_call_queue(vec![
         FauxProvider::text_call("I'll search for that.", StopReason::ToolUse),
         FauxProvider::text_call("Done searching. The answer is 42.", StopReason::Stop),
     ]));
-    registry::register("faux-api", provider);
+    let ai_client = Arc::new(AiClient::new());
+    ai_client.register_provider("faux-api", provider);
 
     let model = Model {
         id: "faux-model".into(),
@@ -44,6 +38,10 @@ async fn main() {
     let mut config = AgentConfig::new(model);
     config.system_prompt = Some("You are a helpful assistant.".into());
     config.max_turns = Some(5);
+    config.provider_streamer = Some(Arc::new({
+        let ai_client = Arc::clone(&ai_client);
+        move |model, context, options| ai_client.stream_model(model, context, options)
+    }));
 
     let agent = Agent::new(config);
 

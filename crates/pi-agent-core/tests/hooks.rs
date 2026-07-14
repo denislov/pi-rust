@@ -2,7 +2,7 @@ mod common;
 use common::{ProviderGuard, TestProvider, faux_model, tool_use_turn};
 use futures::StreamExt;
 use pi_agent_core::{
-    AfterToolCallResult, Agent, AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolOutput,
+    AfterToolCallResult, Agent, AgentEvent, AgentMessage, AgentTool, AgentToolOutput,
     BeforeToolCallResult, QueueMode,
 };
 use pi_ai::providers::faux::FauxProvider;
@@ -64,7 +64,7 @@ async fn before_hook_blocks_tool_execution() {
     let api = "hooks-before";
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_real = calls.clone();
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.hooks.before_tool_call = Some(Arc::new(move |ctx| {
         assert_eq!(ctx.tool_name, "echo");
         Box::pin(async move {
@@ -113,7 +113,7 @@ async fn before_hook_blocks_tool_execution() {
 #[tokio::test]
 async fn after_hook_replaces_tool_result() {
     let api = "hooks-after";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.hooks.after_tool_call = Some(Arc::new(|ctx| {
         assert_eq!(ctx.tool_name, "echo");
         assert!(!ctx.result.is_error);
@@ -147,7 +147,7 @@ async fn after_hook_replaces_tool_result() {
 #[tokio::test]
 async fn after_hook_terminate_stops_loop_after_tool_results() {
     let api = "hooks-after-terminate";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.hooks.after_tool_call = Some(Arc::new(|_| {
         Box::pin(async move {
             Ok(Some(AfterToolCallResult {
@@ -188,7 +188,7 @@ async fn should_stop_after_turn_runs_before_follow_up_queue() {
     let api = "hooks-should-stop";
     let calls = Arc::new(AtomicUsize::new(0));
     let hook_calls = calls.clone();
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.follow_up_mode = QueueMode::All;
     config.hooks.should_stop_after_turn = Some(Arc::new(move |_| {
         hook_calls.fetch_add(1, Ordering::SeqCst);
@@ -261,7 +261,7 @@ async fn convert_to_llm_hook_overrides_default_message_conversion() {
         }),
     );
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.hooks.convert_to_llm = Some(Arc::new(|messages, _resources| {
         Box::pin(async move {
             let combined = messages
@@ -340,7 +340,7 @@ async fn transform_context_hook_rewrites_messages_before_llm_call() {
         }),
     );
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.hooks.transform_context = Some(Arc::new(|messages| {
         Box::pin(async move {
             let replaced = vec![AgentMessage::UserText {
@@ -383,7 +383,7 @@ async fn prepare_next_turn_can_replace_messages_before_follow_up_turn() {
     let api = "hooks-prepare-next-turn";
     let calls = Arc::new(AtomicUsize::new(0));
     let hook_calls = calls.clone();
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.follow_up_mode = QueueMode::All;
     config.hooks.prepare_next_turn = Some(Arc::new(move |ctx| {
         hook_calls.fetch_add(1, Ordering::SeqCst);

@@ -3,7 +3,7 @@ mod common;
 use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::{
-    AgentConfig, AgentEvent, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentMessage,
+    AgentEvent, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentMessage,
     BeforeProviderPayload, BeforeProviderPayloadPatch, BeforeProviderRequestPatch, ExecutionError,
     ExecutionOutput, FileErrorCode, FileKind, FileSystem, HeaderPatch, InMemoryExecutionEnv, Patch,
     ProviderAuth, ProviderResponse, Shell, StreamOptionsPatch,
@@ -158,7 +158,7 @@ async fn agent_harness_emits_events_and_hooks_patch_start_messages() {
         }])),
     );
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
 
     let seen_context = Arc::new(Mutex::new(false));
@@ -258,7 +258,7 @@ async fn before_provider_request_hook_patches_actual_provider_request() {
         }),
     );
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     config.stream_options = Some(StreamOptions {
         temperature: Some(0.2),
@@ -364,7 +364,7 @@ async fn provider_request_auth_and_patch_merge_delete_apply_to_each_provider_cal
         }),
     );
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(3);
     config.stream_options = Some(StreamOptions {
         timeout_ms: Some(1000),
@@ -519,7 +519,7 @@ async fn provider_payload_and_response_hooks_are_forwarded_through_stream_option
         ..Default::default()
     };
 
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(1);
     let harness = AgentHarness::new(config).with_hooks(hooks);
     let events = harness.prompt("start").collect::<Vec<_>>().await;

@@ -44,7 +44,7 @@ fn test_config(api_key: &str) -> AgentConfig {
         system_prompt: Some("Be helpful.".into()),
         max_turns: Some(5),
         stream_options: None,
-        ..AgentConfig::new(test_model(api_key))
+        ..common::agent_config(test_model(api_key))
     }
 }
 

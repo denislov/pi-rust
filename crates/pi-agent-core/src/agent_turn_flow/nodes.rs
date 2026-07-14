@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::ai_runtime::stream_model_with_global_runtime;
+use crate::ai_runtime::stream_model_with_provider_streamer;
 use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
 use crate::compaction::summarize::summarize_with_provider_streamer;
@@ -466,18 +466,12 @@ pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<Action, Strin
         .provider_request
         .clone()
         .ok_or_else(|| "provider request is not prepared".to_string())?;
-    let mut llm_stream = match ctx.config.provider_streamer.clone() {
-        Some(provider_streamer) => provider_streamer(
-            &request.model,
-            request.context,
-            Some(request.stream_options),
-        ),
-        None => stream_model_with_global_runtime(
-            &request.model,
-            request.context,
-            Some(request.stream_options),
-        ),
-    };
+    let mut llm_stream = stream_model_with_provider_streamer(
+        &request.model,
+        request.context,
+        Some(request.stream_options),
+        ctx.config.provider_streamer.clone(),
+    );
     let mut assistant_message = None;
     let mut stream_error = None;
 

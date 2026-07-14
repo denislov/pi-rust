@@ -1,7 +1,7 @@
 mod common;
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
-use pi_agent_core::{Agent, AgentConfig, AgentEvent, AgentMessage, QueueMode, ThinkingLevel};
+use pi_agent_core::{Agent, AgentEvent, AgentMessage, QueueMode, ThinkingLevel};
 use pi_ai::providers::faux::FauxProvider;
 use pi_ai::types::{Model, StopReason, StreamOptions};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ fn non_reasoning_model(api: &str) -> Model {
 #[tokio::test]
 async fn steer_injects_user_message_before_next_model_call() {
     let api = "steer-test";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.steering_mode = QueueMode::All;
     config.max_turns = Some(5);
 
@@ -64,7 +64,7 @@ async fn steer_injects_user_message_before_next_model_call() {
 #[tokio::test]
 async fn follow_up_continues_after_stop() {
     let api = "followup-test";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.follow_up_mode = QueueMode::All;
     config.max_turns = Some(5);
 
@@ -107,7 +107,7 @@ async fn follow_up_continues_after_stop() {
 #[tokio::test]
 async fn one_at_a_time_drains_one_steering_message() {
     let api = "one-at-a-time";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.steering_mode = QueueMode::OneAtATime;
     config.max_turns = Some(5);
 
@@ -145,7 +145,7 @@ async fn one_at_a_time_drains_one_steering_message() {
 #[tokio::test]
 async fn clear_queues_removes_all_queued_messages() {
     let api = "clear-queues";
-    let mut config = AgentConfig::new(faux_model(api));
+    let mut config = common::agent_config(faux_model(api));
     config.max_turns = Some(3);
 
     let agent = Agent::new(config);
@@ -178,7 +178,7 @@ async fn clear_queues_removes_all_queued_messages() {
 
 #[test]
 fn thinking_level_sets_stream_options_for_reasoning_model() {
-    let mut config = AgentConfig::new(reasoning_model("thinking-high"));
+    let mut config = common::agent_config(reasoning_model("thinking-high"));
     config.thinking_level = ThinkingLevel::High;
     let options = stream_options_for_turn(
         &config.model,
@@ -194,7 +194,7 @@ fn thinking_level_sets_stream_options_for_reasoning_model() {
 
 #[test]
 fn thinking_level_is_omitted_for_non_reasoning_model() {
-    let mut config = AgentConfig::new(non_reasoning_model("thinking-off"));
+    let mut config = common::agent_config(non_reasoning_model("thinking-off"));
     config.thinking_level = ThinkingLevel::High;
     let options = stream_options_for_turn(
         &config.model,

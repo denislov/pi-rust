@@ -1,6 +1,7 @@
 #![allow(dead_code, deprecated)]
 
 use async_stream::stream;
+use pi_agent_core::{AgentConfig, ProviderStreamer};
 use pi_ai::providers::faux::FauxResponse;
 use pi_ai::registry::ApiProvider;
 use pi_ai::stream::EventStream;
@@ -71,6 +72,17 @@ impl Drop for ProviderGuard<'_> {
             }
         }
     }
+}
+
+pub fn agent_config(model: Model) -> AgentConfig {
+    let mut config = AgentConfig::new(model);
+    config.provider_streamer = Some(global_test_provider_streamer());
+    config
+}
+
+#[allow(deprecated)]
+pub fn global_test_provider_streamer() -> ProviderStreamer {
+    Arc::new(|model, context, options| pi_ai::stream_model(model, context, options))
 }
 
 impl ApiProvider for TestProvider {
