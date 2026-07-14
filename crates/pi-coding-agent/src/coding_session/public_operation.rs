@@ -5,6 +5,7 @@ use super::agent_team_flow::{AgentTeamOptions, AgentTeamOutcome};
 use super::export::CodingAgentSessionExport;
 use super::export_flow::ExportOptions;
 use super::operation::{Operation, OperationOutcome};
+use super::operation_control::OperationKind;
 use super::plugin_load_flow::{PluginLoadOptions, PluginLoadOutcome};
 use super::profiles::ProfileId;
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome};
@@ -103,7 +104,178 @@ pub enum CodingAgentOperationOutcome {
     ExportHtml(PathBuf),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationAssociationClass {
+    TerminalAssociated,
+    OutcomeOnly,
+    #[allow(dead_code)]
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum OperationOutcomeFamily {
+    Prompt,
+    Compact,
+    BranchSummary,
+    SelfHealingEdit,
+    AgentInvocation,
+    AgentTeam,
+    PluginLoad,
+    PluginCommand,
+    DefaultAgentProfileChanged,
+    DelegationApproved,
+    DelegationRejected,
+    SessionForked,
+    ActiveLeafSwitched,
+    Export,
+    ExportHtml,
+}
+
+/// Exact root-event variants that may finalize a terminal-associated operation.
+///
+/// `CompactPromptFailed` is intentionally distinct from ordinary Prompt failure: it is
+/// admitted only for a Compact operation whose typed outcome is the failed Compact branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum OperationRootTerminalEvidence {
+    PromptCompleted,
+    PromptFailed,
+    PromptAborted,
+    CompactionCompleted,
+    CompactPromptFailed,
+    SelfHealingEditCompleted,
+    SelfHealingEditFailed,
+    AgentInvocationCompleted,
+    AgentInvocationFailed,
+    AgentInvocationAborted,
+    AgentTeamCompleted,
+    AgentTeamFailed,
+    AgentTeamAborted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OperationDescriptor {
+    pub(crate) submitted_kind: OperationKind,
+    pub(crate) outcome_family: OperationOutcomeFamily,
+    pub(crate) association: OperationAssociationClass,
+    pub(crate) permitted_root_evidence: &'static [OperationRootTerminalEvidence],
+}
+
+const PROMPT_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
+    OperationRootTerminalEvidence::PromptCompleted,
+    OperationRootTerminalEvidence::PromptFailed,
+    OperationRootTerminalEvidence::PromptAborted,
+];
+const COMPACT_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
+    OperationRootTerminalEvidence::CompactionCompleted,
+    OperationRootTerminalEvidence::CompactPromptFailed,
+];
+const SELF_HEALING_EDIT_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
+    OperationRootTerminalEvidence::SelfHealingEditCompleted,
+    OperationRootTerminalEvidence::SelfHealingEditFailed,
+];
+const AGENT_INVOCATION_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
+    OperationRootTerminalEvidence::AgentInvocationCompleted,
+    OperationRootTerminalEvidence::AgentInvocationFailed,
+    OperationRootTerminalEvidence::AgentInvocationAborted,
+];
+const AGENT_TEAM_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
+    OperationRootTerminalEvidence::AgentTeamCompleted,
+    OperationRootTerminalEvidence::AgentTeamFailed,
+    OperationRootTerminalEvidence::AgentTeamAborted,
+];
+
 impl CodingAgentOperation {
+    pub(crate) fn descriptor(&self) -> OperationDescriptor {
+        let (submitted_kind, outcome_family, permitted_root_evidence) = match self {
+            Self::Prompt(_) => (
+                OperationKind::Prompt,
+                OperationOutcomeFamily::Prompt,
+                PROMPT_ROOT_EVIDENCE,
+            ),
+            Self::Compact(_) => (
+                OperationKind::Compact,
+                OperationOutcomeFamily::Compact,
+                COMPACT_ROOT_EVIDENCE,
+            ),
+            Self::BranchSummary { .. } => (
+                OperationKind::BranchSummary,
+                OperationOutcomeFamily::BranchSummary,
+                &[][..],
+            ),
+            Self::SelfHealingEdit(_) => (
+                OperationKind::SelfHealingEdit,
+                OperationOutcomeFamily::SelfHealingEdit,
+                SELF_HEALING_EDIT_ROOT_EVIDENCE,
+            ),
+            Self::InvokeAgent(_) => (
+                OperationKind::AgentInvocation,
+                OperationOutcomeFamily::AgentInvocation,
+                AGENT_INVOCATION_ROOT_EVIDENCE,
+            ),
+            Self::InvokeTeam(_) => (
+                OperationKind::AgentTeam,
+                OperationOutcomeFamily::AgentTeam,
+                AGENT_TEAM_ROOT_EVIDENCE,
+            ),
+            Self::PluginLoad => (
+                OperationKind::PluginLoad,
+                OperationOutcomeFamily::PluginLoad,
+                &[][..],
+            ),
+            Self::PluginCommand { .. } => (
+                OperationKind::PluginCommand,
+                OperationOutcomeFamily::PluginCommand,
+                &[][..],
+            ),
+            Self::SetDefaultAgentProfile { .. } => (
+                OperationKind::SetDefaultAgentProfile,
+                OperationOutcomeFamily::DefaultAgentProfileChanged,
+                &[][..],
+            ),
+            Self::ApproveDelegation { .. } => (
+                OperationKind::DelegationConfirmation,
+                OperationOutcomeFamily::DelegationApproved,
+                &[][..],
+            ),
+            Self::RejectDelegation { .. } => (
+                OperationKind::DelegationConfirmation,
+                OperationOutcomeFamily::DelegationRejected,
+                &[][..],
+            ),
+            Self::ForkSession { .. } => (
+                OperationKind::ForkSession,
+                OperationOutcomeFamily::SessionForked,
+                &[][..],
+            ),
+            Self::SwitchActiveLeaf { .. } => (
+                OperationKind::SwitchActiveLeaf,
+                OperationOutcomeFamily::ActiveLeafSwitched,
+                &[][..],
+            ),
+            Self::ExportCurrent => (
+                OperationKind::Export,
+                OperationOutcomeFamily::Export,
+                &[][..],
+            ),
+            Self::ExportCurrentHtml(_) => (
+                OperationKind::Export,
+                OperationOutcomeFamily::ExportHtml,
+                &[][..],
+            ),
+        };
+        let association = if permitted_root_evidence.is_empty() {
+            OperationAssociationClass::OutcomeOnly
+        } else {
+            OperationAssociationClass::TerminalAssociated
+        };
+        OperationDescriptor {
+            submitted_kind,
+            outcome_family,
+            association,
+            permitted_root_evidence,
+        }
+    }
+
     pub(crate) fn submission_fingerprint(&self) -> Option<(String, String)> {
         match self {
             Self::Prompt(options) => match options.invocation() {
