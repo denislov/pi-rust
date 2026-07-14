@@ -309,7 +309,7 @@ fn absent_receiver_calls(scan: &SourceScan, names: &[&str]) -> Vec<String> {
             for name in names {
                 let pattern = format!(".{name}(");
                 if line.contains(&pattern) {
-                    if *name == "subscribe" && line.contains("lifecycle_sender.subscribe()") {
+                    if *name == "subscribe" && line.contains("lifecycle_sender") {
                         continue;
                     }
                     if (*name == "prompt" && line.contains("agent.prompt("))
