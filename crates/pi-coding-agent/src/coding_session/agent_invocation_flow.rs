@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::AssistantMessage;
 
 use super::agent_team_flow::{AgentTeamContext, AgentTeamOptions};

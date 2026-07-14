@@ -13,8 +13,7 @@ pub mod convert;
 pub mod env;
 #[doc(hidden)]
 pub mod errors;
-#[doc(hidden)]
-pub mod flow;
+mod flow;
 #[doc(hidden)]
 pub mod harness;
 #[doc(hidden)]
@@ -30,8 +29,7 @@ pub mod resources;
 pub mod session_context;
 #[doc(hidden)]
 pub mod shell_output;
-#[doc(hidden)]
-pub mod transcript;
+mod transcript;
 #[doc(hidden)]
 pub mod truncate;
 #[doc(hidden)]
@@ -49,6 +47,10 @@ pub mod api {
         InMemoryExecutionEnv, Shell,
     };
     pub use crate::errors::{ExecutionError, ExecutionErrorCode, FileError, FileErrorCode};
+    pub use crate::flow::{
+        Action, Flow, FlowError, FlowEvent, FlowEventCallback, FlowNode, FlowOutcome,
+        FlowRunOptions, NodeId,
+    };
     pub use crate::harness::{
         AbortResult, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentHarnessPhase,
         BeforeAgentStartHook, BeforeProviderPayload, BeforeProviderPayloadHook,
@@ -72,6 +74,11 @@ pub mod api {
     };
     pub use crate::shell_output::{
         ShellCaptureOptions, ShellCaptureResult, sanitize_binary_output,
+    };
+    pub use crate::transcript::{
+        SessionEntry, SessionHeader, SessionIdGenerator, SessionMetadata, SessionTreeNode,
+        StoredAgentMessage, StoredUsage, StoredUsageCost, TranscriptIdError, TreeFilterMode,
+        agent_message_to_stored, create_session_id, create_timestamp, generate_entry_id,
     };
     pub use crate::truncate::{
         TruncationLimit, TruncationResult, format_size, truncate_head, truncate_line, truncate_tail,

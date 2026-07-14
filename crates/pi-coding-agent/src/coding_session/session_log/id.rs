@@ -1,4 +1,4 @@
-use pi_agent_core::transcript::{create_session_id, create_timestamp};
+use pi_agent_core::api::{create_session_id, create_timestamp};
 
 pub(crate) trait IdGenerator {
     fn next_session_id(&mut self) -> String;

@@ -32,7 +32,7 @@ mod tests {
         CodingAgentEvent, CodingAgentProductEventKind, CodingAgentWorkflowProductEvent,
         CodingSessionError, ProductEvent, ProductEventSequence,
     };
-    use pi_agent_core::transcript::StoredAgentMessage;
+    use pi_agent_core::api::StoredAgentMessage;
     use pi_ai::api::{StopReason, Usage};
 
     fn adapter() -> RpcCodingEventAdapter {

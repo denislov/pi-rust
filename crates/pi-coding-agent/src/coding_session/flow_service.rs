@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use pi_agent_core::flow::{Flow, FlowOutcome, FlowRunOptions};
+use pi_agent_core::api::{Flow, FlowOutcome, FlowRunOptions};
 
 use super::CodingSessionError;
 use super::agent_invocation_flow::{
@@ -315,7 +315,7 @@ mod tests {
 
     struct NoopFlowNode;
 
-    impl pi_agent_core::flow::FlowNode<()> for NoopFlowNode {
+    impl pi_agent_core::api::FlowNode<()> for NoopFlowNode {
         fn name(&self) -> &str {
             "NoopFlowNode"
         }
@@ -325,18 +325,18 @@ mod tests {
             _ctx: &'a mut (),
         ) -> std::pin::Pin<
             Box<
-                dyn std::future::Future<Output = Result<pi_agent_core::flow::Action, String>>
+                dyn std::future::Future<Output = Result<pi_agent_core::api::Action, String>>
                     + Send
                     + 'a,
             >,
         > {
-            Box::pin(async { Ok(pi_agent_core::flow::Action::default()) })
+            Box::pin(async { Ok(pi_agent_core::api::Action::default()) })
         }
     }
 
     #[test]
     fn add_linear_edges_maps_configuration_errors_to_coding_session_error() {
-        let mut flow = pi_agent_core::flow::Flow::new("start").unwrap();
+        let mut flow = pi_agent_core::api::Flow::new("start").unwrap();
         flow.add_node("start", NoopFlowNode).unwrap();
 
         let error = add_linear_edges(&mut flow, &["start", "missing"]).unwrap_err();

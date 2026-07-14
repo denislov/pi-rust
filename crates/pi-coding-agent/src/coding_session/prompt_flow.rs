@@ -4,8 +4,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use futures::StreamExt;
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_agent_core::api::{AgentEvent, AgentMessage, AgentStream};
-use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 
 use super::CodingSessionError;
 use super::operation_control::PromptControlCommand;
@@ -495,7 +495,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use pi_agent_core::api::{Agent, AgentConfig, AgentResources, AgentTool, AgentToolOutput};
-    use pi_agent_core::flow::{FlowEvent, NodeId};
+    use pi_agent_core::api::{FlowEvent, NodeId};
     use pi_ai::api::AiClient;
     use pi_ai::api::ApiProvider;
     use pi_ai::api::EventStream;

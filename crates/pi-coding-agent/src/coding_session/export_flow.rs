@@ -2,7 +2,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
-use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 
 use super::context::CodingAgentSessionSummary;
 use super::error::CodingSessionError;

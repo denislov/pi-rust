@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 use pi_agent_core::api::AgentResources;
-use pi_agent_core::transcript::create_session_id;
+use pi_agent_core::api::create_session_id;
 use pi_ai::api::AiClient;
 use pi_ai::api::{Model, ProviderAuthDiagnostic};
 #[cfg(test)]

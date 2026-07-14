@@ -5,7 +5,7 @@ use crate::protocol::rpc::state::RunningPrompt;
 use crate::protocol::types::RpcCapabilities;
 use crate::protocol::types::RpcSessionState;
 use crate::protocol::version::{ProtocolFamilyVersion, UI_SNAPSHOT_PROTOCOL_VERSION};
-use pi_agent_core::transcript::StoredAgentMessage;
+use pi_agent_core::api::StoredAgentMessage;
 use serde_json::Value;
 
 impl RpcState {

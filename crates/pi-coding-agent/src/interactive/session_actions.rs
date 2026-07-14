@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
-use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage, StoredUsage};
-use pi_agent_core::transcript::{SessionTreeNode, create_timestamp};
+use pi_agent_core::api::{SessionEntry, StoredAgentMessage, StoredUsage};
+use pi_agent_core::api::{SessionTreeNode, create_timestamp};
 #[cfg(test)]
 use pi_ai::api::{ContentBlock, StopReason};
 
@@ -454,7 +454,7 @@ fn export_transcript_html(
 
 /// Get a current RFC3339 timestamp string for use in label changes etc.
 pub(super) fn current_timestamp() -> String {
-    pi_agent_core::transcript::create_timestamp()
+    pi_agent_core::api::create_timestamp()
 }
 
 fn html_escape(text: &str) -> String {

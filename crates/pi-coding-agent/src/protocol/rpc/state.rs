@@ -12,8 +12,8 @@ use crate::{
     coding_session::OperationIdempotencyKey, coding_session::OperationKind,
     coding_session::ProductEventSequence, coding_session::PromptTurnOutcome, config, select_model,
 };
+use pi_agent_core::api::StoredAgentMessage;
 use pi_agent_core::api::{QueueMode, ThinkingLevel};
-use pi_agent_core::transcript::StoredAgentMessage;
 use pi_ai::api::Model;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;

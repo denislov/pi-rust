@@ -272,7 +272,7 @@ fn test_model() -> pi_ai::api::Model {
 
 #[test]
 fn transcript_types_are_importable_from_neutral_module() {
-    use pi_agent_core::transcript::{
+    use pi_agent_core::api::{
         SessionEntry, SessionHeader, SessionTreeNode, StoredAgentMessage, StoredUsage,
         StoredUsageCost, TreeFilterMode, create_session_id, create_timestamp, generate_entry_id,
     };

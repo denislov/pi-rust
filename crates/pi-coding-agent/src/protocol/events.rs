@@ -12,7 +12,7 @@ use crate::protocol::types::{
     CompactionProtocolResult, CompactionReason, ProtocolDelegationFoldedBlock, ProtocolEvent,
     ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, ToolExecutionResult,
 };
-use pi_agent_core::transcript::{StoredAgentMessage, StoredUsage, StoredUsageCost};
+use pi_agent_core::api::{StoredAgentMessage, StoredUsage, StoredUsageCost};
 use pi_ai::api::{AssistantMessage, AssistantMessageEvent, ContentBlock, StopReason};
 
 pub struct CodingProtocolEventAdapter {

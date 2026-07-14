@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use mlua::{Function, Lua, LuaSerdeExt, Table, Value, Variadic};
 use pi_agent_core::api::AgentTool;
-use pi_agent_core::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use serde::Deserialize;
 
 use super::CodingSessionError;

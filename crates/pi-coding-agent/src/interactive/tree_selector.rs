@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pi_agent_core::transcript::{SessionTreeNode, TreeFilterMode};
+use pi_agent_core::api::{SessionTreeNode, TreeFilterMode};
 use pi_tui::{
     InputEvent, Key, KeybindingsManager, SYSTEM, USER, color_enabled, paint_with,
     truncate_to_width_with_ellipsis, visible_width,
@@ -1015,7 +1015,7 @@ fn folded_descendant_ids(
     skipped
 }
 
-fn message_role(entry: &pi_agent_core::transcript::SessionEntry) -> Option<&str> {
+fn message_role(entry: &pi_agent_core::api::SessionEntry) -> Option<&str> {
     if entry.entry_type != "message" {
         return None;
     }
@@ -1067,7 +1067,7 @@ fn collect_tool_call_map(tree: &[SessionTreeNode]) -> BTreeMap<String, ToolCallI
     result
 }
 
-fn assistant_has_text_content(entry: &pi_agent_core::transcript::SessionEntry) -> bool {
+fn assistant_has_text_content(entry: &pi_agent_core::api::SessionEntry) -> bool {
     if message_role(entry) != Some("assistant") {
         return false;
     }
@@ -1077,7 +1077,7 @@ fn assistant_has_text_content(entry: &pi_agent_core::transcript::SessionEntry) -
         .is_some_and(content_has_text)
 }
 
-fn assistant_stop_reason(entry: &pi_agent_core::transcript::SessionEntry) -> Option<String> {
+fn assistant_stop_reason(entry: &pi_agent_core::api::SessionEntry) -> Option<String> {
     if message_role(entry) != Some("assistant") {
         return None;
     }
@@ -1088,7 +1088,7 @@ fn assistant_stop_reason(entry: &pi_agent_core::transcript::SessionEntry) -> Opt
         .map(str::to_string)
 }
 
-fn assistant_error_message(entry: &pi_agent_core::transcript::SessionEntry) -> Option<String> {
+fn assistant_error_message(entry: &pi_agent_core::api::SessionEntry) -> Option<String> {
     if message_role(entry) != Some("assistant") {
         return None;
     }
@@ -1531,7 +1531,7 @@ fn format_label_timestamp(timestamp: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_agent_core::transcript::{SessionEntry, StoredAgentMessage};
+    use pi_agent_core::api::{SessionEntry, StoredAgentMessage};
     use pi_ai::api::{ContentBlock, StopReason};
 
     fn user_node(id: &str, parent: Option<&str>, text: &str) -> SessionTreeNode {

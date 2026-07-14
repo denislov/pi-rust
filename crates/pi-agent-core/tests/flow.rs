@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use pi_agent_core::flow::{Action, Flow, FlowError, FlowEvent, FlowNode, FlowRunOptions, NodeId};
+use pi_agent_core::api::{Action, Flow, FlowError, FlowEvent, FlowNode, FlowRunOptions, NodeId};
 use tokio_util::sync::CancellationToken;
 
 struct PushNode {

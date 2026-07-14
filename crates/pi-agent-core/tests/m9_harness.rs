@@ -84,18 +84,18 @@ fn custom_messages_convert_to_context_and_session_wire_shape() {
     assert!(text.contains("Ran `cargo test`"));
     assert!(text.contains("Output truncated"));
 
-    let stored = pi_agent_core::transcript::agent_message_to_stored(&messages[0], 999).unwrap();
+    let stored = pi_agent_core::api::agent_message_to_stored(&messages[0], 999).unwrap();
     let json = serde_json::to_value(stored).unwrap();
     assert_eq!(json["role"], "bashExecution");
     assert_eq!(json["command"], "cargo test");
     assert_eq!(json["timestamp"], 123);
 
-    let stored = pi_agent_core::transcript::agent_message_to_stored(&messages[1], 999).unwrap();
+    let stored = pi_agent_core::api::agent_message_to_stored(&messages[1], 999).unwrap();
     let json = serde_json::to_value(stored).unwrap();
     assert_eq!(json["role"], "custom");
     assert_eq!(json["customType"], "note");
 
-    let stored = pi_agent_core::transcript::agent_message_to_stored(&messages[2], 999).unwrap();
+    let stored = pi_agent_core::api::agent_message_to_stored(&messages[2], 999).unwrap();
     let json = serde_json::to_value(stored).unwrap();
     assert_eq!(json["role"], "branchSummary");
     assert_eq!(json["fromId"], "entry_7");

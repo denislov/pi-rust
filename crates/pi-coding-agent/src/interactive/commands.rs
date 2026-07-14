@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use pi_agent_core::api::{PromptTemplate, Skill};
-use pi_agent_core::resources::{parse_command_args, substitute_args};
+use pi_agent_core::api::{parse_command_args, substitute_args};
 use pi_tui::KeybindingsManager;
 
 use crate::coding_session::SelfHealingEditReplacement;
@@ -885,9 +885,8 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
                     .push(TranscriptItem::system("No entries in session"));
                 return;
             }
-            let filter_mode = pi_agent_core::transcript::TreeFilterMode::from_str_name(
-                &root.settings.tree_filter_mode,
-            );
+            let filter_mode =
+                pi_agent_core::api::TreeFilterMode::from_str_name(&root.settings.tree_filter_mode);
             let selector = crate::interactive::tree_selector::TreeSelectorState::new(
                 tree,
                 leaf_id,

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use pi_agent_core::api::AgentResources;
-use pi_agent_core::transcript::create_session_id;
+use pi_agent_core::api::create_session_id;
 use pi_tui::{
     Component, InputEvent, RenderScheduler, StdinBuffer, Terminal, Tui, TuiError, is_key_release,
 };

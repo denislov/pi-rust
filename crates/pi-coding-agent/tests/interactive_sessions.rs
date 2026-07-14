@@ -1,6 +1,6 @@
 mod support;
 
-use pi_agent_core::transcript::{
+use pi_agent_core::api::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, create_timestamp,
 };
 use pi_ai::api::StopReason;
