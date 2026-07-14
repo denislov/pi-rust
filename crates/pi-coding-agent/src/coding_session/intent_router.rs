@@ -534,9 +534,8 @@ mod tests {
             "default-profile mutation should be owned by the canonical run dispatcher"
         );
         assert!(
-            session_source.contains(
-                "OperationDispatchMode::SyncMutable => self.run_sync_mut_operation(operation)?"
-            ),
+            session_source.contains("OperationDispatchMode::SyncMutable => {")
+                && session_source.contains("self.run_sync_mut_operation(operation, submission)?"),
             "public run should own sync-mutable operation dispatch"
         );
         assert!(

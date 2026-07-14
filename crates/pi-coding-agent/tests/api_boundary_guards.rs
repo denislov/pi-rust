@@ -250,8 +250,8 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
         "OperationDispatchMode::SyncReadOnly",
         "OperationDispatchMode::SyncMutable",
         "run_operation(operation, submission).await",
-        "run_sync_operation(operation)",
-        "run_sync_mut_operation(operation)",
+        "run_sync_operation(operation, submission)",
+        "run_sync_mut_operation(operation, submission)",
         "CodingAgentOperationOutcome::from_internal(outcome)",
     ] {
         assert!(
