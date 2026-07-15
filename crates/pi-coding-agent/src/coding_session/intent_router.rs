@@ -466,6 +466,7 @@ mod tests {
     #[test]
     fn canonical_session_run_owns_mutation_dispatch() {
         let session_source = include_str!("mod.rs");
+        let dispatch_source = include_str!("operation_dispatch.rs");
         let operation_source = include_str!("operation.rs");
 
         assert!(
@@ -479,7 +480,11 @@ mod tests {
             "public run should own sync-mutable operation dispatch"
         );
         assert!(
-            session_source.matches("OperationScheduler::admit(").count() >= 3,
+            session_source.matches("OperationScheduler::admit(").count()
+                + dispatch_source
+                    .matches("OperationScheduler::admit(")
+                    .count()
+                >= 3,
             "the three canonical dispatchers should admit through OperationScheduler"
         );
         for expected in [
