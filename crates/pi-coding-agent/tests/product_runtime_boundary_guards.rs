@@ -1731,6 +1731,29 @@ fn runtime_admission_has_no_direct_operation_control_bypass() {
 }
 
 #[test]
+fn production_runtime_has_no_permanently_disabled_fallbacks() {
+    let scan = SourceScan::new();
+    let mut violations = Vec::new();
+
+    for path in rust_files_under(&scan.crate_root.join("src")) {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source = fs::read_to_string(&path).expect("read product source");
+        let production = production_source(&sanitize_rust_source(&source));
+        for (line_no, line) in production.lines().enumerate() {
+            if line.contains("cfg(any())") || line.contains("cfg(all(any()") {
+                violations.push(format!("{}:{}: {}", relative, line_no + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "production runtime contains permanently disabled fallback paths:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn delegated_child_flows_require_scheduler_lineage_admission() {
     let scan = SourceScan::new();
     for relative in [
