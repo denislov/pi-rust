@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -10,6 +8,7 @@ use futures::{
     future::{BoxFuture, FutureExt},
 };
 use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome};
+#[cfg(test)]
 use pi_agent_core::api::{ExecOptions, ExecutionEnv, FileError};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, StopReason,
@@ -319,6 +318,7 @@ impl SelfHealingEditOptions {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_check_runner(mut self, runner: Arc<dyn SelfHealingEditCheckRunner>) -> Self {
         self.check_runner = Some(runner);
         self
@@ -350,6 +350,7 @@ impl SelfHealingEditOptions {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_execution_env<E>(mut self, env: E) -> Self
     where
         E: ExecutionEnv + Clone + 'static,
@@ -406,6 +407,7 @@ impl SelfHealingEditContext {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn diagnostics(&self) -> &[SelfHealingEditDiagnostic] {
         &self.diagnostics
     }
@@ -852,16 +854,19 @@ fn shell_check_command(command: &str) -> Command {
     }
 }
 
+#[cfg(test)]
 struct ExecutionEnvCheckRunner<E> {
     env: E,
 }
 
+#[cfg(test)]
 impl<E> ExecutionEnvCheckRunner<E> {
     fn new(env: E) -> Self {
         Self { env }
     }
 }
 
+#[cfg(test)]
 impl<E> SelfHealingEditCheckRunner for ExecutionEnvCheckRunner<E>
 where
     E: ExecutionEnv + Clone + 'static,
@@ -893,16 +898,19 @@ where
     }
 }
 
+#[cfg(test)]
 struct ExecutionEnvEditOperations<E> {
     env: E,
 }
 
+#[cfg(test)]
 impl<E> ExecutionEnvEditOperations<E> {
     fn new(env: E) -> Self {
         Self { env }
     }
 }
 
+#[cfg(test)]
 impl<E> EditOperations for ExecutionEnvEditOperations<E>
 where
     E: ExecutionEnv + Clone + 'static,
@@ -1100,6 +1108,7 @@ fn compact_check_text(text: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn file_error_message(error: FileError) -> String {
     error.to_string()
 }
