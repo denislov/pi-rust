@@ -784,8 +784,16 @@ fn runtime_service_production_paths_require_capability_snapshot() {
 #[test]
 fn plugin_command_paths_use_capability_aware_execution() {
     let scan = SourceScan::new();
-    let source = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
-        .expect("read coding session owner source");
+    let source = [
+        fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
+            .expect("read coding session owner source"),
+        fs::read_to_string(
+            scan.crate_root
+                .join("src/coding_session/operation_dispatch.rs"),
+        )
+        .expect("read operation dispatch source"),
+    ]
+    .join("\n");
 
     assert!(
         source.contains("run_command_with_capabilities("),
@@ -1664,12 +1672,21 @@ fn runtime_admission_has_no_direct_operation_control_bypass() {
     let scan = SourceScan::new();
     let session_path = scan.crate_root.join("src/coding_session/mod.rs");
     let session_source = fs::read_to_string(&session_path).expect("read coding session source");
+    let dispatch_path = scan
+        .crate_root
+        .join("src/coding_session/operation_dispatch.rs");
+    let dispatch_source =
+        fs::read_to_string(&dispatch_path).expect("read operation dispatch source");
     let session_production = production_source(&sanitize_rust_source(&session_source));
-    assert_eq!(
-        session_production
+    let dispatch_production = production_source(&sanitize_rust_source(&dispatch_source));
+    let scheduler_admission_count = session_production
+        .matches("OperationScheduler::admit(")
+        .count()
+        + dispatch_production
             .matches("OperationScheduler::admit(")
-            .count(),
-        3,
+            .count();
+    assert_eq!(
+        scheduler_admission_count, 3,
         "canonical sync/async dispatchers must all route through typed scheduler admission"
     );
     assert!(
