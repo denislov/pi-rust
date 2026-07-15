@@ -1,4 +1,4 @@
-use pi_coding_agent::protocol::jsonl::{read_jsonl_lines, serialize_json_line};
+use pi_coding_agent::api::{read_jsonl_lines, serialize_json_line};
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 

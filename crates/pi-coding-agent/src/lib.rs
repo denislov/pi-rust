@@ -21,8 +21,7 @@ mod list_models;
 mod models;
 mod print_mode;
 mod prompt_options;
-#[doc(hidden)]
-pub mod protocol;
+mod protocol;
 mod request;
 mod resources;
 mod runtime;
@@ -94,12 +93,22 @@ pub mod api {
     pub use crate::models::{ModelRotation, ModelRotationEntry, parse_model_rotation};
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};
     pub use crate::prompt_options::PromptRunOptions;
+    pub use crate::protocol::events::CodingProtocolEventAdapter;
+    pub use crate::protocol::jsonl::{JsonlLineReader, read_jsonl_lines, serialize_json_line};
+    pub use crate::protocol::rpc::{run_rpc_mode_for_io, run_rpc_mode_stdio};
     pub use crate::protocol::types::{
         CompactionProtocolResult, CompactionReason, ProtocolDelegationFoldedBlock, ProtocolEvent,
         ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, RpcCapabilities,
         RpcCapabilityStatus, RpcCommand, RpcDelegationCapabilityStatus,
-        RpcDelegationRenderingMetadata, RpcResponse, RpcSelfHealingEditModelRepair,
-        RpcSelfHealingEditReplacement, RpcSessionState, StreamingBehavior, ToolExecutionResult,
+        RpcDelegationRenderingMetadata, RpcDetachLifecycleEvent, RpcDetachRequest,
+        RpcDetachResponse, RpcDetachStatus, RpcHelloResponse, RpcNegotiatedProtocolState,
+        RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
+        RpcShutdownLifecycleEvent, RpcShutdownRequest, RpcShutdownResponse, RpcShutdownStatus,
+        StreamingBehavior, ToolExecutionResult,
+    };
+    pub use crate::protocol::version::{
+        PRODUCT_EVENT_PROTOCOL_VERSION, ProtocolFamilyVersion, RPC_PROTOCOL_VERSION,
+        RequestedProtocolVersion, UI_SNAPSHOT_PROTOCOL_VERSION,
     };
     pub use crate::request::{
         CliDiagnostic, CliDiagnosticSeverity, ResolvedCliContext, ResolvedPromptRequest,

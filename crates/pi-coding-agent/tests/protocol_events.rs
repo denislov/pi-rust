@@ -9,14 +9,10 @@ use pi_coding_agent::api::{
     CodingAgentProductEventKind, CodingAgentProductEventProfileKind,
     CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
     CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
-    CodingSessionError, SelfHealingEditCheckOutput, SelfHealingEditDiagnostic,
-    SelfHealingEditReplacement,
-};
-use pi_coding_agent::protocol::events::CodingProtocolEventAdapter;
-use pi_coding_agent::protocol::types::{
-    CompactionReason, ProtocolEvent, RpcDetachLifecycleEvent, RpcDetachRequest, RpcDetachResponse,
-    RpcDetachStatus, RpcShutdownLifecycleEvent, RpcShutdownRequest, RpcShutdownResponse,
-    RpcShutdownStatus,
+    CodingProtocolEventAdapter, CodingSessionError, CompactionReason, ProtocolEvent,
+    RpcDetachLifecycleEvent, RpcDetachRequest, RpcDetachResponse, RpcDetachStatus,
+    RpcShutdownLifecycleEvent, RpcShutdownRequest, RpcShutdownResponse, RpcShutdownStatus,
+    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
 use serde_json::{Value, json};
 use support::{

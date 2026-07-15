@@ -6,8 +6,7 @@ use pi_ai::api::{
     ModelInput, StopReason, StreamOptions,
 };
 use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_coding_agent::api::{CliRunOptions, SessionRunOptions};
-use pi_coding_agent::protocol::rpc::run_rpc_mode_for_io;
+use pi_coding_agent::api::{CliRunOptions, SessionRunOptions, run_rpc_mode_for_io};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

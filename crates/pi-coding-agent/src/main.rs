@@ -14,7 +14,7 @@ async fn main() {
             ai_client: None,
             session: pi_coding_agent::api::SessionRunOptions::enabled(cwd),
         };
-        match pi_coding_agent::protocol::rpc::run_rpc_mode_stdio(options).await {
+        match pi_coding_agent::api::run_rpc_mode_stdio(options).await {
             Ok(()) => std::process::exit(0),
             Err(error) => {
                 eprintln!("{error}");

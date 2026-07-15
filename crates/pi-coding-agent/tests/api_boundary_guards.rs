@@ -464,6 +464,7 @@ fn retired_root_compatibility_modules_stay_private() {
         "models",
         "print_mode",
         "prompt_options",
+        "protocol",
         "request",
         "resources",
         "runtime",

@@ -2,8 +2,7 @@ mod support;
 
 use pi_ai::api::{Model, ModelCost, ModelInput};
 use pi_ai::providers::faux::FauxProvider;
-use pi_coding_agent::api::{CliRunOptions, SessionRunOptions};
-use pi_coding_agent::protocol::rpc::run_rpc_mode_for_io;
+use pi_coding_agent::api::{CliRunOptions, SessionRunOptions, run_rpc_mode_for_io};
 use std::sync::Arc;
 use std::time::Duration;
 use support::ProviderGuard;
