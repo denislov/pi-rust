@@ -1375,7 +1375,7 @@ async fn snapshot_writers_3_capability_install_is_atomic_and_bounded() {
 #[test]
 fn snapshot_writers_4_navigation_refreshes_projection_before_publication() {
     let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
-    let owner = fs::read_to_string(source_root.join("mod.rs")).unwrap();
+    let owner = fs::read_to_string(source_root.join("operation_dispatch.rs")).unwrap();
     let refresh = owner.find("self.refresh_snapshot_projection();").unwrap();
     let publish = owner
         .find("emit_session_opened(forked_session_id)")
