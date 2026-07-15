@@ -19,7 +19,8 @@ const PRODUCT_EVENT_CONTRACT: &str = include_str!("../../../docs/product-event-c
 const CRATE_ROOT: &str = include_str!("../src/lib.rs");
 const PROTOCOL_EVENT_ADAPTER: &str = include_str!("../src/protocol/events.rs");
 const PROTOCOL_EVENT_TESTS: &str = include_str!("protocol_events.rs");
-const INTERACTIVE_EVENT_TESTS: &str = include_str!("interactive_event_bridge.rs");
+const INTERACTIVE_EVENT_TESTS: &str =
+    include_str!("../src/internal_tests/interactive_event_bridge.rs");
 
 #[test]
 fn typed_public_event_boundary_is_fail_closed() {

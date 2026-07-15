@@ -296,6 +296,7 @@ impl EditOperations for RealEditOperations {
     }
 }
 
+#[cfg(test)]
 pub async fn edit_execute(cwd: &Path, args: serde_json::Value) -> Result<AgentToolOutput, String> {
     edit_execute_with_operations(cwd, args, Arc::new(RealEditOperations)).await
 }

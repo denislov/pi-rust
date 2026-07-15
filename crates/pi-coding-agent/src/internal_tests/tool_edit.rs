@@ -1,3 +1,5 @@
+//! Internal owner tests for the edit tool.
+
 use pi_agent_core::api::AgentToolOutput;
 use pi_ai::api::ContentBlock;
 use pi_coding_agent::api::builtin_tools;

@@ -40,6 +40,7 @@ impl InputPump {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn from_chunks(chunks: Vec<String>) -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         for chunk in chunks {
@@ -54,6 +55,7 @@ impl InputPump {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn from_receiver(rx: tokio::sync::mpsc::UnboundedReceiver<String>) -> Self {
         Self {
             rx,
@@ -63,6 +65,7 @@ impl InputPump {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn from_receiver_with_observers(
         rx: tokio::sync::mpsc::UnboundedReceiver<String>,
         consumed_tx: tokio::sync::mpsc::UnboundedSender<String>,

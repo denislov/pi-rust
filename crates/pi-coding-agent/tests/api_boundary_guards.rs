@@ -461,6 +461,7 @@ fn retired_root_compatibility_modules_stay_private() {
         "config",
         "error",
         "input",
+        "interactive",
         "models",
         "print_mode",
         "prompt_options",
@@ -470,6 +471,7 @@ fn retired_root_compatibility_modules_stay_private() {
         "runtime",
         "session",
         "theme",
+        "tools",
     ] {
         assert!(
             lib_source.contains(&format!("mod {module};")),

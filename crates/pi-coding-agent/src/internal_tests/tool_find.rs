@@ -1,3 +1,5 @@
+//! Internal owner tests for the find tool.
+
 use pi_ai::api::ContentBlock;
 use pi_coding_agent::tools::find::find_execute;
 use tempfile::tempdir;

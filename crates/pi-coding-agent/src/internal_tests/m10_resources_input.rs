@@ -1,5 +1,6 @@
-mod support;
+//! Internal owner tests spanning resources, input, tools, and the interactive harness.
 
+use super::support::ProviderGuard;
 use pi_agent_core::api::ThinkingLevel;
 use pi_ai::api::ApiProvider;
 use pi_ai::api::EventStream;
@@ -16,7 +17,6 @@ use pi_coding_agent::api::{
 };
 use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
 use std::sync::{Arc, Mutex};
-use support::ProviderGuard;
 
 #[test]
 fn discovers_global_and_ancestor_context_files_in_priority_order() {

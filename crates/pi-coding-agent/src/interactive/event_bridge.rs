@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::coding_session::CodingAgentProductEvent;
 use crate::coding_session::{
     CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent,
-    CodingAgentMessageProductEvent, CodingAgentProductEvent, CodingAgentProductEventKind,
+    CodingAgentMessageProductEvent, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentProductEventUsage,
     CodingAgentRuntimeProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
     ProductEvent, ProductEventSequence, ProfileKind, UiSnapshot,
@@ -8,7 +10,6 @@ use crate::coding_session::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
-    AgentStarted,
     TurnStarted,
     AssistantDelta {
         text: String,
@@ -148,6 +149,7 @@ impl CodingEventBridge {
         self.handle_typed(event.event())
     }
 
+    #[cfg(test)]
     pub fn handle_product_event(&mut self, event: &CodingAgentProductEvent) -> Vec<UiEvent> {
         self.handle_typed(event.event())
     }

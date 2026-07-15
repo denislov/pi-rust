@@ -1,4 +1,4 @@
-mod support;
+//! Internal owner tests for interactive abort handling.
 
 use std::sync::{
     Arc,
@@ -6,6 +6,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use super::support::EnvGuard;
 use async_stream::stream;
 use pi_ai::api::ApiProvider;
 use pi_ai::api::{
@@ -15,7 +16,6 @@ use pi_coding_agent::interactive::test_harness::{
     ScriptedInteractiveOutput, run_scripted_idle_interactive,
     run_scripted_interactive_with_provider_chunks,
 };
-use support::EnvGuard;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const INTERACTIVE_ABORT_HARNESS_TIMEOUT: Duration = Duration::from_millis(500);

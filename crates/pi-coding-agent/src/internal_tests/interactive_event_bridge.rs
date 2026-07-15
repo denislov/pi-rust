@@ -1,5 +1,9 @@
-mod support;
+//! Internal owner tests for the interactive event bridge.
 
+use super::support::{
+    product_check_output, product_diagnostic, product_error, product_event, product_replacement,
+    product_usage,
+};
 use pi_ai::api::{Cost, Usage};
 use pi_coding_agent::api::{
     CodingAgentCapabilityProductEvent, CodingAgentDelegationEventContext,
@@ -10,10 +14,6 @@ use pi_coding_agent::api::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
 use pi_coding_agent::interactive::{CodingEventBridge, Transcript, TranscriptItem, UiEvent};
-use support::{
-    product_check_output, product_diagnostic, product_error, product_event, product_replacement,
-    product_usage,
-};
 
 #[test]
 fn ui_events_apply_to_transcript() {

@@ -15,6 +15,7 @@ pub struct TruncationOptions {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TruncationResult {
     pub content: String,
     pub truncated: bool,
@@ -132,6 +133,7 @@ pub fn truncate_head(content: &str, opts: &TruncationOptions) -> TruncationResul
     }
 }
 
+#[cfg(test)]
 fn truncate_bytes_from_end(s: &str, max_bytes: usize) -> String {
     let b = s.as_bytes();
     if b.len() <= max_bytes {
@@ -144,6 +146,7 @@ fn truncate_bytes_from_end(s: &str, max_bytes: usize) -> String {
     String::from_utf8_lossy(&b[start..]).into_owned()
 }
 
+#[cfg(test)]
 pub fn truncate_tail(content: &str, opts: &TruncationOptions) -> TruncationResult {
     let max_lines = opts.max_lines.unwrap_or(DEFAULT_MAX_LINES);
     let max_bytes = opts.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);

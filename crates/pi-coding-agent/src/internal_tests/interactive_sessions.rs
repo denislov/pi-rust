@@ -1,4 +1,4 @@
-mod support;
+//! Internal owner tests for interactive session handling.
 
 use pi_agent_core::api::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, create_timestamp,
@@ -278,7 +278,7 @@ async fn scripted_interactive_branch_summary_preserves_visible_and_persisted_beh
 
 #[tokio::test]
 async fn scripted_interactive_default_profile_selection_persists_and_refreshes_projection() {
-    let _env = support::EnvGuard::with_pi_rust_dir(tempfile::tempdir().unwrap().path());
+    let _env = super::support::EnvGuard::with_pi_rust_dir(tempfile::tempdir().unwrap().path());
     let temp = tempfile::tempdir().unwrap();
 
     // Set up a project-level agent profile so the profile menu has a selectable entry.

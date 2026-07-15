@@ -59,6 +59,7 @@ impl WriteOperations for RealWriteOperations {
     }
 }
 
+#[cfg(test)]
 pub async fn write_execute(
     cwd: &Path,
     args: serde_json::Value,

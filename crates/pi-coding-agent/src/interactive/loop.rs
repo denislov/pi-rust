@@ -110,6 +110,7 @@ fn print_exit_resume_hint(active_session_path: Option<&std::path::Path>) {
 }
 
 pub(super) struct LoopResult<T: Terminal> {
+    #[allow(dead_code)]
     pub(super) tui: Tui<T>,
     pub(super) exit_code: i32,
     pub(super) coding_session: Option<CodingAgentSession>,
@@ -174,13 +175,13 @@ impl InteractiveClock for SystemInteractiveClock {
     }
 }
 
-#[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[cfg(test)]
 #[derive(Clone)]
 pub(super) struct ManualInteractiveClock {
     now: std::sync::Arc<std::sync::Mutex<Instant>>,
 }
 
-#[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[cfg(test)]
 impl ManualInteractiveClock {
     pub(super) fn new(now: Instant) -> Self {
         Self {
@@ -197,7 +198,7 @@ impl ManualInteractiveClock {
     }
 }
 
-#[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[cfg(test)]
 impl InteractiveClock for ManualInteractiveClock {
     fn now(&self) -> Instant {
         *self
@@ -207,6 +208,7 @@ impl InteractiveClock for ManualInteractiveClock {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn run_interactive_loop<T: Terminal>(
     parsed: CliArgs,
     options: CliRunOptions,
@@ -217,6 +219,7 @@ pub(super) async fn run_interactive_loop<T: Terminal>(
     run_interactive_loop_with_clock(parsed, options, terminal, input, &clock).await
 }
 
+#[cfg(test)]
 pub(super) async fn run_interactive_loop_with_clock<T, C>(
     parsed: CliArgs,
     options: CliRunOptions,

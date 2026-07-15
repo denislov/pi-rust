@@ -1,13 +1,16 @@
 const THEME_RELOAD_SOURCE: &str = include_str!("../src/theme/reload.rs");
 const THEME_TEST_SOURCE: &str = include_str!("theme.rs");
-const TOOL_BASH_TEST_SOURCE: &str = include_str!("tool_bash.rs");
+const TOOL_BASH_TEST_SOURCE: &str = include_str!("../src/internal_tests/tool_bash.rs");
 const INTERACTIVE_APP_SOURCE: &str = include_str!("../src/interactive/app.rs");
 const INTERACTIVE_LOOP_SOURCE: &str = include_str!("../src/interactive/loop.rs");
 const RPC_MODE_TEST_SOURCE: &str = include_str!("rpc_mode.rs");
 const PROTOCOL_SESSIONS_TEST_SOURCE: &str = include_str!("protocol_sessions.rs");
-const INTERACTIVE_MODE_TEST_SOURCE: &str = include_str!("interactive_mode.rs");
-const INTERACTIVE_ABORT_TEST_SOURCE: &str = include_str!("interactive_abort.rs");
-const FILE_MUTATION_QUEUE_TEST_SOURCE: &str = include_str!("file_mutation_queue.rs");
+const INTERACTIVE_MODE_TEST_SOURCE: &str =
+    include_str!("../src/internal_tests/interactive_mode.rs");
+const INTERACTIVE_ABORT_TEST_SOURCE: &str =
+    include_str!("../src/internal_tests/interactive_abort.rs");
+const FILE_MUTATION_QUEUE_TEST_SOURCE: &str =
+    include_str!("../src/internal_tests/file_mutation_queue.rs");
 
 #[test]
 fn theme_reload_worker_does_not_poll_with_thread_sleep() {

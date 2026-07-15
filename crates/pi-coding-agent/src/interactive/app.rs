@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -22,9 +23,9 @@ use crate::error::CliError;
 use crate::interactive::clipboard::ClipboardSink;
 use crate::interactive::input::InputPump;
 use crate::interactive::key_hints::{app_key_hint, key_hint};
-use crate::interactive::r#loop::{
-    LoopResult, run_interactive_loop, run_interactive_loop_with_input,
-};
+use crate::interactive::r#loop::run_interactive_loop_with_input;
+#[cfg(test)]
+use crate::interactive::r#loop::{LoopResult, run_interactive_loop};
 #[cfg(test)]
 use crate::interactive::render::{
     TranscriptRenderCache, TranscriptRenderOptions, TranscriptStyles, format_tokens,
@@ -50,19 +51,6 @@ use crate::runtime::CliRunOptions;
 use crate::runtime::{SessionMode, SessionRunOptions};
 use crate::session::ResolvedSessionTarget;
 use crate::{CliOutput, config, resources};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InteractiveModeOptions {
-    pub terminal_required: bool,
-}
-
-impl Default for InteractiveModeOptions {
-    fn default() -> Self {
-        Self {
-            terminal_required: true,
-        }
-    }
-}
 
 pub async fn run_interactive_mode(parsed: CliArgs, options: CliRunOptions) -> CliOutput {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -102,6 +90,7 @@ pub async fn run_interactive_mode(parsed: CliArgs, options: CliRunOptions) -> Cl
     }
 }
 
+#[cfg(test)]
 static INTERACTIVE_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Clone)]
@@ -4560,7 +4549,7 @@ display_name = "Coder"
     }
 }
 
-#[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[cfg(test)]
 pub mod test_harness {
     use std::future::Future;
     use std::path::{Path, PathBuf};
@@ -4585,7 +4574,6 @@ pub mod test_harness {
         pub rendered: String,
         pub exit_code: i32,
         pub terminal_restored: bool,
-        pub cursor_row: usize,
         pub cursor_col: usize,
         pub ops: Vec<TerminalOp>,
         pub rendered_lines: Vec<String>,
@@ -4634,16 +4622,6 @@ pub mod test_harness {
         input: &str,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         run_scripted(provider, input, None).await
-    }
-
-    pub async fn run_scripted_interactive_with_size(
-        provider: FauxProvider,
-        input: &str,
-        columns: usize,
-        rows: usize,
-    ) -> Result<ScriptedInteractiveOutput, CliError> {
-        run_scripted_with_provider_and_size(Arc::new(provider), vec![input], None, columns, rows)
-            .await
     }
 
     pub async fn run_scripted_interactive_with_session_dir(
@@ -4708,37 +4686,6 @@ pub mod test_harness {
         input_chunks: Vec<&str>,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         run_scripted_with_provider(provider, input_chunks, None).await
-    }
-
-    pub async fn run_scripted_interactive_with_provider_driver<F, Fut>(
-        provider: Arc<dyn pi_ai::api::ApiProvider>,
-        driver: F,
-    ) -> Result<ScriptedInteractiveOutput, CliError>
-    where
-        F: FnOnce(tokio::sync::mpsc::UnboundedSender<String>) -> Fut,
-        Fut: Future<Output = ()>,
-    {
-        let api = format!(
-            "interactive-harness-{}",
-            INTERACTIVE_ID.fetch_add(1, Ordering::SeqCst)
-        );
-        let _provider_guard = crate::test_support::ProviderGuard::register(api.clone(), provider);
-
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut input = InputPump::from_receiver(rx);
-        let parsed = CliArgs::default();
-        let options = CliRunOptions {
-            model_override: Some(faux_model(&api)),
-            tools: Vec::new(),
-            register_builtins: false,
-            ai_client: Some(_provider_guard.ai_client()),
-            session: SessionRunOptions::disabled(PathBuf::from(".")),
-        };
-
-        let run = run_interactive_loop(parsed, options, VirtualTerminal::new(80, 24), &mut input);
-        let (result, ()) = tokio::join!(run, driver(tx));
-
-        Ok(scripted_output(result?, None))
     }
 
     pub async fn run_scripted_interactive_with_observed_provider_driver<F, Fut>(
@@ -5023,7 +4970,6 @@ pub mod test_harness {
     ) -> ScriptedInteractiveOutput {
         let terminal_restored = result.tui.terminal().ops().contains(&TerminalOp::Stop);
         let rendered = result.tui.terminal().written_output();
-        let cursor_row = result.tui.terminal().cursor_row();
         let cursor_col = result.tui.terminal().cursor_col();
         let ops = result.tui.terminal().ops().to_vec();
         let rendered_lines = result.tui.rendered_lines().to_vec();
@@ -5031,7 +4977,6 @@ pub mod test_harness {
             rendered,
             exit_code: result.exit_code,
             terminal_restored,
-            cursor_row,
             cursor_col,
             ops,
             rendered_lines,

@@ -42,6 +42,7 @@ impl TranscriptItem {
         }
     }
 
+    #[cfg(test)]
     pub fn error(text: impl Into<String>) -> Self {
         Self::Error { text: text.into() }
     }
@@ -229,6 +230,7 @@ impl Transcript {
         }
     }
 
+    #[cfg(test)]
     pub fn scroll_to_bottom(&mut self) {
         let previous_offset = self.scroll_offset;
         let previous_new_output_below = self.new_output_below;
@@ -268,13 +270,13 @@ impl Transcript {
         }
     }
 
+    #[cfg(test)]
     pub fn apply_event(&mut self, event: UiEvent) {
         self.apply_event_with_mutation(event);
     }
 
     pub(crate) fn apply_event_with_mutation(&mut self, event: UiEvent) -> TranscriptMutation {
         match event {
-            UiEvent::AgentStarted => TranscriptMutation::none(),
             UiEvent::TurnStarted => self.close_open_assistant(),
             UiEvent::AssistantDelta { text } => self.append_assistant_delta(&text),
             UiEvent::ThinkingDelta { text } => self.append_assistant_thinking(&text),

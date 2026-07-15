@@ -6,6 +6,11 @@
 mod coding_session;
 mod plugins;
 
+#[cfg(test)]
+extern crate self as pi_coding_agent;
+#[cfg(test)]
+mod internal_tests;
+
 use crate::args::{CliMode, help_text, parse_args};
 use crate::error::CliError;
 use crate::runtime::{CliRunOptions, SessionRunOptions};
@@ -15,8 +20,7 @@ mod args;
 mod config;
 mod error;
 mod input;
-#[doc(hidden)]
-pub mod interactive;
+mod interactive;
 mod list_models;
 mod models;
 mod print_mode;
@@ -27,8 +31,7 @@ mod resources;
 mod runtime;
 mod session;
 mod theme;
-#[doc(hidden)]
-pub mod tools;
+mod tools;
 
 /// Stable library facade for embedding or scripting `pi-coding-agent`.
 ///

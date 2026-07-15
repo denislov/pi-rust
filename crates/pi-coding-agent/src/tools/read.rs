@@ -74,6 +74,7 @@ impl ReadOperations for RealReadOperations {
     }
 }
 
+#[cfg(test)]
 pub async fn read_execute(
     cwd: &Path,
     args: serde_json::Value,

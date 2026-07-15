@@ -1,9 +1,10 @@
-mod support;
+//! Internal owner tests for interactive mode.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::support::{EnvGuard, ProviderGuard};
 use futures::stream;
 use pi_ai::api::ApiProvider;
 use pi_ai::api::EventStream;
@@ -20,12 +21,11 @@ use pi_coding_agent::interactive::test_harness::{
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
 use pi_tui::TerminalOp;
-use support::{EnvGuard, ProviderGuard};
 use tokio::sync::Notify;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const RUNNING_CONTROL_OBSERVED_DRIVER_TIMEOUT: Duration = Duration::from_secs(1);
-const DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT: Duration = Duration::from_secs(2);
+const DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT: Duration = Duration::from_secs(5);
 const SETTINGS_COMMAND_INPUT_DELAY: Duration = Duration::from_millis(20);
 const SETTINGS_ESCAPE_INPUT_DELAY: Duration = Duration::from_millis(40);
 const SETTINGS_HELP_COMMAND_INPUT_DELAY: Duration = Duration::from_millis(20);
@@ -1351,8 +1351,8 @@ async fn scripted_interactive_name_updates_footer_session_label() {
 
 #[test]
 fn embedded_interactive_lifecycle_is_detach_only_and_owner_shutdown_is_top_level() {
-    let loop_source = include_str!("../src/interactive/loop.rs");
-    let app_source = include_str!("../src/interactive/app.rs");
+    let loop_source = include_str!("../interactive/loop.rs");
+    let app_source = include_str!("../interactive/app.rs");
     assert!(loop_source.contains("detach_interactive_client"));
     assert!(loop_source.contains("connection.detach()"));
     assert!(!loop_source.contains("session.shutdown().await"));

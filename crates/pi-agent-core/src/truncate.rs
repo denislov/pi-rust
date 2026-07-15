@@ -1,7 +1,5 @@
 pub const DEFAULT_MAX_LINES: usize = 2000;
 pub const DEFAULT_MAX_BYTES: usize = 50 * 1024;
-pub const GREP_MAX_LINE_LENGTH: usize = 500;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TruncationLimit {
     pub max_lines: usize,

@@ -1,3 +1,5 @@
+//! Internal owner tests for injected tool operations.
+
 use futures::future::{BoxFuture, FutureExt};
 use pi_ai::api::ContentBlock;
 use pi_coding_agent::tools::ShellCapability;

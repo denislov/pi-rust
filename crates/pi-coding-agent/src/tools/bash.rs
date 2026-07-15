@@ -325,6 +325,7 @@ fn push_output(tail: &mut OutputTail, data: &[u8], on_update: Option<&ToolUpdate
     }
 }
 
+#[cfg(test)]
 pub async fn bash_execute(
     cwd: &Path,
     args: serde_json::Value,
@@ -332,6 +333,7 @@ pub async fn bash_execute(
     bash_execute_with_options(cwd, args, &BashOptions::default()).await
 }
 
+#[cfg(test)]
 pub async fn bash_execute_with_options(
     cwd: &Path,
     args: serde_json::Value,
@@ -340,6 +342,7 @@ pub async fn bash_execute_with_options(
     bash_execute_with_options_and_update(cwd, args, options, None).await
 }
 
+#[cfg(test)]
 pub async fn bash_execute_with_options_and_update(
     cwd: &Path,
     args: serde_json::Value,

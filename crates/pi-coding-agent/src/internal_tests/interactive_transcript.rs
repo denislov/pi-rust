@@ -1,3 +1,5 @@
+//! Internal owner tests for the interactive transcript.
+
 use pi_coding_agent::interactive::UiEvent;
 use pi_coding_agent::interactive::{Transcript, TranscriptItem};
 

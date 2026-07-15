@@ -1,3 +1,5 @@
+//! Internal owner tests for the bash tool.
+
 use pi_ai::api::ContentBlock;
 use pi_coding_agent::tools::bash::{
     BashOptions, BashSpawnContext, bash_execute, bash_execute_with_options,

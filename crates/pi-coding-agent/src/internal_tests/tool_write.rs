@@ -1,3 +1,5 @@
+//! Internal owner tests for the write tool.
+
 use pi_ai::api::ContentBlock;
 use pi_coding_agent::tools::write::write_execute;
 use tempfile::tempdir;

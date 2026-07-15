@@ -20,8 +20,9 @@ pub mod transcript;
 pub(super) mod tree_selector;
 
 pub use app::run_interactive_mode;
-#[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[cfg(test)]
 pub use app::test_harness;
-pub use event_bridge::{CodingEventBridge, UiEvent};
-pub use key_hints::{app_key_hint, format_key_text, key_hint};
+#[cfg(test)]
+pub use event_bridge::CodingEventBridge;
+pub use event_bridge::UiEvent;
 pub use transcript::{Transcript, TranscriptItem};

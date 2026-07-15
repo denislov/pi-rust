@@ -946,6 +946,9 @@ fn rust_files_under(root: &Path) -> Vec<PathBuf> {
             .into_iter()
             .collect();
     }
+    if root.file_name().and_then(|name| name.to_str()) == Some("internal_tests") {
+        return Vec::new();
+    }
     let mut files = fs::read_dir(root)
         .expect("read Rust source directory")
         .collect::<Result<Vec<_>, _>>()

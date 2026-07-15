@@ -1,3 +1,5 @@
+//! Internal owner tests for the read tool.
+
 use pi_ai::api::ContentBlock;
 use pi_coding_agent::tools::read::read_execute;
 use tempfile::tempdir;
