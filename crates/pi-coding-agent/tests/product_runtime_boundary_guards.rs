@@ -1536,6 +1536,11 @@ const ADAPTER_CLASSIFICATIONS: &[AdapterClassification] = &[
         rationale: "canonical runtime owner and sole ordinary dispatcher",
     },
     AdapterClassification {
+        path: "crates/pi-coding-agent/src/coding_session/session_connection.rs",
+        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+        rationale: "session-owned connection, snapshot, replay, and lifecycle facade",
+    },
+    AdapterClassification {
         path: "crates/pi-coding-agent/src/coding_session/public_projection.rs",
         ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
         rationale: "stable state/replay/control contract implementation",

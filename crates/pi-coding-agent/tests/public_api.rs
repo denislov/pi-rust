@@ -1329,7 +1329,7 @@ fn snapshot_topology_has_one_registry_and_zero_authority_client_facade() {
 #[test]
 fn snapshot_writers_1_startup_drain_releases_marker_lock_before_projection() {
     let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/coding_session");
-    let owner = fs::read_to_string(source_root.join("mod.rs")).unwrap();
+    let owner = fs::read_to_string(source_root.join("session_connection.rs")).unwrap();
     let take = owner.find("std::mem::take(&mut *markers)").unwrap();
     let project = owner.find("mark_recovery_projected()").unwrap();
     let emit = owner.find("emit_operation_recovered").unwrap();

@@ -570,10 +570,15 @@ fn first_party_code_does_not_consume_compatibility_event_subscription() {
 
 #[test]
 fn legacy_receiver_and_duplicate_broadcast_are_absent() {
-    let owner_source = std::fs::read_to_string(workspace_path(
+    let session_source = std::fs::read_to_string(workspace_path(
         "crates/pi-coding-agent/src/coding_session/mod.rs",
     ))
     .expect("read coding session owner");
+    let connection_source = std::fs::read_to_string(workspace_path(
+        "crates/pi-coding-agent/src/coding_session/session_connection.rs",
+    ))
+    .expect("read coding session connection owner");
+    let owner_source = format!("{session_source}\n{connection_source}");
     let event_service_source = std::fs::read_to_string(workspace_path(
         "crates/pi-coding-agent/src/coding_session/event_service.rs",
     ))
