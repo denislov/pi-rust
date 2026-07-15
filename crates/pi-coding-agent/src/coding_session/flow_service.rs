@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use pi_agent_core::api::{Flow, FlowOutcome, FlowRunOptions};
 
 use super::CodingSessionError;
