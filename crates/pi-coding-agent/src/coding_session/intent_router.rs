@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn session_query_facade_routes_through_query_admission() {
-        let source = include_str!("mod.rs");
+        let source = [include_str!("mod.rs"), include_str!("session_view.rs")].concat();
 
         assert!(
             source.matches("IntentRouter::admit_query(").count() >= 6,
