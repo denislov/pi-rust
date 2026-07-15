@@ -468,6 +468,7 @@ fn retired_root_compatibility_modules_stay_private() {
         "resources",
         "runtime",
         "session",
+        "theme",
     ] {
         assert!(
             lib_source.contains(&format!("mod {module};")),

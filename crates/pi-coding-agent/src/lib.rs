@@ -27,8 +27,7 @@ mod request;
 mod resources;
 mod runtime;
 mod session;
-#[doc(hidden)]
-pub mod theme;
+mod theme;
 #[doc(hidden)]
 pub mod tools;
 
@@ -118,11 +117,13 @@ pub mod api {
     };
     pub use crate::session::{ResolvedSessionTarget, encode_cwd};
     pub use crate::theme::{
-        ColorValue, DetectionConfidence, DetectionSource, REQUIRED_TOKEN_KEYS, ResolveError,
-        ResolvedColor, ResolvedTheme, TerminalTheme, ThemeBg, ThemeColor, ThemeExportColors,
-        ThemeJson, builtin_dark, builtin_light, detect_terminal_background,
+        ColorValue, DARK_JSON, DetectionConfidence, DetectionSource, ExportSection, LIGHT_JSON,
+        REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor, ResolvedTheme, Rgb, SCHEMA_JSON,
+        TerminalBackgroundDetection, TerminalTheme, ThemeBg, ThemeColor, ThemeExportColors,
+        ThemeJson, ThemeReloadSignal, ThemeWatcher, builtin_dark, builtin_light,
+        detect_terminal_background, get_default_theme, get_language_from_path,
         get_resolved_theme_colors, get_theme_export_colors, get_theme_for_rgb_color,
-        is_light_theme, parse_osc11_background_color, resolve,
+        highlight_code, is_light_theme, parse_osc11_background_color, resolve, should_watch_target,
     };
     pub use crate::tools::{ToolFilter, builtin_tools, filter_tools};
     pub use crate::{CliOutput, run_cli, run_cli_with_options, run_cli_with_options_and_stdin};
