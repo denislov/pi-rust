@@ -222,8 +222,10 @@ struct OperationStateInner {
 #[derive(Debug, Clone)]
 struct ActiveOperationIdentity {
     kind: OperationKind,
+    #[cfg(test)]
     operation_id: String,
     generation: u64,
+    #[cfg(test)]
     cancellation: Option<CancellationToken>,
 }
 
@@ -309,7 +311,7 @@ impl OperationState {
     pub(crate) fn begin(
         &self,
         kind: OperationKind,
-        operation_id: String,
+        _operation_id: String,
     ) -> Result<OperationGuard, CodingSessionError> {
         let mut shared = self.shared.lock().expect("operation state lock poisoned");
         if let Some(active) = shared.active.as_ref() {
@@ -322,8 +324,10 @@ impl OperationState {
         let cancellation = (kind == OperationKind::Compact).then(CancellationToken::new);
         shared.active = Some(ActiveOperationIdentity {
             kind,
-            operation_id,
+            #[cfg(test)]
+            operation_id: _operation_id,
             generation,
+            #[cfg(test)]
             cancellation: cancellation.clone(),
         });
         drop(shared);

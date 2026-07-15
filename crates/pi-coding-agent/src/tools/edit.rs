@@ -353,8 +353,7 @@ fn coding_session_error_message(error: CodingSessionError) -> String {
         gap @ CodingSessionError::EventStreamGap { .. } => gap.to_string(),
         lag @ CodingSessionError::EventStreamLag { .. } => lag.to_string(),
         version @ CodingSessionError::UnsupportedProtocolVersion { .. } => version.to_string(),
-        other @ (CodingSessionError::StaleClientConnection { .. }
-        | CodingSessionError::SubmissionPreparationBusy
+        other @ (CodingSessionError::SubmissionPreparationBusy
         | CodingSessionError::SubmissionDraftMismatch
         | CodingSessionError::ClientCapacityExceeded { .. }
         | CodingSessionError::Lifecycle { .. }) => other.to_string(),

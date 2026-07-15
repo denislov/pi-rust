@@ -49,7 +49,6 @@ pub struct CodingAgentDraft {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CodingAgentSubmittedOperationStatus {
-    Accepted,
     Running,
     Terminal {
         status: CodingAgentProductEventTerminalStatus,
@@ -541,8 +540,7 @@ impl CodingAgentClientConnection {
                 ) => CodingAgentMutationRejection::Detached,
                 ClientRegistryError::Lifecycle(
                     super::error::CodingAgentLifecycleRejection::StaleGeneration,
-                )
-                | ClientRegistryError::StaleClient => CodingAgentMutationRejection::StaleGeneration,
+                ) => CodingAgentMutationRejection::StaleGeneration,
                 ClientRegistryError::Lifecycle(
                     super::error::CodingAgentLifecycleRejection::RuntimeShutDown,
                 ) => CodingAgentMutationRejection::RuntimeShutDown,
@@ -1088,13 +1086,6 @@ fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
         })
         .collect();
     snapshot.submitted_operation = state.submitted_operation.map(|submitted| match submitted {
-        SubmittedOperationStatus::Accepted {
-            operation_id, kind, ..
-        } => CodingAgentSubmittedOperation {
-            operation_id,
-            kind: kind.as_str().into(),
-            status: CodingAgentSubmittedOperationStatus::Accepted,
-        },
         SubmittedOperationStatus::Running {
             operation_id, kind, ..
         } => CodingAgentSubmittedOperation {
@@ -1144,12 +1135,9 @@ fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
     snapshot
 }
 
-fn registry_error(id: &CodingAgentClientId, error: ClientRegistryError) -> CodingSessionError {
+fn registry_error(_id: &CodingAgentClientId, error: ClientRegistryError) -> CodingSessionError {
     match error {
         ClientRegistryError::Lifecycle(reason) => CodingSessionError::Lifecycle { reason },
-        ClientRegistryError::StaleClient => CodingSessionError::StaleClientConnection {
-            client_id: id.as_str().into(),
-        },
         ClientRegistryError::ClientCapacityExceeded { limit } => {
             CodingSessionError::ClientCapacityExceeded { limit }
         }

@@ -46,11 +46,6 @@ pub(crate) enum SubmittedTerminalAnchor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SubmittedOperationStatus {
-    Accepted {
-        operation_id: String,
-        kind: OperationKind,
-        descriptor: OperationDescriptor,
-    },
     Running {
         operation_id: String,
         kind: OperationKind,
@@ -71,7 +66,6 @@ pub(crate) struct ClientSnapshotState {
     pub(crate) snapshot: UiSnapshot,
     pub(crate) drafts: Vec<DraftRecord>,
     pub(crate) submitted_operation: Option<SubmittedOperationStatus>,
-    pub(crate) acknowledged_sequence: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,8 +356,7 @@ impl SnapshotCoordinator {
         let mut state = self.state.lock().unwrap();
         let record = match Self::record(&mut state, handle) {
             Ok(record) => record,
-            Err(error @ ClientRegistryError::Lifecycle(_))
-            | Err(error @ ClientRegistryError::StaleClient) => {
+            Err(error @ ClientRegistryError::Lifecycle(_)) => {
                 return Err(super::public_projection::CodingAgentControlRejection {
                     control_id,
                     operation_id: operation_id.into(),
@@ -535,11 +528,6 @@ impl SnapshotCoordinator {
         self.lifecycle_sender.subscribe()
     }
 
-    pub(crate) fn validate_handle(&self, handle: &ClientHandle) -> Result<(), ClientRegistryError> {
-        let state = self.state.lock().unwrap();
-        Self::validate_client(&state, handle)
-    }
-
     pub(crate) fn validate_receiver(
         &self,
         handle: &ClientHandle,
@@ -618,6 +606,7 @@ impl SnapshotCoordinator {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn shutdown_drain_boundary(&self) -> Option<ProductEventSequence> {
         self.state.lock().unwrap().shutdown_drain_boundary
     }
@@ -756,7 +745,6 @@ impl SnapshotCoordinator {
             snapshot,
             drafts,
             submitted_operation: record.submitted_operation.clone(),
-            acknowledged_sequence: record.acknowledged_sequence,
         })
     }
 
@@ -915,6 +903,7 @@ impl SnapshotCoordinator {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn shutdown_lag_recovery(
         &self,
         handle: &ClientHandle,
@@ -977,7 +966,6 @@ impl SnapshotCoordinator {
                 .cloned()
                 .collect(),
             submitted_operation: record.submitted_operation.clone(),
-            acknowledged_sequence: record.acknowledged_sequence,
         };
         let oldest_available = state
             .retained_product_events
@@ -1186,11 +1174,7 @@ impl SnapshotCoordinator {
             ))?;
         if !matches!(
             &record.submitted_operation,
-            Some(SubmittedOperationStatus::Accepted {
-                operation_id: stored_id,
-                kind: stored_kind,
-                ..
-            } | SubmittedOperationStatus::Running {
+            Some(SubmittedOperationStatus::Running {
                 operation_id: stored_id,
                 kind: stored_kind,
                 ..
@@ -1222,12 +1206,7 @@ impl SnapshotCoordinator {
         };
         for record in state.clients.values_mut() {
             let (stored_id, descriptor) = match record.submitted_operation.as_ref() {
-                Some(SubmittedOperationStatus::Accepted {
-                    operation_id,
-                    descriptor,
-                    ..
-                })
-                | Some(SubmittedOperationStatus::Running {
+                Some(SubmittedOperationStatus::Running {
                     operation_id,
                     descriptor,
                     ..
@@ -1252,8 +1231,7 @@ impl SnapshotCoordinator {
                 Some(SubmittedOperationStatus::Terminal { root_count, .. }) => {
                     *root_count = root_count.saturating_add(1);
                 }
-                Some(SubmittedOperationStatus::Accepted { .. })
-                | Some(SubmittedOperationStatus::Running { .. }) => {
+                Some(SubmittedOperationStatus::Running { .. }) => {
                     let durability = match source {
                         super::event::CodingAgentEvent::PromptFailed {
                             error: super::CodingSessionError::PartialCommit { .. },
@@ -1304,12 +1282,7 @@ impl SnapshotCoordinator {
                     Err(ClientRegistryError::TerminalCardinality { count: *root_count })
                 }
             }
-            Some(SubmittedOperationStatus::Accepted {
-                operation_id: stored_id,
-                descriptor: stored_descriptor,
-                ..
-            })
-            | Some(SubmittedOperationStatus::Running {
+            Some(SubmittedOperationStatus::Running {
                 operation_id: stored_id,
                 descriptor: stored_descriptor,
                 ..
@@ -1369,8 +1342,9 @@ fn control_rejection_reason(
         ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::Detached) => {
             CodingAgentControlRejectionReason::Detached
         }
-        ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration)
-        | ClientRegistryError::StaleClient => CodingAgentControlRejectionReason::StaleGeneration,
+        ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::StaleGeneration) => {
+            CodingAgentControlRejectionReason::StaleGeneration
+        }
         ClientRegistryError::Lifecycle(CodingAgentLifecycleRejection::RuntimeShutDown) => {
             CodingAgentControlRejectionReason::RuntimeShutDown
         }
@@ -1380,16 +1354,12 @@ fn control_rejection_reason(
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ClientRegistryError {
-    #[error("stale client connection")]
-    StaleClient,
     #[error("lifecycle rejection: {0}")]
     Lifecycle(CodingAgentLifecycleRejection),
     #[error("client capacity exceeded: {limit}")]
     ClientCapacityExceeded { limit: usize },
     #[error("draft queue capacity exceeded: {limit}")]
     QueueCapacityExceeded { limit: usize },
-    #[error("accepted receipt capacity exceeded: {limit}")]
-    ReceiptCapacityExceeded { limit: usize },
     #[error("invalid client input")]
     InvalidInput,
     #[error("submitted operation transition regressed")]

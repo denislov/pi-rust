@@ -1283,13 +1283,6 @@ fn client_reconnect_source_uses_only_the_atomic_replay_live_boundary() {
 #[test]
 fn client_errors_have_stable_non_overlapping_codes() {
     assert_eq!(
-        CodingSessionError::StaleClientConnection {
-            client_id: "c".into()
-        }
-        .code(),
-        "stale_client_connection"
-    );
-    assert_eq!(
         CodingSessionError::SubmissionPreparationBusy.code(),
         "submission_preparation_busy"
     );

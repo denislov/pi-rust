@@ -81,8 +81,6 @@ pub enum CodingSessionError {
         requested: String,
         supported: String,
     },
-    #[error("stale client connection: {client_id}")]
-    StaleClientConnection { client_id: String },
     #[error("submission preparation is busy")]
     SubmissionPreparationBusy,
     #[error("prepared submission draft no longer matches")]
@@ -115,7 +113,6 @@ impl CodingSessionError {
             Self::Busy { .. } => "busy",
             Self::EventStreamLag { .. } => "event_stream_lag",
             Self::UnsupportedProtocolVersion { .. } => "unsupported_protocol_version",
-            Self::StaleClientConnection { .. } => "stale_client_connection",
             Self::SubmissionPreparationBusy => "submission_preparation_busy",
             Self::SubmissionDraftMismatch => "submission_draft_mismatch",
             Self::ClientCapacityExceeded { .. } => "client_capacity_exceeded",
@@ -160,8 +157,7 @@ impl From<CodingSessionError> for CliError {
             version @ CodingSessionError::UnsupportedProtocolVersion { .. } => {
                 CliError::SessionFailure(version.to_string())
             }
-            other @ (CodingSessionError::StaleClientConnection { .. }
-            | CodingSessionError::SubmissionPreparationBusy
+            other @ (CodingSessionError::SubmissionPreparationBusy
             | CodingSessionError::SubmissionDraftMismatch
             | CodingSessionError::ClientCapacityExceeded { .. }
             | CodingSessionError::Lifecycle { .. }) => CliError::SessionFailure(other.to_string()),
