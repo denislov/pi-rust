@@ -37,6 +37,7 @@ mod scheduler;
 mod self_healing_edit_flow;
 mod self_healing_edit_service;
 mod session_connection;
+mod session_control;
 mod session_lifecycle;
 mod session_log;
 mod session_service;
@@ -155,6 +156,7 @@ pub(crate) use self_healing_edit_flow::{
     SelfHealingEditOptions, SelfHealingEditRepairStrategy,
 };
 use self_healing_edit_service::SelfHealingEditService;
+use session_control::PromptControlCleanupGuard;
 use session_log::event::PersistedDelegationStatus;
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use session_service::{
@@ -191,49 +193,6 @@ pub struct CodingAgentSession {
     client_service: ClientService,
     pending_submission: Option<PendingSubmissionLease>,
     startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
-}
-
-#[derive(Debug)]
-#[must_use = "dropping PromptControlCleanupGuard clears exact Prompt control ownership"]
-struct PromptControlCleanupGuard {
-    cleanup: PromptControlCleanup,
-    snapshot_coordinator: Arc<SnapshotCoordinator>,
-    operation_id: String,
-    channel_generation: PromptControlGeneration,
-    armed: bool,
-}
-
-impl PromptControlCleanupGuard {
-    fn new(
-        cleanup: PromptControlCleanup,
-        snapshot_coordinator: Arc<SnapshotCoordinator>,
-        operation_id: String,
-        channel_generation: PromptControlGeneration,
-    ) -> Self {
-        Self {
-            cleanup,
-            snapshot_coordinator,
-            operation_id,
-            channel_generation,
-            armed: true,
-        }
-    }
-
-    fn cleanup(&mut self) {
-        if !self.armed {
-            return;
-        }
-        self.snapshot_coordinator
-            .clear_prompt_control_if(&self.operation_id, self.channel_generation);
-        self.cleanup.clear_if_generation(self.channel_generation);
-        self.armed = false;
-    }
-}
-
-impl Drop for PromptControlCleanupGuard {
-    fn drop(&mut self) {
-        self.cleanup();
-    }
 }
 
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
@@ -319,15 +278,6 @@ fn replay_derived_owner_state(
 }
 
 impl CodingAgentSession {
-    pub(crate) fn prompt_control_handle(
-        &mut self,
-    ) -> Result<PromptControlHandle, CodingSessionError> {
-        IntentRouter::prompt_control_handle(
-            &mut self.operation_control,
-            ControlIntent::PromptControl,
-        )
-    }
-
     fn export_current_inner(
         &self,
         options: ExportOptions,
