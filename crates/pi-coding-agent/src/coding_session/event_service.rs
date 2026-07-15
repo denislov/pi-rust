@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use futures::future::{BoxFuture, FutureExt};
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -28,10 +26,12 @@ const EVENT_RETAINED_CAPACITY: usize = 128;
 pub(crate) struct EventService {
     product_sender: broadcast::Sender<ProductEvent>,
     snapshot_coordinator: Arc<SnapshotCoordinator>,
+    #[cfg(test)]
     channel_capacity: usize,
     retained_capacity: usize,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EventBackpressureStatus {
     pub(crate) channel_capacity: usize,
@@ -48,8 +48,10 @@ pub(crate) struct EventBackpressureStatus {
 /// through `receiver`, never accidentally omitted between two calls.
 #[derive(Debug)]
 pub(crate) struct ProductEventRecoveryBoundary {
+    #[cfg(test)]
     pub(crate) requested_after: ProductEventSequence,
     pub(crate) replayed_through: ProductEventSequence,
+    #[cfg(test)]
     pub(crate) oldest_available: Option<ProductEventSequence>,
     pub(crate) replay: Vec<ProductEvent>,
     pub(crate) receiver: ProductEventReceiver,
@@ -100,6 +102,7 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
 }
 
 impl EventService {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::with_snapshot_coordinator(SnapshotCoordinator::new())
     }
@@ -114,6 +117,7 @@ impl EventService {
         )
     }
 
+    #[cfg(test)]
     fn with_event_capacities(channel_capacity: usize, retained_capacity: usize) -> Self {
         Self::with_event_capacities_and_coordinator(
             channel_capacity,
@@ -132,6 +136,7 @@ impl EventService {
         Self {
             product_sender,
             snapshot_coordinator,
+            #[cfg(test)]
             channel_capacity,
             retained_capacity,
         }
@@ -163,11 +168,13 @@ impl EventService {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn current_product_sequence(&self) -> ProductEventSequence {
         let state = self.snapshot_coordinator.state.lock().unwrap();
         ProductEventSequence::new(state.next_event_sequence.saturating_sub(1))
     }
 
+    #[cfg(test)]
     pub(crate) fn backpressure_status(&self) -> EventBackpressureStatus {
         let state = self.snapshot_coordinator.state.lock().unwrap();
         EventBackpressureStatus {
@@ -212,6 +219,7 @@ impl EventService {
 
     /// Atomically establish a live receiver and copy the retained partition
     /// after `cursor`. No acknowledgement cursor is read or mutated here.
+    #[cfg(test)]
     pub(crate) fn recovery_boundary_after(
         &self,
         cursor: ProductEventSequence,
@@ -261,8 +269,10 @@ impl EventService {
             .cloned()
             .collect();
         ProductEventRecovery::Ready(ProductEventRecoveryBoundary {
+            #[cfg(test)]
             requested_after: cursor,
             replayed_through,
+            #[cfg(test)]
             oldest_available,
             replay,
             receiver,
@@ -322,6 +332,7 @@ impl EventService {
         product_event
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_agent_event(
         &self,
         context: &AgentEventMappingContext,
@@ -651,6 +662,7 @@ impl EventService {
         });
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_agent_team_aborted(
         &self,
         operation_id: impl Into<String>,
