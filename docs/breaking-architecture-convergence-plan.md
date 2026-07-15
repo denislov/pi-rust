@@ -20,7 +20,7 @@
 | M3 | 进行中 | WP3.1 event/manifest decoder 已改为 explicit schema/version dispatch；v2 event 缺失 `session_sequence` 仍可兼容 replay，unknown decoder fail closed 并提供恢复建议（`88ddab4`）；WP3.2 已强制 durable sequence 从 1 连续递增，legacy 无 sequence 行按逻辑行号归一化（`b6e1218`） | 定义 append CAS/idempotency 与 partial commit 合同，扩展故障注入矩阵 |
 | M4 | 进行中 | WP4.3 已移除 `capability_snapshot.rs` 文件级 dead-code suppression，删除无 production consumer 的 plugin actor、tool-name enumeration、filesystem/shell require helpers 及测试 helper（`e2f3265`）；WP4.2 删除未实现的 `CancelMatchingOperations` revocation mode，public event/protocol 只保留真实支持的 `FutureOnly`（`0730e44`） | 审计 raw service capability escape，完成 generation/revocation 与 snapshot audit 统一 |
 | M5 | 进行中 | WP5.1 已删除 `CodingAgentProductEvent` 顶层 deprecated `family`/`kind` 字符串字段，public wire 仅保留 typed event family/payload kind；测试消费者改为 typed family + kind 查询（`1f09f1f`）。WP5.2 public snapshot cursor 已增加稳定 `stream_id`（`6f3df8c`）、`snapshot_protocol_major`（`134e374`）并统一使用 camelCase wire shape；fresh snapshot 与 reconnect replay 统一填充 session identity/version，RPC prompt 已删除裸 `afterSnapshotSequence` 并要求完整 cursor（`b03a0bc`）；canonical `reconnect_from_cursor` 已校验 stream/major 并复用 atomic recovery boundary（`ea11a09`）。WP5.3 RPC queue 已拆分 data/control lanes，overflow recovery 优先于已满的 data lane（`8faa190`） | 继续定义 terminal/control 优先级、shutdown drain 和 reconnect overlap，并完成剩余 adapter 收敛 |
-| M6-M7 | M6 进行中；M7 未开始 | M6/WP6.2 已将 query、dispatcher、connection/snapshot/shutdown、construction/static lifecycle、submission、prompt control 与 operation admission/capability helpers 分别移入专门 owner modules；`coding_session/mod.rs` production owner 已降至 867 行。WP6.3 已清除无生产消费者的 replay seam，并将原 5115 行内联 session tests 移入显式 `cfg(test)` 的 `session_tests.rs`（`bf300d7`），production source inventory 不再混入测试调用。 | 继续迁移 operation-specific helpers，完成 facade/dead-code/fallback 审计与剩余 test-support 收敛；随后进入 release train |
+| M6-M7 | M6 进行中；M7 未开始 | M6/WP6.2 已将 query、dispatcher、connection/snapshot/shutdown、construction/static lifecycle、submission、prompt control 与 operation admission/capability helpers 分别移入专门 owner modules；`coding_session/mod.rs` 已降至 768 行。WP6.3 已将 5115 行 session tests 移入 `session_tests.rs`（`bf300d7`），并将 store failure injection、pending delegation fixture 与只读 test accessors 移入 `session_test_support.rs`（`d927360`）；production source inventory 不再混入测试调用或 fixture bridges。 | 继续迁移 operation-specific helpers，完成 facade/dead-code/fallback 审计；随后进入 release train |
 
 已提交检查点：
 
@@ -78,6 +78,7 @@
 - `61d6deb`：将 prompt-control facade 与 exact operation-id/channel-generation cleanup guard 移入 `coding_session/session_control.rs`；dispatcher bind/cleanup 与 control ownership 合同保持不变。
 - `aec0aa7`：将 operation admission、dynamic delegation-approval kind、operation ID、capability snapshot input、cwd/persistence 与 runtime/profile/plugin/delegation tool resolution 移入 `coding_session/operation_admission.rs`；dispatcher 只消费 frozen admission result。
 - `bf300d7`：将 `coding_session/mod.rs` 中 5115 行内联测试迁入独立 `session_tests.rs`，以文件内显式 `#[cfg(test)] mod tests` 保证 production source scans 剥离全部测试调用；主 owner 降至 867 行。
+- `d927360`：将 session-store failure injection、pending delegation fixture、persistent-session 与 capability-generation test accessors 移入 `session_test_support.rs`；源码 guard 改为检查实际 test-only owner，主 owner 降至 768 行。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -173,6 +174,12 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --test api_boundary_guards --test session_boundary_guards --test event_boundary_guards --no-fail-fast --quiet`：44 个 API/session/event source ownership guards 通过。
 - `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --no-fail-fast --quiet`：21 个 production adapter/runtime inventory guards 通过，独立测试文件未被计入 production adapter。
 - `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：session test-support 拆分后全量 coding-agent tests 通过（701 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）。
+- `cargo check -p pi-coding-agent`：`session_test_support.rs` fixture bridge 拆分后的 production crate 编译通过。
+- `cargo test -p pi-coding-agent --lib --no-fail-fast --quiet`：fixture bridge 拆分后的 701 个 lib tests 通过，1 个 ignored。
+- `cargo test -p pi-coding-agent --lib partial_commit --quiet`、`--lib pending_delegation --quiet`、`--lib capability_generation --quiet`：13 个 failure/delegation/generation 定向测试通过。
+- `cargo test -p pi-coding-agent --test interactive_sessions --quiet`：30 个 interactive fixture consumer tests 通过。
+- `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --no-fail-fast --quiet`：21 个 guards 通过，fixture bridges 各存在一次、直接 `cfg(test)` gated 且归属独立 owner。
+- `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：fixture bridge owner 拆分后全量 coding-agent tests 通过（701 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）。
 
 ## 激进方案决策
 
