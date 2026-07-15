@@ -1744,7 +1744,16 @@ fn delegated_child_flows_require_scheduler_lineage_admission() {
 
     let session_source = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
         .expect("read coding session source");
-    let session_production = production_source(&sanitize_rust_source(&session_source));
+    let dispatch_source = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/operation_dispatch.rs"),
+    )
+    .expect("read operation dispatch source");
+    let session_production = format!(
+        "{}\n{}",
+        production_source(&sanitize_rust_source(&session_source)),
+        production_source(&sanitize_rust_source(&dispatch_source))
+    );
     for required in [
         ".invoke_agent_inner(options, snapshot.operation_id.clone())",
         ".invoke_team_inner(options, snapshot.operation_id.clone())",
