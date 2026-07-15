@@ -161,6 +161,7 @@ pub(crate) use self_healing_edit_flow::{
 };
 use self_healing_edit_service::SelfHealingEditService;
 use session_control::PromptControlCleanupGuard;
+use session_lifecycle::{default_cwd, replay_derived_owner_state, session_cwd};
 use session_log::event::PersistedDelegationStatus;
 use session_log::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use session_service::{
@@ -197,86 +198,4 @@ pub struct CodingAgentSession {
     client_service: ClientService,
     pending_submission: Option<PendingSubmissionLease>,
     startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
-}
-
-fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
-    let cwd = options
-        .cwd()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(default_cwd);
-    let paths = crate::config::resolve_paths(&cwd);
-    PluginLoadOptions::new()
-        .with_discovery_root(paths.project_dir.join("plugins"), PluginSource::Project)
-        .with_discovery_root(paths.global_dir.join("plugins"), PluginSource::User)
-}
-
-fn profile_registry_for_options(
-    options: &CodingAgentSessionOptions,
-    session_service: Option<&SessionService>,
-) -> Result<ProfileRegistry, CodingSessionError> {
-    let cwd = options
-        .cwd()
-        .map(Path::to_path_buf)
-        .or_else(|| session_service.and_then(session_cwd))
-        .unwrap_or_else(default_cwd);
-    let paths = crate::config::resolve_paths(&cwd);
-    ProfileRegistry::load(
-        ProfileRegistryOptions::new()
-            .with_user_root(paths.global_dir)
-            .with_project_root(paths.project_dir),
-    )
-}
-
-fn session_cwd(session_service: &SessionService) -> Option<PathBuf> {
-    session_service
-        .replay()
-        .ok()
-        .and_then(|replay| replay.cwd.map(PathBuf::from))
-}
-
-fn option_default_agent_profile_id(options: &CodingAgentSessionOptions) -> ProfileId {
-    options
-        .default_agent_profile_id()
-        .cloned()
-        .unwrap_or_else(|| ProfileId::from("default"))
-}
-
-fn runtime_service_for_options(options: &CodingAgentSessionOptions) -> RuntimeService {
-    options
-        .ai_client()
-        .cloned()
-        .map(RuntimeService::with_ai_client)
-        .unwrap_or_else(RuntimeService::new)
-}
-
-fn default_cwd() -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-}
-
-struct ReplayDerivedOwnerState {
-    pending_delegation_confirmations: PendingDelegationConfirmationQueue,
-    startup_recovery_markers: Vec<StartupRecoveryMarker>,
-}
-
-fn replay_derived_owner_state(
-    session_service: &mut SessionService,
-) -> Result<ReplayDerivedOwnerState, CodingSessionError> {
-    let startup_recovery_markers = session_service.take_startup_recovery_markers();
-    let replay = session_service.replay()?;
-    let cwd = replay
-        .cwd
-        .as_deref()
-        .map(PathBuf::from)
-        .unwrap_or_else(default_cwd);
-    let pending_delegation_confirmations = PendingDelegationConfirmationQueue::from_pending(
-        replay
-            .pending_delegation_confirmations
-            .into_iter()
-            .map(|pending| pending_state_from_replay(pending, &cwd))
-            .collect::<Result<Vec<_>, _>>()?,
-    );
-    Ok(ReplayDerivedOwnerState {
-        pending_delegation_confirmations,
-        startup_recovery_markers,
-    })
 }
