@@ -341,17 +341,6 @@ pub fn find_template<'a>(
     templates.iter().find(|t| t.name == name)
 }
 
-pub fn print_diagnostics(diags: &[ResourceDiagnostic]) {
-    for d in diags {
-        eprintln!(
-            "resource {}: {} (code: {})",
-            d.path.display(),
-            d.message,
-            d.code
-        );
-    }
-}
-
 pub fn build_agent_resources(skills: Vec<Skill>, templates: Vec<PromptTemplate>) -> AgentResources {
     AgentResources {
         skills,

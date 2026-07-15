@@ -1,9 +1,9 @@
 mod support;
 
-use pi_coding_agent::api::{CliRunOptions, SessionRunOptions, builtin_tools, parse_args};
-use pi_coding_agent::request::{resolve_cli_context, resolve_prompt_request};
-use pi_coding_agent::runtime::PromptInvocation;
-use pi_coding_agent::session::ResolvedSessionTarget;
+use pi_coding_agent::api::{
+    CliRunOptions, PromptInvocation, ResolvedSessionTarget, SessionRunOptions, builtin_tools,
+    parse_args, resolve_cli_context, resolve_prompt_request,
+};
 use support::EnvGuard;
 
 #[test]

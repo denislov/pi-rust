@@ -7,19 +7,16 @@ use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
-use pi_coding_agent::api::parse_args;
-use pi_coding_agent::api::{PrintModeOptions, PromptInvocation, run_print_mode};
+use pi_coding_agent::api::{
+    PrintModeOptions, PromptInvocation, ResourceLoadOptions, ToolFilter, builtin_tools,
+    discover_context_files, filter_tools, load_cli_resources_with_options, parse_args,
+    parse_model_rotation, run_print_mode, select_model,
+};
 use pi_coding_agent::input::{
     ImageProcessingOptions, ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
     process_at_file_references_with_options, process_at_file_references_with_processing_options,
 };
 use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
-use pi_coding_agent::models::parse_model_rotation;
-use pi_coding_agent::resources::{
-    ResourceLoadOptions, discover_context_files, load_cli_resources_with_options,
-};
-use pi_coding_agent::runtime::select_model;
-use pi_coding_agent::tools::{ToolFilter, builtin_tools, filter_tools};
 use std::sync::{Arc, Mutex};
 use support::ProviderGuard;
 

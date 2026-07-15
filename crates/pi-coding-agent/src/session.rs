@@ -1,5 +1,4 @@
 use crate::error::CliError;
-use crate::runtime::SessionRunOptions;
 use std::path::{Path, PathBuf};
 
 pub fn encode_cwd(path: &Path) -> String {
@@ -53,13 +52,6 @@ pub enum ResolvedSessionTarget {
     OpenTarget(String),
     OpenOrCreateId(String),
     ForkTarget(String),
-}
-
-pub fn session_root_from_run_options(options: &SessionRunOptions) -> Result<PathBuf, CliError> {
-    match options.session_dir.as_ref() {
-        Some(root) => Ok(root.clone()),
-        None => resolve_session_dir(&options.cwd, None, None),
-    }
 }
 
 #[cfg(test)]

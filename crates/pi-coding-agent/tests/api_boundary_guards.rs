@@ -67,7 +67,7 @@ fn external_diagnostic_matcher_requires_code_primary_span_and_forbidden_surface(
     assert!(diagnostic_matches(&diagnostic, &wrong_code).is_err());
 }
 
-const FAIL_FIXTURES: [CompileFixture; 12] = [
+const FAIL_FIXTURES: [CompileFixture; 15] = [
     CompileFixture {
         category: "operation-dispatch",
         access_path: "api",
@@ -140,6 +140,24 @@ const FAIL_FIXTURES: [CompileFixture; 12] = [
         source: "flow_hidden.rs",
         expected: private(22, 36, "export_flow"),
     },
+    CompileFixture {
+        category: "legacy-root-args-module",
+        access_path: "root",
+        source: "args_root.rs",
+        expected: private_module(22, 26, "args"),
+    },
+    CompileFixture {
+        category: "legacy-root-error-module",
+        access_path: "root",
+        source: "error_root.rs",
+        expected: private_module(22, 27, "error"),
+    },
+    CompileFixture {
+        category: "legacy-root-prompt-options-module",
+        access_path: "root",
+        source: "prompt_options_root.rs",
+        expected: private_module(22, 36, "prompt_options"),
+    },
 ];
 
 const fn unresolved(
@@ -170,6 +188,23 @@ const fn private(column_start: u64, column_end: u64, symbol: &'static str) -> Ex
         forbidden_path: "pi_coding_agent",
         symbol,
         fragments: &["is private"],
+    }
+}
+
+const fn private_module(
+    column_start: u64,
+    column_end: u64,
+    symbol: &'static str,
+) -> ExpectedDiagnostic {
+    ExpectedDiagnostic {
+        code: "E0603",
+        line: 1,
+        column_start,
+        column_end,
+        forbidden: symbol,
+        forbidden_path: "pi_coding_agent",
+        symbol,
+        fragments: &["module", "is private"],
     }
 }
 
@@ -210,8 +245,8 @@ fn run_external_consumer_fixtures() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         expected_matrix.len(),
-        12,
-        "negative fixture matrix must independently cover four categories through three paths"
+        15,
+        "negative fixtures must cover internal contracts and retired root compatibility modules"
     );
 
     for fixture in FAIL_FIXTURES {
@@ -413,6 +448,33 @@ fn root_public_modules_are_marked_migration_private() {
         "root public modules should be documented as migration-private via #[doc(hidden)] while pi_coding_agent::api remains the stable facade:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn retired_root_compatibility_modules_stay_private() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let lib_source = fs::read_to_string(crate_root.join("src/lib.rs"))
+        .expect("pi-coding-agent lib.rs should be readable");
+
+    for module in [
+        "args",
+        "error",
+        "models",
+        "print_mode",
+        "prompt_options",
+        "request",
+        "resources",
+        "session",
+    ] {
+        assert!(
+            lib_source.contains(&format!("mod {module};")),
+            "retired root compatibility module `{module}` should remain private"
+        );
+        assert!(
+            !lib_source.contains(&format!("pub mod {module};")),
+            "retired root compatibility module `{module}` must not become public again"
+        );
+    }
 }
 
 #[test]

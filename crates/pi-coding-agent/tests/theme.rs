@@ -142,7 +142,7 @@ fn reports_missing_required_tokens() {
 
 #[test]
 fn resource_loader_parses_ts_theme_format_and_reports_missing_tokens() {
-    use pi_coding_agent::resources::{ResourceLoadOptions, load_cli_resources_with_options};
+    use pi_coding_agent::api::{ResourceLoadOptions, load_cli_resources_with_options};
     use pi_coding_agent::theme::DARK_JSON;
     use std::fs;
     let temp = tempfile::tempdir().unwrap();
