@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::fs;
 use std::future::Future;
 use std::path::{Component, Path, PathBuf};
@@ -8,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use mlua::{Function, Lua, LuaSerdeExt, Table, Value, Variadic};
 use pi_agent_core::api::AgentTool;
-use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use serde::Deserialize;
 
 use super::CodingSessionError;
@@ -186,6 +184,7 @@ impl PluginLoadOptions {
         Self::default()
     }
 
+    #[cfg(test)]
     pub(crate) fn with_candidate(mut self, candidate: PluginLoadCandidate) -> Self {
         self.candidates.push(candidate);
         self
@@ -239,10 +238,12 @@ impl PluginLoadContext {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn outcome(&self) -> Option<&PluginLoadOutcome> {
         self.outcome.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn loaded_plugin_service(&self) -> Option<&PluginService> {
         self.loaded_plugin_service.as_ref()
     }
@@ -422,6 +423,7 @@ impl PluginLoadFlow {
         Ok(Self { flow })
     }
 
+    #[cfg(test)]
     pub(crate) fn node_ids() -> &'static [&'static str] {
         PLUGIN_LOAD_NODE_IDS
     }
@@ -431,17 +433,6 @@ impl PluginLoadFlow {
         ctx: &mut PluginLoadContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
-    }
-
-    pub(crate) async fn run_with_options(
-        &self,
-        ctx: &mut PluginLoadContext,
-        options: FlowRunOptions,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow
-            .run_with_options(ctx, options)
-            .await
-            .map_err(flow_error)
     }
 }
 
