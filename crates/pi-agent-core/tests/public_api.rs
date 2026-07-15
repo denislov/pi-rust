@@ -11,8 +11,9 @@ use pi_agent_core::api::{
     ShellCaptureResult, ShouldStopAfterTurnContext, ShouldStopAfterTurnHook, Skill, SourceTag,
     SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill, ThinkingLevel,
     ToolExecutionMode, ToolFn, ToolUpdateCallback, TransformContextHook, TruncationLimit,
-    TruncationResult, format_prompt_template_invocation, format_size, format_skill_invocation,
-    format_skills_for_system_prompt, load_prompt_templates, load_skills,
+    TruncationResult, assemble_context, bash_execution_to_text, convert_to_context,
+    default_convert_to_llm, format_prompt_template_invocation, format_size,
+    format_skill_invocation, format_skills_for_system_prompt, load_prompt_templates, load_skills,
     load_sourced_prompt_templates, load_sourced_skills, parse_command_args, parse_frontmatter,
     sanitize_binary_output, substitute_args, truncate_head, truncate_line, truncate_tail,
 };
@@ -65,6 +66,21 @@ fn low_level_runtime_symbols_are_importable_from_api_facade() {
     fn accepts_traits<T: ExecutionEnv + FileSystem + Shell>(_env: &T) {}
     let env = InMemoryExecutionEnv::new(".");
     accepts_traits(&env);
+}
+
+#[test]
+fn message_conversion_helpers_are_importable_from_api_facade() {
+    let messages = vec![AgentMessage::UserText {
+        message_id: "user_1".into(),
+        text: "hello".into(),
+    }];
+    let resources = AgentResources::default();
+    let llm_messages = default_convert_to_llm(&messages, &resources);
+    let assembled = assemble_context(&None, &messages, llm_messages, &[], &resources);
+    let converted = convert_to_context(&None, &messages, &[], &resources);
+
+    assert_eq!(assembled.messages, converted.messages);
+    assert!(bash_execution_to_text("pwd", "", Some(0), false, false, None).contains("`pwd`"));
 }
 
 #[test]

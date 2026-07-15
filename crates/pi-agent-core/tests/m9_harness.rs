@@ -71,8 +71,7 @@ fn custom_messages_convert_to_context_and_session_wire_shape() {
         },
     ];
 
-    let ctx =
-        pi_agent_core::convert::convert_to_context(&None, &messages, &[], &Default::default());
+    let ctx = pi_agent_core::api::convert_to_context(&None, &messages, &[], &Default::default());
     assert_eq!(ctx.messages.len(), 3);
     let text = match &ctx.messages[0] {
         pi_ai::api::Message::User { content } => match &content[0] {

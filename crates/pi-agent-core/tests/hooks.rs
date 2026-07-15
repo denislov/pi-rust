@@ -390,7 +390,7 @@ async fn prepare_next_turn_can_replace_messages_before_follow_up_turn() {
         hook_calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
             if ctx.turn == 1 {
-                Ok(Some(pi_agent_core::hooks::AgentLoopTurnUpdate {
+                Ok(Some(pi_agent_core::api::AgentLoopTurnUpdate {
                     messages: Some(vec![AgentMessage::UserText {
                         message_id: "prepared".into(),
                         text: "prepared context".into(),

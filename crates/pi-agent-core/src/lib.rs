@@ -1,24 +1,17 @@
-#[doc(hidden)]
-pub mod agent;
+mod agent;
 mod agent_turn_flow;
 mod ai_runtime;
 mod branch_summary;
 mod compaction;
-#[doc(hidden)]
-pub mod convert;
-#[doc(hidden)]
-pub mod env;
-#[doc(hidden)]
-pub mod errors;
+mod convert;
+mod env;
+mod errors;
 mod flow;
-#[doc(hidden)]
-pub mod harness;
-#[doc(hidden)]
-pub mod hooks;
+mod harness;
+mod hooks;
 mod loop_runtime;
 mod proxy;
-#[doc(hidden)]
-pub mod queues;
+mod queues;
 mod resources;
 mod session_context;
 mod shell_output;
@@ -55,6 +48,9 @@ pub mod api {
     pub use crate::compaction::summarize::{
         build_summarization_context, serialize_conversation, summarize,
         summarize_with_provider_streamer,
+    };
+    pub use crate::convert::{
+        assemble_context, bash_execution_to_text, convert_to_context, default_convert_to_llm,
     };
     pub use crate::env::{
         ExecOptions, ExecutionEnv, ExecutionOutput, FileInfo, FileKind, FileSystem,
