@@ -20,7 +20,7 @@
 | M3 | 进行中 | WP3.1 event/manifest decoder 已改为 explicit schema/version dispatch；v2 event 缺失 `session_sequence` 仍可兼容 replay，unknown decoder fail closed 并提供恢复建议（`88ddab4`）；WP3.2 已强制 durable sequence 从 1 连续递增，legacy 无 sequence 行按逻辑行号归一化（`b6e1218`） | 定义 append CAS/idempotency 与 partial commit 合同，扩展故障注入矩阵 |
 | M4 | 进行中 | WP4.3 已移除 `capability_snapshot.rs` 文件级 dead-code suppression，删除无 production consumer 的 plugin actor、tool-name enumeration、filesystem/shell require helpers 及测试 helper（`e2f3265`）；WP4.2 删除未实现的 `CancelMatchingOperations` revocation mode，public event/protocol 只保留真实支持的 `FutureOnly`（`0730e44`） | 审计 raw service capability escape，完成 generation/revocation 与 snapshot audit 统一 |
 | M5 | 进行中 | WP5.1 已删除 `CodingAgentProductEvent` 顶层 deprecated `family`/`kind` 字符串字段，public wire 仅保留 typed event family/payload kind；测试消费者改为 typed family + kind 查询（`1f09f1f`）。WP5.2 public snapshot cursor 已增加稳定 `stream_id`（`6f3df8c`）、`snapshot_protocol_major`（`134e374`）并统一使用 camelCase wire shape；fresh snapshot 与 reconnect replay 统一填充 session identity/version，RPC prompt 已删除裸 `afterSnapshotSequence` 并要求完整 cursor（`b03a0bc`）；canonical `reconnect_from_cursor` 已校验 stream/major 并复用 atomic recovery boundary（`ea11a09`）。WP5.3 RPC queue 已拆分 data/control lanes，overflow recovery 优先于已满的 data lane（`8faa190`） | 继续定义 terminal/control 优先级、shutdown drain 和 reconnect overlap，并完成剩余 adapter 收敛 |
-| M6-M7 | M6 进行中；M7 未开始 | M6/WP6.2 已将 `CodingAgentSession` 的 capabilities/view/profile/plugin query slice 移入独立 `session_view.rs`，保持 query admission 和 runtime owner 不变（`c92f77a`）。WP6.3 已清除一个无生产消费者的 `ProductEventReplayHandle` compatibility/test seam，保留真实 `recovery_boundary_after_for_client` 覆盖（`a6982fd`） | 继续拆分 operation dispatch/lifecycle slices，完成 facade deletion 和 test-support 收敛；随后进入 release train |
+| M6-M7 | M6 进行中；M7 未开始 | M6/WP6.2 已将 `CodingAgentSession` 的 capabilities/view/profile/plugin query slice 移入独立 `session_view.rs`（`c92f77a`），并将 read-only sync dispatcher 移入 `operation_dispatch.rs`（`927a04b`）；query/scheduler admission 和唯一 `run` facade 保持不变。WP6.3 已清除一个无生产消费者的 `ProductEventReplayHandle` compatibility/test seam，保留真实 `recovery_boundary_after_for_client` 覆盖（`a6982fd`） | 继续迁移 sync-mutable/async dispatch 与 lifecycle slices，完成 facade deletion 和 test-support 收敛；随后进入 release train |
 
 已提交检查点：
 
@@ -68,6 +68,8 @@
 - `b140574`：删除无生产消费者的 `ClientService::mark_terminal/acknowledge/detach` pass-through，移除 `CodingAgentSession::load_plugins` broad wrapper，测试改用 canonical `run_operation(Operation::PluginLoad)`；同时将 scheduler/test-only constructors 收窄到 `cfg(test)`。
 - `5639a39`：删除不可达 `SubmittedOperationStatus::Accepted`、public `Accepted` status、`StaleClient`/`ReceiptCapacityExceeded`/`StaleClientConnection` errors、无调用 `validate_handle` 及未消费 snapshot acknowledged projection；保留真实 `Running -> Terminal` 与 shutdown recovery contract。
 - `c92f77a`：将 `CodingAgentSession` capabilities/view/profile/plugin query methods 移入 `coding_session/session_view.rs`，减少 `mod.rs` owner 集中度并保持 stable facade 不变。
+- `927a04b`：将 `run_sync_operation` read-only dispatcher 移入 `coding_session/operation_dispatch.rs`，同步 capability-aware plugin command 与 scheduler admission guards。
+- `d69d14a`：扩展 intent-router admission 源码 guard，使 canonical dispatcher 计数覆盖独立 `operation_dispatch.rs`。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -120,6 +122,9 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --test public_api --quiet`：47 个 public API/query/snapshot tests 通过，验证 session view slice 拆分后的 facade 行为。
 - `cargo check -p pi-coding-agent`：`session_view.rs` 模块拆分后的 production crate 编译通过。
 - `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：query slice 拆分及源码 guard 修正后全量 coding-agent tests 通过（701 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）。
+- `cargo test -p pi-coding-agent --lib run_sync_operation --quiet`：4 个 read-only sync dispatch tests 通过。
+- `cargo test -p pi-coding-agent --test api_boundary_guards --quiet`：10 个 stable facade/dispatcher boundary tests 通过。
+- `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：sync dispatcher 拆分与 admission guards 修正后全量 coding-agent tests 通过（701 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）。
 
 ## 激进方案决策
 
