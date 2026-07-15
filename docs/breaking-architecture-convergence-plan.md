@@ -18,9 +18,9 @@
 | M1 | 完成 | WP1.1/WP1.2 已完成；scoped provider runtime、单一 agent loop、lower-level facade 收窄、`pi-coding-agent` root deprecated re-export 删除 | 保持 facade boundary 不回退 |
 | M2 | 进行中 | WP2.1 admission descriptor 已统一 class/dispatch/kind 合同（`c3df909`），admission record 已保存 operation identity、capability generation 和 root/child lineage（`e4c8b2a`）；WP2.2 scheduler core 已接入 canonical dispatchers，提供 typed rejection（`68cc0dc`、`788238d`）；prompt/compact/async vertical slice 已迁移（`4e8515b`）；invocation/delegation 与 profile/runtime slice 已由 canonical operation 集成测试覆盖，delegated child operation 已进入 scheduler lineage admission（`60b61c1`） | 完成 workflow/control 与 session-navigation slices，扩展 child permit 到 cancellation/terminal association |
 | M3 | 进行中 | WP3.1 event/manifest decoder 已改为 explicit schema/version dispatch；v2 event 缺失 `session_sequence` 仍可兼容 replay，unknown decoder fail closed 并提供恢复建议（`88ddab4`）；WP3.2 已强制 durable sequence 从 1 连续递增，legacy 无 sequence 行按逻辑行号归一化（`b6e1218`） | 定义 append CAS/idempotency 与 partial commit 合同，扩展故障注入矩阵 |
-| M4 | 进行中 | WP4.3 已移除 `capability_snapshot.rs`、`event_service.rs`、`flow_service.rs` 及 plugin/branch-summary/manual-compaction/agent-invocation/prompt/self-healing Flow 文件级 dead-code suppression；无 production consumer 的 capability/Flow 表面已删除，仅测试使用的构造、观察、取消验证与 execution-env adapters 精确限制为 `cfg(test)`（`e2f3265`、`f36af38`、`4b52c50`、`dde44da`、`f8b86af`、`163928f`、`3645313`、`68c210d`、`ac4a047`）。WP4.2 删除未实现的 `CancelMatchingOperations` revocation mode（`0730e44`）。 | 继续逐 owner 移除 file-level suppression，审计 raw service capability escape，完成 generation/revocation 与 snapshot audit 统一 |
+| M4 | 进行中 | WP4.3 已移除 capability/event/flow/client-projection 及各 operation Flow 的文件级 dead-code suppression；无 production consumer 的 capability/Flow/client 表面已删除，仅测试使用的构造、观察、取消验证与 execution-env adapters 精确限制为 `cfg(test)`。旧 `ClientConnection`/`SubmittedOperation` 投影模型及 legacy connector 已由 SnapshotCoordinator/public connection 合同取代并删除（`3208364`）。WP4.2 删除未实现的 `CancelMatchingOperations` revocation mode（`0730e44`）。 | 继续逐 owner 移除 file-level suppression，审计 raw service capability escape，完成 generation/revocation 与 snapshot audit 统一 |
 | M5 | 进行中 | WP5.1 已删除 `CodingAgentProductEvent` 顶层 deprecated `family`/`kind` 字符串字段，public wire 仅保留 typed event family/payload kind；测试消费者改为 typed family + kind 查询（`1f09f1f`）。WP5.2 public snapshot cursor 已增加稳定 `stream_id`（`6f3df8c`）、`snapshot_protocol_major`（`134e374`）并统一使用 camelCase wire shape；fresh snapshot 与 reconnect replay 统一填充 session identity/version，RPC prompt 已删除裸 `afterSnapshotSequence` 并要求完整 cursor（`b03a0bc`）；canonical `reconnect_from_cursor` 已校验 stream/major 并复用 atomic recovery boundary（`ea11a09`）。WP5.3 RPC queue 已拆分 data/control lanes，overflow recovery 优先于已满的 data lane（`8faa190`） | 继续定义 terminal/control 优先级、shutdown drain 和 reconnect overlap，并完成剩余 adapter 收敛 |
-| M6-M7 | M6 进行中；M7 未开始 | M6/WP6.2 的 session facade/module split 已覆盖 query、dispatcher、connection、lifecycle、submission、control、admission/capability、prompt 与其余 operation helpers；construction options、profile/plugin/runtime resolution、cwd 与 replay-derived owner state 也已归入 `session_lifecycle.rs`（`92a0920`）。`coding_session/mod.rs` 现为 201 行，仅保留 module graph、facade exports/import aliases 与 session state layout。WP6.3 已将 session tests 与 fixture bridges 分离到独立 test-only owners。 | 执行 dead-code suppression/hidden fallback/facade 完成审计；随后生成 API diff/migration guide 并进入 release train |
+| M6-M7 | M6 进行中；M7 未开始 | M6/WP6.2 的 session facade/module split 已覆盖 query、dispatcher、connection、lifecycle、submission、control、admission/capability、prompt 与其余 operation helpers；construction options、profile/plugin/runtime resolution、cwd 与 replay-derived owner state 也已归入 `session_lifecycle.rs`（`92a0920`）。`coding_session/mod.rs` 仅保留 module graph、facade exports/import aliases 与 session state layout；legacy internal client facade、submission projection 与无消费者 ClientService pass-through 已删除（`3208364`）。WP6.3 已将 session tests 与 fixture bridges 分离到独立 test-only owners。 | 完成剩余 session-log/prompt suppression、hidden fallback 与 facade 审计；随后生成 API diff/migration guide 并进入 release train |
 
 已提交检查点：
 
@@ -90,6 +90,7 @@
 - `3645313`：移除 `prompt_flow.rs` file-level dead-code suppression；node-id ledger 与 cancellation/max-step test execution seam 精确限制为 `cfg(test)`，production graph 继续只暴露 canonical `run`。
 - `68c210d`：移除 `self_healing_edit_flow.rs` file-level dead-code suppression；execution-env check/edit adapters、check-runner injection 与 diagnostics observer 精确限制为 `cfg(test)`，保留 production `EditOperations`、默认 check runner 和工具调用路径。
 - `ac4a047`：移除 `flow_service.rs` file-level dead-code suppression；production 编译未暴露本地 dead code，证明当前 service/graph runners 均有真实消费者，无需引入 item-level例外。
+- `3208364`：移除 `client_projection.rs` file-level dead-code suppression，并沿消费者链删除已被 SnapshotCoordinator/public connection 替代的内部 `ClientConnection`、`SubmittedOperation`、legacy `connect_client`、两个无消费者 ClientService pass-through 及 6 个只验证死表面的测试；`set_prompt_draft` fixture seam 精确限制为 `cfg(test)`。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -240,6 +241,10 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --lib flow_service --quiet`：28 个 Flow orchestration tests 通过。
 - `cargo test -p pi-coding-agent --test event_boundary_guards --test product_runtime_boundary_guards --test session_boundary_guards --no-fail-fast --quiet`：55 个 event/runtime/session ownership guards 通过。
 - `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：flow-service blanket suppression 删除后全量 coding-agent tests 通过（701 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）。
+- `cargo check -p pi-coding-agent`：删除 legacy client projection chain 后 production crate 编译通过，无 client-projection/client-service dead-code/unused warning。
+- `cargo test -p pi-coding-agent --lib client_projection --quiet`、`--lib snapshot_coordinator --quiet`：11 个 projection/coordinator focused tests 通过。
+- `cargo test -p pi-coding-agent --test public_api --test product_runtime_boundary_guards --test session_boundary_guards --no-fail-fast --quiet`：80 个 public/runtime/session boundary tests 通过，method ledger 明确禁止 `connect_client` 回归。
+- `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：legacy client projection 删除后全量 coding-agent tests 通过（695 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）；减少的 6 个测试均只覆盖已删除内部模型/pass-through。
 
 ## 激进方案决策
 
@@ -532,6 +537,7 @@ release/0.2-rc                  release stabilization branch
 
 - 移除 `capability_snapshot.rs` 文件级 `allow(dead_code)`，逐符号证明保留或删除。
 - 移除 `event_service.rs`、`flow_service.rs` 及 plugin-load、branch-summary、manual-compaction、agent-invocation、prompt、self-healing Flow 文件级 suppression；测试构造/观察/取消验证/adapters 使用 `cfg(test)`，无消费者的平行执行入口直接删除或收窄。
+- 移除 `client_projection.rs` 文件级 suppression；只保留 SnapshotCoordinator 和 public connection 实际消费的 snapshot/cursor/draft/identity 类型，删除平行 client/submission state model 与 legacy connector。
 - 保留已有 Lua/runtime 消费者的 tool/command/hook/UI/keybind 能力。
 - Flow extension 需要单独产品决策：支持则限定声明式 extension point；不支持则先移除 loader/manifest/diagnostic consumer，再删除 trait。
 
