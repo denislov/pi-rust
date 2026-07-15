@@ -8,13 +8,11 @@ use pi_ai::api::{
     StopReason, StreamOptions,
 };
 use pi_coding_agent::api::{
-    PrintModeOptions, PromptInvocation, ResourceLoadOptions, ToolFilter, builtin_tools,
-    discover_context_files, filter_tools, load_cli_resources_with_options, parse_args,
-    parse_model_rotation, run_print_mode, select_model,
-};
-use pi_coding_agent::input::{
-    ImageProcessingOptions, ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
-    process_at_file_references_with_options, process_at_file_references_with_processing_options,
+    ImageProcessingOptions, ImageResizeOptions, PrintModeOptions, PromptInvocation,
+    ResourceLoadOptions, ToolFilter, builtin_tools, discover_context_files, filter_tools,
+    load_cli_resources_with_options, merge_stdin_prompt, parse_args, parse_model_rotation,
+    process_at_file_references, process_at_file_references_with_options,
+    process_at_file_references_with_processing_options, run_print_mode, select_model,
 };
 use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
 use std::sync::{Arc, Mutex};

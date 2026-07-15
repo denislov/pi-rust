@@ -460,6 +460,7 @@ fn retired_root_compatibility_modules_stay_private() {
         "args",
         "config",
         "error",
+        "input",
         "models",
         "print_mode",
         "prompt_options",

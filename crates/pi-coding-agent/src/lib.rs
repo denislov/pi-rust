@@ -14,8 +14,7 @@ use crate::tools::builtin_tools;
 mod args;
 mod config;
 mod error;
-#[doc(hidden)]
-pub mod input;
+mod input;
 #[doc(hidden)]
 pub mod interactive;
 mod list_models;
@@ -88,6 +87,11 @@ pub mod api {
         load_config, resolve_paths,
     };
     pub use crate::error::CliError;
+    pub use crate::input::{
+        ImageAttachment, ImageProcessingOptions, ImageResizeOptions, ProcessedPromptInput,
+        merge_stdin_prompt, process_at_file_references, process_at_file_references_with_options,
+        process_at_file_references_with_processing_options,
+    };
     pub use crate::models::{ModelRotation, ModelRotationEntry, parse_model_rotation};
     pub use crate::print_mode::{PrintModeOptions, run_print_mode};
     pub use crate::prompt_options::PromptRunOptions;
