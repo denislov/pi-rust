@@ -1,12 +1,10 @@
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
 use pi_agent_core::api::AgentMessage;
 use pi_agent_core::api::summarize_with_provider_streamer;
-use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use pi_ai::api::{AssistantMessage, ContentBlock, StreamOptions};
 
 use super::CodingSessionError;
@@ -14,7 +12,9 @@ use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::plugin_service::PluginService;
 use super::prompt::{PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
 use super::runtime_service::{RuntimeService, scoped_provider_streamer_for_runtime};
-use super::session_log::event::{DiagnosticLevel, PersistedContentBlock, SessionEventEnvelope};
+#[cfg(test)]
+use super::session_log::event::SessionEventEnvelope;
+use super::session_log::event::{DiagnosticLevel, PersistedContentBlock};
 use super::session_log::replay::{ReplayLeaf, SessionReplay, ToolCallStatus, TranscriptItem};
 
 const DEFAULT_ACTION: &str = "default";
@@ -270,10 +270,12 @@ impl BranchSummaryContext {
         &self.turn_id
     }
 
+    #[cfg(test)]
     pub(crate) fn outcome(&self) -> Option<&BranchSummaryOutcome> {
         self.outcome.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn pending_session_events(&self) -> &[SessionEventEnvelope] {
         self.transaction
             .as_ref()
@@ -492,6 +494,7 @@ impl BranchSummaryFlow {
         Ok(Self { flow })
     }
 
+    #[cfg(test)]
     pub(crate) fn node_ids() -> &'static [&'static str] {
         BRANCH_SUMMARY_NODE_IDS
     }
@@ -501,17 +504,6 @@ impl BranchSummaryFlow {
         ctx: &mut BranchSummaryContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
-    }
-
-    pub(crate) async fn run_with_options(
-        &self,
-        ctx: &mut BranchSummaryContext,
-        options: FlowRunOptions,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow
-            .run_with_options(ctx, options)
-            .await
-            .map_err(flow_error)
     }
 }
 
