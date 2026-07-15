@@ -1,10 +1,10 @@
-#![allow(dead_code)]
-
 use std::future::Future;
 use std::pin::Pin;
 
 use futures::StreamExt;
-use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+#[cfg(test)]
+use pi_agent_core::api::FlowRunOptions;
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use pi_agent_core::api::{AgentEvent, AgentMessage, AgentStream};
 
 use super::CodingSessionError;
@@ -127,6 +127,7 @@ impl PromptTurnFlow {
         Ok(Self { flow })
     }
 
+    #[cfg(test)]
     pub(crate) fn node_ids() -> &'static [&'static str] {
         PROMPT_TURN_NODE_IDS
     }
@@ -138,6 +139,7 @@ impl PromptTurnFlow {
         self.flow.run(ctx).await.map_err(flow_error)
     }
 
+    #[cfg(test)]
     pub(crate) async fn run_with_options(
         &self,
         ctx: &mut PromptTurnContext,
