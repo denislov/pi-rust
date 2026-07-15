@@ -22,6 +22,7 @@ mod manual_compaction_service;
 mod operation;
 mod operation_control;
 mod operation_dispatch;
+mod operation_submission;
 mod plugin_load_flow;
 mod plugin_load_service;
 mod plugin_service;
@@ -139,6 +140,10 @@ use operation_control::{
     OperationControl, PromptControlCleanup, PromptControlGeneration, PromptControlRegistration,
 };
 pub(crate) use operation_control::{OperationKind, PromptControlHandle};
+pub(crate) use operation_submission::SubmissionLeaseLifecycle;
+use operation_submission::{
+    PendingSubmissionLease, SubmissionCommitGuard, submitted_terminal_status,
+};
 use plugin_load_flow::PluginLoadOptions;
 use plugin_load_service::PluginLoadService;
 use plugin_service::PluginService;
@@ -188,35 +193,6 @@ pub struct CodingAgentSession {
     startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SubmissionLeaseLifecycle {
-    Prepared,
-    Consuming,
-    Committed,
-    Abandoned,
-}
-
-#[derive(Debug)]
-struct PendingSubmissionLease {
-    handle: snapshot_coordinator::ClientHandle,
-    descriptor: public_operation::OperationDescriptor,
-    prompt_fingerprint: Option<(String, String)>,
-    expected_prompt_draft: Option<snapshot_coordinator::DraftRecord>,
-    lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
-}
-
-#[derive(Debug)]
-struct SubmissionCommitGuard {
-    client_service: ClientService,
-    coordinator: Arc<SnapshotCoordinator>,
-    handle: snapshot_coordinator::ClientHandle,
-    lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
-    operation_id: Option<String>,
-    descriptor: public_operation::OperationDescriptor,
-    expected_prompt_draft: Option<snapshot_coordinator::DraftRecord>,
-    finished: bool,
-}
-
 #[derive(Debug)]
 #[must_use = "dropping PromptControlCleanupGuard clears exact Prompt control ownership"]
 struct PromptControlCleanupGuard {
@@ -257,113 +233,6 @@ impl PromptControlCleanupGuard {
 impl Drop for PromptControlCleanupGuard {
     fn drop(&mut self) {
         self.cleanup();
-    }
-}
-
-impl SubmissionCommitGuard {
-    fn commit(&mut self, operation_id: String) -> Result<(), CodingSessionError> {
-        self.client_service
-            .commit_submission_running(
-                &self.handle,
-                operation_id.clone(),
-                self.descriptor,
-                self.expected_prompt_draft.as_ref(),
-            )
-            .map_err(|error| match error {
-                snapshot_coordinator::ClientRegistryError::Lifecycle(reason) => {
-                    CodingSessionError::Lifecycle { reason }
-                }
-                snapshot_coordinator::ClientRegistryError::SubmissionDraftMismatch => {
-                    CodingSessionError::SubmissionDraftMismatch
-                }
-                other => CodingSessionError::Input {
-                    message: other.to_string(),
-                },
-            })?;
-        *self.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Committed;
-        self.operation_id = Some(operation_id);
-        Ok(())
-    }
-
-    fn finish(
-        &mut self,
-        status: event::ProductEventTerminalStatus,
-    ) -> Result<(), CodingSessionError> {
-        if let Some(operation_id) = &self.operation_id {
-            match self.descriptor.association {
-                public_operation::OperationAssociationClass::TerminalAssociated => {
-                    self.coordinator
-                        .finalize_terminal_association(
-                            &self.handle,
-                            operation_id,
-                            self.descriptor,
-                            status,
-                        )
-                        .map_err(|error| CodingSessionError::Session {
-                            message: error.to_string(),
-                        })?;
-                }
-                public_operation::OperationAssociationClass::OutcomeOnly => {
-                    let anchor = snapshot_coordinator::SubmittedTerminalAnchor::OutcomeOnly {
-                        acknowledgement:
-                            public_projection::CodingAgentOutcomeAcknowledgementId::new(format!(
-                                "outcome:{operation_id}"
-                            )),
-                    };
-                    self.coordinator
-                        .mark_terminal(
-                            &self.handle,
-                            operation_id.clone(),
-                            self.descriptor.submitted_kind,
-                            self.descriptor,
-                            anchor,
-                            status,
-                        )
-                        .map_err(|error| CodingSessionError::Session {
-                            message: error.to_string(),
-                        })?;
-                }
-                public_operation::OperationAssociationClass::NotApplicable => {
-                    return Err(CodingSessionError::Session {
-                        message: "submitted operation has no finalization contract".into(),
-                    });
-                }
-            }
-        }
-        self.finished = true;
-        Ok(())
-    }
-}
-
-impl Drop for SubmissionCommitGuard {
-    fn drop(&mut self) {
-        if self.finished {
-            return;
-        }
-        if let Some(operation_id) = self.operation_id.as_deref() {
-            self.coordinator.abort_running_submission_if_matches(
-                &self.handle,
-                operation_id,
-                self.descriptor,
-            );
-        } else if let Ok(mut lifecycle) = self.lifecycle.lock() {
-            *lifecycle = SubmissionLeaseLifecycle::Abandoned;
-        }
-    }
-}
-
-fn submitted_terminal_status(
-    result: &Result<OperationOutcome, CodingSessionError>,
-) -> event::ProductEventTerminalStatus {
-    match result {
-        Ok(
-            OperationOutcome::Prompt(PromptTurnOutcome::Aborted { .. })
-            | OperationOutcome::ManualCompaction(PromptTurnOutcome::Aborted { .. })
-            | OperationOutcome::BranchSummary(PromptTurnOutcome::Aborted { .. }),
-        )
-        | Err(CodingSessionError::Cancelled) => event::ProductEventTerminalStatus::Aborted,
-        Ok(_) => event::ProductEventTerminalStatus::Completed,
-        Err(_) => event::ProductEventTerminalStatus::Failed,
     }
 }
 
@@ -450,81 +319,6 @@ fn replay_derived_owner_state(
 }
 
 impl CodingAgentSession {
-    pub async fn run(
-        &mut self,
-        operation: CodingAgentOperation,
-    ) -> Result<CodingAgentOperationOutcome, CodingSessionError> {
-        self.snapshot_coordinator.ensure_runtime_running()?;
-        let descriptor = operation.descriptor();
-        let fingerprint = operation.submission_fingerprint();
-        let submission = self.consume_submission_lease(descriptor, fingerprint.as_ref());
-        let operation = operation.into_internal(self.default_plugin_load_options.clone());
-        let dispatch_mode = operation.metadata().dispatch_mode;
-        let outcome = match dispatch_mode {
-            OperationDispatchMode::Async => self.run_operation(operation, submission).await?,
-            OperationDispatchMode::SyncReadOnly => {
-                self.run_sync_operation(operation, submission)?
-            }
-            OperationDispatchMode::SyncMutable => {
-                self.run_sync_mut_operation(operation, submission)?
-            }
-        };
-        Ok(CodingAgentOperationOutcome::from_internal(outcome))
-    }
-
-    fn install_submission_lease(
-        &mut self,
-        handle: snapshot_coordinator::ClientHandle,
-        descriptor: public_operation::OperationDescriptor,
-        prompt_fingerprint: Option<(String, String)>,
-        expected_prompt_draft: Option<snapshot_coordinator::DraftRecord>,
-    ) -> Result<Arc<Mutex<SubmissionLeaseLifecycle>>, CodingSessionError> {
-        if let Some(pending) = &self.pending_submission {
-            let lifecycle = *pending.lifecycle.lock().unwrap();
-            if lifecycle != SubmissionLeaseLifecycle::Abandoned
-                && self.snapshot_coordinator.is_current(&pending.handle)
-            {
-                return Err(CodingSessionError::SubmissionPreparationBusy);
-            }
-        }
-        let lifecycle = Arc::new(Mutex::new(SubmissionLeaseLifecycle::Prepared));
-        self.pending_submission = Some(PendingSubmissionLease {
-            handle,
-            descriptor,
-            prompt_fingerprint,
-            expected_prompt_draft,
-            lifecycle: lifecycle.clone(),
-        });
-        Ok(lifecycle)
-    }
-
-    fn consume_submission_lease(
-        &mut self,
-        descriptor: public_operation::OperationDescriptor,
-        fingerprint: Option<&(String, String)>,
-    ) -> Option<SubmissionCommitGuard> {
-        let pending = self.pending_submission.as_ref()?;
-        if *pending.lifecycle.lock().unwrap() == SubmissionLeaseLifecycle::Abandoned {
-            self.pending_submission = None;
-            return None;
-        }
-        if pending.descriptor != descriptor || pending.prompt_fingerprint.as_ref() != fingerprint {
-            return None;
-        }
-        let pending = self.pending_submission.take().unwrap();
-        *pending.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Consuming;
-        Some(SubmissionCommitGuard {
-            client_service: self.client_service.clone(),
-            coordinator: self.snapshot_coordinator.clone(),
-            handle: pending.handle,
-            lifecycle: pending.lifecycle,
-            operation_id: None,
-            descriptor,
-            expected_prompt_draft: pending.expected_prompt_draft,
-            finished: false,
-        })
-    }
-
     pub(crate) fn prompt_control_handle(
         &mut self,
     ) -> Result<PromptControlHandle, CodingSessionError> {
@@ -2665,16 +2459,13 @@ runtime = "lua"
         let expected_prompt_draft = service.coordinator.state.lock().unwrap().clients[&handle.id]
             .prompt_draft
             .clone();
-        SubmissionCommitGuard {
-            client_service: service.clone(),
-            coordinator: service.coordinator.clone(),
+        SubmissionCommitGuard::for_tests(
+            service.clone(),
+            service.coordinator.clone(),
             handle,
-            lifecycle: Arc::new(Mutex::new(SubmissionLeaseLifecycle::Consuming)),
-            operation_id: None,
             descriptor,
             expected_prompt_draft,
-            finished: false,
-        }
+        )
     }
 
     #[test]

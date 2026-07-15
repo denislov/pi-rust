@@ -445,8 +445,8 @@ fn root_reexports_are_removed_after_breaking_facade_migration() {
 #[test]
 fn coding_session_run_is_the_canonical_operation_dispatcher() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = fs::read_to_string(crate_root.join("src/coding_session/mod.rs"))
-        .expect("coding session owner should be readable");
+    let source = fs::read_to_string(crate_root.join("src/coding_session/operation_submission.rs"))
+        .expect("operation submission owner should be readable");
     let run_body =
         function_body(&source, "pub async fn run(").expect("CodingAgentSession::run should exist");
 

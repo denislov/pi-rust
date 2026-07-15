@@ -467,16 +467,19 @@ mod tests {
     fn canonical_session_run_owns_mutation_dispatch() {
         let session_source = include_str!("mod.rs");
         let dispatch_source = include_str!("operation_dispatch.rs");
+        let submission_source = include_str!("operation_submission.rs");
         let operation_source = include_str!("operation.rs");
 
         assert!(
             !session_source.contains("fn set_default_agent_profile_id(")
-                && session_source.contains("self.run_sync_mut_operation(operation, submission)?"),
+                && submission_source
+                    .contains("self.run_sync_mut_operation(operation, submission)?"),
             "default-profile mutation should be owned by the canonical run dispatcher"
         );
         assert!(
-            session_source.contains("OperationDispatchMode::SyncMutable => {")
-                && session_source.contains("self.run_sync_mut_operation(operation, submission)?"),
+            submission_source.contains("OperationDispatchMode::SyncMutable => {")
+                && submission_source
+                    .contains("self.run_sync_mut_operation(operation, submission)?"),
             "public run should own sync-mutable operation dispatch"
         );
         assert!(
