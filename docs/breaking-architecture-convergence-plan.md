@@ -66,6 +66,7 @@
 - `3785330`：同步 product runtime boundary method ledger，明确删除 replay seam 后的 stable facade 允许方法集合。
 - `10f5e84`：确认 compact cancellation authority 只有单元测试消费者，将 `CompactCancellationHandle`、rejection 类型和 session accessor 限定为 `cfg(test)`，避免测试控制面进入 production facade。
 - `b140574`：删除无生产消费者的 `ClientService::mark_terminal/acknowledge/detach` pass-through，移除 `CodingAgentSession::load_plugins` broad wrapper，测试改用 canonical `run_operation(Operation::PluginLoad)`；同时将 scheduler/test-only constructors 收窄到 `cfg(test)`。
+- `5639a39`：删除不可达 `SubmittedOperationStatus::Accepted`、public `Accepted` status、`StaleClient`/`ReceiptCapacityExceeded`/`StaleClientConnection` errors、无调用 `validate_handle` 及未消费 snapshot acknowledged projection；保留真实 `Running -> Terminal` 与 shutdown recovery contract。
 
 M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、delegation approval 和 product Flow fixtures 均显式使用 scoped `AiClient`；仓内不再读写 deprecated global provider registry；`pi-ai::registry`、`pi-agent-core` 的主要 runtime/support 模块已不再是外部模块入口；`pi-coding-agent` root deprecated re-export 已删除。M2/WP2.2 已建立 scheduler 核心并完成 prompt/compact/async canonical dispatch migration，且移除了第二 operation admission 入口；`f31ede0` 增加了禁止 scheduler admission 绕行的 product boundary guard。下一步按 workflow、invocation/delegation、plugin/runtime-write、session-navigation 顺序迁移其余 vertical slices，删除 adapter/service 层散落的 admission 判断。
 
@@ -112,6 +113,9 @@ M1 已完成。`CodingAgentSession`、CLI、print/JSON、RPC、interactive、del
 - `cargo test -p pi-coding-agent --lib plugin_load --no-fail-fast`：18 个 plugin-load/canonical operation 测试通过。
 - `cargo test -p pi-coding-agent --lib operation --quiet`：96 个 operation/admission 测试通过。
 - `cargo test -p pi-coding-agent --tests --no-fail-fast --quiet`：删除 session pass-through 后全量 coding-agent tests 通过（701 个 coding-session 单元测试通过，1 个 ignored，所有 integration targets 通过）。
+- `cargo test -p pi-coding-agent --test public_api --quiet`：47 个 public snapshot/error/facade tests 通过。
+- `cargo test -p pi-coding-agent --lib snapshot_coordinator --quiet`：9 个 snapshot lifecycle/recovery tests 通过。
+- `cargo test -p pi-coding-agent --test product_runtime_boundary_guards --no-fail-fast --quiet`：21 个 boundary guards 通过。
 
 ## 激进方案决策
 
