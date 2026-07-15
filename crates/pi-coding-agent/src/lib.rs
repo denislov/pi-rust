@@ -27,8 +27,7 @@ mod prompt_options;
 pub mod protocol;
 mod request;
 mod resources;
-#[doc(hidden)]
-pub mod runtime;
+mod runtime;
 mod session;
 #[doc(hidden)]
 pub mod theme;
