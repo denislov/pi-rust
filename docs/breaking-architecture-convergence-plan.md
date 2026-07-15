@@ -619,7 +619,7 @@ release/0.2-rc                  release stabilization branch
 - compile-fail fixture 验证 internal operation dispatch、services、Flow nodes、plugin registry 无法从 facade 导入。
 - 生成 `0.1 -> 0.2` public API diff，并逐项关联 migration guide。
 
-当前产物：`docs/0.1-to-0.2-api-diff.md` 与 `docs/0.2-migration-guide.md` 已生成；release candidate 前仍需在 CI 安装/运行 public-api tooling，归档 machine-readable snapshot 并与文档交叉校验。
+当前产物：`docs/0.1-to-0.2-api-diff.md` 与 `docs/0.2-migration-guide.md` 已生成；release candidate 前仍需在 CI 安装/运行 public-api tooling，归档 machine-readable snapshot 并与文档交叉校验。本机 `cargo-public-api 0.52.0` 安装因缺少系统 `libssl-dev` 失败，vendored `curl/static-ssl` 重试又长期阻塞于镜像下载后终止；仓库代码不受影响，CI prerequisite 必须显式安装 OpenSSL development headers 或提供可复现的 vendored tool image。
 
 ### WP6.2 拆分 `CodingAgentSession`
 
@@ -644,6 +644,8 @@ release/0.2-rc                  release stabilization branch
 ### WP7.1 Alpha
 
 - 升 crate versions 到 `0.2.0-alpha.1`，protocol constants 到 `2.0`。
+- 将当前未跟踪的根 `Cargo.toml` 纳入 Git，在 workspace/package 层统一版本来源，并同步所有实际发布 crate 的 manifests。
+- 为每个实际发布 crate 新增独立 `CHANGELOG.md`，以 Keep a Changelog 风格记录 `0.2.0-alpha.1` 的 Breaking、Added、Changed、Removed、Fixed 与 Migration 摘要；后续每次版本提升追加新 section，不覆盖历史。
 - 发布 API migration guide、RPC/ProductEvent/Snapshot v2 spec、session compatibility matrix。
 - 对实际 `0.1` session fixture 做只读 replay、fork、export soak test。
 
