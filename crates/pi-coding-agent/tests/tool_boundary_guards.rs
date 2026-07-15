@@ -48,3 +48,28 @@ fn plugin_tool_hosts_remain_capability_scoped() {
         );
     }
 }
+
+#[test]
+fn plugins_do_not_expose_arbitrary_flow_extension_surface() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        !crate_root.join("src/plugins/flow_extension.rs").exists(),
+        "arbitrary plugin Flow extensions are an architecture non-goal"
+    );
+
+    for relative in [
+        "src/plugins/mod.rs",
+        "src/plugins/registry.rs",
+        "src/plugins/capability.rs",
+        "src/coding_session/plugin_service.rs",
+        "src/coding_session/capability_snapshot.rs",
+    ] {
+        let source = fs::read_to_string(crate_root.join(relative)).expect("read plugin owner");
+        for forbidden in ["FlowExtension", "flow_extension", "flow_extensions"] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} must not reintroduce unsupported `{forbidden}` plugin Flow surface"
+            );
+        }
+    }
+}

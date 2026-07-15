@@ -173,7 +173,6 @@ pub(crate) struct PluginCapabilitySet {
     pub(crate) hook_providers: usize,
     pub(crate) ui_providers: usize,
     pub(crate) keybind_providers: usize,
-    pub(crate) flow_extensions: usize,
 }
 
 impl From<&PluginCapabilities> for PluginCapabilitySet {
@@ -184,7 +183,6 @@ impl From<&PluginCapabilities> for PluginCapabilitySet {
             hook_providers: value.hook_providers,
             ui_providers: value.ui_providers,
             keybind_providers: value.keybind_providers,
-            flow_extensions: value.flow_extensions,
         }
     }
 }
@@ -242,7 +240,6 @@ impl OperationCapabilitySnapshot {
                 hook_providers: usize::MAX,
                 ui_providers: usize::MAX,
                 keybind_providers: usize::MAX,
-                flow_extensions: usize::MAX,
             },
         }
     }
@@ -417,7 +414,6 @@ mod tests {
                 hook_providers: 1,
                 ui_providers: 0,
                 keybind_providers: 0,
-                flow_extensions: 0,
                 diagnostics: 0,
             },
             persistent_session: true,

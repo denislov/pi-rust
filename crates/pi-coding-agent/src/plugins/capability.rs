@@ -6,7 +6,6 @@ pub(crate) struct PluginCapabilities {
     pub(crate) hook_providers: usize,
     pub(crate) ui_providers: usize,
     pub(crate) keybind_providers: usize,
-    pub(crate) flow_extensions: usize,
     pub(crate) diagnostics: usize,
 }
 
