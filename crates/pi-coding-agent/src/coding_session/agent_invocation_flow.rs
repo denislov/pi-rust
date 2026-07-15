@@ -1,9 +1,7 @@
-#![allow(dead_code)]
-
 use std::future::Future;
 use std::pin::Pin;
 
-use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
+use pi_agent_core::api::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 use pi_ai::api::AssistantMessage;
 
 use super::agent_team_flow::{AgentTeamContext, AgentTeamOptions};
@@ -167,6 +165,7 @@ impl AgentInvocationFlow {
         Ok(Self { flow })
     }
 
+    #[cfg(test)]
     pub(crate) fn node_ids() -> &'static [&'static str] {
         AGENT_INVOCATION_NODE_IDS
     }
@@ -176,17 +175,6 @@ impl AgentInvocationFlow {
         ctx: &mut AgentInvocationContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
-    }
-
-    pub(crate) async fn run_with_options(
-        &self,
-        ctx: &mut AgentInvocationContext,
-        options: FlowRunOptions,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow
-            .run_with_options(ctx, options)
-            .await
-            .map_err(flow_error)
     }
 }
 
@@ -291,10 +279,6 @@ impl AgentInvocationContext {
 
     pub(crate) fn operation_id(&self) -> &str {
         &self.operation_id
-    }
-
-    pub(crate) fn child_operation_id(&self) -> &str {
-        &self.child_operation_id
     }
 
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
