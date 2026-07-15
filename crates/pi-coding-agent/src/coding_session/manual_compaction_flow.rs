@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::future::Future;
 use std::pin::Pin;
 
@@ -14,6 +12,7 @@ use super::capability_snapshot::OperationCapabilitySnapshot;
 use super::plugin_service::PluginService;
 use super::prompt::{PromptTurnOptions, PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot};
 use super::runtime_service::{RuntimeService, scoped_provider_streamer_for_runtime};
+#[cfg(test)]
 use super::session_log::event::SessionEventEnvelope;
 use super::session_log::replay::{SessionReplay, transcript_item_id};
 use crate::runtime::PromptInvocation;
@@ -101,6 +100,7 @@ pub(crate) struct ManualCompactionOptions {
 }
 
 impl ManualCompactionOptions {
+    #[cfg(test)]
     pub(crate) fn new(runtime: RuntimeSnapshot) -> Self {
         Self {
             runtime,
@@ -135,6 +135,7 @@ impl ManualCompactionOptions {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn with_custom_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.custom_instructions = Some(instructions.into());
         self
@@ -251,22 +252,22 @@ impl ManualCompactionContext {
         &self.turn_id
     }
 
+    #[cfg(test)]
     pub(crate) fn summary(&self) -> Option<&str> {
         self.summary.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn first_kept_message_id(&self) -> Option<&str> {
         self.first_kept_message_id.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn tokens_before(&self) -> Option<u32> {
         self.tokens_before
     }
 
-    pub(crate) fn final_message(&self) -> Option<&AssistantMessage> {
-        self.final_message.as_ref()
-    }
-
+    #[cfg(test)]
     pub(crate) fn pending_session_events(&self) -> &[SessionEventEnvelope] {
         self.transaction
             .as_ref()
@@ -468,10 +469,12 @@ impl ManualCompactionFlow {
         Ok(Self { flow })
     }
 
+    #[cfg(test)]
     pub(crate) fn node_ids() -> &'static [&'static str] {
         MANUAL_COMPACTION_NODE_IDS
     }
 
+    #[cfg(test)]
     pub(crate) async fn run(
         &self,
         ctx: &mut ManualCompactionContext,
