@@ -491,6 +491,7 @@ impl SessionHandle {
         &self.manifest
     }
 
+    #[cfg(test)]
     pub(crate) fn event_log_path(&self) -> Result<PathBuf, CodingSessionError> {
         event_log_path(&self.session_dir, &self.manifest)
     }
@@ -535,6 +536,7 @@ impl ManifestPatch {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn active_branch_id(mut self, active_branch_id: Option<String>) -> Self {
         self.active_branch_id = Some(active_branch_id);
         self

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub(crate) mod event;
 pub(crate) mod id;
 pub(crate) mod manifest;

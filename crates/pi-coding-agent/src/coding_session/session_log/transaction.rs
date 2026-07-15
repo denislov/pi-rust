@@ -184,6 +184,7 @@ where
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn cancel_assistant_message(
         &mut self,
         message_id: impl Into<String>,
@@ -263,6 +264,7 @@ where
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn record_tool_cancelled(
         &mut self,
         tool_call_id: impl Into<String>,
@@ -475,6 +477,7 @@ where
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn is_in_doubt(&self) -> bool {
         self.state == TransactionState::InDoubt
     }

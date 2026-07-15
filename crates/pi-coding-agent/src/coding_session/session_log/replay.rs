@@ -23,6 +23,7 @@ pub(crate) struct SessionRecoverySummary {
 }
 
 impl SessionReplay {
+    #[cfg(test)]
     pub(crate) fn operation_status(&self, operation_id: &str) -> Option<OperationReplayStatus> {
         self.operation_statuses.get(operation_id).copied()
     }

@@ -46,11 +46,13 @@ impl SessionManifest {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_active_leaf(mut self, leaf_id: impl Into<String>) -> Self {
         self.active_leaf_id = Some(leaf_id.into());
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn touch(mut self, updated_at: impl Into<String>) -> Self {
         self.updated_at = updated_at.into();
         self
