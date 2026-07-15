@@ -107,36 +107,6 @@ impl CodingAgentSession {
         snapshot
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn connect_client(
-        &self,
-        id: ClientConnectionId,
-        client_drafts: Vec<ClientDraft>,
-    ) -> (ClientConnection, UiSnapshot) {
-        self.emit_pending_startup_recovery_markers();
-        let handle = self.client_service.connect_or_takeover(id.clone()).unwrap();
-        for (index, draft) in client_drafts.into_iter().enumerate() {
-            let record = snapshot_coordinator::DraftRecord {
-                id: format!("legacy-{index}"),
-                kind: draft.kind,
-                text: draft.text,
-            };
-            match record.kind {
-                ClientDraftKind::Prompt => self
-                    .client_service
-                    .set_prompt_draft(&handle, Some(record))
-                    .unwrap(),
-                ClientDraftKind::Steer | ClientDraftKind::FollowUp => self
-                    .client_service
-                    .enqueue_control_draft(&handle, record)
-                    .unwrap(),
-            }
-        }
-        let snapshot = self.client_service.client_snapshot(&handle).unwrap();
-        let connection = ClientConnection::new(id, snapshot.clone());
-        (connection, snapshot)
-    }
-
     pub(super) fn refresh_snapshot_projection(&self) {
         let session = self.view();
         let capabilities = self.capabilities();

@@ -207,22 +207,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_client_returns_connection_and_initial_snapshot() {
-        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
-
-        let (connection, snapshot) = session.connect_client(
-            ClientConnectionId::new("rpc-primary"),
-            vec![ClientDraft::new(ClientDraftKind::Prompt, "hello")],
-        );
-
-        assert_eq!(connection.id.as_str(), "rpc-primary");
-        assert_eq!(connection.cursor, snapshot.cursor);
-        assert_eq!(connection.client_drafts.len(), 1);
-    }
-
-    #[tokio::test]
     async fn startup_recovery_product_event_is_visible_to_first_subscriber() {
         let temp = tempfile::tempdir().unwrap();
         let store = session_log::store::SessionLogStore::new(temp.path());

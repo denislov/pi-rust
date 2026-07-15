@@ -148,6 +148,7 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
         "summarize_branch",
         "summarize_branch_for_navigation",
         "subscribe",
+        "connect_client",
     ];
     add_expectations(
         &mut expected,
@@ -187,7 +188,6 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "hydrate_current",
             "subscribe_product_events",
             "ui_snapshot",
-            "connect_client",
             "product_events_after",
             "prompt_control_handle",
             "plugin_commands",

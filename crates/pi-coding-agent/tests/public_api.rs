@@ -1399,7 +1399,7 @@ fn snapshot_writers_6_client_mutations_return_owned_snapshots_after_release() {
     let client_service = fs::read_to_string(source_root.join("client_service.rs")).unwrap();
     assert!(coordinator.contains("pub(crate) fn client_snapshot("));
     assert!(coordinator.contains("let projection = state"));
-    assert!(client_service.contains("self.coordinator.client_snapshot(handle)"));
+    assert!(!client_service.contains("fn client_snapshot("));
 }
 
 #[test]

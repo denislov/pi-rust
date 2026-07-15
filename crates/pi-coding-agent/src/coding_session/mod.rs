@@ -52,11 +52,9 @@ mod snapshot_coordinator;
 
 pub use agent_invocation_flow::{AgentInvocationOptions, AgentInvocationOutcome};
 pub use agent_team_flow::{AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome};
-#[allow(unused_imports)]
-pub(crate) use client_projection::{
-    ClientConnection, ClientConnectionId, ClientDraft, ClientDraftKind, SubmittedOperation,
-    UiSnapshot, UiSnapshotCursor,
-};
+#[cfg(test)]
+pub(crate) use client_projection::{ClientConnectionId, ClientDraftKind, UiSnapshotCursor};
+pub(crate) use client_projection::{ClientDraft, UiSnapshot};
 pub use context::{
     CapabilityStatus, CodingAgentCapabilities, CodingAgentSessionOptions,
     CodingAgentSessionSummary, CodingAgentSessionView,
