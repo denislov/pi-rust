@@ -64,9 +64,12 @@ fn session_store_failure_controls_remain_test_only() {
         assert_direct_cfg_test(&sanitized, &call);
     }
 
-    let session_source = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
-        .expect("read coding session source");
-    let session_sanitized = sanitize_rust_source(&session_source);
+    let test_support_source = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/session_test_support.rs"),
+    )
+    .expect("read coding session test-support source");
+    let session_sanitized = sanitize_rust_source(&test_support_source);
     for signature in [
         "pub(crate) fn arm_append_events_failure_for_tests(",
         "pub(crate) fn arm_update_manifest_failure_for_tests(",
