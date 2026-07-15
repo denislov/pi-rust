@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -31,11 +29,13 @@ use super::operation_control::PromptControlReceiver;
 use super::plugin_service::PluginService;
 use super::profiles::{AgentProfile, DelegationPolicy, ProfileId, ProfileKind};
 use super::session_log::event::{
-    DiagnosticLevel, OperationKind, PersistedContentBlock, PersistedDelegationStatus,
-    PersistedToolResult, SessionEventEnvelope,
+    DiagnosticLevel, PersistedContentBlock, PersistedDelegationStatus, PersistedToolResult,
 };
+#[cfg(test)]
+use super::session_log::event::{OperationKind, SessionEventEnvelope};
 use super::session_log::id::{SystemClock, SystemIdGenerator};
 use super::session_log::replay::{MessageStatus, SessionReplay, TranscriptItem};
+#[cfg(test)]
 use super::session_log::store::{SessionHandle, SessionLogStore};
 use super::session_log::transaction::TurnTransaction;
 
@@ -291,22 +291,6 @@ impl PromptTurnOutcome {
 }
 
 pub(crate) type PromptTurnTransaction = TurnTransaction<SystemIdGenerator, SystemClock>;
-
-#[derive(Debug, Clone)]
-pub(crate) struct AgentRunObservation {
-    event: AgentEvent,
-    coding_events: Vec<CodingAgentEvent>,
-}
-
-impl AgentRunObservation {
-    pub(crate) fn event(&self) -> &AgentEvent {
-        &self.event
-    }
-
-    pub(crate) fn coding_events(&self) -> &[CodingAgentEvent] {
-        &self.coding_events
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DelegationRequest {
@@ -569,7 +553,6 @@ pub(crate) struct PromptTurnContext {
     agent: Option<Agent>,
     transaction: Option<PromptTurnTransaction>,
     final_message: Option<AssistantMessage>,
-    agent_observations: Vec<AgentRunObservation>,
     coding_events: Vec<CodingAgentEvent>,
     delegation_requests: Vec<DelegationRequest>,
     delegation_authorization_decisions: Vec<DelegationAuthorizationDecision>,
@@ -599,7 +582,6 @@ impl PromptTurnContext {
             agent: None,
             transaction: None,
             final_message: None,
-            agent_observations: Vec::new(),
             coding_events: Vec::new(),
             delegation_requests: Vec::new(),
             delegation_authorization_decisions: Vec::new(),
@@ -613,14 +595,6 @@ impl PromptTurnContext {
             requested_abort_reason: None,
             capability_snapshot: None,
         }
-    }
-
-    pub(crate) fn from_resolved_request(
-        ids: PromptTurnIds,
-        request: ResolvedPromptRequest,
-    ) -> Result<Self, CodingSessionError> {
-        let options = PromptTurnOptions::from(request);
-        Ok(Self::new(ids, options))
     }
 
     pub(crate) fn operation_id(&self) -> &str {
@@ -705,6 +679,7 @@ impl PromptTurnContext {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn request_is_resolved(&self) -> bool {
         self.request_resolved
     }
@@ -740,6 +715,7 @@ impl PromptTurnContext {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn prepared_input(&self) -> Option<&[PersistedContentBlock]> {
         self.prepared_input.as_deref()
     }
@@ -815,6 +791,7 @@ impl PromptTurnContext {
         self.agent.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_transaction(
         &mut self,
         store: &SessionLogStore,
@@ -840,10 +817,6 @@ impl PromptTurnContext {
         self.transaction = Some(transaction);
     }
 
-    pub(crate) fn transaction_mut(&mut self) -> Option<&mut PromptTurnTransaction> {
-        self.transaction.as_mut()
-    }
-
     pub(crate) fn has_active_transaction(&self) -> bool {
         self.transaction.is_some()
     }
@@ -852,6 +825,7 @@ impl PromptTurnContext {
         self.transaction.take()
     }
 
+    #[cfg(test)]
     pub(crate) fn pending_session_events(&self) -> &[SessionEventEnvelope] {
         self.transaction
             .as_ref()
@@ -957,6 +931,7 @@ impl PromptTurnContext {
         self.requested_abort_reason.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn diagnostics(&self) -> &[CodingDiagnostic] {
         &self.diagnostics
     }
@@ -995,21 +970,14 @@ impl PromptTurnContext {
                 }
             }
         }
-        self.agent_observations.push(AgentRunObservation {
-            event,
-            coding_events: coding_events.clone(),
-        });
         Ok(coding_events)
-    }
-
-    pub(crate) fn agent_observations(&self) -> &[AgentRunObservation] {
-        &self.agent_observations
     }
 
     pub(crate) fn coding_events(&self) -> &[CodingAgentEvent] {
         &self.coding_events
     }
 
+    #[cfg(test)]
     pub(crate) fn delegation_requests(&self) -> &[DelegationRequest] {
         &self.delegation_requests
     }
@@ -1048,6 +1016,7 @@ impl PromptTurnContext {
         Ok(&self.delegation_authorization_decisions)
     }
 
+    #[cfg(test)]
     pub(crate) fn delegation_authorization_decisions(&self) -> &[DelegationAuthorizationDecision] {
         &self.delegation_authorization_decisions
     }

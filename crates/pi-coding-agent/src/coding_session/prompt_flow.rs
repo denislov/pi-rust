@@ -1372,12 +1372,6 @@ mod tests {
             context.final_message().map(assistant_text),
             Some("flow answer".to_string())
         );
-        assert!(
-            context
-                .agent_observations()
-                .iter()
-                .any(|observation| matches!(observation.event(), AgentEvent::AgentDone { .. }))
-        );
         assert!(context.coding_events().iter().any(|event| matches!(
             event,
             CodingAgentEvent::AssistantMessageDelta { text, .. } if text == "flow answer"

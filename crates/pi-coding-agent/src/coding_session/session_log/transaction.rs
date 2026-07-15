@@ -140,6 +140,7 @@ where
         &self.turn_id
     }
 
+    #[cfg(test)]
     pub(crate) fn pending_events(&self) -> &[SessionEventEnvelope] {
         &self.pending_events
     }
