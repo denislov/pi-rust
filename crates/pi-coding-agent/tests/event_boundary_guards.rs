@@ -2,11 +2,11 @@ const AGENT_INVOCATION_FLOW: &str = include_str!("../src/coding_session/agent_in
 const AGENT_TEAM_FLOW: &str = include_str!("../src/coding_session/agent_team_flow.rs");
 const BRANCH_SUMMARY_SERVICE: &str =
     include_str!("../src/coding_session/branch_summary_service.rs");
-const CODING_SESSION_OWNER: &str = include_str!("../src/coding_session/mod.rs");
 const FLOW_SERVICE: &str = include_str!("../src/coding_session/flow_service.rs");
 const MANUAL_COMPACTION_SERVICE: &str =
     include_str!("../src/coding_session/manual_compaction_service.rs");
 const PROMPT_CONTEXT: &str = include_str!("../src/coding_session/prompt.rs");
+const PROMPT_EXECUTION: &str = include_str!("../src/coding_session/prompt_execution.rs");
 const RPC_STATS: &str = include_str!("../src/protocol/rpc/stats.rs");
 const INTERACTIVE_EVENT_BRIDGE: &str = include_str!("../src/interactive/event_bridge.rs");
 const INTERACTIVE_LOOP: &str = include_str!("../src/interactive/loop.rs");
@@ -412,17 +412,14 @@ fn branch_summary_prompt_outcomes_are_built_by_flow_boundary() {
 
 #[test]
 fn owner_delegates_prompt_transaction_finalization_to_services() {
-    let owner_impl = CODING_SESSION_OWNER
+    let owner_impl = PROMPT_EXECUTION
         .split("impl CodingAgentSession {")
         .nth(1)
-        .expect("CodingAgentSession impl should be present");
+        .expect("prompt execution owner impl should be present");
     let finalize_region = owner_impl
         .split("    fn finalize_prompt_transaction(")
         .nth(1)
-        .expect("owner finalize_prompt_transaction should be present")
-        .split("    #[cfg(test)]")
-        .next()
-        .expect("test section should follow owner helpers");
+        .expect("owner finalize_prompt_transaction should be present");
 
     for variant in [
         "PromptTurnOutcome::Success",
@@ -438,13 +435,10 @@ fn owner_delegates_prompt_transaction_finalization_to_services() {
 
 #[test]
 fn owner_does_not_rebuild_prompt_success_session_write_metadata() {
-    let owner_helpers = CODING_SESSION_OWNER
+    let owner_helpers = PROMPT_EXECUTION
         .split("fn apply_finalized_session_write(")
         .nth(1)
-        .expect("apply_finalized_session_write helper should be present")
-        .split("#[cfg(test)]")
-        .next()
-        .expect("test section should follow owner helpers");
+        .expect("apply_finalized_session_write helper should be present");
 
     assert!(
         !owner_helpers.contains("PromptTurnOutcome::Success"),
@@ -454,13 +448,13 @@ fn owner_does_not_rebuild_prompt_success_session_write_metadata() {
 
 #[test]
 fn prompt_inner_uses_outcome_helper_for_success_branching() {
-    let prompt_inner = CODING_SESSION_OWNER
-        .split("    async fn prompt_inner(")
+    let prompt_inner = PROMPT_EXECUTION
+        .split("async fn prompt_inner(")
         .nth(1)
         .expect("prompt_inner should be present")
-        .split("    async fn invoke_agent_inner(")
+        .split("    async fn execute_authorized_delegations(")
         .next()
-        .expect("invoke_agent_inner should follow prompt_inner");
+        .expect("delegation execution should follow prompt_inner");
 
     assert!(
         !prompt_inner.contains("PromptTurnOutcome::Success"),
