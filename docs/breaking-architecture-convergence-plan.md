@@ -647,6 +647,8 @@ release/0.2-rc                  release stabilization branch
 
 当前 hidden-fallback 结论：production `pi-coding-agent/src` 不含永久禁用分支，且 boundary guard 会在后续引入 `cfg(any())` 时失败；`#[allow(deprecated)]` 仅存在于 test-support owner，不构成 production compatibility dispatcher。`pi-coding-agent` root compatibility modules 已从 15 个降至 0；external compile-fail、source visibility 和 stable facade guards 同时防止回归。machine-readable public API snapshot 以及 `pi-ai`/`pi-agent-core` 剩余 doc-hidden module 的最终分类仍待完成。
 
+最新验证：`cargo test -p pi-coding-agent --tests --no-fail-fast --quiet` 通过，owner-crate lib tests 为 863 passed / 1 ignored，全部剩余 integration targets 通过；`cargo check -p pi-coding-agent` 通过且无本 crate warning。`cargo clippy -p pi-coding-agent --all-targets --all-features -- -D warnings` 在当前 Rust 1.96 上被 26 个既有 style lints 阻断（主要是 `bind_instead_of_map`，另含 redundant closure、explicit counter、nonminimal bool 等），未发现新的 architecture-boundary failure；这些 lint 需在 release validation 前机械修正，但不阻塞 facade ownership 决策。
+
 ## M7. `0.2.0` Release Train
 
 依赖：M6。
