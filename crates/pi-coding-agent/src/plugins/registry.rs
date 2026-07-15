@@ -11,7 +11,6 @@ use super::ui::UiProvider;
 pub(crate) struct PluginId(String);
 
 impl PluginId {
-    #[allow(dead_code)]
     pub(crate) fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
@@ -22,7 +21,6 @@ impl PluginId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum PluginSource {
     FirstParty,
     Project,
@@ -39,7 +37,6 @@ pub(crate) struct PluginMetadata {
 }
 
 impl PluginMetadata {
-    #[allow(dead_code)]
     pub(crate) fn new(
         id: PluginId,
         name: impl Into<String>,
@@ -69,27 +66,22 @@ impl PluginRegistry {
         Self::default()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn register_tool_provider(&mut self, provider: Arc<dyn ToolProvider>) {
         self.tool_providers.push(provider);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn register_command_provider(&mut self, provider: Arc<dyn CommandProvider>) {
         self.command_providers.push(provider);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn register_hook_provider(&mut self, provider: Arc<dyn HookProvider>) {
         self.hook_providers.push(provider);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn register_ui_provider(&mut self, provider: Arc<dyn UiProvider>) {
         self.ui_providers.push(provider);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn register_keybind_provider(&mut self, provider: Arc<dyn KeybindProvider>) {
         self.keybind_providers.push(provider);
     }
@@ -106,22 +98,18 @@ impl PluginRegistry {
         &self.tool_providers
     }
 
-    #[allow(dead_code)]
     pub(crate) fn command_providers(&self) -> &[Arc<dyn CommandProvider>] {
         &self.command_providers
     }
 
-    #[allow(dead_code)]
     pub(crate) fn hook_providers(&self) -> &[Arc<dyn HookProvider>] {
         &self.hook_providers
     }
 
-    #[allow(dead_code)]
     pub(crate) fn ui_providers(&self) -> &[Arc<dyn UiProvider>] {
         &self.ui_providers
     }
 
-    #[allow(dead_code)]
     pub(crate) fn keybind_providers(&self) -> &[Arc<dyn KeybindProvider>] {
         &self.keybind_providers
     }

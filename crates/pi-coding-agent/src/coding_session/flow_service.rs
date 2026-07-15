@@ -286,9 +286,8 @@ mod tests {
     use crate::coding_session::session_log::store::{CreateSessionOptions, SessionLogStore};
     use crate::coding_session::{CodingAgentSessionExportItem, CodingAgentSessionSummary};
     use crate::plugins::{
-        CommandDefinition, CommandProvider, CommandRegistrationHost, HookFailurePolicy,
-        PluginError, PluginRegistry, PluginSource, PromptHookContext, PromptHookPoint,
-        ToolProvider, ToolRegistrationHost,
+        CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginRegistry,
+        PluginSource, PromptHookContext, PromptHookPoint, ToolProvider, ToolRegistrationHost,
     };
     use crate::prompt_options::PromptRunOptions;
     use crate::runtime::PromptInvocation;
@@ -1175,11 +1174,6 @@ end
         assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
         assert_eq!(outcome.capabilities.hook_providers, 1);
         let loaded_service = context.loaded_plugin_service().unwrap();
-        let hooks = loaded_service.collect_prompt_hooks();
-        assert_eq!(hooks.len(), 1);
-        assert_eq!(hooks[0].point, PromptHookPoint::BeforeAgentTurn);
-        assert_eq!(hooks[0].policy, HookFailurePolicy::FailOpen);
-
         let diagnostics = loaded_service
             .run_prompt_hook(
                 PromptHookPoint::BeforeAgentTurn,

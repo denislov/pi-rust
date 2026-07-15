@@ -62,7 +62,6 @@ impl PluginService {
         self.collect_tools()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn collect_commands(&self) -> Vec<CommandDefinition> {
         let host = CommandRegistrationHost::new(PluginCapabilitySet::default());
         let mut commands = Vec::new();
@@ -75,7 +74,6 @@ impl PluginService {
         commands
     }
 
-    #[allow(dead_code)]
     pub(crate) fn run_command(
         &self,
         command_id: &str,
@@ -121,20 +119,6 @@ impl PluginService {
         self.run_command(command_id, args)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn collect_prompt_hooks(&self) -> Vec<HookRegistration> {
-        let host = HookRegistrationHost::new(PluginCapabilitySet::default());
-        let mut hooks = Vec::new();
-        for provider in self.registry.hook_providers() {
-            match collect_provider_hooks(provider.as_ref(), &host) {
-                Ok(mut provided) => hooks.append(&mut provided),
-                Err(error) => self.record_plugin_error(error),
-            }
-        }
-        hooks
-    }
-
-    #[allow(dead_code)]
     pub(crate) fn collect_ui_actions(&self) -> Vec<UiActionDefinition> {
         let host = UiRegistrationHost::new(PluginCapabilitySet::default());
         let mut actions = Vec::new();
@@ -147,7 +131,6 @@ impl PluginService {
         actions
     }
 
-    #[allow(dead_code)]
     pub(crate) fn collect_ui_dialogs(&self) -> Vec<UiDialogDefinition> {
         let host = UiRegistrationHost::new(PluginCapabilitySet::default());
         let mut dialogs = Vec::new();
@@ -160,7 +143,6 @@ impl PluginService {
         dialogs
     }
 
-    #[allow(dead_code)]
     pub(crate) fn collect_keybindings(&self) -> Vec<KeybindDefinition> {
         let host = KeybindRegistrationHost::new(PluginCapabilitySet::default());
         let mut keybindings = Vec::new();
@@ -276,7 +258,6 @@ fn collect_provider_tools(
     }
 }
 
-#[allow(dead_code)]
 fn collect_provider_commands(
     provider: &dyn CommandProvider,
     host: &CommandRegistrationHost,
@@ -306,7 +287,6 @@ fn run_provider_command(
     }
 }
 
-#[allow(dead_code)]
 fn collect_provider_hooks(
     provider: &dyn HookProvider,
     host: &HookRegistrationHost,
@@ -321,7 +301,6 @@ fn collect_provider_hooks(
     }
 }
 
-#[allow(dead_code)]
 fn collect_provider_ui_actions(
     provider: &dyn UiProvider,
     host: &UiRegistrationHost,
@@ -336,7 +315,6 @@ fn collect_provider_ui_actions(
     }
 }
 
-#[allow(dead_code)]
 fn collect_provider_ui_dialogs(
     provider: &dyn UiProvider,
     host: &UiRegistrationHost,
@@ -351,7 +329,6 @@ fn collect_provider_ui_dialogs(
     }
 }
 
-#[allow(dead_code)]
 fn collect_provider_keybindings(
     provider: &dyn KeybindProvider,
     host: &KeybindRegistrationHost,
@@ -733,30 +710,47 @@ mod tests {
     }
 
     #[test]
-    fn collect_prompt_hooks_returns_registered_hook_definitions() {
+    fn run_prompt_hook_executes_registered_point() {
         let mut registry = PluginRegistry::new();
         registry.register_hook_provider(Arc::new(StaticHookProvider));
         let service = PluginService::with_registry(registry);
 
-        let hooks = service.collect_prompt_hooks();
+        let diagnostics = service
+            .run_prompt_hook(
+                PromptHookPoint::BeforeAgentTurn,
+                PromptHookContext {
+                    operation_id: "op_hook".into(),
+                    turn_id: "turn_hook".into(),
+                    session_id: None,
+                    point: PromptHookPoint::BeforeAgentTurn,
+                },
+            )
+            .unwrap();
 
-        assert_eq!(hooks.len(), 1);
-        assert_eq!(hooks[0].point, PromptHookPoint::BeforeAgentTurn);
-        assert_eq!(hooks[0].policy, HookFailurePolicy::FailOpen);
+        assert!(diagnostics.is_empty());
         assert!(service.diagnostics().is_empty());
     }
 
     #[test]
-    fn collect_prompt_hooks_isolates_provider_failures_as_diagnostics() {
+    fn run_prompt_hook_isolates_registration_failures_as_diagnostics() {
         let mut registry = PluginRegistry::new();
         registry.register_hook_provider(Arc::new(FailingHookProvider));
         registry.register_hook_provider(Arc::new(StaticHookProvider));
         let service = PluginService::with_registry(registry);
 
-        let hooks = service.collect_prompt_hooks();
+        let hook_diagnostics = service
+            .run_prompt_hook(
+                PromptHookPoint::BeforeAgentTurn,
+                PromptHookContext {
+                    operation_id: "op_hook".into(),
+                    turn_id: "turn_hook".into(),
+                    session_id: None,
+                    point: PromptHookPoint::BeforeAgentTurn,
+                },
+            )
+            .unwrap();
 
-        assert_eq!(hooks.len(), 1);
-        assert_eq!(hooks[0].point, PromptHookPoint::BeforeAgentTurn);
+        assert!(hook_diagnostics.is_empty());
         let diagnostics = service.diagnostics();
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
