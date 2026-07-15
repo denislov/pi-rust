@@ -91,3 +91,35 @@ fn persisted_plugin_diagnostics(
         })
         .collect()
 }
+
+use super::*;
+
+impl CodingAgentSession {
+    pub(super) async fn load_plugins_inner(
+        &mut self,
+        options: PluginLoadOptions,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> Result<PluginLoadOutcome, CodingSessionError> {
+        let execution = self
+            .plugin_load_service
+            .load(
+                &mut self.persistence,
+                &self.flow_service,
+                &self.event_service,
+                options,
+                snapshot,
+            )
+            .await?;
+        if let Some(plugin_service) = execution.loaded_plugin_service {
+            self.plugin_service = plugin_service;
+        }
+        if execution.outcome.capability_changed {
+            let installed = self
+                .capability_snapshots
+                .install_next_generation(CapabilityRevocationPolicy::FutureOnly);
+            self.refresh_snapshot_projection();
+            self.event_service.emit_capability_changed(installed);
+        }
+        Ok(execution.outcome)
+    }
+}

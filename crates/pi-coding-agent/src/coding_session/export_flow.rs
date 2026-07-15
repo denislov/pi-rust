@@ -309,3 +309,22 @@ fn flow_error(error: FlowError) -> CodingSessionError {
         message: error.to_string(),
     }
 }
+
+use super::*;
+
+impl CodingAgentSession {
+    pub(super) fn export_current_inner(
+        &self,
+        options: ExportOptions,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> Result<export_flow::ExportOutcome, CodingSessionError> {
+        SessionReadCapability::require(snapshot.session_read.as_ref())?;
+        let SessionPersistence::Persistent(session_service) = &self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "export requires a persistent Rust-native session".into(),
+            });
+        };
+        let mut context = session_service.export_context(options)?;
+        self.flow_service.run_export(&mut context)
+    }
+}

@@ -72,7 +72,6 @@ pub use event::CodingAgentEvent;
 pub(crate) use event::{ProductEvent, ProductEventSequence};
 pub(crate) use event_service::ProductEventReceiver;
 pub use export::{CodingAgentSessionExport, CodingAgentSessionExportItem};
-pub(crate) use plugin_load_flow::PluginLoadOutcome;
 pub use profiles::{
     AgentProfile, DelegationConfirmationMode, DelegationPolicy, ProfileDiagnostic, ProfileId,
     ProfileKind, ProfileRegistry, ProfileRegistryOptions, ProfileSource, SupervisionPolicy,
@@ -118,8 +117,6 @@ pub use self_healing_edit_flow::{
     SelfHealingEditRequest,
 };
 
-use agent_invocation_flow::AgentInvocationContext;
-use agent_team_flow::AgentTeamContext;
 use branch_summary_service::BranchSummaryService;
 use capability_service::CapabilityService;
 pub(crate) use capability_snapshot::PluginCapabilitySet;
@@ -160,7 +157,7 @@ use runtime_service::RuntimeService;
 use scheduler::OperationScheduler;
 pub(crate) use self_healing_edit_flow::{
     ModelSelfHealingEditRepairStrategy, SelfHealingEditContext, SelfHealingEditFlow,
-    SelfHealingEditOptions, SelfHealingEditRepairStrategy,
+    SelfHealingEditOptions,
 };
 use self_healing_edit_service::SelfHealingEditService;
 use session_control::PromptControlCleanupGuard;
@@ -282,197 +279,4 @@ fn replay_derived_owner_state(
         pending_delegation_confirmations,
         startup_recovery_markers,
     })
-}
-
-impl CodingAgentSession {
-    fn export_current_inner(
-        &self,
-        options: ExportOptions,
-        snapshot: &OperationCapabilitySnapshot,
-    ) -> Result<export_flow::ExportOutcome, CodingSessionError> {
-        SessionReadCapability::require(snapshot.session_read.as_ref())?;
-        let SessionPersistence::Persistent(session_service) = &self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "export requires a persistent Rust-native session".into(),
-            });
-        };
-        let mut context = session_service.export_context(options)?;
-        self.flow_service.run_export(&mut context)
-    }
-
-    async fn approve_delegation_confirmation_inner(
-        &mut self,
-        operation_id: String,
-        tool_call_id: String,
-        now: String,
-        parent_capability_snapshot: OperationCapabilitySnapshot,
-    ) -> Result<(), CodingSessionError> {
-        let mut ids = SystemIdGenerator;
-        let mut pending = self.delegation_confirmation_service.approve_pending(
-            &mut self.persistence,
-            &mut self.pending_delegation_confirmations,
-            &self.event_service,
-            operation_id.as_str(),
-            tool_call_id.as_str(),
-            &now,
-            ids.next_operation_id(),
-        )?;
-        if let Some(runtime) = pending.prompt_options.runtime_mut() {
-            self.runtime_service.install_provider_runtime(runtime);
-        }
-        let outcome = match pending.request.target_kind {
-            ProfileKind::Agent => {
-                self.delegation_execution_service
-                    .execute_agent(
-                        &self.flow_service,
-                        self.profile_registry.clone(),
-                        self.plugin_service.clone(),
-                        self.event_service.clone(),
-                        &pending.request,
-                        pending.prompt_options,
-                        pending.child_delegation_depth,
-                        pending.delegation_lineage,
-                        Some(parent_capability_snapshot.clone()),
-                    )
-                    .await
-            }
-            ProfileKind::Team => {
-                self.delegation_execution_service
-                    .execute_team(
-                        &self.flow_service,
-                        self.profile_registry.clone(),
-                        self.plugin_service.clone(),
-                        self.event_service.clone(),
-                        &pending.request,
-                        pending.prompt_options,
-                        pending.child_delegation_depth,
-                        pending.delegation_lineage,
-                        Some(parent_capability_snapshot),
-                    )
-                    .await
-            }
-        };
-        self.delegation_confirmation_service.adopt_pending(
-            &mut self.persistence,
-            &mut self.pending_delegation_confirmations,
-            &self.event_service,
-            outcome.pending_confirmations,
-        )?;
-        outcome.execution.map(|_| ())
-    }
-
-    async fn run_branch_summary_admitted(
-        &mut self,
-        options: PromptTurnOptions,
-        source_leaf_id: String,
-        target_leaf_id: String,
-        custom_instructions: Option<String>,
-        snapshot: &OperationCapabilitySnapshot,
-    ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
-            return Err(CodingSessionError::UnsupportedCapability {
-                capability: "branch summary without persistent session".into(),
-            });
-        };
-        self.branch_summary_service
-            .run_persistent(
-                session_service,
-                &self.flow_service,
-                &self.event_service,
-                options,
-                source_leaf_id,
-                target_leaf_id,
-                custom_instructions,
-                snapshot,
-            )
-            .await
-    }
-
-    #[allow(dead_code)]
-    async fn load_plugins_inner(
-        &mut self,
-        options: PluginLoadOptions,
-        snapshot: &OperationCapabilitySnapshot,
-    ) -> Result<PluginLoadOutcome, CodingSessionError> {
-        let execution = self
-            .plugin_load_service
-            .load(
-                &mut self.persistence,
-                &self.flow_service,
-                &self.event_service,
-                options,
-                snapshot,
-            )
-            .await?;
-        if let Some(plugin_service) = execution.loaded_plugin_service {
-            self.plugin_service = plugin_service;
-        }
-        if execution.outcome.capability_changed {
-            let installed = self
-                .capability_snapshots
-                .install_next_generation(CapabilityRevocationPolicy::FutureOnly);
-            self.refresh_snapshot_projection();
-            self.event_service.emit_capability_changed(installed);
-        }
-        Ok(execution.outcome)
-    }
-
-    async fn invoke_agent_inner(
-        &mut self,
-        options: AgentInvocationOptions,
-        scheduler_parent_operation_id: String,
-    ) -> Result<AgentInvocationOutcome, CodingSessionError> {
-        let prompt_control_receiver = self.operation_control.take_prompt_control_receiver();
-        let mut context = AgentInvocationContext::new(
-            options,
-            self.profile_registry.clone(),
-            self.plugin_service.clone(),
-            self.event_service.clone(),
-        )
-        .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
-        if let Some(receiver) = prompt_control_receiver {
-            context.set_prompt_control_receiver(receiver);
-        }
-        self.flow_service.run_agent_invocation(&mut context).await
-    }
-
-    async fn invoke_team_inner(
-        &mut self,
-        options: AgentTeamOptions,
-        scheduler_parent_operation_id: String,
-    ) -> Result<AgentTeamOutcome, CodingSessionError> {
-        let mut context = AgentTeamContext::new(
-            options,
-            self.profile_registry.clone(),
-            self.plugin_service.clone(),
-            self.event_service.clone(),
-        )
-        .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
-        self.flow_service.run_agent_team(&mut context).await
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn self_healing_model_repair_policy(
-        &self,
-        model_repair: Option<SelfHealingEditModelRepairOptions>,
-    ) -> Result<Option<(Arc<dyn SelfHealingEditRepairStrategy>, usize)>, CodingSessionError> {
-        let Some(model_repair) = model_repair else {
-            return Ok(None);
-        };
-        let (prompt_options, max_attempts) = model_repair.into_parts();
-        let prompt_options = self.apply_default_agent_profile(prompt_options)?;
-        let runtime =
-            prompt_options
-                .runtime()
-                .cloned()
-                .ok_or_else(|| CodingSessionError::Config {
-                    message:
-                        "self-healing edit model repair options do not include a runtime snapshot"
-                            .into(),
-                })?;
-        Ok(Some((
-            Arc::new(ModelSelfHealingEditRepairStrategy::new(runtime)),
-            max_attempts,
-        )))
-    }
 }

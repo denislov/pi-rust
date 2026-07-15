@@ -290,3 +290,68 @@ mod tests {
         assert!(child.shell.is_some());
     }
 }
+
+use super::*;
+
+impl CodingAgentSession {
+    pub(super) async fn approve_delegation_confirmation_inner(
+        &mut self,
+        operation_id: String,
+        tool_call_id: String,
+        now: String,
+        parent_capability_snapshot: OperationCapabilitySnapshot,
+    ) -> Result<(), CodingSessionError> {
+        let mut ids = SystemIdGenerator;
+        let mut pending = self.delegation_confirmation_service.approve_pending(
+            &mut self.persistence,
+            &mut self.pending_delegation_confirmations,
+            &self.event_service,
+            operation_id.as_str(),
+            tool_call_id.as_str(),
+            &now,
+            ids.next_operation_id(),
+        )?;
+        if let Some(runtime) = pending.prompt_options.runtime_mut() {
+            self.runtime_service.install_provider_runtime(runtime);
+        }
+        let outcome = match pending.request.target_kind {
+            ProfileKind::Agent => {
+                self.delegation_execution_service
+                    .execute_agent(
+                        &self.flow_service,
+                        self.profile_registry.clone(),
+                        self.plugin_service.clone(),
+                        self.event_service.clone(),
+                        &pending.request,
+                        pending.prompt_options,
+                        pending.child_delegation_depth,
+                        pending.delegation_lineage,
+                        Some(parent_capability_snapshot.clone()),
+                    )
+                    .await
+            }
+            ProfileKind::Team => {
+                self.delegation_execution_service
+                    .execute_team(
+                        &self.flow_service,
+                        self.profile_registry.clone(),
+                        self.plugin_service.clone(),
+                        self.event_service.clone(),
+                        &pending.request,
+                        pending.prompt_options,
+                        pending.child_delegation_depth,
+                        pending.delegation_lineage,
+                        Some(parent_capability_snapshot),
+                    )
+                    .await
+            }
+        };
+        self.delegation_confirmation_service.adopt_pending(
+            &mut self.persistence,
+            &mut self.pending_delegation_confirmations,
+            &self.event_service,
+            outcome.pending_confirmations,
+        )?;
+        outcome.execution.map(|_| ())
+    }
+}

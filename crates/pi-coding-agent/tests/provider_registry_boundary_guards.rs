@@ -233,8 +233,16 @@ fn product_agent_runtime_build_installs_scoped_ai_client_streamer() {
 #[test]
 fn session_admission_installs_the_session_owned_provider_runtime() {
     let scan = SourceScan::new();
-    let session = fs::read_to_string(scan.crate_root.join("src/coding_session/mod.rs"))
-        .expect("read coding session source");
+    let dispatch = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/operation_dispatch.rs"),
+    )
+    .expect("read operation dispatch source");
+    let delegation = fs::read_to_string(
+        scan.crate_root
+            .join("src/coding_session/delegation_execution_service.rs"),
+    )
+    .expect("read delegation execution source");
     let runtime_service = fs::read_to_string(
         scan.crate_root
             .join("src/coding_session/runtime_service.rs"),
@@ -244,8 +252,12 @@ fn session_admission_installs_the_session_owned_provider_runtime() {
         .expect("read prompt runtime source");
 
     assert!(
-        session.contains("self.runtime_service.install_provider_runtime(runtime)"),
-        "session admission must install its provider runtime into operation-local state"
+        dispatch.contains("self.runtime_service.install_provider_runtime(runtime)"),
+        "ordinary session admission must install its provider runtime into operation-local state"
+    );
+    assert!(
+        delegation.contains("self.runtime_service.install_provider_runtime(runtime)"),
+        "delegation approval must install its provider runtime into operation-local state"
     );
     assert!(
         runtime_service.contains("runtime.set_provider_streamer("),

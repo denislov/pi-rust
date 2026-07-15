@@ -740,3 +740,26 @@ fn flow_error(error: FlowError) -> CodingSessionError {
         message: error.to_string(),
     }
 }
+
+use super::*;
+
+impl CodingAgentSession {
+    pub(super) async fn invoke_agent_inner(
+        &mut self,
+        options: AgentInvocationOptions,
+        scheduler_parent_operation_id: String,
+    ) -> Result<AgentInvocationOutcome, CodingSessionError> {
+        let prompt_control_receiver = self.operation_control.take_prompt_control_receiver();
+        let mut context = AgentInvocationContext::new(
+            options,
+            self.profile_registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        )
+        .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
+        if let Some(receiver) = prompt_control_receiver {
+            context.set_prompt_control_receiver(receiver);
+        }
+        self.flow_service.run_agent_invocation(&mut context).await
+    }
+}

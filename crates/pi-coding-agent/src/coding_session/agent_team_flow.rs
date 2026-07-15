@@ -798,3 +798,22 @@ fn flow_error(error: FlowError) -> CodingSessionError {
         message: error.to_string(),
     }
 }
+
+use super::*;
+
+impl CodingAgentSession {
+    pub(super) async fn invoke_team_inner(
+        &mut self,
+        options: AgentTeamOptions,
+        scheduler_parent_operation_id: String,
+    ) -> Result<AgentTeamOutcome, CodingSessionError> {
+        let mut context = AgentTeamContext::new(
+            options,
+            self.profile_registry.clone(),
+            self.plugin_service.clone(),
+            self.event_service.clone(),
+        )
+        .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
+        self.flow_service.run_agent_team(&mut context).await
+    }
+}

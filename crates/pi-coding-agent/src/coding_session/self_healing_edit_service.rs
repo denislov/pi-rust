@@ -118,3 +118,32 @@ impl SelfHealingEditService {
         }
     }
 }
+
+use super::*;
+
+impl CodingAgentSession {
+    #[allow(clippy::type_complexity)]
+    pub(super) fn self_healing_model_repair_policy(
+        &self,
+        model_repair: Option<SelfHealingEditModelRepairOptions>,
+    ) -> Result<Option<(Arc<dyn SelfHealingEditRepairStrategy>, usize)>, CodingSessionError> {
+        let Some(model_repair) = model_repair else {
+            return Ok(None);
+        };
+        let (prompt_options, max_attempts) = model_repair.into_parts();
+        let prompt_options = self.apply_default_agent_profile(prompt_options)?;
+        let runtime =
+            prompt_options
+                .runtime()
+                .cloned()
+                .ok_or_else(|| CodingSessionError::Config {
+                    message:
+                        "self-healing edit model repair options do not include a runtime snapshot"
+                            .into(),
+                })?;
+        Ok(Some((
+            Arc::new(ModelSelfHealingEditRepairStrategy::new(runtime)),
+            max_attempts,
+        )))
+    }
+}

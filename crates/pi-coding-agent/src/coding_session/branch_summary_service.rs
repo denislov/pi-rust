@@ -184,3 +184,34 @@ mod tests {
         );
     }
 }
+
+use super::*;
+
+impl CodingAgentSession {
+    pub(super) async fn run_branch_summary_admitted(
+        &mut self,
+        options: PromptTurnOptions,
+        source_leaf_id: String,
+        target_leaf_id: String,
+        custom_instructions: Option<String>,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "branch summary without persistent session".into(),
+            });
+        };
+        self.branch_summary_service
+            .run_persistent(
+                session_service,
+                &self.flow_service,
+                &self.event_service,
+                options,
+                source_leaf_id,
+                target_leaf_id,
+                custom_instructions,
+                snapshot,
+            )
+            .await
+    }
+}
