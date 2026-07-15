@@ -12,8 +12,7 @@ use crate::runtime::{CliRunOptions, SessionRunOptions};
 use crate::tools::builtin_tools;
 
 mod args;
-#[doc(hidden)]
-pub mod config;
+mod config;
 mod error;
 #[doc(hidden)]
 pub mod input;
@@ -77,6 +76,16 @@ pub mod api {
         SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
         SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
         SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+    };
+    pub use crate::config::auth::{AuthMaterialKind, KeySource, ResolvedKey, resolve_api_key};
+    pub use crate::config::settings::{
+        CompactionSettings, PartialCompaction, PartialRetry, PartialSettings, PartialTerminal,
+        PartialWarnings, RetrySettings, Settings, SettingsScope, TerminalSettings,
+        WarningsSettings, merge_and_save_settings,
+    };
+    pub use crate::config::{
+        AuthStore, Config, ConfigDiagnostic, ConfigPaths, DiagnosticSeverity, drain_diagnostics,
+        load_config, resolve_paths,
     };
     pub use crate::error::CliError;
     pub use crate::models::{ModelRotation, ModelRotationEntry, parse_model_rotation};

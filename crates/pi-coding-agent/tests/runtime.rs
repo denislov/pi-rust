@@ -1,9 +1,7 @@
 use pi_agent_core::api::AgentResources;
 use pi_coding_agent::api::{
-    CliError, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config, parse_args, select_model,
-};
-use pi_coding_agent::config::settings::{
-    CompactionSettings, RetrySettings, Settings, TerminalSettings,
+    CliError, CompactionSettings, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, RetrySettings, Settings,
+    TerminalSettings, WarningsSettings, build_agent_config, parse_args, select_model,
 };
 
 fn runtime_settings() -> Settings {
@@ -33,7 +31,7 @@ fn runtime_settings() -> Settings {
         http_idle_timeout_ms: 300000,
         websocket_connect_timeout_ms: 30000,
         enabled_models: Vec::new(),
-        warnings: pi_coding_agent::config::settings::WarningsSettings {
+        warnings: WarningsSettings {
             anthropic_extra_usage: true,
         },
         terminal: TerminalSettings {

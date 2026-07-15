@@ -458,6 +458,7 @@ fn retired_root_compatibility_modules_stay_private() {
 
     for module in [
         "args",
+        "config",
         "error",
         "models",
         "print_mode",

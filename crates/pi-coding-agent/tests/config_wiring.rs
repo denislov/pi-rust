@@ -1,6 +1,6 @@
 mod support;
 
-use pi_coding_agent::config;
+use pi_coding_agent::api::{KeySource, PartialSettings, load_config, resolve_api_key};
 use support::EnvGuard;
 
 #[test]
@@ -22,7 +22,7 @@ fn load_config_from_temp_pi_rust_dir() {
     )
     .unwrap();
     env.set_pi_rust_dir(dir.path());
-    let (cfg, diags) = config::load_config(std::path::Path::new("."));
+    let (cfg, diags) = load_config(std::path::Path::new("."));
     assert_eq!(
         cfg.settings.default_model.as_deref(),
         Some("claude-sonnet-4-5")
@@ -51,13 +51,12 @@ fn config_auth_resolution_prefers_env_over_auth_file() {
     env.set_pi_rust_dir(dir.path());
     env.set("ANTHROPIC_API_KEY", "from-env");
 
-    let (cfg, diags) = config::load_config(std::path::Path::new("."));
+    let (cfg, diags) = load_config(std::path::Path::new("."));
     let mut key_diags = Vec::new();
-    let key =
-        config::auth::resolve_api_key("anthropic", None, &cfg.auth, &mut key_diags).expect("key");
+    let key = resolve_api_key("anthropic", None, &cfg.auth, &mut key_diags).expect("key");
 
     assert_eq!(key.value, "from-env");
-    assert_eq!(key.source, config::auth::KeySource::Env);
+    assert_eq!(key.source, KeySource::Env);
     assert!(diags.is_empty());
     assert!(key_diags.is_empty());
 }
@@ -67,7 +66,7 @@ fn runtime_setting_helpers_consume_session_dir_and_context_flag() {
     use pi_coding_agent::api::{effective_no_context_files, effective_session_dir, parse_args};
 
     let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
-    let mut settings = config::settings::PartialSettings {
+    let mut settings = PartialSettings {
         session_dir: Some("/tmp/pi-sessions".into()),
         no_context_files: Some(true),
         ..Default::default()
