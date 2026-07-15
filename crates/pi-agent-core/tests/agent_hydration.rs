@@ -3,7 +3,7 @@ mod common;
 use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
 use pi_agent_core::api::{Agent, AgentEvent, AgentMessage};
-use pi_ai::providers::faux::FauxProvider;
+use pi_ai::api::testing::FauxProvider;
 use std::sync::Arc;
 
 #[tokio::test]

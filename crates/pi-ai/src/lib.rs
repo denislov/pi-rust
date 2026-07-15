@@ -53,4 +53,14 @@ pub mod api {
     };
     pub use crate::util::env_keys::env_api_key;
     pub use crate::util::http::{RetryConfig, is_retryable_status, parse_retry_after_ms};
+    pub use crate::util::json_repair::{
+        parse_streaming_json, repair_json, try_parse_streaming_json,
+    };
+
+    /// Deterministic provider fixtures for downstream tests and examples.
+    pub mod testing {
+        pub use crate::providers::faux::{
+            FauxCall, FauxProvider, FauxResponse, FauxState, FauxToolCall,
+        };
+    }
 }

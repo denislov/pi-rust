@@ -12,8 +12,8 @@
 //   cargo run -p pi-coding-agent --example manual_test -- hello world
 
 use pi_ai::api::AiClient;
+use pi_ai::api::testing::FauxProvider;
 use pi_ai::api::{Model, ModelCost, ModelInput};
-use pi_ai::providers::faux::FauxProvider;
 use pi_coding_agent::api::{PrintModeOptions, PromptInvocation, run_print_mode};
 use std::sync::Arc;
 
@@ -32,15 +32,13 @@ async fn main() {
     let ai_client = AiClient::new();
     ai_client.register_provider(
         api,
-        Arc::new(FauxProvider::new(vec![
-            pi_ai::providers::faux::FauxResponse {
-                text_deltas: vec![
-                    "Hello! This is the faux provider speaking. No real API call was made.".into(),
-                ],
-                thinking_deltas: vec![],
-                tool_calls: vec![],
-            },
-        ])),
+        Arc::new(FauxProvider::new(vec![pi_ai::api::testing::FauxResponse {
+            text_deltas: vec![
+                "Hello! This is the faux provider speaking. No real API call was made.".into(),
+            ],
+            thinking_deltas: vec![],
+            tool_calls: vec![],
+        }])),
     );
 
     let model = Model {

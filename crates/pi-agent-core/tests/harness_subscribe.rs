@@ -3,8 +3,8 @@ mod common;
 use common::ProviderGuard;
 use futures::StreamExt;
 use pi_agent_core::api::{AgentHarness, AgentHarnessEvent, AgentHarnessHooks};
+use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::api::{Model, ModelCost, ModelInput, StopReason};
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use std::sync::{Arc, Mutex};
 
 fn faux_model(api: &str) -> Model {

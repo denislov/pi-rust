@@ -2419,8 +2419,8 @@ mod tests {
         ProductEventSequence, ProfileId, UiSnapshot, UiSnapshotCursor,
     };
     use crate::runtime::SessionRunOptions;
+    use pi_ai::api::testing::FauxProvider;
     use pi_ai::api::{Model, ModelCost, ModelInput, Usage};
-    use pi_ai::providers::faux::FauxProvider;
     use pi_tui::VirtualTerminal;
 
     fn test_tui() -> (Tui<VirtualTerminal>, usize) {

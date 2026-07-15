@@ -4557,8 +4557,8 @@ pub mod test_harness {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
+    use pi_ai::api::testing::FauxProvider;
     use pi_ai::api::{Model, ModelCost, ModelInput};
-    use pi_ai::providers::faux::FauxProvider;
     use pi_tui::{TerminalOp, VirtualTerminal};
 
     use super::*;

@@ -15,11 +15,11 @@ use pi_agent_core::api::{
     MaybePrepareNextTurnNode, PrepareContextNode, PrepareProviderRequestNode, ProviderStreamNode,
     StartTurnNode,
 };
+use pi_ai::api::testing::FauxProvider;
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, StopReason,
     StreamOptions,
 };
-use pi_ai::providers::faux::FauxProvider;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},

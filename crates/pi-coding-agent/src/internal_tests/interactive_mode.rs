@@ -8,11 +8,11 @@ use super::support::{EnvGuard, ProviderGuard};
 use futures::stream;
 use pi_ai::api::ApiProvider;
 use pi_ai::api::EventStream;
+use pi_ai::api::testing::{FauxProvider, FauxResponse};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, StopReason,
     StreamOptions,
 };
-use pi_ai::providers::faux::{FauxProvider, FauxResponse};
 use pi_coding_agent::interactive::test_harness::{
     ScriptedInputDriver, ScriptedInteractiveOutput, run_scripted_idle_interactive,
     run_scripted_idle_interactive_with_ai_client, run_scripted_idle_interactive_with_delays,

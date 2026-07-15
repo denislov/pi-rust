@@ -375,7 +375,7 @@ fn process_proxy_event_with_tool_state(
             Some(ContentBlock::ToolCall { arguments, .. }) => {
                 let accumulated = tool_json.entry(content_index).or_default();
                 accumulated.push_str(&delta);
-                *arguments = pi_ai::util::json_repair::parse_streaming_json(accumulated);
+                *arguments = pi_ai::api::parse_streaming_json(accumulated);
                 Ok(AssistantMessageEvent::ToolcallDelta {
                     content_index,
                     delta,

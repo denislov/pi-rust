@@ -4,8 +4,8 @@ use common::{ProviderGuard, faux_model_with_window};
 use futures::StreamExt;
 use pi_agent_core::api::{Agent, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings};
 use pi_agent_core::api::{estimate_tokens, prepare_compaction, should_compact};
+use pi_ai::api::testing::FauxProvider;
 use pi_ai::api::{ContentBlock, StopReason, StreamOptions};
-use pi_ai::providers::faux::FauxProvider;
 use std::sync::Arc;
 
 fn user_msg(text: &str) -> AgentMessage {

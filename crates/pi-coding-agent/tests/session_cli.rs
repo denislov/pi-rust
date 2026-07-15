@@ -1,7 +1,7 @@
 mod support;
 
+use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::api::{Model, ModelCost, ModelInput, StopReason};
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use pi_coding_agent::api::{CliRunOptions, SessionMode, SessionRunOptions, run_cli_with_options};
 use std::sync::Arc;
 use support::ProviderGuard;

@@ -266,8 +266,8 @@ mod tests {
     use pi_agent_core::api::{
         AgentResources, AgentTool, ExecutionOutput, FileSystem, InMemoryExecutionEnv,
     };
+    use pi_ai::api::testing::FauxProvider;
     use pi_ai::api::{ContentBlock, Model, ModelCost, ModelInput};
-    use pi_ai::providers::faux::FauxProvider;
 
     use super::*;
     use crate::coding_session::capability_snapshot::OperationCapabilitySnapshot;

@@ -807,8 +807,8 @@ mod product_event_projection_tests {
     use std::sync::Arc;
 
     use pi_agent_core::api::AgentResources;
+    use pi_ai::api::testing::FauxProvider;
     use pi_ai::api::{Model, ModelCost, ModelInput};
-    use pi_ai::providers::faux::FauxProvider;
 
     use super::*;
     use crate::coding_session::public_event::{

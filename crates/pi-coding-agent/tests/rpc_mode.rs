@@ -1,11 +1,11 @@
 mod support;
 
 use pi_ai::api::EventStream;
+use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_coding_agent::api::{CliRunOptions, SessionRunOptions, run_rpc_mode_for_io};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

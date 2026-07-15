@@ -3,11 +3,11 @@ mod support;
 use futures::stream;
 use pi_ai::api::ApiProvider;
 use pi_ai::api::EventStream;
+use pi_ai::api::testing::{FauxCall, FauxResponse, FauxToolCall};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
     ModelInput, StopReason, StreamOptions,
 };
-use pi_ai::providers::faux::{FauxCall, FauxResponse, FauxToolCall};
 use pi_coding_agent::api::{PrintModeOptions, PromptInvocation, builtin_tools, run_print_mode};
 use std::sync::{Arc, Mutex};
 use support::ProviderGuard;

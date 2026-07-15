@@ -1,8 +1,8 @@
 use futures::StreamExt;
 use pi_agent_core::api::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
 use pi_ai::api::AiClient;
+use pi_ai::api::testing::FauxProvider;
 use pi_ai::api::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
-use pi_ai::providers::faux::FauxProvider;
 use std::sync::Arc;
 
 #[tokio::main]

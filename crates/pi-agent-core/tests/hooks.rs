@@ -5,8 +5,8 @@ use pi_agent_core::api::{
     AfterToolCallResult, Agent, AgentEvent, AgentMessage, AgentTool, AgentToolOutput,
     BeforeToolCallResult, QueueMode,
 };
+use pi_ai::api::testing::FauxProvider;
 use pi_ai::api::{ContentBlock, Message, StopReason};
-use pi_ai::providers::faux::FauxProvider;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -38,10 +38,10 @@ fn script_tool_then_stop(api: &str, tool_name: &str, args: serde_json::Value) ->
         api,
         Arc::new(FauxProvider::with_call_queue(vec![
             FauxProvider::single_call(
-                vec![pi_ai::providers::faux::FauxResponse {
+                vec![pi_ai::api::testing::FauxResponse {
                     text_deltas: vec![],
                     thinking_deltas: vec![],
-                    tool_calls: vec![pi_ai::providers::faux::FauxToolCall {
+                    tool_calls: vec![pi_ai::api::testing::FauxToolCall {
                         id: "tool_1".into(),
                         name: tool_name.into(),
                         deltas: vec![json_str],

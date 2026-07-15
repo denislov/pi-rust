@@ -13,11 +13,11 @@ use pi_agent_core::api::{
 };
 use pi_ai::api::ApiProvider;
 use pi_ai::api::EventStream;
+use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use std::sync::{Arc, Mutex};
 
 fn faux_model(api: &str) -> Model {

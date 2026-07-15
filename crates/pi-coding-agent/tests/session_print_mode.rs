@@ -1,7 +1,7 @@
 mod support;
 
+use pi_ai::api::testing::FauxProvider;
 use pi_ai::api::{Model, ModelCost, ModelInput};
-use pi_ai::providers::faux::FauxProvider;
 use pi_coding_agent::api::{
     PrintModeOptions, ResolvedSessionTarget, SessionMode, SessionRunOptions, run_print_mode,
 };

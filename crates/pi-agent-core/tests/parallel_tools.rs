@@ -3,8 +3,8 @@ use common::{ProviderGuard, faux_model};
 use futures::StreamExt;
 use pi_agent_core::api::{Agent, AgentEvent, AgentTool, AgentToolOutput, ToolExecutionMode};
 use pi_ai::api::ApiProvider;
+use pi_ai::api::testing::FauxProvider;
 use pi_ai::api::{ContentBlock, StopReason};
-use pi_ai::providers::faux::FauxProvider;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -100,17 +100,17 @@ fn two_tool_call_provider(call1_name: &str, call2_name: &str) -> Arc<dyn ApiProv
     let json_args = serde_json::json!({}).to_string();
     Arc::new(FauxProvider::with_call_queue(vec![
         FauxProvider::single_call(
-            vec![pi_ai::providers::faux::FauxResponse {
+            vec![pi_ai::api::testing::FauxResponse {
                 text_deltas: vec![],
                 thinking_deltas: vec![],
                 tool_calls: vec![
-                    pi_ai::providers::faux::FauxToolCall {
+                    pi_ai::api::testing::FauxToolCall {
                         id: "tool_slow".into(),
                         name: call1_name.into(),
                         deltas: vec![json_args.clone()],
                         final_arguments: serde_json::json!({}),
                     },
-                    pi_ai::providers::faux::FauxToolCall {
+                    pi_ai::api::testing::FauxToolCall {
                         id: "tool_fast".into(),
                         name: call2_name.into(),
                         deltas: vec![json_args],

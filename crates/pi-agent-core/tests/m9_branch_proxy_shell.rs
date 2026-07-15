@@ -15,11 +15,11 @@ use pi_agent_core::api::{SessionEntry, StoredAgentMessage, StoredUsage};
 use pi_agent_core::api::{
     ShellCaptureOptions, TruncationLimit, execute_shell_with_capture, truncate_head, truncate_tail,
 };
+use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse};
 use pi_ai::api::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
     StopReason, StreamOptions,
 };
-use pi_ai::providers::faux::{FauxCall, FauxProvider, FauxResponse};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},

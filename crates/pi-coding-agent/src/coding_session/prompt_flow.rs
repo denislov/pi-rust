@@ -501,11 +501,11 @@ mod tests {
     use pi_ai::api::AiClient;
     use pi_ai::api::ApiProvider;
     use pi_ai::api::EventStream;
+    use pi_ai::api::testing::{FauxProvider, FauxResponse, FauxToolCall};
     use pi_ai::api::{
         AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, ModelCost,
         ModelInput, StopReason, StreamOptions,
     };
-    use pi_ai::providers::faux::{FauxProvider, FauxResponse, FauxToolCall};
     use serde_json::json;
     use tokio::sync::oneshot;
 
