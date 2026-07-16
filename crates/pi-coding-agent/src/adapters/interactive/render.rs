@@ -9,7 +9,10 @@ use pi_tui::api::render::{
 };
 use pi_tui::api::theme::MarkdownTheme;
 
-use crate::adapters::interactive::transcript::{Transcript, TranscriptItem, TranscriptRenderKey};
+use crate::adapters::interactive::transcript::{
+    Transcript, TranscriptBlockId, TranscriptDisplayState, TranscriptItem, TranscriptRenderKey,
+    TranscriptViewSnapshot,
+};
 use crate::theme::{ResolvedColor, ResolvedTheme, ThemeBg, ThemeColor};
 
 /// Resolved visual styles for transcript blocks, derived from a
@@ -157,6 +160,9 @@ pub(super) struct TranscriptRenderOptions<'a> {
     pub hide_thinking_block: bool,
     pub hidden_thinking_label: &'a str,
     pub styles: TranscriptStyles,
+    pub view: Option<TranscriptViewSnapshot>,
+    pub selected_block: Option<TranscriptBlockId>,
+    pub selection_gutter: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -165,6 +171,9 @@ struct TranscriptBlockCacheKey {
     item_id: u64,
     item_revision: u64,
     profile_hash: u64,
+    display_state: TranscriptDisplayState,
+    selected: bool,
+    selection_gutter: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +222,19 @@ pub(super) struct TranscriptRowSnapshot {
     total_rows: usize,
 }
 
+impl TranscriptRowSnapshot {
+    pub(super) fn total_rows(self) -> usize {
+        self.total_rows
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TranscriptBlockRows {
+    pub total_rows: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
 #[cfg(test)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TranscriptRenderCacheStats {
@@ -251,13 +273,28 @@ impl TranscriptRenderCache {
     ) -> Vec<String> {
         let mut lines = Vec::new();
         let profile_hash = render_profile_hash(opts);
+        let row_profile_hash = render_row_profile_hash(opts, profile_hash);
         let mut metadata = TranscriptRowMetadata::new(transcript.content_revision());
         let mut used_keys = HashSet::new();
 
         for (render_key, item) in transcript.render_entries() {
-            let block_key = block_cache_key(render_key, profile_hash);
+            let (display_state, selected, selection_gutter) = block_view(render_key, item, opts);
+            let block_key = block_cache_key(
+                render_key,
+                profile_hash,
+                display_state,
+                selected,
+                selection_gutter,
+            );
             used_keys.insert(block_key.clone());
-            let block = self.render_block(&block_key, item, opts);
+            let block = self.render_block(
+                &block_key,
+                item,
+                opts,
+                display_state,
+                selected,
+                selection_gutter,
+            );
             let entry = row_metadata_entry(
                 render_key,
                 item,
@@ -274,7 +311,7 @@ impl TranscriptRenderCache {
         }
 
         self.retain_used_blocks(&used_keys);
-        self.record_row_metadata(transcript, profile_hash, metadata);
+        self.record_row_metadata(transcript, row_profile_hash, metadata);
         lines
     }
 
@@ -284,7 +321,8 @@ impl TranscriptRenderCache {
         opts: &TranscriptRenderOptions<'_>,
     ) -> TranscriptRowSnapshot {
         let profile_hash = render_profile_hash(opts);
-        let key = self.row_metadata_key(transcript, profile_hash);
+        let row_profile_hash = render_row_profile_hash(opts, profile_hash);
+        let key = self.row_metadata_key(transcript, row_profile_hash);
         if let Some(metadata) = self
             .row_metadata
             .get(&key)
@@ -305,7 +343,7 @@ impl TranscriptRenderCache {
         {
             self.stats.row_metadata_misses += 1;
         }
-        let metadata = self.rebuild_row_metadata(transcript, opts, profile_hash);
+        let metadata = self.rebuild_row_metadata(transcript, opts, profile_hash, row_profile_hash);
         TranscriptRowSnapshot {
             key,
             content_revision: metadata.content_revision,
@@ -319,11 +357,19 @@ impl TranscriptRenderCache {
         opts: &TranscriptRenderOptions<'_>,
         before: TranscriptRowSnapshot,
         changed_indices: &[usize],
-    ) -> usize {
+        anchor_start_row: Option<usize>,
+    ) -> isize {
         let profile_hash = render_profile_hash(opts);
-        let key = self.row_metadata_key(transcript, profile_hash);
+        let row_profile_hash = render_row_profile_hash(opts, profile_hash);
+        let key = self.row_metadata_key(transcript, row_profile_hash);
         if key != before.key {
-            return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+            return self.row_delta_fallback(
+                transcript,
+                opts,
+                profile_hash,
+                row_profile_hash,
+                before.total_rows,
+            );
         }
         if before.content_revision == transcript.content_revision() {
             return 0;
@@ -333,20 +379,50 @@ impl TranscriptRenderCache {
             .get(&key)
             .is_none_or(|metadata| metadata.content_revision != before.content_revision)
         {
-            return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+            return self.row_delta_fallback(
+                transcript,
+                opts,
+                profile_hash,
+                row_profile_hash,
+                before.total_rows,
+            );
         }
 
         let mut indices = changed_indices.to_vec();
         indices.sort_unstable();
         indices.dedup();
         if indices.is_empty() {
-            return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+            return self.row_delta_fallback(
+                transcript,
+                opts,
+                profile_hash,
+                row_profile_hash,
+                before.total_rows,
+            );
         }
 
-        let mut signed_delta = 0isize;
+        let old_positions = self.row_metadata.get(&key).map(|metadata| {
+            let mut row = 0usize;
+            metadata
+                .entries
+                .iter()
+                .map(|entry| {
+                    let position = (row, row.saturating_add(entry.contribution_line_count));
+                    row = position.1;
+                    position
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut signed_anchor_delta = 0isize;
         for index in indices {
             let Some((render_key, item)) = transcript.render_entry_at(index) else {
-                return self.row_delta_fallback(transcript, opts, profile_hash, before.total_rows);
+                return self.row_delta_fallback(
+                    transcript,
+                    opts,
+                    profile_hash,
+                    row_profile_hash,
+                    before.total_rows,
+                );
             };
             let old_entry = self
                 .row_metadata
@@ -360,6 +436,7 @@ impl TranscriptRenderCache {
                             transcript,
                             opts,
                             profile_hash,
+                            row_profile_hash,
                             before.total_rows,
                         );
                     }
@@ -375,6 +452,7 @@ impl TranscriptRenderCache {
                             transcript,
                             opts,
                             profile_hash,
+                            row_profile_hash,
                             before.total_rows,
                         );
                     }
@@ -382,8 +460,22 @@ impl TranscriptRenderCache {
                 }
             };
 
-            let block_key = block_cache_key(render_key, profile_hash);
-            let block = self.render_block(&block_key, item, opts);
+            let (display_state, selected, selection_gutter) = block_view(render_key, item, opts);
+            let block_key = block_cache_key(
+                render_key,
+                profile_hash,
+                display_state,
+                selected,
+                selection_gutter,
+            );
+            let block = self.render_block(
+                &block_key,
+                item,
+                opts,
+                display_state,
+                selected,
+                selection_gutter,
+            );
             let new_entry =
                 row_metadata_entry(render_key, item, block.line_count, separator_before);
             let metadata = self
@@ -397,16 +489,29 @@ impl TranscriptRenderCache {
                         transcript,
                         opts,
                         profile_hash,
+                        row_profile_hash,
                         before.total_rows,
                     );
                 }
                 let delta = new_entry.contribution_line_count as isize
                     - old_entry.contribution_line_count as isize;
-                signed_delta += delta;
+                let affects_anchor = anchor_start_row.is_none_or(|anchor| {
+                    old_positions
+                        .as_ref()
+                        .and_then(|positions| positions.get(index))
+                        .is_none_or(|(_, end)| *end > anchor)
+                });
+                if affects_anchor {
+                    signed_anchor_delta += delta;
+                }
                 metadata.total_rows = add_signed_usize(metadata.total_rows, delta);
                 metadata.entries[index] = new_entry;
             } else {
-                signed_delta += new_entry.contribution_line_count as isize;
+                let delta = usize_to_isize(new_entry.contribution_line_count);
+                let old_total_rows = before.total_rows;
+                if anchor_start_row.is_none_or(|anchor| old_total_rows >= anchor) {
+                    signed_anchor_delta += delta;
+                }
                 metadata.total_rows = metadata
                     .total_rows
                     .saturating_add(new_entry.contribution_line_count);
@@ -422,7 +527,40 @@ impl TranscriptRenderCache {
         {
             self.stats.row_delta_hits += 1;
         }
-        signed_delta.max(0) as usize
+        signed_anchor_delta
+    }
+
+    pub(super) fn block_rows(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+        block_id: TranscriptBlockId,
+    ) -> Option<TranscriptBlockRows> {
+        let profile_hash = render_profile_hash(opts);
+        let row_profile_hash = render_row_profile_hash(opts, profile_hash);
+        let key = self.row_metadata_key(transcript, row_profile_hash);
+        let needs_rebuild = self
+            .row_metadata
+            .get(&key)
+            .is_none_or(|metadata| metadata.content_revision != transcript.content_revision());
+        if needs_rebuild {
+            self.rebuild_row_metadata(transcript, opts, profile_hash, row_profile_hash);
+        }
+        let metadata = self.row_metadata.get(&key)?;
+        let mut row = 0usize;
+        for ((render_key, _), entry) in transcript.render_entries().zip(&metadata.entries) {
+            let block_start = row + usize::from(entry.separator_before);
+            let block_end = row + entry.contribution_line_count;
+            if render_key.block_id() == block_id {
+                return Some(TranscriptBlockRows {
+                    total_rows: metadata.total_rows,
+                    start: block_start,
+                    end: block_end,
+                });
+            }
+            row = block_end;
+        }
+        None
     }
 
     fn render_block(
@@ -430,6 +568,9 @@ impl TranscriptRenderCache {
         key: &TranscriptBlockCacheKey,
         item: &TranscriptItem,
         opts: &TranscriptRenderOptions<'_>,
+        display_state: TranscriptDisplayState,
+        selected: bool,
+        selection_gutter: bool,
     ) -> TranscriptBlockCacheEntry {
         if let Some(entry) = self.blocks.get(key) {
             #[cfg(test)]
@@ -452,6 +593,9 @@ impl TranscriptRenderCache {
             opts.hide_thinking_block,
             opts.hidden_thinking_label,
             opts.styles,
+            display_state,
+            selected,
+            selection_gutter,
         );
         let entry = TranscriptBlockCacheEntry {
             line_count: block.len(),
@@ -470,14 +614,29 @@ impl TranscriptRenderCache {
         transcript: &Transcript,
         opts: &TranscriptRenderOptions<'_>,
         profile_hash: u64,
+        row_profile_hash: u64,
     ) -> TranscriptRowMetadata {
         let mut metadata = TranscriptRowMetadata::new(transcript.content_revision());
         let mut used_keys = HashSet::new();
 
         for (render_key, item) in transcript.render_entries() {
-            let block_key = block_cache_key(render_key, profile_hash);
+            let (display_state, selected, selection_gutter) = block_view(render_key, item, opts);
+            let block_key = block_cache_key(
+                render_key,
+                profile_hash,
+                display_state,
+                selected,
+                selection_gutter,
+            );
             used_keys.insert(block_key.clone());
-            let block = self.render_block(&block_key, item, opts);
+            let block = self.render_block(
+                &block_key,
+                item,
+                opts,
+                display_state,
+                selected,
+                selection_gutter,
+            );
             let entry = row_metadata_entry(
                 render_key,
                 item,
@@ -490,7 +649,7 @@ impl TranscriptRenderCache {
         }
 
         self.retain_used_blocks(&used_keys);
-        self.record_row_metadata(transcript, profile_hash, metadata.clone());
+        self.record_row_metadata(transcript, row_profile_hash, metadata.clone());
         metadata
     }
 
@@ -499,15 +658,17 @@ impl TranscriptRenderCache {
         transcript: &Transcript,
         opts: &TranscriptRenderOptions<'_>,
         profile_hash: u64,
+        row_profile_hash: u64,
         previous_total_rows: usize,
-    ) -> usize {
+    ) -> isize {
         #[cfg(test)]
         {
             self.stats.row_delta_fallbacks += 1;
         }
-        self.rebuild_row_metadata(transcript, opts, profile_hash)
-            .total_rows
-            .saturating_sub(previous_total_rows)
+        let current_total_rows = self
+            .rebuild_row_metadata(transcript, opts, profile_hash, row_profile_hash)
+            .total_rows;
+        row_count_delta(current_total_rows, previous_total_rows)
     }
 
     fn record_row_metadata(
@@ -542,12 +703,46 @@ impl TranscriptRenderCache {
     }
 }
 
-fn block_cache_key(render_key: TranscriptRenderKey, profile_hash: u64) -> TranscriptBlockCacheKey {
+fn block_cache_key(
+    render_key: TranscriptRenderKey,
+    profile_hash: u64,
+    display_state: TranscriptDisplayState,
+    selected: bool,
+    selection_gutter: bool,
+) -> TranscriptBlockCacheKey {
     TranscriptBlockCacheKey {
         transcript_id: render_key.transcript_id,
         item_id: render_key.item_id,
         item_revision: render_key.item_revision,
         profile_hash,
+        display_state,
+        selected,
+        selection_gutter,
+    }
+}
+
+fn block_view(
+    render_key: TranscriptRenderKey,
+    item: &TranscriptItem,
+    opts: &TranscriptRenderOptions<'_>,
+) -> (TranscriptDisplayState, bool, bool) {
+    let block_id = render_key.block_id();
+    let display_state = opts.view.as_ref().map_or_else(
+        || legacy_display_state(item),
+        |view| view.display_state(block_id, item),
+    );
+    let selection_gutter = opts.selection_gutter && item.selectable();
+    let selected = selection_gutter && opts.selected_block == Some(block_id);
+    (display_state, selected, selection_gutter)
+}
+
+fn legacy_display_state(item: &TranscriptItem) -> TranscriptDisplayState {
+    match item {
+        TranscriptItem::Tool { name, .. } if matches!(name.as_str(), "edit" | "write") => {
+            TranscriptDisplayState::Expanded
+        }
+        TranscriptItem::Tool { .. } => TranscriptDisplayState::Preview,
+        _ => TranscriptDisplayState::Expanded,
     }
 }
 
@@ -576,6 +771,18 @@ fn add_signed_usize(value: usize, delta: isize) -> usize {
     }
 }
 
+fn usize_to_isize(value: usize) -> isize {
+    isize::try_from(value).unwrap_or(isize::MAX)
+}
+
+fn row_count_delta(current: usize, previous: usize) -> isize {
+    if current >= previous {
+        usize_to_isize(current - previous)
+    } else {
+        -usize_to_isize(previous - current)
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn render_transcript_lines(
     transcript: &Transcript,
@@ -589,6 +796,9 @@ pub(super) fn render_transcript_lines(
         hide_thinking_block,
         hidden_thinking_label,
         styles,
+        view,
+        selected_block,
+        selection_gutter,
     } = opts.clone();
 
     let mut lines = Vec::new();
@@ -598,7 +808,13 @@ pub(super) fn render_transcript_lines(
     // ad-hoc "rule between finished tool and assistant" separator.
     let mut emitted_visible_block = false;
 
-    for item in transcript.items() {
+    for (render_key, item) in transcript.render_entries() {
+        let block_id = render_key.block_id();
+        let display_state = view.as_ref().map_or_else(
+            || legacy_display_state(item),
+            |view| view.display_state(block_id, item),
+        );
+        let item_selection_gutter = selection_gutter && item.selectable();
         let block = render_block(
             item,
             width,
@@ -608,6 +824,9 @@ pub(super) fn render_transcript_lines(
             hide_thinking_block,
             hidden_thinking_label,
             styles,
+            display_state,
+            item_selection_gutter && selected_block == Some(block_id),
+            item_selection_gutter,
         );
         if block.is_empty() {
             continue;
@@ -637,6 +856,18 @@ fn render_profile_hash(opts: &TranscriptRenderOptions<'_>) -> u64 {
     hasher.finish()
 }
 
+fn render_row_profile_hash(opts: &TranscriptRenderOptions<'_>, profile_hash: u64) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    profile_hash.hash(&mut hasher);
+    opts.view
+        .as_ref()
+        .map(TranscriptViewSnapshot::revision)
+        .hash(&mut hasher);
+    opts.selected_block.hash(&mut hasher);
+    opts.selection_gutter.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Render a single transcript item into zero or more lines. Each visible
 /// item is a self-contained "block"; the caller inserts spacing between
 /// blocks.
@@ -650,26 +881,35 @@ fn render_block(
     hide_thinking_block: bool,
     hidden_thinking_label: &str,
     styles: TranscriptStyles,
+    display_state: TranscriptDisplayState,
+    selected: bool,
+    selection_gutter: bool,
 ) -> Vec<String> {
-    match item {
+    let content_width = if selection_gutter {
+        width.saturating_sub(2).max(1)
+    } else {
+        width
+    };
+    let lines = match item {
         TranscriptItem::User { text } => {
-            render_user_message(text, width, color, markdown_theme, &styles)
+            render_user_message(text, content_width, color, markdown_theme, &styles)
         }
         TranscriptItem::System { text } => text
             .split('\n')
-            .map(|line| fit_line(&paint_with(line, &styles.system, color), width))
+            .map(|line| fit_line(&paint_with(line, &styles.system, color), content_width))
             .collect(),
         TranscriptItem::Assistant {
             markdown, thinking, ..
         } => render_assistant_message(
             markdown,
             thinking,
-            width,
+            content_width,
             color,
             markdown_theme,
             hide_thinking_block,
             hidden_thinking_label,
             &styles,
+            display_state,
         ),
         TranscriptItem::Tool {
             name,
@@ -682,13 +922,31 @@ fn render_block(
             args,
             result.as_deref(),
             *is_error,
-            width,
+            content_width,
             max_tool_result_lines,
             color,
             &styles,
+            display_state,
+            selection_gutter,
         ),
-        TranscriptItem::Error { text } => render_error_message(text, width, color, &styles),
+        TranscriptItem::Error { text } => render_error_message(text, content_width, color, &styles),
+    };
+    if selection_gutter {
+        apply_selection_gutter(lines, width, selected)
+    } else {
+        lines
     }
+}
+
+fn apply_selection_gutter(lines: Vec<String>, width: usize, selected: bool) -> Vec<String> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let marker = if selected && index == 0 { "> " } else { "  " };
+            fit_line(&format!("{marker}{line}"), width)
+        })
+        .collect()
 }
 
 /// Render a user message as a backgrounded box (TS `UserMessageComponent`):
@@ -745,6 +1003,7 @@ fn render_assistant_message(
     hide_thinking_block: bool,
     hidden_thinking_label: &str,
     styles: &TranscriptStyles,
+    display_state: TranscriptDisplayState,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     let has_thinking = !thinking.trim().is_empty();
@@ -759,12 +1018,38 @@ fn render_assistant_message(
                 width,
             ));
         } else {
-            lines.push(fit_line(
-                &paint_with("thinking", &styles.system, color),
-                width,
-            ));
+            let thinking_lines = thinking.lines().collect::<Vec<_>>();
+            let (shown, omitted, label) = match display_state {
+                TranscriptDisplayState::Collapsed => (
+                    Vec::new(),
+                    thinking_lines.len(),
+                    format!("thinking · {} lines hidden", thinking_lines.len()),
+                ),
+                TranscriptDisplayState::Preview => {
+                    let start = thinking_lines.len().saturating_sub(3);
+                    (
+                        thinking_lines[start..].to_vec(),
+                        start,
+                        "thinking · preview".to_string(),
+                    )
+                }
+                TranscriptDisplayState::Expanded => {
+                    (thinking_lines.clone(), 0, "thinking · expanded".to_string())
+                }
+            };
+            lines.push(fit_line(&paint_with(&label, &styles.system, color), width));
+            if omitted > 0 && display_state == TranscriptDisplayState::Preview {
+                lines.push(fit_line(
+                    &paint_with(
+                        &format!("  ... {omitted} earlier thinking lines"),
+                        &styles.system,
+                        color,
+                    ),
+                    width,
+                ));
+            }
             let think_width = width.saturating_sub(2).max(1);
-            for line in thinking.lines() {
+            for line in shown {
                 let painted = paint_with(line, &styles.thinking, color);
                 for wrapped in wrap_text_with_ansi(&painted, think_width) {
                     lines.push(fit_line(&format!("  {wrapped}"), width));
@@ -879,6 +1164,8 @@ fn render_tool_block(
     max_tool_result_lines: usize,
     color: bool,
     styles: &TranscriptStyles,
+    display_state: TranscriptDisplayState,
+    per_block_view: bool,
 ) -> Vec<String> {
     let status = match (result, is_error) {
         (None, _) => ToolStatus::Running,
@@ -891,14 +1178,41 @@ fn render_tool_block(
         ToolStatus::Done => &styles.tool_success_bg,
     };
 
+    let header = render_tool_header(name, args, status, color, styles);
+    if display_state == TranscriptDisplayState::Collapsed {
+        if name == "edit" {
+            return vec![fit_line(&header, width)];
+        }
+        return vec![paint_bg_line(&header, width, bg, color)];
+    }
+    let result_limit = match display_state {
+        TranscriptDisplayState::Collapsed => 0,
+        TranscriptDisplayState::Preview => max_tool_result_lines,
+        TranscriptDisplayState::Expanded => usize::MAX,
+    };
+
     // `edit` self-renders its diff (TS renderShell: "self") so the diff's
     // added/removed/context colors aren't swallowed by a flat tool bg.
     if name == "edit" {
-        return render_edit_block(args, result, is_error, width, color, styles);
+        return render_edit_block(
+            args,
+            result,
+            is_error,
+            width,
+            color,
+            styles,
+            result_limit,
+            per_block_view,
+        );
     }
 
-    let header = render_tool_header(name, args, status, color, styles);
     let mut lines = vec![paint_bg_line(&header, width, bg, color)];
+    if name == "delegation"
+        && let Some(task) = string_arg(args, &["task"])
+    {
+        let task = paint_with(&format!("task: {task}"), &styles.tool_output, color);
+        lines.push(paint_bg_line(&format!("  {task}"), width, bg, color));
+    }
     let Some(result) = result else {
         // Bash shows a running hint while pending; other tools just stop.
         if name == "bash" {
@@ -908,8 +1222,15 @@ fn render_tool_block(
         return lines;
     };
 
-    let body =
-        render_tool_result_body(name, result, is_error, max_tool_result_lines, color, styles);
+    let body = render_tool_result_body(
+        name,
+        result,
+        is_error,
+        result_limit,
+        color,
+        styles,
+        per_block_view,
+    );
     for line in body {
         lines.push(paint_bg_line(&line, width, bg, color));
     }
@@ -989,6 +1310,21 @@ fn render_tool_header(
                 paint_with(name, &styles.tool_title, color),
                 path,
                 status_text,
+            )
+        }
+        "delegation" => {
+            let target_kind = string_arg(args, &["targetKind", "target_kind"])
+                .unwrap_or_else(|| "agent".to_string());
+            let target_id =
+                string_arg(args, &["targetId", "target_id"]).unwrap_or_else(|| "-".to_string());
+            let live_status =
+                string_arg(args, &["status"]).unwrap_or_else(|| status.label().to_string());
+            format!(
+                "{} {} {} {}",
+                paint_with("delegate", &styles.tool_title, color),
+                target_kind,
+                target_id,
+                paint_with(&live_status, &status.style(styles), color),
             )
         }
         _ => format!(
@@ -1089,6 +1425,7 @@ fn render_tool_result_body(
     max_tool_result_lines: usize,
     color: bool,
     styles: &TranscriptStyles,
+    per_block_view: bool,
 ) -> Vec<String> {
     let output_style = if is_error {
         styles.tool_error_text
@@ -1097,14 +1434,8 @@ fn render_tool_result_body(
     };
     let all_lines: Vec<&str> = result.lines().collect();
 
-    // write/edit keep their full result (handled here for write; edit is
-    // self-rendered above).
-    let keep_all = matches!(name, "write");
-    let limit = if keep_all {
-        all_lines.len()
-    } else {
-        max_tool_result_lines
-    };
+    let keep_all = max_tool_result_lines == usize::MAX;
+    let limit = max_tool_result_lines.min(all_lines.len());
 
     let (shown, omitted) = if name == "bash" && !keep_all {
         // Tail preview: show the last `limit` logical lines.
@@ -1129,7 +1460,14 @@ fn render_tool_result_body(
     }
     if omitted > 0 {
         let note = paint_with(
-            &format!("... {omitted} more lines (expand tools)"),
+            &format!(
+                "... {omitted} more lines ({})",
+                if per_block_view {
+                    "disclose block"
+                } else {
+                    "expand tools"
+                }
+            ),
             &styles.system,
             color,
         );
@@ -1147,6 +1485,8 @@ fn render_edit_block(
     width: usize,
     color: bool,
     styles: &TranscriptStyles,
+    max_result_lines: usize,
+    per_block_view: bool,
 ) -> Vec<String> {
     let path = tool_target("edit", args);
     let status = match (result, is_error) {
@@ -1170,9 +1510,31 @@ fn render_edit_block(
     } else {
         styles.tool_output
     };
-    for line in result.lines() {
+    let result_lines = result.lines().collect::<Vec<_>>();
+    for line in result_lines.iter().take(max_result_lines) {
         let styled = paint_diff_line(line, color, styles, output_style);
         lines.push(fit_line(&format!("  {styled}"), width));
+    }
+    let omitted = result_lines.len().saturating_sub(max_result_lines);
+    if omitted > 0 {
+        lines.push(fit_line(
+            &format!(
+                "  {}",
+                paint_with(
+                    &format!(
+                        "... {omitted} more diff lines ({})",
+                        if per_block_view {
+                            "disclose block"
+                        } else {
+                            "expand tools"
+                        }
+                    ),
+                    &styles.system,
+                    color
+                )
+            ),
+            width,
+        ));
     }
     lines
 }
@@ -1289,6 +1651,7 @@ pub(super) fn abbreviate_cwd(cwd: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::interactive::transcript::TranscriptViewState;
     use crate::theme::builtin_dark;
 
     #[test]
@@ -1389,6 +1752,9 @@ mod tests {
             hide_thinking_block: false,
             hidden_thinking_label: "Thinking...",
             styles: TranscriptStyles::from_theme(None),
+            view: None,
+            selected_block: None,
+            selection_gutter: false,
         }
     }
 
@@ -1439,6 +1805,9 @@ mod tests {
             hide_thinking_block: false,
             hidden_thinking_label: "Thinking...",
             styles,
+            view: None,
+            selected_block: None,
+            selection_gutter: false,
         };
         let lines = render_transcript_lines(&transcript, &opts);
 
@@ -1999,5 +2368,119 @@ mod tests {
                 visible_width(line)
             );
         }
+    }
+
+    #[test]
+    fn per_block_tool_preview_expands_only_the_selected_tool() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "call-1".into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": "printf lines"}),
+            result: Some("one\ntwo\nthree\nfour\nfive".into()),
+            is_error: false,
+        });
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let mut opts = test_opts(50, false);
+        opts.view = Some(view.snapshot());
+        opts.selected_block = view.selected();
+        opts.selection_gutter = true;
+
+        let preview = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(preview.contains("> $ printf lines done"), "{preview}");
+        assert!(preview.contains("three"), "{preview}");
+        assert!(preview.contains("five"), "{preview}");
+        assert!(
+            !preview.lines().any(|line| line.trim() == "one"),
+            "{preview}"
+        );
+        assert!(
+            preview.contains("2 more lines (disclose block)"),
+            "{preview}"
+        );
+
+        assert!(view.toggle_selected(&transcript));
+        opts.view = Some(view.snapshot());
+        let expanded = render_transcript_lines(&transcript, &opts).join("\n");
+        for line in ["one", "two", "three", "four", "five"] {
+            assert!(expanded.contains(line), "missing {line}: {expanded}");
+        }
+        assert!(!expanded.contains("more lines"), "{expanded}");
+    }
+
+    #[test]
+    fn assistant_disclosure_changes_thinking_without_hiding_answer() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Assistant {
+            id: "assistant-1".into(),
+            markdown: "final answer".into(),
+            thinking: "think one\nthink two\nthink three\nthink four\nthink five".into(),
+            done: true,
+        });
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let mut opts = test_opts(50, false);
+        opts.selected_block = view.selected();
+        opts.selection_gutter = true;
+        opts.view = Some(view.snapshot());
+
+        let preview = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(preview.contains("> thinking · preview"), "{preview}");
+        assert!(!preview.contains("think one"), "{preview}");
+        assert!(preview.contains("think five"), "{preview}");
+        assert!(preview.contains("final answer"), "{preview}");
+
+        assert!(view.toggle_selected(&transcript));
+        opts.view = Some(view.snapshot());
+        let expanded = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(expanded.contains("think one"), "{expanded}");
+        assert!(expanded.contains("final answer"), "{expanded}");
+
+        assert!(view.toggle_selected(&transcript));
+        opts.view = Some(view.snapshot());
+        let collapsed = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(collapsed.contains("5 lines hidden"), "{collapsed}");
+        assert!(!collapsed.contains("think five"), "{collapsed}");
+        assert!(collapsed.contains("final answer"), "{collapsed}");
+    }
+
+    #[test]
+    fn delegation_preview_identifies_target_task_and_final_summary() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "delegate-1".into(),
+            name: "delegation".into(),
+            args: serde_json::json!({
+                "targetKind": "agent",
+                "targetId": "review",
+                "task": "review the parser",
+                "status": "completed"
+            }),
+            result: Some("No blocking issues.\nOne follow-up suggestion.".into()),
+            is_error: false,
+        });
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let mut opts = test_opts(70, false);
+        opts.view = Some(view.snapshot());
+        opts.selected_block = view.selected();
+        opts.selection_gutter = true;
+
+        let preview = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(
+            preview.contains("> delegate agent review completed"),
+            "{preview}"
+        );
+        assert!(preview.contains("task: review the parser"), "{preview}");
+        assert!(preview.contains("No blocking issues."), "{preview}");
+
+        assert!(view.toggle_selected(&transcript));
+        assert!(view.toggle_selected(&transcript));
+        opts.view = Some(view.snapshot());
+        let collapsed = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(collapsed.contains("delegate agent review completed"));
+        assert!(!collapsed.contains("review the parser"), "{collapsed}");
+        assert!(!collapsed.contains("No blocking issues."), "{collapsed}");
     }
 }

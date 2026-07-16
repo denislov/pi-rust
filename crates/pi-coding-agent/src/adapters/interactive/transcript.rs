@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TRANSCRIPT_CACHE_ID: AtomicU64 = AtomicU64::new(1);
@@ -50,6 +51,224 @@ impl TranscriptItem {
     pub fn system(text: impl Into<String>) -> Self {
         Self::System { text: text.into() }
     }
+
+    pub(super) fn selectable(&self) -> bool {
+        !matches!(self, Self::System { .. })
+    }
+
+    pub(super) fn foldable(&self) -> bool {
+        matches!(
+            self,
+            Self::Assistant { thinking, .. } if !thinking.trim().is_empty()
+        ) || matches!(self, Self::Tool { .. })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct TranscriptBlockId {
+    transcript_id: u64,
+    item_id: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum TranscriptDisplayState {
+    Collapsed,
+    Preview,
+    Expanded,
+}
+
+impl TranscriptDisplayState {
+    fn next(self) -> Self {
+        match self {
+            Self::Collapsed => Self::Preview,
+            Self::Preview => Self::Expanded,
+            Self::Expanded => Self::Collapsed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TranscriptViewSnapshot {
+    revision: u64,
+    selected: Option<TranscriptBlockId>,
+    display_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
+}
+
+impl TranscriptViewSnapshot {
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(super) fn display_state(
+        &self,
+        block_id: TranscriptBlockId,
+        item: &TranscriptItem,
+    ) -> TranscriptDisplayState {
+        self.display_states
+            .get(&block_id)
+            .copied()
+            .unwrap_or_else(|| default_display_state(item))
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct TranscriptViewState {
+    transcript_id: Option<u64>,
+    selected: Option<TranscriptBlockId>,
+    last_selectable: Option<TranscriptBlockId>,
+    display_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
+    revision: u64,
+}
+
+impl TranscriptViewState {
+    pub(super) fn sync(&mut self, transcript: &Transcript) {
+        let transcript_id = transcript.render_cache_id();
+        let mut changed = false;
+        if self.transcript_id != Some(transcript_id) {
+            self.transcript_id = Some(transcript_id);
+            self.selected = None;
+            self.last_selectable = None;
+            self.display_states.clear();
+            changed = true;
+        }
+
+        let entries = transcript
+            .view_entries()
+            .filter(|(_, item)| item.selectable())
+            .collect::<Vec<_>>();
+        let visible_ids = entries
+            .iter()
+            .map(|(block_id, _)| *block_id)
+            .collect::<HashSet<_>>();
+        let new_last = entries.last().map(|(block_id, _)| *block_id);
+        let selected_is_valid = self.selected.is_some_and(|id| visible_ids.contains(&id));
+        if !selected_is_valid || self.selected == self.last_selectable {
+            if self.selected != new_last {
+                self.selected = new_last;
+                changed = true;
+            }
+        }
+        self.last_selectable = new_last;
+
+        let before_len = self.display_states.len();
+        self.display_states.retain(|id, _| visible_ids.contains(id));
+        changed |= self.display_states.len() != before_len;
+        if changed {
+            self.bump_revision();
+        }
+    }
+
+    pub(super) fn snapshot(&self) -> TranscriptViewSnapshot {
+        TranscriptViewSnapshot {
+            revision: self.revision,
+            selected: self.selected,
+            display_states: self.display_states.clone(),
+        }
+    }
+
+    pub(super) fn selected(&self) -> Option<TranscriptBlockId> {
+        self.selected
+    }
+
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(super) fn select_previous(&mut self, transcript: &Transcript) -> bool {
+        self.move_selection(transcript, -1)
+    }
+
+    pub(super) fn select_next(&mut self, transcript: &Transcript) -> bool {
+        self.move_selection(transcript, 1)
+    }
+
+    pub(super) fn toggle_selected(&mut self, transcript: &Transcript) -> bool {
+        let Some(selected) = self.selected else {
+            return false;
+        };
+        let Some(item) = transcript.item_for_block(selected) else {
+            return false;
+        };
+        if !item.foldable() {
+            return false;
+        }
+        let current = self
+            .display_states
+            .get(&selected)
+            .copied()
+            .unwrap_or_else(|| default_display_state(item));
+        self.display_states.insert(selected, current.next());
+        self.bump_revision();
+        true
+    }
+
+    pub(super) fn toggle_all(&mut self, transcript: &Transcript) -> bool {
+        let foldable = transcript
+            .view_entries()
+            .filter(|(_, item)| item.foldable())
+            .collect::<Vec<_>>();
+        if foldable.is_empty() {
+            return false;
+        }
+        let all_expanded = foldable.iter().all(|(id, item)| {
+            self.display_states
+                .get(id)
+                .copied()
+                .unwrap_or_else(|| default_display_state(item))
+                == TranscriptDisplayState::Expanded
+        });
+        for (id, _) in foldable {
+            if all_expanded {
+                self.display_states.remove(&id);
+            } else {
+                self.display_states
+                    .insert(id, TranscriptDisplayState::Expanded);
+            }
+        }
+        self.bump_revision();
+        true
+    }
+
+    fn move_selection(&mut self, transcript: &Transcript, delta: isize) -> bool {
+        let ids = transcript
+            .view_entries()
+            .filter(|(_, item)| item.selectable())
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return false;
+        }
+        let current = self
+            .selected
+            .and_then(|selected| ids.iter().position(|id| *id == selected))
+            .unwrap_or(ids.len() - 1);
+        let next = if delta < 0 {
+            current.saturating_sub(delta.unsigned_abs())
+        } else {
+            current.saturating_add(delta as usize).min(ids.len() - 1)
+        };
+        if next == current && self.selected == Some(ids[next]) {
+            return false;
+        }
+        self.selected = Some(ids[next]);
+        self.bump_revision();
+        true
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+}
+
+pub(super) fn default_display_state(item: &TranscriptItem) -> TranscriptDisplayState {
+    match item {
+        TranscriptItem::Assistant { thinking, .. } if !thinking.trim().is_empty() => {
+            TranscriptDisplayState::Preview
+        }
+        TranscriptItem::Tool { is_error: true, .. } => TranscriptDisplayState::Expanded,
+        TranscriptItem::Tool { .. } => TranscriptDisplayState::Preview,
+        _ => TranscriptDisplayState::Expanded,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,6 +276,15 @@ pub(crate) struct TranscriptRenderKey {
     pub(crate) transcript_id: u64,
     pub(crate) item_id: u64,
     pub(crate) item_revision: u64,
+}
+
+impl TranscriptRenderKey {
+    pub(super) fn block_id(self) -> TranscriptBlockId {
+        TranscriptBlockId {
+            transcript_id: self.transcript_id,
+            item_id: self.item_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -191,6 +419,21 @@ impl Transcript {
             })
     }
 
+    fn view_entries(&self) -> impl Iterator<Item = (TranscriptBlockId, &TranscriptItem)> {
+        self.render_entries()
+            .map(|(render_key, item)| (render_key.block_id(), item))
+    }
+
+    fn item_for_block(&self, block_id: TranscriptBlockId) -> Option<&TranscriptItem> {
+        if block_id.transcript_id != self.cache_id {
+            return None;
+        }
+        self.item_meta
+            .iter()
+            .position(|meta| meta.item_id == block_id.item_id)
+            .and_then(|index| self.items.get(index))
+    }
+
     pub(crate) fn render_entry_at(
         &self,
         index: usize,
@@ -254,18 +497,70 @@ impl Transcript {
     pub(crate) fn preserve_scrolled_view_after_hidden_change(
         &mut self,
         previous_scroll_offset: usize,
-        added_rows: usize,
+        row_delta_below_anchor: isize,
     ) {
         if previous_scroll_offset == 0 {
             return;
         }
         let previous_offset = self.scroll_offset;
         let previous_new_output_below = self.new_output_below;
-        self.scroll_offset = previous_scroll_offset.saturating_add(added_rows);
+        self.scroll_offset = add_signed_rows(previous_scroll_offset, row_delta_below_anchor);
         self.new_output_below = true;
         if self.scroll_offset != previous_offset
             || self.new_output_below != previous_new_output_below
         {
+            self.bump_revision();
+        }
+    }
+
+    pub(crate) fn preserve_scrolled_view_after_row_change(
+        &mut self,
+        previous_scroll_offset: usize,
+        previous_total_rows: usize,
+        current_total_rows: usize,
+    ) {
+        if previous_scroll_offset == 0 {
+            return;
+        }
+        let previous = self.scroll_offset;
+        self.scroll_offset = if current_total_rows >= previous_total_rows {
+            previous_scroll_offset.saturating_add(current_total_rows - previous_total_rows)
+        } else {
+            previous_scroll_offset.saturating_sub(previous_total_rows - current_total_rows)
+        };
+        if self.scroll_offset != previous {
+            self.bump_revision();
+        }
+    }
+
+    pub(crate) fn ensure_row_range_visible(
+        &mut self,
+        total_rows: usize,
+        row_start: usize,
+        row_end: usize,
+        viewport_height: usize,
+    ) {
+        if viewport_height == 0 || row_start >= row_end {
+            return;
+        }
+        let max_offset = total_rows.saturating_sub(viewport_height);
+        let current_offset = self.scroll_offset.min(max_offset);
+        let viewport_end = total_rows.saturating_sub(current_offset);
+        let viewport_start = viewport_end.saturating_sub(viewport_height);
+        let next_offset =
+            if row_end.saturating_sub(row_start) >= viewport_height || row_start < viewport_start {
+                total_rows.saturating_sub(row_start.saturating_add(viewport_height))
+            } else if row_end > viewport_end {
+                total_rows.saturating_sub(row_end)
+            } else {
+                current_offset
+            }
+            .min(max_offset);
+        if next_offset != self.scroll_offset {
+            self.scroll_offset = next_offset;
+            if self.scroll_offset == 0 {
+                self.new_output_below = false;
+            }
             self.bump_revision();
         }
     }
@@ -575,6 +870,14 @@ impl Transcript {
     }
 }
 
+fn add_signed_rows(value: usize, delta: isize) -> usize {
+    if delta >= 0 {
+        value.saturating_add(delta as usize)
+    } else {
+        value.saturating_sub(delta.unsigned_abs())
+    }
+}
+
 fn delegation_args(
     target_kind: String,
     target_id: String,
@@ -600,3 +903,150 @@ fn delegation_args(
 }
 
 use super::UiEvent;
+
+#[cfg(test)]
+mod view_state_tests {
+    use super::*;
+
+    fn tool(call_id: &str, is_error: bool) -> TranscriptItem {
+        TranscriptItem::Tool {
+            call_id: call_id.into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": "test"}),
+            result: Some("one\ntwo\nthree\nfour".into()),
+            is_error,
+        }
+    }
+
+    #[test]
+    fn selection_uses_stable_item_identity_across_streaming_revisions() {
+        let mut transcript = Transcript::new();
+        transcript.apply_event(UiEvent::ThinkingDelta {
+            text: "first".into(),
+        });
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let selected = view.selected().unwrap();
+
+        transcript.apply_event(UiEvent::ThinkingDelta {
+            text: " second".into(),
+        });
+        view.sync(&transcript);
+
+        assert_eq!(view.selected(), Some(selected));
+        assert_eq!(
+            view.snapshot()
+                .display_state(selected, transcript.item_for_block(selected).unwrap()),
+            TranscriptDisplayState::Preview
+        );
+    }
+
+    #[test]
+    fn selection_moves_between_non_system_blocks_and_follows_new_tail() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::system("notice"));
+        transcript.push(TranscriptItem::user("question"));
+        transcript.push(tool("call-1", false));
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let tool_id = view.selected().unwrap();
+
+        assert!(view.select_previous(&transcript));
+        let user_id = view.selected().unwrap();
+        assert_ne!(user_id, tool_id);
+        transcript.push(tool("call-2", false));
+        view.sync(&transcript);
+        assert_eq!(view.selected(), Some(user_id));
+
+        assert!(view.select_next(&transcript));
+        assert_eq!(view.selected(), Some(tool_id));
+        assert!(view.select_next(&transcript));
+        let new_tail = view.selected().unwrap();
+        transcript.push(tool("call-3", false));
+        view.sync(&transcript);
+        assert_ne!(view.selected(), Some(new_tail));
+    }
+
+    #[test]
+    fn disclosure_cycles_per_block_and_expand_all_returns_to_defaults() {
+        let mut transcript = Transcript::new();
+        transcript.push(tool("call-1", false));
+        transcript.push(tool("call-2", true));
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let error_id = view.selected().unwrap();
+
+        assert!(view.toggle_selected(&transcript));
+        assert_eq!(
+            view.snapshot()
+                .display_state(error_id, transcript.item_for_block(error_id).unwrap()),
+            TranscriptDisplayState::Collapsed
+        );
+        assert!(view.toggle_all(&transcript));
+        for (id, item) in transcript
+            .view_entries()
+            .filter(|(_, item)| item.foldable())
+        {
+            assert_eq!(
+                view.snapshot().display_state(id, item),
+                TranscriptDisplayState::Expanded
+            );
+        }
+        assert!(view.toggle_all(&transcript));
+        let first = transcript.view_entries().next().unwrap();
+        assert_eq!(
+            view.snapshot().display_state(first.0, first.1),
+            TranscriptDisplayState::Preview
+        );
+    }
+
+    #[test]
+    fn replacing_transcript_discards_old_selection_and_display_state() {
+        let mut first = Transcript::new();
+        first.push(tool("call-1", false));
+        let mut view = TranscriptViewState::default();
+        view.sync(&first);
+        let old = view.selected().unwrap();
+        assert!(view.toggle_selected(&first));
+
+        let mut second = Transcript::new();
+        second.push(tool("call-2", false));
+        view.sync(&second);
+
+        assert_ne!(view.selected(), Some(old));
+        let selected = view.selected().unwrap();
+        assert_eq!(
+            view.snapshot()
+                .display_state(selected, second.item_for_block(selected).unwrap()),
+            TranscriptDisplayState::Preview
+        );
+    }
+
+    #[test]
+    fn view_only_row_changes_preserve_anchor_without_marking_new_output() {
+        let mut transcript = Transcript::new();
+        transcript.scroll_page_up(4);
+
+        transcript.preserve_scrolled_view_after_row_change(4, 20, 25);
+        assert_eq!(transcript.scroll_offset(), 9);
+        assert!(!transcript.has_new_output_below());
+
+        transcript.preserve_scrolled_view_after_row_change(9, 25, 22);
+        assert_eq!(transcript.scroll_offset(), 6);
+        assert!(!transcript.has_new_output_below());
+    }
+
+    #[test]
+    fn ensuring_a_row_range_visible_scrolls_in_both_directions() {
+        let mut transcript = Transcript::new();
+
+        transcript.ensure_row_range_visible(30, 4, 7, 6);
+        assert_eq!(transcript.scroll_offset(), 20);
+
+        transcript.ensure_row_range_visible(30, 25, 28, 6);
+        assert_eq!(transcript.scroll_offset(), 2);
+
+        transcript.ensure_row_range_visible(30, 24, 30, 6);
+        assert_eq!(transcript.scroll_offset(), 0);
+    }
+}

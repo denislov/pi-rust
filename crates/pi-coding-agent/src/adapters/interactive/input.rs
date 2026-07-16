@@ -174,7 +174,11 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
     }
 
     if matches_key(event, "ctrl+o") {
-        root.tool_output_expanded = !root.tool_output_expanded;
+        if root.uses_per_block_transcript_view() {
+            root.toggle_all_transcript_blocks();
+        } else {
+            root.tool_output_expanded = !root.tool_output_expanded;
+        }
         return;
     }
 

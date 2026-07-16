@@ -39,6 +39,7 @@ use crate::adapters::interactive::session_actions::{HydratedSession, SessionChoi
 use crate::adapters::interactive::session_selector;
 use crate::adapters::interactive::slash::{self, ParsedSlashCommand};
 use crate::adapters::interactive::transcript::TranscriptMutation;
+use crate::adapters::interactive::transcript::{TranscriptBlockId, TranscriptViewState};
 use crate::adapters::interactive::transient_overlay::TransientOverlayBridge;
 use crate::adapters::interactive::tree_selector::{TreeSelectorInput, TreeSelectorState};
 use crate::adapters::interactive::{Transcript, TranscriptItem, UiEvent};
@@ -624,6 +625,7 @@ pub(super) struct InteractiveRoot {
     pub(super) selected_tree_entry_id: Option<String>,
     pub(super) pending_tree_label_change: Option<(String, Option<String>)>,
     pub(super) transcript: Transcript,
+    transcript_view: TranscriptViewState,
     render_cache: TranscriptRenderCache,
     pub(super) editor: Editor,
     pub(super) keybindings: KeybindingsManager,
@@ -659,6 +661,7 @@ pub(super) struct InteractiveRoot {
     context_tab: ContextTab,
     context_open: bool,
     context_restore_focus: InteractiveRegion,
+    conversation_viewport_width: usize,
     conversation_viewport_height: usize,
     modal_overlay: TransientOverlayBridge,
     support_overlay: TransientOverlayBridge,
@@ -718,6 +721,8 @@ pub(super) struct InteractiveRenderState {
     editor_text: String,
     editor_cursor: usize,
     transcript_revision: u64,
+    transcript_view_revision: u64,
+    selected_transcript_block: Option<TranscriptBlockId>,
     transcript_scroll_offset: usize,
     transcript_has_new_output_below: bool,
     focused_region: Option<InteractiveRegion>,
@@ -837,6 +842,7 @@ impl InteractiveRoot {
             selected_tree_entry_id: None,
             pending_tree_label_change: None,
             transcript,
+            transcript_view: TranscriptViewState::default(),
             render_cache: TranscriptRenderCache::new(),
             editor,
             keybindings,
@@ -870,6 +876,7 @@ impl InteractiveRoot {
             context_tab: ContextTab::Ops,
             context_open: false,
             context_restore_focus: InteractiveRegion::Composer,
+            conversation_viewport_width: 1,
             conversation_viewport_height: 1,
             modal_overlay,
             support_overlay,
@@ -2004,13 +2011,22 @@ impl InteractiveRoot {
             }
         }
         if let Some(previous_rows) = previous_rows {
-            let added_rows = self.transcript_row_delta_since(
+            let anchor_start_row = self.fullscreen_viewport.then(|| {
+                previous_rows
+                    .total_rows()
+                    .saturating_sub(previous_scroll_offset)
+                    .saturating_sub(self.conversation_viewport_height.max(1))
+            });
+            let row_delta_below_anchor = self.transcript_row_delta_since(
                 previous_rows,
                 mutation.changed_indices(),
                 MAX_TOOL_RESULT_LINES,
+                anchor_start_row,
             );
-            self.transcript
-                .preserve_scrolled_view_after_hidden_change(previous_scroll_offset, added_rows);
+            self.transcript.preserve_scrolled_view_after_hidden_change(
+                previous_scroll_offset,
+                row_delta_below_anchor,
+            );
         }
     }
 
@@ -2357,6 +2373,8 @@ impl InteractiveRoot {
             editor_text: self.editor.text().to_string(),
             editor_cursor: self.editor.cursor(),
             transcript_revision: self.transcript.revision(),
+            transcript_view_revision: self.transcript_view.revision(),
+            selected_transcript_block: self.transcript_view.selected(),
             transcript_scroll_offset: self.transcript.scroll_offset(),
             transcript_has_new_output_below: self.transcript.has_new_output_below(),
             focused_region: self.focus_ring.current(),
@@ -2628,6 +2646,14 @@ impl InteractiveRoot {
             hide_thinking_block: self.settings.hide_thinking_block,
             hidden_thinking_label: "Thinking...",
             styles: TranscriptStyles::from_theme(self.resolved_theme.as_ref()),
+            view: self
+                .fullscreen_viewport
+                .then(|| self.transcript_view.snapshot()),
+            selected_block: (self.fullscreen_viewport
+                && self.focus_ring.current() == Some(InteractiveRegion::Conversation))
+            .then(|| self.transcript_view.selected())
+            .flatten(),
+            selection_gutter: self.fullscreen_viewport,
         }
     }
 
@@ -2696,11 +2722,13 @@ impl InteractiveRoot {
     }
 
     fn transcript_lines(&mut self, max_tool_result_lines: usize) -> Vec<String> {
+        self.sync_transcript_view();
         let opts = self.transcript_render_options(self.viewport_width, max_tool_result_lines);
         self.render_cache.render_lines(&self.transcript, &opts)
     }
 
     fn transcript_lines_at(&mut self, width: usize, max_tool_result_lines: usize) -> Vec<String> {
+        self.sync_transcript_view();
         let opts = self.transcript_render_options(width, max_tool_result_lines);
         self.render_cache.render_lines(&self.transcript, &opts)
     }
@@ -2708,6 +2736,32 @@ impl InteractiveRoot {
     pub(super) fn set_fullscreen_viewport(&mut self, enabled: bool) {
         self.fullscreen_viewport = enabled;
         self.refresh_shell_focus();
+    }
+
+    fn sync_transcript_view(&mut self) {
+        if self.fullscreen_viewport {
+            self.transcript_view.sync(&self.transcript);
+        }
+    }
+
+    pub(super) fn toggle_all_transcript_blocks(&mut self) -> bool {
+        self.sync_transcript_view();
+        let previous_scroll_offset = self.transcript.scroll_offset();
+        let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
+        let changed = self.transcript_view.toggle_all(&self.transcript);
+        if changed && let Some(previous_rows) = previous_rows {
+            let current_rows = self.transcript_total_rows();
+            self.transcript.preserve_scrolled_view_after_row_change(
+                previous_scroll_offset,
+                previous_rows,
+                current_rows,
+            );
+        }
+        changed
+    }
+
+    pub(super) fn uses_per_block_transcript_view(&self) -> bool {
+        self.fullscreen_viewport
     }
 
     pub(super) fn handle_shell_input(&mut self, event: &InputEvent) -> bool {
@@ -2743,6 +2797,26 @@ impl InteractiveRoot {
 
         match self.focus_ring.current() {
             Some(InteractiveRegion::Conversation) => {
+                self.sync_transcript_view();
+                if matches_key(event, "up") || matches_key(event, "k") {
+                    if self.transcript_view.select_previous(&self.transcript) {
+                        self.ensure_selected_transcript_visible();
+                    }
+                    return true;
+                }
+                if matches_key(event, "down") || matches_key(event, "j") {
+                    if self.transcript_view.select_next(&self.transcript) {
+                        self.ensure_selected_transcript_visible();
+                    }
+                    return true;
+                }
+                if matches_key(event, "enter")
+                    || matches_key(event, "space")
+                    || matches_key(event, "ctrl+o")
+                {
+                    self.toggle_selected_transcript_block();
+                    return true;
+                }
                 if matches_key(event, "pageup") {
                     self.transcript
                         .scroll_page_up(self.conversation_viewport_height.max(1));
@@ -2926,12 +3000,9 @@ impl InteractiveRoot {
         let mut frame = Frame::new(self.viewport_width, self.viewport_height);
 
         let conversation_body = panel_body(layout.conversation);
+        self.conversation_viewport_width = conversation_body.width.max(1);
         self.conversation_viewport_height = conversation_body.height.max(1);
-        let max_tool_result_lines = if self.tool_output_expanded {
-            EXPANDED_TOOL_RESULT_LINES
-        } else {
-            MAX_TOOL_RESULT_LINES
-        };
+        let max_tool_result_lines = MAX_TOOL_RESULT_LINES;
         let transcript_lines =
             self.transcript_lines_at(conversation_body.width.max(1), max_tool_result_lines);
         let transcript_lines = transcript_viewport(
@@ -3088,7 +3159,7 @@ impl InteractiveRoot {
             width,
         ));
         let focused = match self.focus_ring.current() {
-            Some(InteractiveRegion::Conversation) => "PageUp/PageDown  scroll",
+            Some(InteractiveRegion::Conversation) => "Up/Down select · Enter disclose",
             Some(InteractiveRegion::Context) => "Left/Right  tabs",
             Some(InteractiveRegion::Composer) => "Enter  submit",
             None => "",
@@ -3167,7 +3238,9 @@ impl InteractiveRoot {
     }
 
     fn transcript_row_snapshot(&mut self, max_tool_result_lines: usize) -> TranscriptRowSnapshot {
-        let opts = self.transcript_render_options(self.viewport_width, max_tool_result_lines);
+        self.sync_transcript_view();
+        let opts =
+            self.transcript_render_options(self.transcript_render_width(), max_tool_result_lines);
         self.render_cache.row_snapshot(&self.transcript, &opts)
     }
 
@@ -3176,10 +3249,73 @@ impl InteractiveRoot {
         snapshot: TranscriptRowSnapshot,
         changed_indices: &[usize],
         max_tool_result_lines: usize,
-    ) -> usize {
-        let opts = self.transcript_render_options(self.viewport_width, max_tool_result_lines);
+        anchor_start_row: Option<usize>,
+    ) -> isize {
+        self.sync_transcript_view();
+        let opts =
+            self.transcript_render_options(self.transcript_render_width(), max_tool_result_lines);
+        self.render_cache.row_delta_since(
+            &self.transcript,
+            &opts,
+            snapshot,
+            changed_indices,
+            anchor_start_row,
+        )
+    }
+
+    fn transcript_render_width(&self) -> usize {
+        if self.fullscreen_viewport {
+            self.conversation_viewport_width.max(1)
+        } else {
+            self.viewport_width.max(1)
+        }
+    }
+
+    fn transcript_total_rows(&mut self) -> usize {
+        let opts =
+            self.transcript_render_options(self.transcript_render_width(), MAX_TOOL_RESULT_LINES);
         self.render_cache
-            .row_delta_since(&self.transcript, &opts, snapshot, changed_indices)
+            .row_snapshot(&self.transcript, &opts)
+            .total_rows()
+    }
+
+    fn toggle_selected_transcript_block(&mut self) -> bool {
+        let previous_scroll_offset = self.transcript.scroll_offset();
+        let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
+        let changed = self.transcript_view.toggle_selected(&self.transcript);
+        if !changed {
+            return false;
+        }
+        if let Some(previous_rows) = previous_rows {
+            let current_rows = self.transcript_total_rows();
+            self.transcript.preserve_scrolled_view_after_row_change(
+                previous_scroll_offset,
+                previous_rows,
+                current_rows,
+            );
+        }
+        self.ensure_selected_transcript_visible();
+        true
+    }
+
+    fn ensure_selected_transcript_visible(&mut self) {
+        let Some(selected) = self.transcript_view.selected() else {
+            return;
+        };
+        let opts =
+            self.transcript_render_options(self.transcript_render_width(), MAX_TOOL_RESULT_LINES);
+        let Some(rows) = self
+            .render_cache
+            .block_rows(&self.transcript, &opts, selected)
+        else {
+            return;
+        };
+        self.transcript.ensure_row_range_visible(
+            rows.total_rows,
+            rows.start,
+            rows.end,
+            self.conversation_viewport_height.max(1),
+        );
     }
 
     #[cfg(test)]
@@ -3560,6 +3696,9 @@ mod transcript_viewport_tests {
     use pi_tui::api::component::Component;
     use pi_tui::api::input::{InputEvent, parse_key};
 
+    use crate::adapters::interactive::UiEvent;
+    use crate::adapters::interactive::transcript::TranscriptItem;
+
     use super::{ContextTab, InteractiveRegion, InteractiveRoot, transcript_viewport};
 
     fn lines() -> Vec<String> {
@@ -3634,5 +3773,121 @@ mod transcript_viewport_tests {
         assert!(root.editor.text().is_empty());
         assert!(root.handle_shell_input(&key("\x1b[D")));
         assert_eq!(root.context_tab, ContextTab::Ops);
+    }
+
+    fn bash_tool(call_id: &str, prefix: &str) -> TranscriptItem {
+        TranscriptItem::Tool {
+            call_id: call_id.into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": format!("run-{prefix}")}),
+            result: Some(
+                (1..=5)
+                    .map(|line| format!("{prefix}-{line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            is_error: false,
+        }
+    }
+
+    #[test]
+    fn conversation_keys_select_and_disclose_only_the_active_block() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 30);
+        root.transcript.push(TranscriptItem::user("question"));
+        root.transcript.push(bash_tool("a", "alpha"));
+        root.transcript.push(bash_tool("b", "beta"));
+        let _ = root.render(120);
+        root.focus_ring.focus(InteractiveRegion::Conversation);
+        root.apply_region_focus();
+
+        assert!(root.handle_shell_input(&key("\x1b[A")));
+        assert!(root.handle_shell_input(&key("\r")));
+        let first_expanded = root.transcript_lines_at(80, 3).join("\n");
+        assert!(first_expanded.contains("alpha-1"), "{first_expanded}");
+        assert!(first_expanded.contains("alpha-5"), "{first_expanded}");
+        assert!(!first_expanded.contains("beta-1"), "{first_expanded}");
+        assert!(first_expanded.contains("beta-5"), "{first_expanded}");
+
+        assert!(root.handle_shell_input(&key("\x1b[B")));
+        assert!(root.handle_shell_input(&key("\r")));
+        let both_expanded = root.transcript_lines_at(80, 3).join("\n");
+        assert!(both_expanded.contains("alpha-1"), "{both_expanded}");
+        assert!(both_expanded.contains("beta-1"), "{both_expanded}");
+    }
+
+    #[test]
+    fn block_navigation_keeps_the_selected_block_inside_the_viewport() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(60, 12);
+        for index in 0..12 {
+            root.transcript
+                .push(TranscriptItem::user(format!("message {index}")));
+        }
+        let _ = root.render(60);
+        root.focus_ring.focus(InteractiveRegion::Conversation);
+        root.apply_region_focus();
+
+        for _ in 0..11 {
+            assert!(root.handle_shell_input(&key("\x1b[A")));
+        }
+
+        assert!(root.transcript.scroll_offset() > 0);
+        let frame = root.render(60).join("\n");
+        assert!(frame.contains("message 0"), "{frame}");
+    }
+
+    #[test]
+    fn fullscreen_streaming_adjusts_only_for_row_changes_below_the_anchor() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        root.transcript.push(TranscriptItem::Tool {
+            call_id: "above".into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": "history"}),
+            result: Some("a\nb\nc\nd\ne\nf".into()),
+            is_error: false,
+        });
+        for index in 0..16 {
+            root.transcript
+                .push(TranscriptItem::user(format!("history {index}")));
+        }
+        root.transcript.push(TranscriptItem::Tool {
+            call_id: "below".into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": "stream"}),
+            result: Some("one".into()),
+            is_error: false,
+        });
+        let _ = root.render(120);
+        root.transcript.scroll_page_up(8);
+
+        let before_above_change = root.transcript.scroll_offset();
+        root.apply_events(vec![UiEvent::ToolUpdated {
+            call_id: "above".into(),
+            result: "short".into(),
+        }]);
+        assert_eq!(
+            root.transcript.scroll_offset(),
+            before_above_change,
+            "a block wholly above the viewport must not move its visual anchor"
+        );
+
+        let before_growth = root.transcript.scroll_offset();
+        root.apply_events(vec![UiEvent::ToolUpdated {
+            call_id: "below".into(),
+            result: "one\ntwo\nthree\nfour\nfive\nsix".into(),
+        }]);
+        let after_growth = root.transcript.scroll_offset();
+        assert!(after_growth > before_growth);
+
+        root.apply_events(vec![UiEvent::ToolUpdated {
+            call_id: "below".into(),
+            result: "one".into(),
+        }]);
+        assert_eq!(root.transcript.scroll_offset(), before_growth);
     }
 }

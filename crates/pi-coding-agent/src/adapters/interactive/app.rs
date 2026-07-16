@@ -287,6 +287,9 @@ mod tests {
             hide_thinking_block: false,
             hidden_thinking_label: "Thinking...",
             styles: TranscriptStyles::from_theme(None),
+            view: None,
+            selected_block: None,
+            selection_gutter: false,
         }
     }
 
