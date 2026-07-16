@@ -574,6 +574,44 @@ impl TranscriptRenderCache {
         None
     }
 
+    pub(super) fn all_block_rows(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+    ) -> Vec<(TranscriptBlockId, TranscriptBlockRows)> {
+        let profile_hash = render_profile_hash(opts);
+        let row_profile_hash = render_row_profile_hash(opts, profile_hash);
+        let key = self.row_metadata_key(transcript, row_profile_hash);
+        let needs_rebuild = self
+            .row_metadata
+            .get(&key)
+            .is_none_or(|metadata| metadata.content_revision != transcript.content_revision());
+        if needs_rebuild {
+            self.rebuild_row_metadata(transcript, opts, profile_hash, row_profile_hash);
+        }
+        let Some(metadata) = self.row_metadata.get(&key) else {
+            return Vec::new();
+        };
+        let mut row = 0usize;
+        transcript
+            .render_entries()
+            .zip(&metadata.entries)
+            .map(|((render_key, _), entry)| {
+                let block_start = row + usize::from(entry.separator_before);
+                let block_end = row + entry.contribution_line_count;
+                row = block_end;
+                (
+                    render_key.block_id(),
+                    TranscriptBlockRows {
+                        total_rows: metadata.total_rows,
+                        start: block_start,
+                        end: block_end,
+                    },
+                )
+            })
+            .collect()
+    }
+
     fn render_block(
         &mut self,
         key: &TranscriptBlockCacheKey,

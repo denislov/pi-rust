@@ -340,7 +340,7 @@ impl<T: Terminal> Tui<T> {
                     _ => return self.dispatch_to_focused(event),
                 }
             }
-            InputEvent::Paste(_) => return self.dispatch_to_focused(event),
+            InputEvent::Mouse(_) | InputEvent::Paste(_) => return self.dispatch_to_focused(event),
             InputEvent::Raw(data) => data.as_str(),
             InputEvent::Resize(_) => {
                 // Resize events are always forwarded directly.

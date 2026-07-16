@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use pi_tui::api::component::{Component, OverlayAnchor, OverlayMargin, OverlayOptions, SizeValue};
+use pi_tui::api::input::{InputEvent, MouseButton, MouseEvent, MouseEventKind, MouseModifiers};
 use pi_tui::api::render::Tui;
 use pi_tui::api::testing::VirtualTerminal;
 
@@ -246,4 +247,47 @@ fn capturing_overlay_traps_and_restores_focus() {
     handle.hide(&mut tui);
     assert!(*base_focused.lock().unwrap());
     assert!(!*overlay_focused.lock().unwrap());
+}
+
+struct InputProbe {
+    events: Arc<Mutex<Vec<InputEvent>>>,
+}
+
+impl Component for InputProbe {
+    fn render(&mut self, _width: usize) -> Vec<String> {
+        vec!["input".into()]
+    }
+
+    fn handle_input(&mut self, event: &InputEvent) {
+        self.events.lock().unwrap().push(event.clone());
+    }
+}
+
+#[test]
+fn capturing_overlay_receives_mouse_without_leaking_to_the_base_component() {
+    let base_events = Arc::new(Mutex::new(Vec::new()));
+    let overlay_events = Arc::new(Mutex::new(Vec::new()));
+    let mut tui = Tui::new(VirtualTerminal::new(12, 5));
+    let base_id = tui.add_child_with_id(Box::new(InputProbe {
+        events: Arc::clone(&base_events),
+    }));
+    tui.set_focus(Some(base_id));
+    let handle = tui.show_overlay(
+        Box::new(InputProbe {
+            events: Arc::clone(&overlay_events),
+        }),
+        Default::default(),
+    );
+    handle.focus(&mut tui);
+    let event = InputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 4,
+        row: 2,
+        modifiers: MouseModifiers::empty(),
+    });
+
+    tui.dispatch_input(&event);
+
+    assert!(base_events.lock().unwrap().is_empty());
+    assert_eq!(overlay_events.lock().unwrap().as_slice(), &[event]);
 }

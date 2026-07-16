@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::{InputEvent, parse_key};
+use super::{InputEvent, parse_key, parse_sgr_mouse};
 
 const ESC: &str = "\x1b";
 const BRACKETED_PASTE_START: &str = "\x1b[200~";
@@ -189,11 +189,13 @@ impl StdinBuffer {
             self.pending_kitty_printable_codepoint = Some(cp);
         }
 
-        Some(
+        Some(if let Some(mouse) = parse_sgr_mouse(sequence) {
+            InputEvent::Mouse(mouse)
+        } else {
             parse_key(sequence)
                 .map(InputEvent::Key)
-                .unwrap_or_else(|| InputEvent::Raw(sequence.to_string())),
-        )
+                .unwrap_or_else(|| InputEvent::Raw(sequence.to_string()))
+        })
     }
 
     fn drain_pending_residual(&mut self) -> Vec<InputEvent> {
@@ -202,9 +204,13 @@ impl StdinBuffer {
             return Vec::new();
         }
         let data = std::mem::take(&mut self.buffer);
-        let event = parse_key(&data)
-            .map(InputEvent::Key)
-            .unwrap_or(InputEvent::Raw(data));
+        let event = if let Some(mouse) = parse_sgr_mouse(&data) {
+            InputEvent::Mouse(mouse)
+        } else {
+            parse_key(&data)
+                .map(InputEvent::Key)
+                .unwrap_or(InputEvent::Raw(data))
+        };
         vec![event]
     }
 
@@ -308,7 +314,7 @@ fn parse_unmodified_kitty_printable_codepoint(sequence: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Key, KeyEvent, KeyEventKind, KeyModifiers};
+    use crate::input::{Key, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 
     const STDIN_BUFFER_PENDING_TIMEOUT: Duration = Duration::from_millis(10);
     const STDIN_BUFFER_PARTIAL_WAIT: Duration = Duration::from_millis(5);
@@ -346,6 +352,37 @@ mod tests {
             other => panic!("expected key event, got {other:?}"),
         }
         assert!(!buffer.has_pending_residual());
+    }
+
+    #[test]
+    fn sgr_mouse_sequence_emits_a_typed_mouse_event() {
+        let mut buffer = StdinBuffer::new();
+        let events = buffer.process("\x1b[<0;9;6M");
+
+        assert!(matches!(
+            events.as_slice(),
+            [InputEvent::Mouse(event)]
+                if event.kind == MouseEventKind::Down(MouseButton::Left)
+                    && event.column == 8
+                    && event.row == 5
+        ));
+    }
+
+    #[test]
+    fn split_sgr_mouse_sequence_waits_for_the_final_byte() {
+        let start = stdin_buffer_clock_anchor();
+        let mut buffer = StdinBuffer::with_pending_timeout(STDIN_BUFFER_PENDING_TIMEOUT);
+
+        assert!(buffer.process_at("\x1b[<0;9", start).is_empty());
+        let events = buffer.process_at(";6M", start + STDIN_BUFFER_FOLLOWUP_OFFSET);
+
+        assert!(matches!(
+            events.as_slice(),
+            [InputEvent::Mouse(event)]
+                if event.kind == MouseEventKind::Down(MouseButton::Left)
+                    && event.column == 8
+                    && event.row == 5
+        ));
     }
 
     #[test]

@@ -31,8 +31,9 @@ pub mod input {
     pub use crate::input::{
         GENERIC_TUI_KEYBINDINGS, InputEvent, Key, KeyEvent, KeyEventKind, KeyModifiers,
         KeybindingConflict, KeybindingDefinition, KeybindingsConfig, KeybindingsManager,
-        StdinBuffer, TUI_KEYBINDINGS, is_key_release, is_kitty_protocol_active, matches_key,
-        parse_key, set_kitty_protocol_active,
+        MouseButton, MouseEvent, MouseEventKind, MouseModifiers, StdinBuffer, TUI_KEYBINDINGS,
+        is_key_release, is_kitty_protocol_active, matches_key, parse_key, parse_sgr_mouse,
+        set_kitty_protocol_active,
     };
 }
 
@@ -53,11 +54,12 @@ pub mod component {
 /// Render scheduling, surfaces, styles, painting, and display-width helpers.
 pub mod render {
     pub use crate::render::{
-        Axis, Color, ColorLevel, Constraint, ERROR, FocusRing, Frame, InputListenerResult, Layout,
-        PATH, Rect, RenderOutcome, RenderScheduler, RenderStrategy, STATUS_IDLE, STATUS_RUNNING,
-        SYSTEM, Style, TOOL_ERROR, TOOL_NAME, Tui, TuiError, USER, color_enabled, color_level,
-        detect_color_level_from_env, paint, paint_with, paint_with_level, truncate_to_width,
-        truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
+        Axis, Color, ColorLevel, Constraint, ERROR, FocusRing, Frame, HitMap, HitRegion,
+        InputListenerResult, Layout, PATH, Point, Rect, RenderOutcome, RenderScheduler,
+        RenderStrategy, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, Tui,
+        TuiError, USER, color_enabled, color_level, detect_color_level_from_env, paint, paint_with,
+        paint_with_level, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
+        wrap_text_with_ansi,
     };
 }
 

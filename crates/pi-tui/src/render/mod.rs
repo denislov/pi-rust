@@ -7,7 +7,7 @@ mod surface;
 mod width;
 
 pub(crate) use ansi::ansi_sequence_len;
-pub use layout::{Axis, Constraint, FocusRing, Frame, Layout, Rect};
+pub use layout::{Axis, Constraint, FocusRing, Frame, HitMap, HitRegion, Layout, Point, Rect};
 pub(crate) use overlay::OverlayEntry;
 pub use overlay::{
     OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, OverlayVisibleFn, SizeValue,

@@ -109,6 +109,11 @@ sleep 0.3
 
 tmux send-keys -t "$SESSION" "/help" Enter
 sleep 0.3
+for _ in {1..12}; do
+  tmux send-keys -t "$SESSION" -l $'\033[<64;2;2M'
+done
+sleep 0.2
+capture_viewport "14-fullscreen-help-mouse-wheel"
 tmux send-keys -t "$SESSION" PageUp
 sleep 0.2
 capture_viewport "14-fullscreen-help-page-up"
@@ -139,6 +144,7 @@ grep -Fq "Context ops [changes]" "$OUT_DIR/13-context-focus-changes.txt"
 grep -Fq "Settings" "$OUT_DIR/13-settings-overlay-wide.txt"
 grep -Fq "Settings" "$OUT_DIR/13-settings-overlay-narrow.txt"
 grep -Fq "idle" "$OUT_DIR/13-settings-overlay-narrow.txt"
+grep -Fq "show this help" "$OUT_DIR/14-fullscreen-help-mouse-wheel.txt"
 grep -Fq "show this help" "$OUT_DIR/14-fullscreen-help-page-up.txt"
 grep -Fq "scrollback sentinel before pi-rust TUI" "$OUT_DIR/99-after-fullscreen-exit.txt"
 
@@ -166,6 +172,8 @@ Review checklist:
   product overlay remains bounded through resize; the script also runs offline
   authorization queue and delegation approval round trips before tmux starts.
 - 14-fullscreen-help-page-up shows the top of help through transcript scrolling.
+- 14-fullscreen-help-mouse-wheel reaches the same scrollable Conversation
+  history through typed SGR mouse input while PageUp remains available.
 - 99-after-fullscreen-exit restores the primary screen and its sentinel.
 EOF
 

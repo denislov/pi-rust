@@ -18,6 +18,12 @@ use crate::input::set_kitty_protocol_active;
 const TERMINAL_PROGRESS_KEEPALIVE_MS: u64 = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE: &str = "\x1b]9;4;3\x07";
 const TERMINAL_PROGRESS_CLEAR_SEQUENCE: &str = "\x1b]9;4;0;\x07";
+const MOUSE_CAPTURE_ENABLE_SEQUENCE: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const MOUSE_CAPTURE_DISABLE_SEQUENCE: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
+
+fn mouse_capture_enable_sequence(mode: TerminalMode) -> Option<&'static str> {
+    (mode == TerminalMode::Fullscreen).then_some(MOUSE_CAPTURE_ENABLE_SEQUENCE)
+}
 
 #[cfg(windows)]
 mod win32 {
@@ -137,6 +143,7 @@ pub struct ProcessTerminal {
     modify_other_keys_active: bool,
     keyboard_protocol_pushed: bool,
     alternate_screen_active: bool,
+    mouse_capture_active: bool,
     negotiation_buffer: String,
     negotiation_done: bool,
     negotiation_flush_deadline: Option<std::time::Instant>,
@@ -155,6 +162,7 @@ impl ProcessTerminal {
             modify_other_keys_active: false,
             keyboard_protocol_pushed: false,
             alternate_screen_active: false,
+            mouse_capture_active: false,
             negotiation_buffer: String::new(),
             negotiation_done: false,
             negotiation_flush_deadline: None,
@@ -387,6 +395,14 @@ impl ProcessTerminal {
         self.modify_other_keys_active = false;
     }
 
+    fn disable_mouse_capture(&mut self) {
+        if !self.mouse_capture_active {
+            return;
+        }
+        let _ = self.write(MOUSE_CAPTURE_DISABLE_SEQUENCE);
+        self.mouse_capture_active = false;
+    }
+
     fn stop_progress_thread(&mut self) {
         if let Some(stop) = self.progress_stop_flag.take() {
             stop.store(true, Ordering::Relaxed);
@@ -479,6 +495,10 @@ impl Terminal for ProcessTerminal {
             self.write("\x1b[?1049h")?;
             self.alternate_screen_active = true;
         }
+        if let Some(sequence) = mouse_capture_enable_sequence(mode) {
+            self.mouse_capture_active = true;
+            self.write(sequence)?;
+        }
         // Enable bracketed paste
         self.write("\x1b[?2004h")?;
         // Query Kitty keyboard protocol (flags 7: disambiguate + event types + alternate keys)
@@ -498,6 +518,7 @@ impl Terminal for ProcessTerminal {
         // Fire-and-forget escape sequences, matching TS behaviour.
         // Never let a write failure skip the critical disable_raw_mode call.
         let _ = self.write("\x1b[?2004l");
+        self.disable_mouse_capture();
         let should_disable = self.keyboard_protocol_pushed || self.kitty_protocol_active;
         self.negotiation_buffer.clear();
         self.negotiation_done = true;
@@ -542,6 +563,7 @@ impl Terminal for ProcessTerminal {
             set_kitty_protocol_active(false);
         }
         self.disable_modify_other_keys();
+        self.disable_mouse_capture();
         self.flush()?;
 
         // Simple drain: sleep for `idle` to let in-flight data arrive and be
@@ -688,12 +710,23 @@ mod tests {
         term.kitty_protocol_active = true;
         term.modify_other_keys_active = true;
         term.alternate_screen_active = true;
+        term.mouse_capture_active = true;
         // stop() writes to stdout — just verify state is cleared
         term.stop().unwrap();
         assert!(!term.kitty_protocol_active);
         assert!(!term.modify_other_keys_active);
         assert!(!term.keyboard_protocol_pushed);
         assert!(!term.alternate_screen_active);
+        assert!(!term.mouse_capture_active);
+    }
+
+    #[test]
+    fn mouse_capture_is_enabled_only_for_fullscreen_mode() {
+        assert_eq!(
+            mouse_capture_enable_sequence(TerminalMode::Fullscreen),
+            Some(MOUSE_CAPTURE_ENABLE_SEQUENCE)
+        );
+        assert_eq!(mouse_capture_enable_sequence(TerminalMode::Inline), None);
     }
 
     #[test]
@@ -701,10 +734,12 @@ mod tests {
         let mut term = ProcessTerminal::new();
         term.keyboard_protocol_pushed = true;
         term.kitty_protocol_active = true;
+        term.mouse_capture_active = true;
         term.drain_input(TERMINAL_DRAIN_INPUT_MAX, TERMINAL_DRAIN_INPUT_IDLE)
             .unwrap();
         assert!(!term.kitty_protocol_active);
         assert!(!term.keyboard_protocol_pushed);
+        assert!(!term.mouse_capture_active);
     }
 
     #[test]

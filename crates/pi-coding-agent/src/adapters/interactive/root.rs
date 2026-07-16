@@ -7,12 +7,13 @@ use pi_ai::api::model::Model;
 use pi_tui::api::component::OverlayHandle;
 use pi_tui::api::component::{Component, Editor, SettingItem, SettingsList, SettingsListOptions};
 use pi_tui::api::input::{
-    InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager, matches_key,
+    InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager, MouseButton, MouseEvent,
+    MouseEventKind, matches_key,
 };
 use pi_tui::api::render::{
-    Constraint, ERROR, FocusRing, Frame, Layout, Rect, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style,
-    USER, color_enabled, paint_with, truncate_to_width, truncate_to_width_with_ellipsis,
-    visible_width,
+    Constraint, ERROR, FocusRing, Frame, HitMap, HitRegion, Layout, Point, Rect, STATUS_IDLE,
+    STATUS_RUNNING, SYSTEM, Style, USER, color_enabled, paint_with, truncate_to_width,
+    truncate_to_width_with_ellipsis, visible_width,
 };
 use pi_tui::api::terminal::TerminalCapabilities;
 use pi_tui::api::theme::{MarkdownTheme, TuiTheme, dark_theme, light_theme};
@@ -60,6 +61,7 @@ const WIDE_LAYOUT_MIN_WIDTH: usize = 100;
 const MEDIUM_LAYOUT_MIN_WIDTH: usize = 64;
 const TIPS_MIN_HEIGHT: usize = 18;
 const MAX_COMPOSER_HEIGHT: usize = 8;
+const MOUSE_SCROLL_ROWS: usize = 3;
 pub(super) const DOUBLE_ESCAPE_WINDOW: Duration = Duration::from_millis(500);
 
 const HTTP_IDLE_TIMEOUT_CHOICES: [(&str, u64); 5] = [
@@ -153,6 +155,24 @@ struct ShellLayout {
     composer: Rect,
     status: Rect,
     work: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InteractiveHitTarget {
+    Conversation,
+    Context,
+    Composer,
+    TranscriptBlock(TranscriptBlockId),
+    TranscriptDisclosure(TranscriptBlockId),
+}
+
+impl InteractiveHitTarget {
+    fn is_conversation(self) -> bool {
+        matches!(
+            self,
+            Self::Conversation | Self::TranscriptBlock(_) | Self::TranscriptDisclosure(_)
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -665,6 +685,7 @@ pub(super) struct InteractiveRoot {
     context_restore_focus: InteractiveRegion,
     conversation_viewport_width: usize,
     conversation_viewport_height: usize,
+    mouse_hits: HitMap<InteractiveHitTarget>,
     modal_overlay: TransientOverlayBridge,
     support_overlay: TransientOverlayBridge,
     modal_overlay_handle: Option<OverlayHandle>,
@@ -885,6 +906,7 @@ impl InteractiveRoot {
             context_restore_focus: InteractiveRegion::Composer,
             conversation_viewport_width: 1,
             conversation_viewport_height: 1,
+            mouse_hits: HitMap::new(),
             modal_overlay,
             support_overlay,
             modal_overlay_handle: None,
@@ -2788,6 +2810,9 @@ impl InteractiveRoot {
         if self.selecting_model || self.selecting_session || self.selecting_settings {
             return false;
         }
+        if let InputEvent::Mouse(mouse) = event {
+            return self.handle_shell_mouse(*mouse);
+        }
 
         let mode = shell_layout_mode(self.viewport_width);
         if self.context_open && mode != ShellLayoutMode::Wide && matches_key(event, "escape") {
@@ -2870,6 +2895,52 @@ impl InteractiveRoot {
             return false;
         }
         true
+    }
+
+    fn handle_shell_mouse(&mut self, event: MouseEvent) -> bool {
+        let point = Point::new(event.column, event.row);
+        let target = self.mouse_hits.hit(point).copied();
+        match event.kind {
+            MouseEventKind::ScrollUp => {
+                if target.is_some_and(InteractiveHitTarget::is_conversation) {
+                    self.transcript.scroll_page_up(MOUSE_SCROLL_ROWS);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if target.is_some_and(InteractiveHitTarget::is_conversation) {
+                    self.transcript.scroll_page_down(MOUSE_SCROLL_ROWS);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => match target {
+                Some(InteractiveHitTarget::TranscriptDisclosure(block_id)) => {
+                    self.focus_shell_region(InteractiveRegion::Conversation);
+                    self.select_transcript_block(block_id);
+                    self.toggle_selected_transcript_block();
+                }
+                Some(InteractiveHitTarget::TranscriptBlock(block_id)) => {
+                    self.focus_shell_region(InteractiveRegion::Conversation);
+                    self.select_transcript_block(block_id);
+                }
+                Some(InteractiveHitTarget::Conversation) => {
+                    self.focus_shell_region(InteractiveRegion::Conversation);
+                }
+                Some(InteractiveHitTarget::Context) => {
+                    self.focus_shell_region(InteractiveRegion::Context);
+                }
+                Some(InteractiveHitTarget::Composer) => {
+                    self.focus_shell_region(InteractiveRegion::Composer);
+                }
+                None => {}
+            },
+            _ => {}
+        }
+        true
+    }
+
+    fn focus_shell_region(&mut self, region: InteractiveRegion) {
+        if self.focus_ring.focus(region) {
+            self.apply_region_focus();
+        }
     }
 
     fn toggle_context(&mut self, mode: ShellLayoutMode) {
@@ -3014,6 +3085,76 @@ impl InteractiveRoot {
         }
     }
 
+    fn rebuild_mouse_hit_regions(
+        &mut self,
+        layout: ShellLayout,
+        conversation_body: Rect,
+        transcript_total_rows: usize,
+    ) {
+        self.mouse_hits.clear();
+        self.mouse_hits.push(HitRegion::new(
+            layout.conversation,
+            InteractiveHitTarget::Conversation,
+        ));
+
+        let (viewport_start, viewport_end) = transcript_viewport_bounds(
+            transcript_total_rows,
+            conversation_body.height,
+            self.transcript.scroll_offset(),
+        );
+        let opts =
+            self.transcript_render_options(conversation_body.width.max(1), MAX_TOOL_RESULT_LINES);
+        let block_rows = self.render_cache.all_block_rows(&self.transcript, &opts);
+        for (block_id, rows) in block_rows {
+            let visible_start = rows.start.max(viewport_start);
+            let visible_end = rows.end.min(viewport_end);
+            if visible_start >= visible_end {
+                continue;
+            }
+            let block_rect = Rect::new(
+                conversation_body.x,
+                conversation_body
+                    .y
+                    .saturating_add(visible_start.saturating_sub(viewport_start)),
+                conversation_body.width,
+                visible_end.saturating_sub(visible_start),
+            );
+            self.mouse_hits.push(HitRegion::new(
+                block_rect,
+                InteractiveHitTarget::TranscriptBlock(block_id),
+            ));
+
+            if rows.start >= viewport_start
+                && rows.start < viewport_end
+                && self
+                    .transcript
+                    .item_for_block(block_id)
+                    .is_some_and(TranscriptItem::foldable)
+            {
+                self.mouse_hits.push(HitRegion::new(
+                    Rect::new(
+                        conversation_body.x,
+                        conversation_body
+                            .y
+                            .saturating_add(rows.start.saturating_sub(viewport_start)),
+                        conversation_body.width,
+                        1,
+                    ),
+                    InteractiveHitTarget::TranscriptDisclosure(block_id),
+                ));
+            }
+        }
+
+        if let Some(context) = layout.context {
+            self.mouse_hits
+                .push(HitRegion::new(context, InteractiveHitTarget::Context));
+        }
+        self.mouse_hits.push(HitRegion::new(
+            layout.composer,
+            InteractiveHitTarget::Composer,
+        ));
+    }
+
     fn render_fullscreen_shell(&mut self, width: usize) -> Vec<String> {
         let editor_lines = self.render_editor_box(width);
         let composer_height = editor_lines.len().clamp(1, MAX_COMPOSER_HEIGHT);
@@ -3026,6 +3167,7 @@ impl InteractiveRoot {
         let max_tool_result_lines = MAX_TOOL_RESULT_LINES;
         let transcript_lines =
             self.transcript_lines_at(conversation_body.width.max(1), max_tool_result_lines);
+        self.rebuild_mouse_hit_regions(layout, conversation_body, transcript_lines.len());
         let transcript_lines = transcript_viewport(
             &transcript_lines,
             conversation_body.height,
@@ -3326,6 +3468,15 @@ impl InteractiveRoot {
         true
     }
 
+    fn select_transcript_block(&mut self, block_id: TranscriptBlockId) -> bool {
+        self.sync_transcript_view();
+        let changed = self.transcript_view.select(&self.transcript, block_id);
+        if changed {
+            self.ensure_selected_transcript_visible();
+        }
+        changed
+    }
+
     fn toggle_selected_transcript_arguments(&mut self) -> bool {
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
@@ -3503,6 +3654,8 @@ impl Component for InteractiveRoot {
             return self.render_fullscreen_shell(width);
         }
 
+        self.mouse_hits.clear();
+
         let max_tool_result_lines = if self.tool_output_expanded {
             EXPANDED_TOOL_RESULT_LINES
         } else {
@@ -3542,11 +3695,22 @@ fn transcript_viewport(lines: &[String], height: usize, scroll_offset: usize) ->
     if height == 0 || lines.is_empty() {
         return Vec::new();
     }
-    let max_offset = lines.len().saturating_sub(height);
-    let offset = scroll_offset.min(max_offset);
-    let end = lines.len().saturating_sub(offset);
-    let start = end.saturating_sub(height);
+    let (start, end) = transcript_viewport_bounds(lines.len(), height, scroll_offset);
     lines[start..end].to_vec()
+}
+
+fn transcript_viewport_bounds(
+    total_rows: usize,
+    height: usize,
+    scroll_offset: usize,
+) -> (usize, usize) {
+    if height == 0 || total_rows == 0 {
+        return (0, 0);
+    }
+    let max_offset = total_rows.saturating_sub(height);
+    let offset = scroll_offset.min(max_offset);
+    let end = total_rows.saturating_sub(offset);
+    (end.saturating_sub(height), end)
 }
 
 fn shell_layout_mode(width: usize) -> ShellLayoutMode {
@@ -3744,13 +3908,17 @@ mod transcript_viewport_tests {
 
     use base64::Engine;
     use pi_tui::api::component::Component;
-    use pi_tui::api::input::{InputEvent, parse_key};
+    use pi_tui::api::input::{
+        InputEvent, MouseButton, MouseEvent, MouseEventKind, MouseModifiers, parse_key,
+    };
     use pi_tui::api::terminal::{ImageProtocol, TerminalCapabilities};
 
     use crate::adapters::interactive::UiEvent;
     use crate::adapters::interactive::transcript::TranscriptItem;
 
-    use super::{ContextTab, InteractiveRegion, InteractiveRoot, transcript_viewport};
+    use super::{
+        ContextTab, InteractiveHitTarget, InteractiveRegion, InteractiveRoot, transcript_viewport,
+    };
 
     fn lines() -> Vec<String> {
         (1..=6).map(|line| line.to_string()).collect()
@@ -3778,6 +3946,15 @@ mod transcript_viewport_tests {
 
     fn key(data: &str) -> InputEvent {
         InputEvent::Key(parse_key(data).expect("test key should parse"))
+    }
+
+    fn mouse(kind: MouseEventKind, column: usize, row: usize) -> InputEvent {
+        InputEvent::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: MouseModifiers::empty(),
+        })
     }
 
     #[test]
@@ -3906,6 +4083,130 @@ mod transcript_viewport_tests {
         assert!(root.transcript.scroll_offset() > 0);
         let frame = root.render(60).join("\n");
         assert!(frame.contains("message 0"), "{frame}");
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_only_the_conversation_under_the_pointer() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 16);
+        for index in 0..16 {
+            root.transcript
+                .push(TranscriptItem::user(format!("message {index}")));
+        }
+        let _ = root.render(120);
+
+        let conversation = root
+            .mouse_hits
+            .regions()
+            .iter()
+            .find(|region| region.target == InteractiveHitTarget::Conversation)
+            .unwrap()
+            .rect;
+        assert!(root.handle_shell_input(&mouse(
+            MouseEventKind::ScrollUp,
+            conversation.x,
+            conversation.y
+        )));
+        assert_eq!(root.transcript.scroll_offset(), super::MOUSE_SCROLL_ROWS);
+
+        let context = root
+            .mouse_hits
+            .regions()
+            .iter()
+            .find(|region| region.target == InteractiveHitTarget::Context)
+            .unwrap()
+            .rect;
+        assert!(root.handle_shell_input(&mouse(MouseEventKind::ScrollUp, context.x, context.y)));
+        assert_eq!(root.transcript.scroll_offset(), super::MOUSE_SCROLL_ROWS);
+    }
+
+    #[test]
+    fn mouse_selects_block_body_and_discloses_only_its_header() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 30);
+        root.transcript.push(bash_tool("a", "alpha"));
+        root.transcript.push(bash_tool("b", "beta"));
+        let _ = root.render(120);
+
+        let disclosures = root
+            .mouse_hits
+            .regions()
+            .iter()
+            .filter_map(|region| match region.target {
+                InteractiveHitTarget::TranscriptDisclosure(block_id) => {
+                    Some((block_id, region.rect))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(disclosures.len(), 2);
+        let (first_id, first_header) = disclosures[0];
+        let first_body = root
+            .mouse_hits
+            .regions()
+            .iter()
+            .find_map(|region| match region.target {
+                InteractiveHitTarget::TranscriptBlock(block_id) if block_id == first_id => {
+                    Some(region.rect)
+                }
+                _ => None,
+            })
+            .unwrap();
+
+        assert!(root.handle_shell_input(&mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            first_body.x,
+            first_body.y.saturating_add(1)
+        )));
+        assert_eq!(root.transcript_view.selected(), Some(first_id));
+        assert_eq!(
+            root.focus_ring.current(),
+            Some(InteractiveRegion::Conversation)
+        );
+        let selected_only = root.transcript_lines_at(80, 3).join("\n");
+        assert!(!selected_only.contains("alpha-1"), "{selected_only}");
+
+        assert!(root.handle_shell_input(&mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            first_header.x,
+            first_header.y
+        )));
+        let disclosed = root.transcript_lines_at(80, 3).join("\n");
+        assert!(disclosed.contains("alpha-1"), "{disclosed}");
+        assert!(!disclosed.contains("beta-1"), "{disclosed}");
+    }
+
+    #[test]
+    fn fullscreen_resize_rebuilds_mouse_regions_in_the_new_frame() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        root.transcript.push(bash_tool("a", "alpha"));
+        let _ = root.render(120);
+        assert!(
+            root.mouse_hits
+                .regions()
+                .iter()
+                .any(|region| region.target == InteractiveHitTarget::Context)
+        );
+
+        root.set_viewport_size(50, 10);
+        let _ = root.render(50);
+
+        assert!(
+            root.mouse_hits
+                .regions()
+                .iter()
+                .all(|region| region.rect.right() <= 50 && region.rect.bottom() <= 10)
+        );
+        assert!(
+            root.mouse_hits
+                .regions()
+                .iter()
+                .all(|region| region.target != InteractiveHitTarget::Context)
+        );
     }
 
     #[test]

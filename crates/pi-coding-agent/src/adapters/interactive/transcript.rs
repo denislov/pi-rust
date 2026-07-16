@@ -223,6 +223,18 @@ impl TranscriptViewState {
         self.move_selection(transcript, 1)
     }
 
+    pub(super) fn select(&mut self, transcript: &Transcript, block_id: TranscriptBlockId) -> bool {
+        let Some(item) = transcript.item_for_block(block_id) else {
+            return false;
+        };
+        if !item.selectable() || self.selected == Some(block_id) {
+            return false;
+        }
+        self.selected = Some(block_id);
+        self.bump_revision();
+        true
+    }
+
     pub(super) fn toggle_selected(&mut self, transcript: &Transcript) -> bool {
         let Some(selected) = self.selected else {
             return false;
@@ -520,7 +532,7 @@ impl Transcript {
             .map(|(render_key, item)| (render_key.block_id(), item))
     }
 
-    fn item_for_block(&self, block_id: TranscriptBlockId) -> Option<&TranscriptItem> {
+    pub(super) fn item_for_block(&self, block_id: TranscriptBlockId) -> Option<&TranscriptItem> {
         if block_id.transcript_id != self.cache_id {
             return None;
         }

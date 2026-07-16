@@ -22,17 +22,20 @@ use pi_tui::api::input::{
     GENERIC_TUI_KEYBINDINGS as API_GENERIC_TUI_KEYBINDINGS, InputEvent as ApiInputEvent,
     Key as ApiKey, KeyEvent as ApiKeyEvent, KeyEventKind as ApiKeyEventKind,
     KeyModifiers as ApiKeyModifiers, KeybindingsManager as ApiKeybindingsManager,
-    KillRing as ApiKillRing, UndoStack as ApiUndoStack,
-    find_word_backward as api_find_word_backward, find_word_forward as api_find_word_forward,
-    fuzzy_filter_indices as api_fuzzy_filter_indices, fuzzy_match as api_fuzzy_match,
-    is_key_release as api_is_key_release, matches_key as api_matches_key,
-    parse_key as api_parse_key,
+    KillRing as ApiKillRing, MouseButton as ApiMouseButton, MouseEvent as ApiMouseEvent,
+    MouseEventKind as ApiMouseEventKind, MouseModifiers as ApiMouseModifiers,
+    UndoStack as ApiUndoStack, find_word_backward as api_find_word_backward,
+    find_word_forward as api_find_word_forward, fuzzy_filter_indices as api_fuzzy_filter_indices,
+    fuzzy_match as api_fuzzy_match, is_key_release as api_is_key_release,
+    matches_key as api_matches_key, parse_key as api_parse_key,
+    parse_sgr_mouse as api_parse_sgr_mouse,
 };
 use pi_tui::api::render::{
     Axis as ApiAxis, Color as ApiColor, ColorLevel as ApiColorLevel, Constraint as ApiConstraint,
-    FocusRing as ApiFocusRing, Frame as ApiFrame, Layout as ApiLayout, Rect as ApiRect,
-    RenderScheduler as ApiRenderScheduler, RenderStrategy as ApiRenderStrategy, Style as ApiStyle,
-    Tui as ApiTui, detect_color_level_from_env as api_detect_color_level_from_env,
+    FocusRing as ApiFocusRing, Frame as ApiFrame, HitMap as ApiHitMap, HitRegion as ApiHitRegion,
+    Layout as ApiLayout, Point as ApiPoint, Rect as ApiRect, RenderScheduler as ApiRenderScheduler,
+    RenderStrategy as ApiRenderStrategy, Style as ApiStyle, Tui as ApiTui,
+    detect_color_level_from_env as api_detect_color_level_from_env,
     paint_with_level as api_paint_with_level,
     truncate_to_width_with_ellipsis as api_truncate_to_width_with_ellipsis,
     visible_width as api_visible_width, wrap_text_with_ansi as api_wrap_text_with_ansi,
@@ -142,6 +145,19 @@ fn generic_tui_symbols_are_importable_from_api_facade() {
     );
     assert_eq!(ApiFrame::new(10, 4).bounds(), bounds);
     assert_eq!(ApiFocusRing::new([1_u8, 2]).current(), Some(1));
+    let mouse = api_parse_sgr_mouse("\x1b[<0;3;2M").unwrap();
+    assert_eq!(
+        mouse,
+        ApiMouseEvent {
+            kind: ApiMouseEventKind::Down(ApiMouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: ApiMouseModifiers::empty(),
+        }
+    );
+    let mut hits = ApiHitMap::new();
+    hits.push(ApiHitRegion::new(bounds, "root"));
+    assert_eq!(hits.hit(ApiPoint::new(1, 1)), Some(&"root"));
 
     fn accepts_component<T: ApiComponent>() {}
     fn accepts_terminal<T: ApiTerminal>() {}

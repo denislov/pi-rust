@@ -50,6 +50,78 @@ impl Rect {
         let bottom = self.bottom().min(other.bottom());
         Self::new(x, y, right.saturating_sub(x), bottom.saturating_sub(y))
     }
+
+    pub const fn contains(self, point: Point) -> bool {
+        point.x >= self.x
+            && point.x < self.x.saturating_add(self.width)
+            && point.y >= self.y
+            && point.y < self.y.saturating_add(self.height)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Point {
+    pub x: usize,
+    pub y: usize,
+}
+
+impl Point {
+    pub const fn new(x: usize, y: usize) -> Self {
+        Self { x, y }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HitRegion<T> {
+    pub rect: Rect,
+    pub target: T,
+}
+
+impl<T> HitRegion<T> {
+    pub const fn new(rect: Rect, target: T) -> Self {
+        Self { rect, target }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HitMap<T> {
+    regions: Vec<HitRegion<T>>,
+}
+
+impl<T> Default for HitMap<T> {
+    fn default() -> Self {
+        Self {
+            regions: Vec::new(),
+        }
+    }
+}
+
+impl<T> HitMap<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.regions.clear();
+    }
+
+    pub fn push(&mut self, region: HitRegion<T>) {
+        if !region.rect.is_empty() {
+            self.regions.push(region);
+        }
+    }
+
+    pub fn hit(&self, point: Point) -> Option<&T> {
+        self.regions
+            .iter()
+            .rev()
+            .find(|region| region.rect.contains(point))
+            .map(|region| &region.target)
+    }
+
+    pub fn regions(&self) -> &[HitRegion<T>] {
+        &self.regions
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

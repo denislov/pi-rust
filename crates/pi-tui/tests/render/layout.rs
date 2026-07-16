@@ -1,6 +1,8 @@
 //! Rectangular layout, clipping, frame composition, and focus traversal.
 
-use pi_tui::api::render::{Axis, Constraint, FocusRing, Frame, Layout, Rect, visible_width};
+use pi_tui::api::render::{
+    Axis, Constraint, FocusRing, Frame, HitMap, HitRegion, Layout, Point, Rect, visible_width,
+};
 
 #[test]
 fn layout_splits_fixed_percentage_and_fill_constraints_deterministically() {
@@ -92,4 +94,19 @@ fn focus_ring_preserves_visible_focus_and_wraps() {
     ring.set_items(["conversation", "composer"]);
     assert_eq!(ring.current(), Some("composer"));
     assert!(!ring.focus("context"));
+}
+
+#[test]
+fn hit_map_uses_frame_coordinates_and_last_region_wins_overlap() {
+    let mut hits = HitMap::new();
+    hits.push(HitRegion::new(Rect::new(2, 3, 8, 4), "panel"));
+    hits.push(HitRegion::new(Rect::new(4, 4, 2, 1), "control"));
+
+    assert_eq!(hits.hit(Point::new(2, 3)), Some(&"panel"));
+    assert_eq!(hits.hit(Point::new(4, 4)), Some(&"control"));
+    assert_eq!(hits.hit(Point::new(10, 4)), None);
+    assert_eq!(hits.regions().len(), 2);
+
+    hits.clear();
+    assert!(hits.hit(Point::new(4, 4)).is_none());
 }
