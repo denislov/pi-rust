@@ -576,13 +576,26 @@ impl RpcState {
                 )
                 .await
             }
-            RpcCommand::GetSessionStats { id } => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::success(id, "get_session_stats", Some(self.session_stats())),
-                )
-                .await
-            }
+            RpcCommand::GetSessionStats { id } => match self.session_stats() {
+                Ok(stats) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::success(
+                            id,
+                            "get_session_stats",
+                            Some(serde_json::to_value(stats).expect("rpc session stats serialize")),
+                        ),
+                    )
+                    .await
+                }
+                Err(error) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(id, "get_session_stats", error.to_string()),
+                    )
+                    .await
+                }
+            },
             RpcCommand::GetLastAssistantText { id } => {
                 write_rpc_response(
                     writer,
@@ -642,7 +655,7 @@ impl RpcState {
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
-            settings: Some(self.settings.clone()),
+            settings: Some(self.effective_prompt_settings()),
             invocation: PromptInvocation::Text(prompt),
         })
         .with_mode(PromptTurnMode::Rpc);

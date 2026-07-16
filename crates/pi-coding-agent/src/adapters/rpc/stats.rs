@@ -1,9 +1,13 @@
 use crate::adapters::rpc::state::RpcState;
 use crate::protocol::types::RpcCapabilities;
 use crate::protocol::types::RpcSessionState;
+use crate::protocol::types::{RpcSessionStats, RpcSessionTokenStats};
 use crate::protocol::version::{ProtocolFamilyVersion, UI_SNAPSHOT_PROTOCOL_VERSION};
-use crate::runtime::facade::CodingAgentCapabilities;
+use crate::runtime::facade::{
+    CodingAgentCapabilities, CodingAgentSessionTranscriptItem, CodingSessionError,
+};
 use pi_agent_core::api::transcript::StoredAgentMessage;
+#[cfg(test)]
 use serde_json::Value;
 
 impl RpcState {
@@ -104,53 +108,101 @@ impl RpcState {
             .unwrap_or_else(|| "in-memory".into())
     }
 
-    pub(super) fn session_stats(&self) -> Value {
-        let mut user_messages = 0;
-        let mut assistant_messages = 0;
-        let mut tool_results = 0;
-        for message in &self.messages {
-            match message {
-                StoredAgentMessage::User { .. } => user_messages += 1,
-                StoredAgentMessage::Assistant { .. } => assistant_messages += 1,
-                StoredAgentMessage::ToolResult { .. } => tool_results += 1,
-                StoredAgentMessage::BashExecution { .. }
-                | StoredAgentMessage::Custom { .. }
-                | StoredAgentMessage::BranchSummary { .. } => user_messages += 1,
-            }
-        }
+    pub(super) fn session_stats(&self) -> Result<RpcSessionStats, CodingSessionError> {
         let session_file = self
             .active_session_path
             .as_ref()
-            .map(|path| Value::String(path.display().to_string()))
-            .unwrap_or(Value::Null);
-        let session_id = self
-            .active_leaf_id
-            .clone()
-            .or_else(|| {
-                self.active_session_path
-                    .as_ref()
-                    .and_then(|path| path.file_stem())
-                    .and_then(|stem| stem.to_str())
-                    .map(ToString::to_string)
-            })
-            .unwrap_or_else(|| "in-memory".into());
+            .map(|path| path.display().to_string());
 
-        serde_json::json!({
-            "sessionFile": session_file,
-            "sessionId": session_id,
-            "userMessages": user_messages,
-            "assistantMessages": assistant_messages,
-            "toolCalls": 0,
-            "toolResults": tool_results,
-            "totalMessages": self.messages.len(),
-            "tokens": {
-                "input": 0,
-                "output": 0,
-                "cacheRead": 0,
-                "cacheWrite": 0,
-                "total": 0
-            },
-            "cost": 0.0
+        if let Some(hydration) = self
+            .coding_session
+            .as_ref()
+            .map(|session| session.hydrate_current())
+            .transpose()?
+            .flatten()
+        {
+            let mut counts = RpcSessionMessageCounts::default();
+            for item in &hydration.transcript {
+                match item {
+                    CodingAgentSessionTranscriptItem::User { .. } => counts.user += 1,
+                    CodingAgentSessionTranscriptItem::Assistant { .. } => counts.assistant += 1,
+                    CodingAgentSessionTranscriptItem::Tool { result, .. } => {
+                        counts.tool_calls += 1;
+                        counts.tool_results += usize::from(result.is_some());
+                    }
+                    CodingAgentSessionTranscriptItem::Delegation { .. }
+                    | CodingAgentSessionTranscriptItem::CompactionSummary { .. }
+                    | CodingAgentSessionTranscriptItem::BranchSummary { .. }
+                    | CodingAgentSessionTranscriptItem::Diagnostic { .. } => {}
+                }
+            }
+            let usage = hydration.usage;
+            return Ok(RpcSessionStats {
+                session_file,
+                session_id: hydration.summary.session_id,
+                active_leaf_id: hydration.summary.active_leaf_id,
+                user_messages: counts.user,
+                assistant_messages: counts.assistant,
+                tool_calls: counts.tool_calls,
+                tool_results: counts.tool_results,
+                total_messages: counts.total_messages(),
+                tokens: token_stats(
+                    usage.input.into(),
+                    usage.output.into(),
+                    usage.cache_read.into(),
+                    usage.cache_write.into(),
+                ),
+                cost: usage.cost,
+            });
+        }
+
+        let mut counts = RpcSessionMessageCounts::default();
+        let mut input = 0_u64;
+        let mut output = 0_u64;
+        let mut cache_read = 0_u64;
+        let mut cache_write = 0_u64;
+        let mut cost = 0.0;
+        for message in &self.messages {
+            match message {
+                StoredAgentMessage::User { .. } => counts.user += 1,
+                StoredAgentMessage::Assistant { content, usage, .. } => {
+                    counts.assistant += 1;
+                    counts.tool_calls += content
+                        .iter()
+                        .filter(|block| {
+                            matches!(
+                                block,
+                                pi_ai::api::conversation::ContentBlock::ToolCall { .. }
+                            )
+                        })
+                        .count();
+                    input += u64::from(usage.input);
+                    output += u64::from(usage.output);
+                    cache_read += u64::from(usage.cache_read);
+                    cache_write += u64::from(usage.cache_write);
+                    cost += usage.cost.input
+                        + usage.cost.output
+                        + usage.cost.cache_read
+                        + usage.cost.cache_write;
+                }
+                StoredAgentMessage::ToolResult { .. } => counts.tool_results += 1,
+                StoredAgentMessage::BashExecution { .. }
+                | StoredAgentMessage::Custom { .. }
+                | StoredAgentMessage::BranchSummary { .. } => {}
+            }
+        }
+
+        Ok(RpcSessionStats {
+            session_file,
+            session_id: self.fallback_session_id(),
+            active_leaf_id: self.active_leaf_id.clone(),
+            user_messages: counts.user,
+            assistant_messages: counts.assistant,
+            tool_calls: counts.tool_calls,
+            tool_results: counts.tool_results,
+            total_messages: counts.total_messages(),
+            tokens: token_stats(input, output, cache_read, cache_write),
+            cost,
         })
     }
 
@@ -176,6 +228,33 @@ impl RpcState {
     }
 }
 
+#[derive(Debug, Default)]
+struct RpcSessionMessageCounts {
+    user: usize,
+    assistant: usize,
+    tool_calls: usize,
+    tool_results: usize,
+}
+
+impl RpcSessionMessageCounts {
+    fn total_messages(&self) -> usize {
+        self.user + self.assistant + self.tool_results
+    }
+}
+
+fn token_stats(input: u64, output: u64, cache_read: u64, cache_write: u64) -> RpcSessionTokenStats {
+    RpcSessionTokenStats {
+        input,
+        output,
+        cache_read,
+        cache_write,
+        total: input
+            .saturating_add(output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_write),
+    }
+}
+
 struct RpcSessionProjection {
     session_id: String,
     event_stream_id: Option<String>,
@@ -195,9 +274,94 @@ mod tests {
         CodingAgentClientId, CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind,
         CodingAgentSession, CodingAgentSessionOptions,
     };
+    use pi_agent_core::api::transcript::{StoredUsage, StoredUsageCost};
+    use pi_ai::api::conversation::{ContentBlock, StopReason};
 
     fn serialized_session_state(state: &RpcState) -> Value {
         serde_json::to_value(state.session_state()).expect("session state serializes")
+    }
+
+    #[test]
+    fn non_persistent_stats_count_only_conversation_messages_and_sum_usage() {
+        let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        state.messages = vec![
+            StoredAgentMessage::User {
+                content: vec![],
+                timestamp: 1,
+            },
+            StoredAgentMessage::Assistant {
+                content: vec![ContentBlock::ToolCall {
+                    id: "call_1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                }],
+                api: "test".into(),
+                provider: "test".into(),
+                model: "test".into(),
+                response_model: None,
+                response_id: None,
+                usage: StoredUsage {
+                    input: 3,
+                    output: 4,
+                    cache_read: 1,
+                    cache_write: 2,
+                    total: 10,
+                    cost: StoredUsageCost {
+                        input: 0.1,
+                        output: 0.2,
+                        cache_read: 0.3,
+                        cache_write: 0.4,
+                    },
+                },
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                timestamp: 2,
+            },
+            StoredAgentMessage::ToolResult {
+                tool_call_id: "call_1".into(),
+                tool_name: "read".into(),
+                content: vec![],
+                is_error: false,
+                timestamp: 3,
+            },
+            StoredAgentMessage::BashExecution {
+                command: "pwd".into(),
+                output: String::new(),
+                exit_code: Some(0),
+                cancelled: false,
+                truncated: false,
+                full_output_path: None,
+                exclude_from_context: None,
+                timestamp: 4,
+            },
+            StoredAgentMessage::Custom {
+                custom_type: "note".into(),
+                content: vec![],
+                display: true,
+                details: None,
+                timestamp: 5,
+            },
+            StoredAgentMessage::BranchSummary {
+                summary: "summary".into(),
+                from_id: "entry_1".into(),
+                timestamp: 6,
+            },
+        ];
+
+        let stats = state.session_stats().unwrap();
+
+        assert_eq!(stats.user_messages, 1);
+        assert_eq!(stats.assistant_messages, 1);
+        assert_eq!(stats.tool_calls, 1);
+        assert_eq!(stats.tool_results, 1);
+        assert_eq!(stats.total_messages, 3);
+        assert_eq!(stats.tokens.input, 3);
+        assert_eq!(stats.tokens.output, 4);
+        assert_eq!(stats.tokens.cache_read, 1);
+        assert_eq!(stats.tokens.cache_write, 2);
+        assert_eq!(stats.tokens.total, 10);
+        assert!((stats.cost - 1.0).abs() < f64::EPSILON);
     }
 
     #[tokio::test]

@@ -332,7 +332,7 @@ impl RpcState {
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
-            settings: Some(self.settings.clone()),
+            settings: Some(self.effective_prompt_settings()),
             invocation: PromptInvocation::Text(task.clone()),
         })
         .with_mode(PromptTurnMode::Rpc);
@@ -519,7 +519,7 @@ impl RpcState {
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
-            settings: Some(self.settings.clone()),
+            settings: Some(self.effective_prompt_settings()),
             invocation: PromptInvocation::Text(task.clone()),
         })
         .with_mode(PromptTurnMode::Rpc);
@@ -781,7 +781,7 @@ impl RpcState {
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
-            settings: Some(self.settings.clone()),
+            settings: Some(self.effective_prompt_settings()),
             invocation: PromptInvocation::Text(message.clone()),
         })
         .with_mode(PromptTurnMode::Rpc);

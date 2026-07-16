@@ -1,7 +1,9 @@
 use crate::support;
 
 use pi_agent_core::api::tool::AgentTool;
-use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
+use pi_ai::api::conversation::{
+    AssistantMessage, ContentBlock, Context, Cost, Message, StopReason, Usage,
+};
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
@@ -139,6 +141,119 @@ fn rpc_mutation_tool(executions: Arc<AtomicUsize>) -> AgentTool {
             }
         },
     )
+}
+
+fn rpc_read_only_stats_tool() -> AgentTool {
+    AgentTool::new_text(
+        "rpc_stats_read",
+        "read deterministic statistics fixture data",
+        serde_json::json!({
+            "type": "object",
+            "x-pi-authorization-risk": "workspace_local_read_only"
+        }),
+        |_context, _args| async { Ok("fixture result".to_owned()) },
+    )
+}
+
+#[tokio::test]
+async fn rpc_session_stats_use_persistent_replay_usage_and_tool_facts() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-session-stats";
+    let usage = Usage {
+        input: 7,
+        output: 11,
+        cache_read: 2,
+        cache_write: 3,
+        total_tokens: 23,
+        cost: Cost {
+            input: 0.1,
+            output: 0.2,
+            cache_read: 0.3,
+            cache_write: 0.4,
+        },
+    };
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(
+            FauxProvider::with_call_queue(vec![
+                FauxProvider::single_call(
+                    vec![FauxResponse {
+                        text_deltas: Vec::new(),
+                        thinking_deltas: Vec::new(),
+                        tool_calls: vec![FauxToolCall {
+                            id: "tool-stats-read".into(),
+                            name: "rpc_stats_read".into(),
+                            deltas: vec!["{}".into()],
+                            final_arguments: serde_json::json!({}),
+                        }],
+                    }],
+                    StopReason::ToolUse,
+                ),
+                FauxProvider::text_call("statistics complete", StopReason::Stop),
+            ])
+            .with_default_usage(usage),
+        ),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(2048);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let mut session = SessionRunOptions::enabled(cwd);
+    session.session_dir = Some(sessions);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: vec![rpc_read_only_stats_tool()],
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session,
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"prompt-stats\",\"type\":\"prompt\",\"message\":\"read stats\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "stats prompt completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+
+    input_writer
+        .write_all(b"{\"id\":\"get-stats\",\"type\":\"get_session_stats\"}\n")
+        .await
+        .unwrap();
+    let response = read_rpc_json_matching(&mut lines, "session stats response", |value| {
+        value["type"] == "response" && value["command"] == "get_session_stats"
+    })
+    .await;
+
+    assert_eq!(response["success"], true, "{response}");
+    assert_eq!(response["data"]["userMessages"], 1);
+    assert_eq!(response["data"]["assistantMessages"], 2);
+    assert_eq!(response["data"]["toolCalls"], 1);
+    assert_eq!(response["data"]["toolResults"], 1);
+    assert_eq!(response["data"]["totalMessages"], 4);
+    assert_eq!(response["data"]["tokens"]["input"], 14);
+    assert_eq!(response["data"]["tokens"]["output"], 22);
+    assert_eq!(response["data"]["tokens"]["cacheRead"], 4);
+    assert_eq!(response["data"]["tokens"]["cacheWrite"], 6);
+    assert_eq!(response["data"]["tokens"]["total"], 46);
+    assert_eq!(response["data"]["cost"], 2.0);
+    assert!(response["data"]["sessionId"].as_str().is_some());
+    assert!(response["data"]["activeLeafId"].as_str().is_some());
+
+    drop(input_writer);
+    task.await.unwrap();
 }
 
 #[tokio::test]
@@ -737,20 +852,39 @@ async fn rpc_state_reports_capabilities_when_idle() {
             "delegation_failed"
         ])
     );
-    for capability in [
-        "compact",
-        "fork",
-        "cloneSession",
-        "branchSummary",
-        "export",
-        "pluginReload",
-        "selfHealingEdit",
-    ] {
+    for capability in ["pluginReload", "selfHealingEdit"] {
         assert_eq!(capabilities[capability]["status"], "disabled");
         assert_eq!(
             capabilities[capability]["reason"],
             "requires persistent Rust-native session"
         );
+    }
+    let unsupported = [
+        (
+            "compact",
+            "manual compaction is not connected to the RPC runtime in protocol 2.0",
+        ),
+        ("fork", "RPC protocol 2.0 does not expose a fork command"),
+        (
+            "cloneSession",
+            "RPC protocol 2.0 does not expose a cloneSession command",
+        ),
+        (
+            "branchSummary",
+            "RPC protocol 2.0 does not expose a branchSummary command",
+        ),
+        (
+            "switchSession",
+            "RPC protocol 2.0 does not expose a switchSession command",
+        ),
+        (
+            "export",
+            "RPC protocol 2.0 does not expose an export command",
+        ),
+    ];
+    for (capability, reason) in unsupported {
+        assert_eq!(capabilities[capability]["status"], "unsupported");
+        assert_eq!(capabilities[capability]["reason"], reason);
     }
 }
 

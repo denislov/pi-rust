@@ -846,6 +846,39 @@ pub struct RpcSessionState {
     pub capabilities: RpcCapabilities,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RpcSessionStats {
+    #[serde(rename = "sessionFile", skip_serializing_if = "Option::is_none")]
+    pub session_file: Option<String>,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "activeLeafId", skip_serializing_if = "Option::is_none")]
+    pub active_leaf_id: Option<String>,
+    #[serde(rename = "userMessages")]
+    pub user_messages: usize,
+    #[serde(rename = "assistantMessages")]
+    pub assistant_messages: usize,
+    #[serde(rename = "toolCalls")]
+    pub tool_calls: usize,
+    #[serde(rename = "toolResults")]
+    pub tool_results: usize,
+    #[serde(rename = "totalMessages")]
+    pub total_messages: usize,
+    pub tokens: RpcSessionTokenStats,
+    pub cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcSessionTokenStats {
+    pub input: u64,
+    pub output: u64,
+    #[serde(rename = "cacheRead")]
+    pub cache_read: u64,
+    #[serde(rename = "cacheWrite")]
+    pub cache_write: u64,
+    pub total: u64,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RpcCapabilities {
     pub prompt: RpcCapabilityStatus,
@@ -941,12 +974,20 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             abort: capabilities.abort.into(),
             steer: capabilities.steer.into(),
             follow_up: capabilities.follow_up.into(),
-            compact: capabilities.compact.into(),
-            fork: capabilities.fork.into(),
-            clone_session: capabilities.clone_session.into(),
-            branch_summary: capabilities.branch_summary.into(),
-            switch_session: capabilities.switch_session.into(),
-            export: capabilities.export.into(),
+            compact: rpc_unsupported(
+                "manual compaction is not connected to the RPC runtime in protocol 2.0",
+            ),
+            fork: rpc_unsupported("RPC protocol 2.0 does not expose a fork command"),
+            clone_session: rpc_unsupported(
+                "RPC protocol 2.0 does not expose a cloneSession command",
+            ),
+            branch_summary: rpc_unsupported(
+                "RPC protocol 2.0 does not expose a branchSummary command",
+            ),
+            switch_session: rpc_unsupported(
+                "RPC protocol 2.0 does not expose a switchSession command",
+            ),
+            export: rpc_unsupported("RPC protocol 2.0 does not expose an export command"),
             plugin_reload: capabilities.plugin_reload.into(),
             self_healing_edit: capabilities.self_healing_edit.into(),
             agent_profiles: capabilities.agent_profiles.into(),
@@ -956,6 +997,12 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             shell: capabilities.shell.into(),
             plugins: capabilities.plugins.into(),
         }
+    }
+}
+
+fn rpc_unsupported(reason: &'static str) -> RpcCapabilityStatus {
+    RpcCapabilityStatus::Unsupported {
+        reason: reason.to_owned(),
     }
 }
 

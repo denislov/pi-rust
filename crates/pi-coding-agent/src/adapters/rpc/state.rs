@@ -156,6 +156,14 @@ impl RpcState {
         self.foreground.is_some() || !self.background_operations.is_empty()
     }
 
+    pub(super) fn effective_prompt_settings(&self) -> crate::config::Settings {
+        let mut settings = self.settings.clone();
+        settings.steering_mode = self.steering_mode.to_string();
+        settings.follow_up_mode = self.follow_up_mode.to_string();
+        settings.compaction.enabled = self.auto_compaction_enabled;
+        settings
+    }
+
     pub(super) fn ensure_session_event_pump(&mut self, session: &CodingAgentSession) {
         let stream_id = session.snapshot().cursor.stream_id;
         if self.session_event_stream_id.as_deref() == Some(stream_id.as_str())
@@ -374,5 +382,52 @@ impl RpcState {
         if let Some(record) = self.idempotency_records.get_mut(key) {
             record.completed = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::bootstrap::build_agent_config_with_auth_diagnostics;
+    use pi_agent_core::api::resources::AgentResources;
+
+    #[test]
+    fn rpc_mutable_modes_feed_the_next_agent_config() {
+        let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        state.steering_mode = QueueMode::All;
+        state.follow_up_mode = QueueMode::OneAtATime;
+        state.auto_compaction_enabled = false;
+
+        let settings = state.effective_prompt_settings();
+        let config = build_agent_config_with_auth_diagnostics(
+            state.model.clone(),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            None,
+            AgentResources::default(),
+            Some(&settings),
+        );
+
+        assert_eq!(config.steering_mode, QueueMode::All);
+        assert_eq!(config.follow_up_mode, QueueMode::OneAtATime);
+        assert!(config.compaction.is_none());
+
+        state.auto_compaction_enabled = true;
+        let settings = state.effective_prompt_settings();
+        let config = build_agent_config_with_auth_diagnostics(
+            state.model.clone(),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            None,
+            AgentResources::default(),
+            Some(&settings),
+        );
+        assert!(config.compaction.is_some());
     }
 }
