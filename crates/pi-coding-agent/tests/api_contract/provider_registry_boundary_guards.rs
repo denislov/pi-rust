@@ -338,6 +338,7 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
                 "fuzzy_filter_indices",
                 "is_key_release",
                 "matches_key",
+                "parse_key",
             ],
         ),
         (
@@ -345,7 +346,12 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
             &[
                 "Color",
                 "ColorLevel",
+                "Constraint",
                 "ERROR",
+                "FocusRing",
+                "Frame",
+                "Layout",
+                "Rect",
                 "RenderScheduler",
                 "STATUS_IDLE",
                 "STATUS_RUNNING",

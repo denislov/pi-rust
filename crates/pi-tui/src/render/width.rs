@@ -77,6 +77,45 @@ pub fn truncate_to_width(text: &str, max_width: usize) -> String {
     output
 }
 
+pub(crate) fn drop_columns(text: &str, columns: usize) -> String {
+    if columns == 0 || text.is_empty() {
+        return text.to_string();
+    }
+
+    let mut output = String::new();
+    let mut skipped = 0usize;
+    let mut pos = 0usize;
+    while pos < text.len() {
+        if let Some(len) = ansi_sequence_len(text, pos) {
+            output.push_str(&text[pos..pos + len]);
+            pos += len;
+            continue;
+        }
+
+        let ch = text[pos..]
+            .chars()
+            .next()
+            .expect("pos is on a char boundary");
+        if ch == '\t' {
+            if skipped.saturating_add(3) > columns {
+                output.push(ch);
+            }
+            skipped = skipped.saturating_add(3);
+            pos += ch.len_utf8();
+            continue;
+        }
+
+        let grapheme = text[pos..].graphemes(true).next().expect("grapheme exists");
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        if skipped.saturating_add(grapheme_width) > columns {
+            output.push_str(grapheme);
+        }
+        skipped = skipped.saturating_add(grapheme_width);
+        pos += grapheme.len();
+    }
+    output
+}
+
 pub fn truncate_to_width_with_ellipsis(text: &str, max_width: usize) -> String {
     if visible_width(text) <= max_width {
         return text.to_string();

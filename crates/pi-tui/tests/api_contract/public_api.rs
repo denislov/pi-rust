@@ -29,9 +29,10 @@ use pi_tui::api::input::{
     parse_key as api_parse_key,
 };
 use pi_tui::api::render::{
-    Color as ApiColor, ColorLevel as ApiColorLevel, RenderScheduler as ApiRenderScheduler,
-    RenderStrategy as ApiRenderStrategy, Style as ApiStyle, Tui as ApiTui,
-    detect_color_level_from_env as api_detect_color_level_from_env,
+    Axis as ApiAxis, Color as ApiColor, ColorLevel as ApiColorLevel, Constraint as ApiConstraint,
+    FocusRing as ApiFocusRing, Frame as ApiFrame, Layout as ApiLayout, Rect as ApiRect,
+    RenderScheduler as ApiRenderScheduler, RenderStrategy as ApiRenderStrategy, Style as ApiStyle,
+    Tui as ApiTui, detect_color_level_from_env as api_detect_color_level_from_env,
     paint_with_level as api_paint_with_level,
     truncate_to_width_with_ellipsis as api_truncate_to_width_with_ellipsis,
     visible_width as api_visible_width, wrap_text_with_ansi as api_wrap_text_with_ansi,
@@ -134,6 +135,13 @@ fn generic_tui_symbols_are_importable_from_api_facade() {
     };
     assert_eq!(image_capabilities.images, Some(ApiImageProtocol::Kitty));
     assert_eq!(ApiTerminalMode::default(), ApiTerminalMode::Inline);
+    let bounds = ApiRect::new(0, 0, 10, 4);
+    assert_eq!(
+        ApiLayout::split(bounds, ApiAxis::Vertical, &[ApiConstraint::Fill(1)]),
+        [bounds]
+    );
+    assert_eq!(ApiFrame::new(10, 4).bounds(), bounds);
+    assert_eq!(ApiFocusRing::new([1_u8, 2]).current(), Some(1));
 
     fn accepts_component<T: ApiComponent>() {}
     fn accepts_terminal<T: ApiTerminal>() {}

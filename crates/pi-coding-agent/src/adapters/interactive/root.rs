@@ -9,8 +9,9 @@ use pi_tui::api::input::{
     InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager, matches_key,
 };
 use pi_tui::api::render::{
-    ERROR, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, USER, color_enabled, paint_with,
-    truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
+    Constraint, ERROR, FocusRing, Frame, Layout, Rect, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style,
+    USER, color_enabled, paint_with, truncate_to_width, truncate_to_width_with_ellipsis,
+    visible_width,
 };
 use pi_tui::api::theme::{MarkdownTheme, TuiTheme, dark_theme, light_theme};
 
@@ -51,6 +52,10 @@ use crate::theme::{ResolvedTheme, ThemeColor};
 
 const MAX_TOOL_RESULT_LINES: usize = 3;
 const EXPANDED_TOOL_RESULT_LINES: usize = 20;
+const WIDE_LAYOUT_MIN_WIDTH: usize = 100;
+const MEDIUM_LAYOUT_MIN_WIDTH: usize = 64;
+const TIPS_MIN_HEIGHT: usize = 18;
+const MAX_COMPOSER_HEIGHT: usize = 8;
 pub(super) const DOUBLE_ESCAPE_WINDOW: Duration = Duration::from_millis(500);
 
 const HTTP_IDLE_TIMEOUT_CHOICES: [(&str, u64); 5] = [
@@ -81,6 +86,62 @@ pub(super) enum InteractiveAction {
     ReloadResources,
     Fork,
     Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InteractiveRegion {
+    Conversation,
+    Context,
+    Composer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextTab {
+    Ops,
+    Changes,
+    Agents,
+    Usage,
+}
+
+impl ContextTab {
+    const ALL: [Self; 4] = [Self::Ops, Self::Changes, Self::Agents, Self::Usage];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Ops => "ops",
+            Self::Changes => "changes",
+            Self::Agents => "agents",
+            Self::Usage => "usage",
+        }
+    }
+
+    fn next(self) -> Self {
+        let index = Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    fn previous(self) -> Self {
+        let index = Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0);
+        Self::ALL[index.checked_sub(1).unwrap_or(Self::ALL.len() - 1)]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellLayoutMode {
+    Wide,
+    Medium,
+    Narrow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ShellLayout {
+    mode: ShellLayoutMode,
+    conversation: Rect,
+    context: Option<Rect>,
+    tips: Option<Rect>,
+    composer: Rect,
+    status: Rect,
+    work: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -585,6 +646,11 @@ pub(super) struct InteractiveRoot {
     pub(super) viewport_width: usize,
     pub(super) viewport_height: usize,
     fullscreen_viewport: bool,
+    focus_ring: FocusRing<InteractiveRegion>,
+    context_tab: ContextTab,
+    context_open: bool,
+    context_restore_focus: InteractiveRegion,
+    conversation_viewport_height: usize,
     pub(super) cwd: PathBuf,
     pub(super) model_id: String,
     pub(super) session_label: String,
@@ -641,6 +707,9 @@ pub(super) struct InteractiveRenderState {
     transcript_revision: u64,
     transcript_scroll_offset: usize,
     transcript_has_new_output_below: bool,
+    focused_region: Option<InteractiveRegion>,
+    context_tab: ContextTab,
+    context_open: bool,
     status: InteractiveStatus,
     stats: FooterStats,
     tool_output_expanded: bool,
@@ -740,6 +809,12 @@ impl InteractiveRoot {
         transcript.push(TranscriptItem::system(welcome_line(&keybindings)));
         let settings_list = build_settings_list(settings.clone(), &theme, keybindings.clone());
         let profile_registry = profile_registry_for_cwd(&cwd);
+        let mut focus_ring = FocusRing::new([
+            InteractiveRegion::Conversation,
+            InteractiveRegion::Context,
+            InteractiveRegion::Composer,
+        ]);
+        focus_ring.focus(InteractiveRegion::Composer);
 
         Self {
             selecting_tree: false,
@@ -776,6 +851,11 @@ impl InteractiveRoot {
             viewport_width: 80,
             viewport_height: 24,
             fullscreen_viewport: false,
+            focus_ring,
+            context_tab: ContextTab::Ops,
+            context_open: false,
+            context_restore_focus: InteractiveRegion::Composer,
+            conversation_viewport_height: 1,
             git_branch: GitBranchProvider::new(&cwd),
             cwd,
             model_id,
@@ -2198,6 +2278,9 @@ impl InteractiveRoot {
             transcript_revision: self.transcript.revision(),
             transcript_scroll_offset: self.transcript.scroll_offset(),
             transcript_has_new_output_below: self.transcript.has_new_output_below(),
+            focused_region: self.focus_ring.current(),
+            context_tab: self.context_tab,
+            context_open: self.context_open,
             status: self.status,
             stats: self.stats,
             tool_output_expanded: self.tool_output_expanded,
@@ -2453,10 +2536,11 @@ impl InteractiveRoot {
     /// available, falling back to the built-in palette otherwise.
     fn transcript_render_options(
         &self,
+        width: usize,
         max_tool_result_lines: usize,
     ) -> TranscriptRenderOptions<'static> {
         TranscriptRenderOptions {
-            width: self.viewport_width,
+            width,
             max_tool_result_lines,
             color: color_enabled(),
             markdown_theme: self.markdown_theme(),
@@ -2531,16 +2615,473 @@ impl InteractiveRoot {
     }
 
     fn transcript_lines(&mut self, max_tool_result_lines: usize) -> Vec<String> {
-        let opts = self.transcript_render_options(max_tool_result_lines);
+        let opts = self.transcript_render_options(self.viewport_width, max_tool_result_lines);
+        self.render_cache.render_lines(&self.transcript, &opts)
+    }
+
+    fn transcript_lines_at(&mut self, width: usize, max_tool_result_lines: usize) -> Vec<String> {
+        let opts = self.transcript_render_options(width, max_tool_result_lines);
         self.render_cache.render_lines(&self.transcript, &opts)
     }
 
     pub(super) fn set_fullscreen_viewport(&mut self, enabled: bool) {
         self.fullscreen_viewport = enabled;
+        self.refresh_shell_focus();
+    }
+
+    pub(super) fn handle_shell_input(&mut self, event: &InputEvent) -> bool {
+        if !self.fullscreen_viewport {
+            return false;
+        }
+        if self.selecting_model || self.selecting_session || self.selecting_settings {
+            return false;
+        }
+
+        let mode = shell_layout_mode(self.viewport_width);
+        if self.context_open && mode != ShellLayoutMode::Wide && matches_key(event, "escape") {
+            self.close_context_overlay();
+            return true;
+        }
+        if self.keybindings.matches(event, "app.context.toggle") {
+            self.toggle_context(mode);
+            return true;
+        }
+
+        let editor_accepts_tab = self.focus_ring.current() == Some(InteractiveRegion::Composer)
+            && !self.editor.text().is_empty();
+        if self.keybindings.matches(event, "app.focus.next") && !editor_accepts_tab {
+            self.focus_ring.focus_next();
+            self.apply_region_focus();
+            return true;
+        }
+        if self.keybindings.matches(event, "app.focus.previous") {
+            self.focus_ring.focus_previous();
+            self.apply_region_focus();
+            return true;
+        }
+
+        match self.focus_ring.current() {
+            Some(InteractiveRegion::Conversation) => {
+                if matches_key(event, "pageup") {
+                    self.transcript
+                        .scroll_page_up(self.conversation_viewport_height.max(1));
+                    return true;
+                }
+                if matches_key(event, "pagedown") {
+                    self.transcript
+                        .scroll_page_down(self.conversation_viewport_height.max(1));
+                    return true;
+                }
+            }
+            Some(InteractiveRegion::Context) => {
+                if matches_key(event, "left") {
+                    self.context_tab = self.context_tab.previous();
+                    return true;
+                }
+                if matches_key(event, "right") {
+                    self.context_tab = self.context_tab.next();
+                    return true;
+                }
+            }
+            Some(InteractiveRegion::Composer) | None => return false,
+        }
+
+        if matches_key(event, "ctrl+c")
+            || matches_key(event, "ctrl+o")
+            || self.keybindings.matches(event, "app.model.next")
+            || self.keybindings.matches(event, "app.model.previous")
+        {
+            return false;
+        }
+        true
+    }
+
+    fn toggle_context(&mut self, mode: ShellLayoutMode) {
+        if mode == ShellLayoutMode::Wide {
+            self.focus_ring.focus(InteractiveRegion::Context);
+            self.apply_region_focus();
+            return;
+        }
+        if self.context_open {
+            self.close_context_overlay();
+        } else {
+            self.context_restore_focus = self
+                .focus_ring
+                .current()
+                .unwrap_or(InteractiveRegion::Composer);
+            self.context_open = true;
+            self.refresh_shell_focus();
+        }
+    }
+
+    fn close_context_overlay(&mut self) {
+        self.context_open = false;
+        self.refresh_shell_focus();
+        self.focus_ring.focus(self.context_restore_focus);
+        self.apply_region_focus();
+    }
+
+    fn refresh_shell_focus(&mut self) {
+        if !self.fullscreen_viewport {
+            self.focus_ring.set_items([InteractiveRegion::Composer]);
+            self.focus_ring.focus(InteractiveRegion::Composer);
+            self.apply_region_focus();
+            return;
+        }
+        match shell_layout_mode(self.viewport_width) {
+            ShellLayoutMode::Wide => {
+                self.context_open = false;
+                self.focus_ring.set_items([
+                    InteractiveRegion::Conversation,
+                    InteractiveRegion::Context,
+                    InteractiveRegion::Composer,
+                ]);
+            }
+            ShellLayoutMode::Medium | ShellLayoutMode::Narrow if self.context_open => {
+                self.focus_ring.set_items([InteractiveRegion::Context]);
+                self.focus_ring.focus(InteractiveRegion::Context);
+            }
+            ShellLayoutMode::Medium | ShellLayoutMode::Narrow => {
+                self.focus_ring
+                    .set_items([InteractiveRegion::Conversation, InteractiveRegion::Composer]);
+            }
+        }
+        self.apply_region_focus();
+    }
+
+    fn apply_region_focus(&mut self) {
+        self.editor
+            .set_focused(self.focus_ring.current() == Some(InteractiveRegion::Composer));
+    }
+
+    fn shell_layout(&self, composer_height: usize) -> ShellLayout {
+        let width = self.viewport_width.max(1);
+        let height = self.viewport_height.max(1);
+        let mode = shell_layout_mode(width);
+        let status_height = usize::from(height >= 2);
+        let maximum_composer = height.saturating_sub(status_height + 1).max(1);
+        let composer_height = composer_height.clamp(1, maximum_composer);
+        let rows = Layout::vertical(
+            Rect::new(0, 0, width, height),
+            &[
+                Constraint::Fill(1),
+                Constraint::Length(composer_height),
+                Constraint::Length(status_height),
+            ],
+        );
+        let work = rows[0];
+        let composer = rows[1];
+        let status = rows[2];
+
+        match mode {
+            ShellLayoutMode::Wide => {
+                let context_width = (width / 3).clamp(26, 38).min(width.saturating_sub(2));
+                let columns = Layout::horizontal(
+                    work,
+                    &[
+                        Constraint::Fill(1),
+                        Constraint::Length(1),
+                        Constraint::Length(context_width),
+                    ],
+                );
+                let side_rows = if work.height >= TIPS_MIN_HEIGHT {
+                    Layout::vertical(
+                        columns[2],
+                        &[
+                            Constraint::Fill(1),
+                            Constraint::Length(1),
+                            Constraint::Length(4),
+                        ],
+                    )
+                } else {
+                    Layout::vertical(columns[2], &[Constraint::Fill(1)])
+                };
+                ShellLayout {
+                    mode,
+                    conversation: columns[0],
+                    context: Some(side_rows[0]),
+                    tips: (side_rows.len() == 3).then(|| side_rows[2]),
+                    composer,
+                    status,
+                    work,
+                }
+            }
+            ShellLayoutMode::Medium => {
+                let context = self.context_open.then(|| {
+                    let overlay_width = (width * 2 / 5).clamp(26, 38).min(width);
+                    Rect::new(
+                        width.saturating_sub(overlay_width),
+                        0,
+                        overlay_width,
+                        work.height,
+                    )
+                });
+                ShellLayout {
+                    mode,
+                    conversation: work,
+                    context,
+                    tips: None,
+                    composer,
+                    status,
+                    work,
+                }
+            }
+            ShellLayoutMode::Narrow => ShellLayout {
+                mode,
+                conversation: work,
+                context: self.context_open.then_some(work),
+                tips: None,
+                composer,
+                status,
+                work,
+            },
+        }
+    }
+
+    fn render_fullscreen_shell(&mut self, width: usize) -> Vec<String> {
+        let editor_lines = self.render_editor_box(width);
+        let composer_height = editor_lines.len().clamp(1, MAX_COMPOSER_HEIGHT);
+        let layout = self.shell_layout(composer_height);
+        let mut frame = Frame::new(self.viewport_width, self.viewport_height);
+
+        let conversation_body = panel_body(layout.conversation);
+        self.conversation_viewport_height = conversation_body.height.max(1);
+        let max_tool_result_lines = if self.tool_output_expanded {
+            EXPANDED_TOOL_RESULT_LINES
+        } else {
+            MAX_TOOL_RESULT_LINES
+        };
+        let transcript_lines =
+            self.transcript_lines_at(conversation_body.width.max(1), max_tool_result_lines);
+        let transcript_lines = transcript_viewport(
+            &transcript_lines,
+            conversation_body.height,
+            self.transcript.scroll_offset(),
+        );
+        frame.draw(
+            Rect::new(
+                layout.conversation.x,
+                layout.conversation.y,
+                layout.conversation.width,
+                1.min(layout.conversation.height),
+            ),
+            &[self.panel_header(
+                "Conversation",
+                InteractiveRegion::Conversation,
+                layout.conversation.width,
+            )],
+        );
+        frame.draw(conversation_body, &transcript_lines);
+
+        if layout.mode == ShellLayoutMode::Wide {
+            let separator = Rect::new(
+                layout.conversation.right(),
+                layout.work.y,
+                1,
+                layout.work.height,
+            );
+            frame.fill(separator, "│");
+        }
+        if let Some(context) = layout.context {
+            let context_lines = self.render_context_region(context.width, context.height);
+            if layout.mode != ShellLayoutMode::Wide {
+                frame.fill(context, "");
+            }
+            frame.draw(context, &context_lines);
+        }
+        if let Some(tips) = layout.tips {
+            frame.draw(tips, &self.render_tips_region(tips.width, tips.height));
+        }
+
+        let composer_lines = tail_lines(&editor_lines, layout.composer.height);
+        frame.draw(layout.composer, &composer_lines);
+        if !layout.status.is_empty() {
+            frame.draw(
+                layout.status,
+                &[self.render_status_bar(layout.status.width)],
+            );
+        }
+
+        let overlay_lines = self.render_transient_surface(width.saturating_sub(4).max(1));
+        if !overlay_lines.is_empty() && !layout.work.is_empty() {
+            let overlay_width = width.saturating_sub(4).clamp(1, 72);
+            let overlay_height = overlay_lines.len().min(layout.work.height).max(1);
+            let overlay = Rect::new(
+                width.saturating_sub(overlay_width) / 2,
+                layout.work.bottom().saturating_sub(overlay_height),
+                overlay_width,
+                overlay_height,
+            );
+            frame.fill(overlay, "");
+            frame.draw(overlay, &tail_lines(&overlay_lines, overlay_height));
+        }
+        frame.into_lines()
+    }
+
+    fn panel_header(&self, title: &str, region: InteractiveRegion, width: usize) -> String {
+        let prefix = if self.focus_ring.current() == Some(region) {
+            "> "
+        } else {
+            "  "
+        };
+        fit_line(&format!("{prefix}{title}"), width)
+    }
+
+    fn render_context_region(&self, width: usize, height: usize) -> Vec<String> {
+        if width == 0 || height == 0 {
+            return Vec::new();
+        }
+        let tabs = ContextTab::ALL
+            .iter()
+            .map(|tab| {
+                if *tab == self.context_tab {
+                    format!("[{}]", tab.label())
+                } else {
+                    tab.label().to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut lines = vec![self.panel_header(
+            &format!("Context {tabs}"),
+            InteractiveRegion::Context,
+            width,
+        )];
+        match self.context_tab {
+            ContextTab::Ops => {
+                lines.push(format!(
+                    "state     {}",
+                    match self.status {
+                        InteractiveStatus::Idle => "idle",
+                        InteractiveStatus::Running => "running",
+                    }
+                ));
+                lines.push("operation unavailable".into());
+            }
+            ContextTab::Changes => {
+                lines.push("change projection unavailable".into());
+            }
+            ContextTab::Agents => {
+                let active = self
+                    .profile_registry
+                    .agent(self.default_agent_profile_id.as_str());
+                lines.push(format!(
+                    "active    {}",
+                    active
+                        .map(|profile| profile.display_name.as_str())
+                        .unwrap_or(self.default_agent_profile_id.as_str())
+                ));
+                lines.push(format!(
+                    "profiles  {} agents / {} teams",
+                    self.profile_registry.agents().count(),
+                    self.profile_registry.teams().count()
+                ));
+            }
+            ContextTab::Usage => {
+                lines.push(format!("input     {}", format_tokens(self.stats.input)));
+                lines.push(format!("output    {}", format_tokens(self.stats.output)));
+                lines.push(format!(
+                    "cache     {}",
+                    format_tokens(self.stats.cache_read)
+                ));
+                if self.stats.cost > 0.0 {
+                    lines.push(format!("cost      ${:.3}", self.stats.cost));
+                } else {
+                    lines.push("cost      unavailable".into());
+                }
+            }
+        }
+        lines.truncate(height);
+        lines
+            .into_iter()
+            .map(|line| fit_line(&line, width))
+            .collect()
+    }
+
+    fn render_tips_region(&self, width: usize, height: usize) -> Vec<String> {
+        let key = |id: &str| {
+            self.keybindings
+                .get_keys(id)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "?".into())
+        };
+        let mut lines = vec![fit_line("  Tips", width)];
+        lines.push(fit_line(
+            &format!(
+                "{} / {}  focus",
+                key("app.focus.next"),
+                key("app.focus.previous")
+            ),
+            width,
+        ));
+        lines.push(fit_line(
+            &format!("{}  context", key("app.context.toggle")),
+            width,
+        ));
+        let focused = match self.focus_ring.current() {
+            Some(InteractiveRegion::Conversation) => "PageUp/PageDown  scroll",
+            Some(InteractiveRegion::Context) => "Left/Right  tabs",
+            Some(InteractiveRegion::Composer) => "Enter  submit",
+            None => "",
+        };
+        lines.push(fit_line(focused, width));
+        lines.truncate(height);
+        lines
+    }
+
+    fn render_status_bar(&self, width: usize) -> String {
+        let status = match self.status {
+            InteractiveStatus::Idle => "idle".to_string(),
+            InteractiveStatus::Running => running_status_text(self.spinner_frame),
+        };
+        let pending = if self.transcript.has_new_output_below() {
+            " | new output below"
+        } else {
+            ""
+        };
+        let model = self
+            .current_model()
+            .map_or("no-model", |model| model.id.as_str());
+        fit_line(
+            &format!(
+                " {status}{pending} | {} | {model} | {}",
+                self.session_label,
+                abbreviate_cwd(&self.cwd)
+            ),
+            width,
+        )
+    }
+
+    fn render_transient_surface(&mut self, width: usize) -> Vec<String> {
+        let mut lines = self.render_pending_delegation_rejection_reason(width);
+        lines.extend(self.render_pending_profile_task(width));
+        if self.selecting_tree {
+            if let Some(ref selector) = self.tree_selector {
+                lines.extend(selector.render(width));
+            }
+        } else if !self.tool_authorizations.is_empty() {
+            lines.extend(self.render_tool_authorization(width));
+        } else if self.active_plugin_ui_dialog.is_some() {
+            lines.extend(self.render_plugin_dialog_form(width));
+        } else if self.delegation_confirmation_menu.is_some() {
+            lines.extend(self.render_delegation_confirmation_menu(width));
+        } else if self.profile_menu.is_some() {
+            lines.extend(self.render_profile_menu(width));
+        } else if self.selecting_model {
+            lines.extend(self.render_model_selector(width));
+        } else if self.selecting_session {
+            lines.extend(self.render_session_selector(width));
+        } else if self.selecting_settings {
+            lines.extend(self.render_settings_menu(width));
+        } else {
+            lines.extend(self.render_slash_suggestions(width));
+        }
+        lines
     }
 
     fn transcript_row_snapshot(&mut self, max_tool_result_lines: usize) -> TranscriptRowSnapshot {
-        let opts = self.transcript_render_options(max_tool_result_lines);
+        let opts = self.transcript_render_options(self.viewport_width, max_tool_result_lines);
         self.render_cache.row_snapshot(&self.transcript, &opts)
     }
 
@@ -2550,7 +3091,7 @@ impl InteractiveRoot {
         changed_indices: &[usize],
         max_tool_result_lines: usize,
     ) -> usize {
-        let opts = self.transcript_render_options(max_tool_result_lines);
+        let opts = self.transcript_render_options(self.viewport_width, max_tool_result_lines);
         self.render_cache
             .row_delta_since(&self.transcript, &opts, snapshot, changed_indices)
     }
@@ -2687,48 +3228,19 @@ impl Component for InteractiveRoot {
         if width == 0 {
             return Vec::new();
         }
+        if self.fullscreen_viewport {
+            return self.render_fullscreen_shell(width);
+        }
 
         let max_tool_result_lines = if self.tool_output_expanded {
             EXPANDED_TOOL_RESULT_LINES
         } else {
             MAX_TOOL_RESULT_LINES
         };
-        let transcript_lines = self.transcript_lines(max_tool_result_lines);
-        let mut trailing_lines = self.render_editor_box(width);
-        trailing_lines.extend(self.render_pending_delegation_rejection_reason(width));
-        trailing_lines.extend(self.render_pending_profile_task(width));
-        if self.selecting_tree {
-            if let Some(ref selector) = self.tree_selector {
-                trailing_lines.extend(selector.render(width));
-            }
-        } else if !self.tool_authorizations.is_empty() {
-            trailing_lines.extend(self.render_tool_authorization(width));
-        } else if self.active_plugin_ui_dialog.is_some() {
-            trailing_lines.extend(self.render_plugin_dialog_form(width));
-        } else if self.delegation_confirmation_menu.is_some() {
-            trailing_lines.extend(self.render_delegation_confirmation_menu(width));
-        } else if self.profile_menu.is_some() {
-            trailing_lines.extend(self.render_profile_menu(width));
-        } else if self.selecting_model {
-            trailing_lines.extend(self.render_model_selector(width));
-        } else if self.selecting_session {
-            trailing_lines.extend(self.render_session_selector(width));
-        } else if self.selecting_settings {
-            trailing_lines.extend(self.render_settings_menu(width));
-        } else {
-            trailing_lines.extend(self.render_slash_suggestions(width));
-        }
-        trailing_lines.extend(self.footer(width));
-        let mut lines = if self.fullscreen_viewport {
-            transcript_viewport(
-                &transcript_lines,
-                self.viewport_height.saturating_sub(trailing_lines.len()),
-                self.transcript.scroll_offset(),
-            )
-        } else {
-            transcript_lines
-        };
-        lines.extend(trailing_lines);
+        let mut lines = self.transcript_lines(max_tool_result_lines);
+        lines.extend(self.render_editor_box(width));
+        lines.extend(self.render_transient_surface(width));
+        lines.extend(self.footer(width));
         lines
     }
 
@@ -2739,6 +3251,7 @@ impl Component for InteractiveRoot {
     fn set_viewport_size(&mut self, width: usize, height: usize) {
         self.viewport_width = width.max(1);
         self.viewport_height = height.max(1);
+        self.refresh_shell_focus();
     }
 
     fn set_focused(&mut self, focused: bool) {
@@ -2759,6 +3272,32 @@ fn transcript_viewport(lines: &[String], height: usize, scroll_offset: usize) ->
     let end = lines.len().saturating_sub(offset);
     let start = end.saturating_sub(height);
     lines[start..end].to_vec()
+}
+
+fn shell_layout_mode(width: usize) -> ShellLayoutMode {
+    if width >= WIDE_LAYOUT_MIN_WIDTH {
+        ShellLayoutMode::Wide
+    } else if width >= MEDIUM_LAYOUT_MIN_WIDTH {
+        ShellLayoutMode::Medium
+    } else {
+        ShellLayoutMode::Narrow
+    }
+}
+
+fn panel_body(panel: Rect) -> Rect {
+    Rect::new(
+        panel.x,
+        panel.y.saturating_add(usize::from(panel.height > 0)),
+        panel.width,
+        panel.height.saturating_sub(1),
+    )
+}
+
+fn tail_lines(lines: &[String], height: usize) -> Vec<String> {
+    if height == 0 {
+        return Vec::new();
+    }
+    lines[lines.len().saturating_sub(height)..].to_vec()
 }
 
 fn build_settings_list(
@@ -2926,7 +3465,12 @@ fn format_http_idle_timeout_ms(timeout_ms: u64) -> String {
 
 #[cfg(test)]
 mod transcript_viewport_tests {
-    use super::transcript_viewport;
+    use std::path::PathBuf;
+
+    use pi_tui::api::component::Component;
+    use pi_tui::api::input::{InputEvent, parse_key};
+
+    use super::{ContextTab, InteractiveRegion, InteractiveRoot, transcript_viewport};
 
     fn lines() -> Vec<String> {
         (1..=6).map(|line| line.to_string()).collect()
@@ -2950,5 +3494,55 @@ mod transcript_viewport_tests {
         );
         assert!(transcript_viewport(&lines(), 0, 0).is_empty());
         assert!(transcript_viewport(&[], 3, 0).is_empty());
+    }
+
+    fn key(data: &str) -> InputEvent {
+        InputEvent::Key(parse_key(data).expect("test key should parse"))
+    }
+
+    #[test]
+    fn fullscreen_focus_ring_tracks_visible_regions_and_restores_overlay_focus() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Composer));
+
+        assert!(root.handle_shell_input(&key("\t")));
+        assert_eq!(
+            root.focus_ring.current(),
+            Some(InteractiveRegion::Conversation)
+        );
+        assert!(root.handle_shell_input(&key("\t")));
+        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Context));
+
+        root.set_viewport_size(80, 24);
+        assert_eq!(
+            root.focus_ring.current(),
+            Some(InteractiveRegion::Conversation)
+        );
+        assert!(root.handle_shell_input(&key("\x07")));
+        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Context));
+        assert!(root.context_open);
+        assert!(root.handle_shell_input(&key("\x1b")));
+        assert_eq!(
+            root.focus_ring.current(),
+            Some(InteractiveRegion::Conversation)
+        );
+        assert!(!root.context_open);
+    }
+
+    #[test]
+    fn context_focus_cycles_tabs_without_editing_composer() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        root.focus_ring.focus(InteractiveRegion::Context);
+        root.apply_region_focus();
+
+        assert!(root.handle_shell_input(&key("\x1b[C")));
+        assert_eq!(root.context_tab, ContextTab::Changes);
+        assert!(root.editor.text().is_empty());
+        assert!(root.handle_shell_input(&key("\x1b[D")));
+        assert_eq!(root.context_tab, ContextTab::Ops);
     }
 }

@@ -35,6 +35,16 @@ pub type ComponentId = usize;
 pub trait Component: Any {
     fn render(&mut self, width: usize) -> Vec<String>;
 
+    fn render_bounded(&mut self, viewport: crate::render::Rect) -> Vec<String> {
+        self.set_viewport_size(viewport.width, viewport.height);
+        let mut lines = self.render(viewport.width);
+        lines.truncate(viewport.height);
+        for line in &mut lines {
+            *line = crate::render::truncate_to_width(line, viewport.width);
+        }
+        lines
+    }
+
     fn set_viewport_size(&mut self, _width: usize, _height: usize) {}
 
     fn handle_input(&mut self, _event: &crate::input::InputEvent) {}

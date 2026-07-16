@@ -15,6 +15,24 @@ pub(crate) static APP_KEYBINDINGS: LazyLock<BTreeMap<String, KeybindingDefinitio
         insert(&mut definitions, "app.exit", &["ctrl+c"], "Exit");
         insert(
             &mut definitions,
+            "app.focus.next",
+            &["tab"],
+            "Focus next region",
+        );
+        insert(
+            &mut definitions,
+            "app.focus.previous",
+            &["shift+tab"],
+            "Focus previous region",
+        );
+        insert(
+            &mut definitions,
+            "app.context.toggle",
+            &["ctrl+g"],
+            "Toggle context region",
+        );
+        insert(
+            &mut definitions,
             "app.tools.expand",
             &["ctrl+o"],
             "Expand tool results",

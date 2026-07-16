@@ -1,6 +1,8 @@
 //! Overlay composition behavior.
 
-use pi_tui::api::component::{Component, OverlayAnchor, OverlayOptions};
+use std::sync::{Arc, Mutex};
+
+use pi_tui::api::component::{Component, OverlayAnchor, OverlayOptions, SizeValue};
 use pi_tui::api::render::Tui;
 use pi_tui::api::testing::VirtualTerminal;
 
@@ -61,4 +63,82 @@ fn hiding_overlay_restores_base_render() {
     tui.render_once().unwrap();
     assert!(tui.terminal().written_output().contains("base"));
     assert!(!tui.terminal().written_output().contains("menu"));
+}
+
+struct ViewportProbe {
+    viewport: Arc<Mutex<Option<(usize, usize)>>>,
+}
+
+impl Component for ViewportProbe {
+    fn render(&mut self, _width: usize) -> Vec<String> {
+        vec!["one".into(), "two".into(), "three".into()]
+    }
+
+    fn set_viewport_size(&mut self, width: usize, height: usize) {
+        *self.viewport.lock().unwrap() = Some((width, height));
+    }
+}
+
+#[test]
+fn overlay_host_uses_bounded_component_rendering() {
+    let viewport = Arc::new(Mutex::new(None));
+    let mut tui = Tui::new(VirtualTerminal::new(12, 5));
+    tui.add_child(Box::new(Lines(vec!["base".to_string()])));
+    tui.show_overlay(
+        Box::new(ViewportProbe {
+            viewport: Arc::clone(&viewport),
+        }),
+        OverlayOptions {
+            width: Some(6.into()),
+            max_height: Some(SizeValue::Columns(2)),
+            ..Default::default()
+        },
+    );
+
+    tui.render_once().unwrap();
+
+    assert_eq!(*viewport.lock().unwrap(), Some((6, 2)));
+    let output = tui.terminal().written_output();
+    assert!(output.contains("one"), "{output:?}");
+    assert!(output.contains("two"), "{output:?}");
+    assert!(!output.contains("three"), "{output:?}");
+}
+
+struct FocusProbe {
+    focused: Arc<Mutex<bool>>,
+}
+
+impl Component for FocusProbe {
+    fn render(&mut self, _width: usize) -> Vec<String> {
+        vec!["focus".into()]
+    }
+
+    fn set_focused(&mut self, focused: bool) {
+        *self.focused.lock().unwrap() = focused;
+    }
+}
+
+#[test]
+fn capturing_overlay_traps_and_restores_focus() {
+    let base_focused = Arc::new(Mutex::new(false));
+    let overlay_focused = Arc::new(Mutex::new(false));
+    let mut tui = Tui::new(VirtualTerminal::new(12, 5));
+    let base_id = tui.add_child_with_id(Box::new(FocusProbe {
+        focused: Arc::clone(&base_focused),
+    }));
+    tui.set_focus(Some(base_id));
+    let handle = tui.show_overlay(
+        Box::new(FocusProbe {
+            focused: Arc::clone(&overlay_focused),
+        }),
+        Default::default(),
+    );
+
+    handle.focus(&mut tui);
+    assert!(!*base_focused.lock().unwrap());
+    assert!(*overlay_focused.lock().unwrap());
+
+    handle.hide(&mut tui);
+    assert!(*base_focused.lock().unwrap());
+    assert!(!*overlay_focused.lock().unwrap());
 }

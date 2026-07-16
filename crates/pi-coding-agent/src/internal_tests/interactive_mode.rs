@@ -20,6 +20,7 @@ use pi_coding_agent::adapters::interactive::test_harness::{
     run_scripted_interactive_with_observed_provider_driver,
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
+use pi_tui::api::render::visible_width;
 use pi_tui::api::terminal::TerminalMode;
 use pi_tui::api::testing::TerminalOp;
 use tokio::sync::Notify;
@@ -1027,11 +1028,67 @@ async fn scripted_fullscreen_initial_render_owns_terminal_height() {
     let frame = output.rendered_lines.join("\n");
 
     assert_eq!(output.rendered_lines.len(), 24, "{output:?}");
-    assert!(output.rendered_lines.first().is_some_and(String::is_empty));
+    assert!(frame.contains("Conversation"), "{frame}");
     assert!(frame.contains(env!("CARGO_PKG_VERSION")), "{frame}");
     assert!(frame.contains("/help"), "{frame}");
     assert!(frame.contains("─"), "{frame}");
     assert_fullscreen_lifecycle(&output);
+}
+
+#[tokio::test]
+async fn scripted_fullscreen_layout_matrix_preserves_primary_regions() {
+    let wide = run_scripted_idle_fullscreen_with_size("", 120, 24)
+        .await
+        .unwrap();
+    let wide_frame = wide.rendered_lines.join("\n");
+    assert!(wide_frame.contains("Conversation"), "{wide_frame}");
+    assert!(wide_frame.contains("Context [ops]"), "{wide_frame}");
+    assert!(wide_frame.contains("Tips"), "{wide_frame}");
+    assert!(
+        wide_frame.contains("status") || wide_frame.contains("idle"),
+        "{wide_frame}"
+    );
+    assert!(
+        wide.rendered_lines
+            .iter()
+            .all(|line| visible_width(line) <= 120)
+    );
+
+    let medium = run_scripted_idle_fullscreen_with_size("", 80, 24)
+        .await
+        .unwrap();
+    let medium_frame = medium.rendered_lines.join("\n");
+    assert!(medium_frame.contains("Conversation"), "{medium_frame}");
+    assert!(!medium_frame.contains("Context [ops]"), "{medium_frame}");
+    assert!(!medium_frame.contains("Tips"), "{medium_frame}");
+
+    let low = run_scripted_idle_fullscreen_with_size("", 120, 8)
+        .await
+        .unwrap();
+    let low_frame = low.rendered_lines.join("\n");
+    assert_eq!(low.rendered_lines.len(), 8, "{low:?}");
+    assert!(low_frame.contains("Conversation"), "{low_frame}");
+    assert!(low_frame.contains("Context [ops]"), "{low_frame}");
+    assert!(!low_frame.contains("Tips"), "{low_frame}");
+    assert!(low_frame.contains("> "), "{low_frame}");
+}
+
+#[tokio::test]
+async fn scripted_fullscreen_context_uses_side_and_modal_overlays() {
+    let medium = run_scripted_idle_fullscreen_with_size("\x07", 80, 24)
+        .await
+        .unwrap();
+    let medium_frame = medium.rendered_lines.join("\n");
+    assert!(medium_frame.contains("Conversation"), "{medium_frame}");
+    assert!(medium_frame.contains("Context [ops]"), "{medium_frame}");
+
+    let narrow = run_scripted_idle_fullscreen_with_size("\x07", 50, 18)
+        .await
+        .unwrap();
+    let narrow_frame = narrow.rendered_lines.join("\n");
+    assert!(narrow_frame.contains("Context [ops]"), "{narrow_frame}");
+    assert!(!narrow_frame.contains("Conversation"), "{narrow_frame}");
+    assert!(narrow_frame.contains("> "), "{narrow_frame}");
 }
 
 #[tokio::test]
@@ -1096,7 +1153,7 @@ async fn scripted_fullscreen_new_output_preserves_scrolled_view() {
     assert!(frame.contains("pi-rust"), "{frame}");
     assert!(!frame.contains("brand new bottom"), "{frame}");
     assert!(frame.contains("new output below"), "{frame}");
-    assert!(frame.contains("status: idle"), "{frame}");
+    assert!(frame.contains("idle"), "{frame}");
 }
 
 #[tokio::test]

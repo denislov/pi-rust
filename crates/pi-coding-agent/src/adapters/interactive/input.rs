@@ -150,6 +150,10 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         return;
     }
 
+    if root.handle_shell_input(event) {
+        return;
+    }
+
     if matches_key(event, "ctrl+c") || matches_key(event, "escape") {
         match root.status {
             InteractiveStatus::Running => {

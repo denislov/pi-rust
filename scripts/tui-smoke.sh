@@ -79,9 +79,19 @@ sleep 0.2
 tmux resize-window -t "$SESSION" -x 60 -y 18
 sleep 0.3
 capture_viewport "12-fullscreen-resize-narrow"
+tmux send-keys -t "$SESSION" C-g
+sleep 0.2
+capture_viewport "12-context-modal-narrow"
+tmux send-keys -t "$SESSION" Escape
+sleep 0.2
 tmux resize-window -t "$SESSION" -x 120 -y 32
 sleep 0.3
 capture_viewport "13-fullscreen-resize-wide"
+tmux send-keys -t "$SESSION" Tab Tab Right
+sleep 0.2
+capture_viewport "13-context-focus-changes"
+tmux send-keys -t "$SESSION" Tab
+sleep 0.2
 
 tmux send-keys -t "$SESSION" "/help" Enter
 sleep 0.3
@@ -101,8 +111,17 @@ if grep -Fq "scrollback sentinel before pi-rust TUI" "$OUT_DIR/10-fullscreen-sta
   exit 1
 fi
 grep -Fq "pi-rust" "$OUT_DIR/10-fullscreen-start.txt"
-grep -Fq "status: idle" "$OUT_DIR/12-fullscreen-resize-narrow.txt"
-grep -Fq "status: idle" "$OUT_DIR/13-fullscreen-resize-wide.txt"
+grep -Fq "Conversation" "$OUT_DIR/10-fullscreen-start.txt"
+grep -Fq "Context [ops]" "$OUT_DIR/10-fullscreen-start.txt"
+grep -Fq "Tips" "$OUT_DIR/10-fullscreen-start.txt"
+grep -Fq "idle" "$OUT_DIR/12-fullscreen-resize-narrow.txt"
+grep -Fq "Context [ops]" "$OUT_DIR/12-context-modal-narrow.txt"
+if grep -Fq "Conversation" "$OUT_DIR/12-context-modal-narrow.txt"; then
+  echo "narrow context modal did not replace the work area" >&2
+  exit 1
+fi
+grep -Fq "idle" "$OUT_DIR/13-fullscreen-resize-wide.txt"
+grep -Fq "Context ops [changes]" "$OUT_DIR/13-context-focus-changes.txt"
 grep -Fq "show this help" "$OUT_DIR/14-fullscreen-help-page-up.txt"
 grep -Fq "scrollback sentinel before pi-rust TUI" "$OUT_DIR/99-after-fullscreen-exit.txt"
 
@@ -124,6 +143,8 @@ Review checklist:
 - 10-fullscreen-start owns the viewport and hides the primary-screen sentinel.
 - 11-fullscreen-wide-unicode keeps the prompt cursor after the wide character.
 - 12-fullscreen-resize-narrow and 13-fullscreen-resize-wide remain bounded.
+- 12-context-modal-narrow replaces the narrow work area and Escape restores it.
+- 13-context-focus-changes proves Tab focus and Context tab routing.
 - 14-fullscreen-help-page-up shows the top of help through transcript scrolling.
 - 99-after-fullscreen-exit restores the primary screen and its sentinel.
 EOF

@@ -1,4 +1,5 @@
 mod ansi;
+mod layout;
 mod overlay;
 mod scheduler;
 mod style;
@@ -6,6 +7,7 @@ mod surface;
 mod width;
 
 pub(crate) use ansi::ansi_sequence_len;
+pub use layout::{Axis, Constraint, FocusRing, Frame, Layout, Rect};
 pub(crate) use overlay::OverlayEntry;
 pub use overlay::{
     OverlayAnchor, OverlayHandle, OverlayMargin, OverlayOptions, OverlayVisibleFn, SizeValue,
@@ -17,6 +19,7 @@ pub use style::{
     paint_with_level,
 };
 pub use surface::{InputListenerResult, RenderOutcome, RenderStrategy, Tui, TuiError};
+pub(crate) use width::drop_columns;
 pub use width::{
     truncate_to_width, truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
 };

@@ -3,7 +3,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::component::{Component, ComponentId};
 use crate::editing::{CursorPosition, extract_cursor_marker};
 use crate::input::{InputEvent, Key, is_key_release};
-use crate::render::{OverlayAnchor, SizeValue};
+use crate::render::{OverlayAnchor, Rect, SizeValue};
 use crate::render::{OverlayEntry, OverlayHandle, OverlayOptions};
 use crate::render::{truncate_to_width, visible_width};
 use crate::terminal::delete_kitty_image;
@@ -582,14 +582,18 @@ impl<T: Terminal> Tui<T> {
             let (overlay_width, overlay_lines, row, col) = {
                 let overlay = &mut self.overlays[i];
                 let overlay_width = resolve_overlay_width(&overlay.options, terminal_width).max(1);
-                let mut overlay_lines = overlay.component.render(overlay_width);
-                if let Some(max_height) = overlay
+                let overlay_height = overlay
                     .options
                     .max_height
                     .map(|size| resolve_size(size, terminal_height))
-                {
-                    overlay_lines.truncate(max_height);
-                }
+                    .unwrap_or(terminal_height)
+                    .min(terminal_height);
+                let overlay_lines = overlay.component.render_bounded(Rect::new(
+                    0,
+                    0,
+                    overlay_width,
+                    overlay_height,
+                ));
                 if overlay_lines.is_empty() {
                     continue;
                 }

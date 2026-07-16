@@ -53,11 +53,11 @@ pub mod component {
 /// Render scheduling, surfaces, styles, painting, and display-width helpers.
 pub mod render {
     pub use crate::render::{
-        Color, ColorLevel, ERROR, InputListenerResult, PATH, RenderOutcome, RenderScheduler,
-        RenderStrategy, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, Tui,
-        TuiError, USER, color_enabled, color_level, detect_color_level_from_env, paint, paint_with,
-        paint_with_level, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
-        wrap_text_with_ansi,
+        Axis, Color, ColorLevel, Constraint, ERROR, FocusRing, Frame, InputListenerResult, Layout,
+        PATH, Rect, RenderOutcome, RenderScheduler, RenderStrategy, STATUS_IDLE, STATUS_RUNNING,
+        SYSTEM, Style, TOOL_ERROR, TOOL_NAME, Tui, TuiError, USER, color_enabled, color_level,
+        detect_color_level_from_env, paint, paint_with, paint_with_level, truncate_to_width,
+        truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
     };
 }
 

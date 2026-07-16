@@ -1,3 +1,5 @@
+#[path = "render/layout.rs"]
+mod layout;
 #[path = "render/overlay.rs"]
 mod overlay;
 #[path = "render/runtime.rs"]
