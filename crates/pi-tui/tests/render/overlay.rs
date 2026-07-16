@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use pi_tui::api::component::{Component, OverlayAnchor, OverlayOptions, SizeValue};
+use pi_tui::api::component::{Component, OverlayAnchor, OverlayMargin, OverlayOptions, SizeValue};
 use pi_tui::api::render::Tui;
 use pi_tui::api::testing::VirtualTerminal;
 
@@ -48,6 +48,33 @@ fn centered_overlay_is_composited_over_base_lines() {
     assert!(
         last_line.contains("XX"),
         "expected last line to contain XX, got: {last_line:?}"
+    );
+}
+
+#[test]
+fn overlay_composition_preserves_width_over_ansi_base_lines() {
+    let mut tui = Tui::new(VirtualTerminal::new(10, 3));
+    tui.add_child(Box::new(Lines(vec![
+        "\x1b[31m..........\x1b[0m".to_string(),
+        "\x1b]8;;https://example.com\x07link......\x1b]8;;\x07".to_string(),
+    ])));
+    tui.show_overlay(
+        Box::new(Lines(vec!["XXXXXX".to_string()])),
+        OverlayOptions {
+            anchor: OverlayAnchor::Center,
+            width: Some(6.into()),
+            ..Default::default()
+        },
+    );
+
+    tui.render_once().unwrap();
+
+    assert!(
+        tui.rendered_lines()
+            .iter()
+            .all(|line| pi_tui::api::render::visible_width(line) <= 10),
+        "{:?}",
+        tui.rendered_lines()
     );
 }
 
@@ -102,6 +129,84 @@ fn overlay_host_uses_bounded_component_rendering() {
     assert!(output.contains("one"), "{output:?}");
     assert!(output.contains("two"), "{output:?}");
     assert!(!output.contains("three"), "{output:?}");
+}
+
+#[test]
+fn overlay_host_subtracts_vertical_margins_from_component_viewport() {
+    let viewport = Arc::new(Mutex::new(None));
+    let mut tui = Tui::new(VirtualTerminal::new(12, 8));
+    tui.add_child(Box::new(Lines(vec!["base".to_string(); 8])));
+    tui.show_overlay(
+        Box::new(ViewportProbe {
+            viewport: Arc::clone(&viewport),
+        }),
+        OverlayOptions {
+            width: Some(6.into()),
+            margin: OverlayMargin {
+                top: 1,
+                bottom: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    tui.render_once().unwrap();
+
+    assert_eq!(*viewport.lock().unwrap(), Some((6, 3)));
+}
+
+#[test]
+fn overlay_host_does_not_invade_margins_when_no_vertical_space_remains() {
+    let viewport = Arc::new(Mutex::new(None));
+    let mut tui = Tui::new(VirtualTerminal::new(12, 4));
+    tui.add_child(Box::new(Lines(vec!["base".to_string(); 4])));
+    tui.show_overlay(
+        Box::new(ViewportProbe {
+            viewport: Arc::clone(&viewport),
+        }),
+        OverlayOptions {
+            width: Some(6.into()),
+            margin: OverlayMargin {
+                bottom: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    tui.render_once().unwrap();
+
+    assert_eq!(*viewport.lock().unwrap(), None);
+    assert!(!tui.terminal().written_output().contains("one"));
+}
+
+#[test]
+fn overlay_options_can_be_updated_after_mount() {
+    let viewport = Arc::new(Mutex::new(None));
+    let mut tui = Tui::new(VirtualTerminal::new(12, 8));
+    tui.add_child(Box::new(Lines(vec!["base".to_string(); 8])));
+    let handle = tui.show_overlay(
+        Box::new(ViewportProbe {
+            viewport: Arc::clone(&viewport),
+        }),
+        OverlayOptions {
+            width: Some(4.into()),
+            ..Default::default()
+        },
+    );
+    tui.set_overlay_options(
+        handle,
+        OverlayOptions {
+            width: Some(7.into()),
+            max_height: Some(2.into()),
+            ..Default::default()
+        },
+    );
+
+    tui.render_once().unwrap();
+
+    assert_eq!(*viewport.lock().unwrap(), Some((7, 2)));
 }
 
 struct FocusProbe {

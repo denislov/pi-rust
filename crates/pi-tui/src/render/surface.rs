@@ -1,11 +1,9 @@
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::component::{Component, ComponentId};
 use crate::editing::{CursorPosition, extract_cursor_marker};
 use crate::input::{InputEvent, Key, is_key_release};
 use crate::render::{OverlayAnchor, Rect, SizeValue};
 use crate::render::{OverlayEntry, OverlayHandle, OverlayOptions};
-use crate::render::{truncate_to_width, visible_width};
+use crate::render::{drop_columns, truncate_to_width, visible_width};
 use crate::terminal::delete_kitty_image;
 use crate::terminal::{Terminal, TerminalMode};
 use crate::terminal::{
@@ -258,6 +256,13 @@ impl<T: Terminal> Tui<T> {
             let restore_focus = self.overlays[index].restore_focus;
             self.set_focus(restore_focus);
         }
+    }
+
+    pub fn set_overlay_options(&mut self, handle: OverlayHandle, options: OverlayOptions) {
+        let Some(index) = self.overlay_index(handle.id) else {
+            return;
+        };
+        self.overlays[index].options = options;
     }
 
     pub fn has_overlay(&self, handle: OverlayHandle) -> bool {
@@ -582,12 +587,17 @@ impl<T: Terminal> Tui<T> {
             let (overlay_width, overlay_lines, row, col) = {
                 let overlay = &mut self.overlays[i];
                 let overlay_width = resolve_overlay_width(&overlay.options, terminal_width).max(1);
+                let available_height = terminal_height
+                    .saturating_sub(overlay.options.margin.top + overlay.options.margin.bottom);
                 let overlay_height = overlay
                     .options
                     .max_height
-                    .map(|size| resolve_size(size, terminal_height))
-                    .unwrap_or(terminal_height)
-                    .min(terminal_height);
+                    .map(|size| resolve_size(size, available_height))
+                    .unwrap_or(available_height)
+                    .min(available_height);
+                if overlay_height == 0 {
+                    continue;
+                }
                 let overlay_lines = overlay.component.render_bounded(Rect::new(
                     0,
                     0,
@@ -1110,29 +1120,4 @@ fn splice_by_columns(base: &str, col: usize, width: usize, replacement: &str) ->
     // Insert SEGMENT_RESET between segments to prevent colour bleed,
     // mirroring TS `compositeLineAt()` which uses `SEGMENT_RESET`.
     format!("{prefix}{SEGMENT_RESET}{replacement}{SEGMENT_RESET}{suffix}")
-}
-
-fn drop_columns(text: &str, columns: usize) -> String {
-    if columns == 0 {
-        return text.to_string();
-    }
-
-    let mut skipped = 0;
-    let mut output = String::new();
-    let mut collecting = false;
-    for grapheme in text.graphemes(true) {
-        if collecting {
-            output.push_str(grapheme);
-            continue;
-        }
-
-        let width = visible_width(grapheme);
-        if skipped + width <= columns {
-            skipped += width;
-        } else {
-            collecting = true;
-            output.push_str(grapheme);
-        }
-    }
-    output
 }

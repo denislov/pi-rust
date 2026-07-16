@@ -17,6 +17,7 @@ mod session_actions;
 mod session_selector;
 mod slash;
 pub mod transcript;
+mod transient_overlay;
 pub(super) mod tree_selector;
 
 pub use app::run_interactive_mode;

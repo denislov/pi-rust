@@ -15,6 +15,10 @@ mkdir -p "$OUT_DIR"
 
 cd "$ROOT"
 cargo build -p pi-coding-agent >/dev/null
+cargo test -q -p pi-coding-agent --lib \
+  fullscreen_authorization_overlay_preserves_queue_focus_until_last_resolution
+cargo test -q -p pi-coding-agent --lib \
+  fullscreen_delegation_overlay_dispatches_approval_and_restores_focus
 
 capture() {
   local name="$1"
@@ -92,6 +96,16 @@ sleep 0.2
 capture_viewport "13-context-focus-changes"
 tmux send-keys -t "$SESSION" Tab
 sleep 0.2
+tmux send-keys -t "$SESSION" "/settings" Enter
+sleep 0.2
+capture_viewport "13-settings-overlay-wide"
+tmux resize-window -t "$SESSION" -x 60 -y 18
+sleep 0.3
+capture_viewport "13-settings-overlay-narrow"
+tmux send-keys -t "$SESSION" Escape
+sleep 0.2
+tmux resize-window -t "$SESSION" -x 120 -y 32
+sleep 0.3
 
 tmux send-keys -t "$SESSION" "/help" Enter
 sleep 0.3
@@ -122,6 +136,9 @@ if grep -Fq "Conversation" "$OUT_DIR/12-context-modal-narrow.txt"; then
 fi
 grep -Fq "idle" "$OUT_DIR/13-fullscreen-resize-wide.txt"
 grep -Fq "Context ops [changes]" "$OUT_DIR/13-context-focus-changes.txt"
+grep -Fq "Settings" "$OUT_DIR/13-settings-overlay-wide.txt"
+grep -Fq "Settings" "$OUT_DIR/13-settings-overlay-narrow.txt"
+grep -Fq "idle" "$OUT_DIR/13-settings-overlay-narrow.txt"
 grep -Fq "show this help" "$OUT_DIR/14-fullscreen-help-page-up.txt"
 grep -Fq "scrollback sentinel before pi-rust TUI" "$OUT_DIR/99-after-fullscreen-exit.txt"
 
@@ -145,6 +162,9 @@ Review checklist:
 - 12-fullscreen-resize-narrow and 13-fullscreen-resize-wide remain bounded.
 - 12-context-modal-narrow replaces the narrow work area and Escape restores it.
 - 13-context-focus-changes proves Tab focus and Context tab routing.
+- 13-settings-overlay-wide and 13-settings-overlay-narrow prove the shared
+  product overlay remains bounded through resize; the script also runs offline
+  authorization queue and delegation approval round trips before tmux starts.
 - 14-fullscreen-help-page-up shows the top of help through transcript scrolling.
 - 99-after-fullscreen-exit restores the primary screen and its sentinel.
 EOF

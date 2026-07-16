@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use pi_agent_core::api::resources::AgentResources;
 use pi_agent_core::api::transcript::create_session_id;
-use pi_tui::api::component::Component;
+use pi_tui::api::component::{Component, OverlayAnchor, OverlayMargin, OverlayOptions, SizeValue};
 use pi_tui::api::input::{InputEvent, StdinBuffer, is_key_release};
 use pi_tui::api::render::{RenderScheduler, Tui, TuiError};
 use pi_tui::api::terminal::{Terminal, TerminalMode, TerminalSize};
@@ -370,9 +370,81 @@ fn initialize_started_tui<T: Terminal>(
             root.apply_hydrated_session(hydrated, None);
         }
     }
+    if fullscreen_viewport {
+        install_transient_overlays(tui, root_id)?;
+    }
     tui.set_clear_on_shrink(prompt_context.settings.terminal.clear_on_shrink);
     tui.set_focus(Some(root_id));
+    sync_transient_overlays(tui, root_id)?;
     Ok(root_id)
+}
+
+fn install_transient_overlays<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+) -> Result<(), CliError> {
+    let (support_component, modal_component) =
+        root_ref(tui, root_id)?.transient_overlay_components();
+    let support = tui.show_overlay(
+        Box::new(support_component),
+        transient_overlay_options(0, true),
+    );
+    support.hide(tui);
+    let modal = tui.show_overlay(
+        Box::new(modal_component),
+        transient_overlay_options(0, false),
+    );
+    modal.hide(tui);
+    root_mut(tui, root_id)?.install_transient_overlay_handles(support, modal);
+    Ok(())
+}
+
+fn transient_overlay_options(bottom_margin: usize, non_capturing: bool) -> OverlayOptions {
+    OverlayOptions {
+        width: non_capturing.then_some(SizeValue::Columns(72)),
+        anchor: OverlayAnchor::BottomCenter,
+        margin: OverlayMargin {
+            right: usize::from(non_capturing) * 2,
+            bottom: bottom_margin,
+            left: usize::from(non_capturing) * 2,
+            ..Default::default()
+        },
+        non_capturing,
+        ..Default::default()
+    }
+}
+
+fn sync_transient_overlays<T: Terminal>(tui: &mut Tui<T>, root_id: usize) -> Result<(), CliError> {
+    let Some((support, modal)) = root_ref(tui, root_id)?.transient_overlay_handles() else {
+        return Ok(());
+    };
+    let size = tui.terminal().size();
+    let projection = {
+        let root = root_mut(tui, root_id)?;
+        root.set_viewport_size(size.columns, size.rows);
+        root.prepare_transient_overlays(size.columns)
+    };
+
+    tui.set_overlay_options(
+        support,
+        transient_overlay_options(projection.bottom_margin, true),
+    );
+    support.set_hidden(tui, !projection.support_visible);
+
+    let modal_was_visible = tui.has_overlay(modal);
+    tui.set_overlay_options(
+        modal,
+        transient_overlay_options(projection.bottom_margin, false),
+    );
+    if projection.modal_visible {
+        modal.set_hidden(tui, false);
+        if !modal_was_visible {
+            modal.focus(tui);
+        }
+    } else if modal_was_visible {
+        modal.hide(tui);
+    }
+    Ok(())
 }
 
 async fn run_started_interactive_loop<T, C>(
@@ -397,7 +469,7 @@ where
     let mut terminal_size = tui.terminal().size();
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
     render_scheduler.request(true);
-    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
 
     // Start the theme hot-reload watcher. Only custom themes (a name other
     // than dark/light) are watched; built-in themes return an idle watcher.
@@ -410,13 +482,13 @@ where
     .map_err(to_cli_error)?;
 
     loop {
-        flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+        flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
         if let Some(mut task) = running.take() {
             let render_delay = pending_render_delay(&render_scheduler, clock.now());
             let stdin_delay = stdin_pending_delay(&stdin_buffer, clock.now());
             tokio::select! {
                 _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
-                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
                     running = Some(task);
                 }
                 _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
@@ -447,7 +519,7 @@ where
                 }
                 _ = tokio::time::sleep(RESIZE_POLL_INTERVAL) => {
                     schedule_resize_render(tui, &mut terminal_size, &mut render_scheduler);
-                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
                     running = Some(task);
                 }
                 chunk = input.recv(), if input_open => {
@@ -543,7 +615,7 @@ where
                             session.view().default_agent_profile_id.clone();
                     }
                     schedule_render(&mut render_scheduler, RenderRequest::FORCE);
-                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
                     running = None;
                     input.mark_idle();
                 }
@@ -555,7 +627,7 @@ where
             }
         } else {
             if !input_open {
-                flush_pending_render(tui, &mut render_scheduler, clock.now())?;
+                flush_pending_render(tui, root_id, &mut render_scheduler, clock.now())?;
                 if let Some(session) = coding_session.as_ref() {
                     detach_interactive_client(session, &mut client_connection);
                 }
@@ -566,7 +638,7 @@ where
             let stdin_delay = stdin_pending_delay(&stdin_buffer, clock.now());
             tokio::select! {
                 _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
-                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
                 }
                 _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
                     let events = stdin_buffer.tick(clock.now());
@@ -595,7 +667,7 @@ where
                 }
                 _ = tokio::time::sleep(RESIZE_POLL_INTERVAL) => {
                     schedule_resize_render(tui, &mut terminal_size, &mut render_scheduler);
-                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
                 }
                 chunk = input.recv() => {
                     let Some(chunk) = chunk else {
@@ -621,7 +693,7 @@ where
                             }
                         }
                         if running.is_none() {
-                            flush_pending_render(tui, &mut render_scheduler, clock.now())?;
+                            flush_pending_render(tui, root_id, &mut render_scheduler, clock.now())?;
                             if let Some(session) = coding_session.as_ref() {
                                 detach_interactive_client(session, &mut client_connection);
                             }
@@ -692,7 +764,7 @@ fn process_input_events<T: Terminal>(
         )? {
             LoopControl::Continue(request) => {
                 schedule_render(render_scheduler, request);
-                flush_render_if_ready(tui, render_scheduler, now)?;
+                flush_render_if_ready(tui, root_id, render_scheduler, now)?;
             }
             LoopControl::Exit => return Ok(LoopControl::Exit),
         }
@@ -745,10 +817,12 @@ async fn sleep_stdin_pending(delay: Option<Duration>) {
 
 fn flush_render_if_ready<T: Terminal>(
     tui: &mut Tui<T>,
+    root_id: usize,
     render_scheduler: &mut RenderScheduler,
     now: Instant,
 ) -> Result<(), CliError> {
     if render_scheduler.should_render_now(now) {
+        sync_transient_overlays(tui, root_id)?;
         render_tui(tui)?;
         render_scheduler.mark_rendered(now);
     }
@@ -757,12 +831,13 @@ fn flush_render_if_ready<T: Terminal>(
 
 fn flush_pending_render<T: Terminal>(
     tui: &mut Tui<T>,
+    root_id: usize,
     render_scheduler: &mut RenderScheduler,
     now: Instant,
 ) -> Result<(), CliError> {
     if render_scheduler.has_pending() {
         render_scheduler.request(true);
-        flush_render_if_ready(tui, render_scheduler, now)?;
+        flush_render_if_ready(tui, root_id, render_scheduler, now)?;
     }
     Ok(())
 }
@@ -780,6 +855,10 @@ fn handle_input_event<T: Terminal>(
     if is_key_release(&event) {
         return Ok(LoopControl::Continue(RenderRequest::NONE));
     }
+
+    let before = root_ref(tui, root_id)?.render_state();
+    tui.dispatch_input(&event);
+    root_mut(tui, root_id)?.drain_modal_overlay_input();
 
     let (
         action,
@@ -804,8 +883,6 @@ fn handle_input_event<T: Terminal>(
         render_request,
     ) = {
         let root = root_mut(tui, root_id)?;
-        let before = root.render_state();
-        root.handle_input(&event);
         let action = root.take_action();
         let prompt = if matches!(
             action,
@@ -897,6 +974,7 @@ fn handle_input_event<T: Terminal>(
             RenderRequest::changed(before != after),
         )
     };
+    sync_transient_overlays(tui, root_id)?;
 
     if let Some(model) = selected_model {
         let (api_key, auth_diagnostics, diagnostics) = resolve_provider_api_key(
@@ -2491,6 +2569,10 @@ mod tests {
     use super::*;
     use crate::api::operation::{CodingAgentOperation, CodingAgentOperationOutcome};
     use crate::app::bootstrap::SessionRunOptions;
+    use crate::authorization::{
+        ToolAuthorizationDecision, ToolAuthorizationPreview, ToolAuthorizationRequest,
+        ToolAuthorizationRisk, ToolAuthorizationScope,
+    };
     use crate::events::delegation::{DelegationEvent, DelegationEventContext};
     use crate::events::message::MessageEvent;
     use crate::events::prompt_stream::PromptStreamEvent;
@@ -2498,12 +2580,13 @@ mod tests {
     use crate::runtime::facade::{
         CapabilityStatus, CodingAgentCapabilities, CodingAgentProductEventKind, CodingAgentSession,
         CodingAgentSessionOptions, CodingAgentSessionProductEvent, CodingAgentSessionView,
-        CodingAgentWorkflowProductEvent, CodingSessionError, ProductEvent, ProductEventSequence,
-        ProfileId, UiSnapshot, UiSnapshotCursor,
+        CodingAgentWorkflowProductEvent, CodingSessionError, PendingDelegationConfirmation,
+        ProductEvent, ProductEventSequence, ProfileId, ProfileKind, UiSnapshot, UiSnapshotCursor,
     };
     use pi_ai::api::conversation::Usage;
     use pi_ai::api::model::{Model, ModelCost, ModelInput};
     use pi_ai::api::testing::FauxProvider;
+    use pi_tui::api::input::parse_key;
     use pi_tui::api::testing::VirtualTerminal;
 
     fn test_tui() -> (Tui<VirtualTerminal>, usize) {
@@ -2513,7 +2596,177 @@ mod tests {
             "faux-model".to_string(),
             "session".to_string(),
         )));
+        tui.set_focus(Some(root_id));
         (tui, root_id)
+    }
+
+    fn fullscreen_test_tui() -> (Tui<VirtualTerminal>, usize) {
+        let mut tui = Tui::new(VirtualTerminal::new(80, 24));
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.set_fullscreen_viewport(true);
+        let root_id = tui.add_child_with_id(Box::new(root));
+        tui.set_focus(Some(root_id));
+        install_transient_overlays(&mut tui, root_id).unwrap();
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        (tui, root_id)
+    }
+
+    fn authorization_request(id: &str) -> ToolAuthorizationRequest {
+        ToolAuthorizationRequest {
+            authorization_id: id.into(),
+            operation_id: "op-auth".into(),
+            turn_id: "turn-auth".into(),
+            tool_call_id: format!("call-{id}"),
+            tool_name: "write".into(),
+            risk: ToolAuthorizationRisk::FilesystemMutation,
+            scope: ToolAuthorizationScope::Path {
+                path: "/workspace/file.txt".into(),
+            },
+            preview: ToolAuthorizationPreview {
+                summary: format!("Modify {id}"),
+                path: Some("/workspace/file.txt".into()),
+                command: None,
+                cwd: None,
+                content_preview: Some("new content".into()),
+            },
+            capability_generation: 1,
+            requested_at: "2026-07-17T00:00:00Z".into(),
+        }
+    }
+
+    fn delegation_confirmation() -> PendingDelegationConfirmation {
+        PendingDelegationConfirmation {
+            operation_id: "op-delegation".into(),
+            turn_id: "turn-delegation".into(),
+            tool_call_id: "call-delegation".into(),
+            requesting_profile_id: ProfileId::from("planner"),
+            target_kind: ProfileKind::Agent,
+            target_id: ProfileId::from("review"),
+            task: "review the change".into(),
+            reason: "confirmation required".into(),
+        }
+    }
+
+    #[test]
+    fn fullscreen_settings_overlay_traps_input_and_restores_root_focus() {
+        let (mut tui, root_id) = fullscreen_test_tui();
+        root_mut(&mut tui, root_id).unwrap().selecting_settings = true;
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+
+        let (_, modal) = root_ref(&tui, root_id)
+            .unwrap()
+            .transient_overlay_handles()
+            .unwrap();
+        assert!(tui.has_overlay(modal));
+        assert!(root_ref(&tui, root_id).unwrap().modal_overlay_focused());
+        tui.render_once().unwrap();
+        let frame = tui.rendered_lines().join("\n");
+        assert!(frame.contains("Settings"), "{frame}");
+        assert!(frame.contains("idle"), "{frame}");
+        assert_eq!(tui.rendered_lines().len(), 24);
+
+        tui.dispatch_input(&InputEvent::Key(parse_key("\x1b").unwrap()));
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .drain_modal_overlay_input();
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+
+        assert!(!root_ref(&tui, root_id).unwrap().selecting_settings);
+        assert!(!tui.has_overlay(modal));
+        assert!(root_ref(&tui, root_id).unwrap().focused());
+    }
+
+    #[test]
+    fn fullscreen_authorization_overlay_preserves_queue_focus_until_last_resolution() {
+        let (mut tui, root_id) = fullscreen_test_tui();
+        root_mut(&mut tui, root_id).unwrap().apply_events(vec![
+            UiEvent::ToolAuthorizationRequired {
+                request: authorization_request("auth-1"),
+            },
+            UiEvent::ToolAuthorizationRequired {
+                request: authorization_request("auth-2"),
+            },
+        ]);
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        let (_, modal) = root_ref(&tui, root_id)
+            .unwrap()
+            .transient_overlay_handles()
+            .unwrap();
+        assert!(tui.has_overlay(modal));
+        assert!(root_ref(&tui, root_id).unwrap().modal_overlay_focused());
+
+        tui.dispatch_input(&InputEvent::Key(parse_key("\x1b[B").unwrap()));
+        tui.dispatch_input(&InputEvent::Key(parse_key("\r").unwrap()));
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .drain_modal_overlay_input();
+        let (request, decision) = root_mut(&mut tui, root_id)
+            .unwrap()
+            .take_pending_tool_authorization_decision()
+            .unwrap();
+        assert_eq!(request.authorization_id, "auth-1");
+        assert_eq!(decision, ToolAuthorizationDecision::AllowForOperation);
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        assert!(tui.has_overlay(modal));
+        assert!(root_ref(&tui, root_id).unwrap().modal_overlay_focused());
+        tui.render_once().unwrap();
+        assert!(tui.rendered_lines().join("\n").contains("Modify auth-2"));
+
+        tui.dispatch_input(&InputEvent::Key(parse_key("\x1b").unwrap()));
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .drain_modal_overlay_input();
+        let (request, decision) = root_mut(&mut tui, root_id)
+            .unwrap()
+            .take_pending_tool_authorization_decision()
+            .unwrap();
+        assert_eq!(request.authorization_id, "auth-2");
+        assert_eq!(decision, ToolAuthorizationDecision::Deny { reason: None });
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        assert!(!tui.has_overlay(modal));
+        assert!(root_ref(&tui, root_id).unwrap().focused());
+    }
+
+    #[test]
+    fn fullscreen_delegation_overlay_dispatches_approval_and_restores_focus() {
+        let (mut tui, root_id) = fullscreen_test_tui();
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .open_delegation_confirmation_menu(vec![delegation_confirmation()]);
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        let (_, modal) = root_ref(&tui, root_id)
+            .unwrap()
+            .transient_overlay_handles()
+            .unwrap();
+        assert!(tui.has_overlay(modal));
+        tui.render_once().unwrap();
+        let frame = tui.rendered_lines().join("\n");
+        assert!(frame.contains("Delegation confirmations"), "{frame}");
+        assert!(frame.contains("review the change"), "{frame}");
+
+        tui.dispatch_input(&InputEvent::Key(parse_key("\r").unwrap()));
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .drain_modal_overlay_input();
+        assert_eq!(
+            root_mut(&mut tui, root_id).unwrap().take_action(),
+            InteractiveAction::DelegationConfirmation
+        );
+        assert!(matches!(
+            root_mut(&mut tui, root_id)
+                .unwrap()
+                .take_pending_delegation_confirmation_command(),
+            Some(PendingDelegationConfirmationCommand::Approve { selection })
+                if selection.operation_id.as_deref() == Some("op-delegation")
+                    && selection.tool_call_id == "call-delegation"
+        ));
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        assert!(!tui.has_overlay(modal));
+        assert!(root_ref(&tui, root_id).unwrap().focused());
     }
 
     fn prompt_event(event: PromptStreamEvent) -> PromptTaskEvent {

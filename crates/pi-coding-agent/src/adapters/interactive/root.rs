@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use pi_ai::api::model::Model;
+use pi_tui::api::component::OverlayHandle;
 use pi_tui::api::component::{Component, Editor, SettingItem, SettingsList, SettingsListOptions};
 use pi_tui::api::input::{
     InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager, matches_key,
@@ -38,6 +39,7 @@ use crate::adapters::interactive::session_actions::{HydratedSession, SessionChoi
 use crate::adapters::interactive::session_selector;
 use crate::adapters::interactive::slash::{self, ParsedSlashCommand};
 use crate::adapters::interactive::transcript::TranscriptMutation;
+use crate::adapters::interactive::transient_overlay::TransientOverlayBridge;
 use crate::adapters::interactive::tree_selector::{TreeSelectorInput, TreeSelectorState};
 use crate::adapters::interactive::{Transcript, TranscriptItem, UiEvent};
 use crate::app::cli::request::profile_registry_for_cwd;
@@ -131,6 +133,13 @@ enum ShellLayoutMode {
     Wide,
     Medium,
     Narrow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TransientOverlayProjection {
+    pub(super) modal_visible: bool,
+    pub(super) support_visible: bool,
+    pub(super) bottom_margin: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -651,6 +660,10 @@ pub(super) struct InteractiveRoot {
     context_open: bool,
     context_restore_focus: InteractiveRegion,
     conversation_viewport_height: usize,
+    modal_overlay: TransientOverlayBridge,
+    support_overlay: TransientOverlayBridge,
+    modal_overlay_handle: Option<OverlayHandle>,
+    support_overlay_handle: Option<OverlayHandle>,
     pub(super) cwd: PathBuf,
     pub(super) model_id: String,
     pub(super) session_label: String,
@@ -815,6 +828,8 @@ impl InteractiveRoot {
             InteractiveRegion::Composer,
         ]);
         focus_ring.focus(InteractiveRegion::Composer);
+        let modal_overlay = TransientOverlayBridge::default();
+        let support_overlay = TransientOverlayBridge::default();
 
         Self {
             selecting_tree: false,
@@ -856,6 +871,10 @@ impl InteractiveRoot {
             context_open: false,
             context_restore_focus: InteractiveRegion::Composer,
             conversation_viewport_height: 1,
+            modal_overlay,
+            support_overlay,
+            modal_overlay_handle: None,
+            support_overlay_handle: None,
             git_branch: GitBranchProvider::new(&cwd),
             cwd,
             model_id,
@@ -922,6 +941,68 @@ impl InteractiveRoot {
 
     pub(super) fn take_action(&mut self) -> InteractiveAction {
         std::mem::replace(&mut self.action, InteractiveAction::None)
+    }
+
+    pub(super) fn transient_overlay_components(
+        &self,
+    ) -> (
+        crate::adapters::interactive::transient_overlay::TransientOverlay,
+        crate::adapters::interactive::transient_overlay::TransientOverlay,
+    ) {
+        (
+            self.support_overlay.component(),
+            self.modal_overlay.component(),
+        )
+    }
+
+    pub(super) fn install_transient_overlay_handles(
+        &mut self,
+        support: OverlayHandle,
+        modal: OverlayHandle,
+    ) {
+        self.support_overlay_handle = Some(support);
+        self.modal_overlay_handle = Some(modal);
+    }
+
+    pub(super) fn transient_overlay_handles(&self) -> Option<(OverlayHandle, OverlayHandle)> {
+        Some((self.support_overlay_handle?, self.modal_overlay_handle?))
+    }
+
+    pub(super) fn prepare_transient_overlays(
+        &mut self,
+        terminal_width: usize,
+    ) -> TransientOverlayProjection {
+        let modal_lines = self.render_modal_surface(terminal_width.max(1));
+        let support_width = terminal_width.saturating_sub(4).clamp(1, 72);
+        let mut support_lines = self.render_transient_prompts(support_width);
+        if modal_lines.is_empty() {
+            support_lines.extend(self.render_completion_surface(support_width));
+        }
+        let modal_visible = !modal_lines.is_empty();
+        let support_visible = !support_lines.is_empty();
+        self.modal_overlay.set_lines(modal_lines);
+        self.support_overlay.set_lines(support_lines);
+
+        let composer_height = self
+            .render_editor_box(terminal_width.max(1))
+            .len()
+            .clamp(1, MAX_COMPOSER_HEIGHT);
+        TransientOverlayProjection {
+            modal_visible,
+            support_visible,
+            bottom_margin: composer_height.saturating_add(1),
+        }
+    }
+
+    pub(super) fn drain_modal_overlay_input(&mut self) {
+        for event in self.modal_overlay.take_pending_input() {
+            input::handle_root_input(self, &event);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn modal_overlay_focused(&self) -> bool {
+        self.modal_overlay.focused()
     }
 
     pub(super) fn take_pending_tool_authorization_decision(
@@ -2902,19 +2983,6 @@ impl InteractiveRoot {
             );
         }
 
-        let overlay_lines = self.render_transient_surface(width.saturating_sub(4).max(1));
-        if !overlay_lines.is_empty() && !layout.work.is_empty() {
-            let overlay_width = width.saturating_sub(4).clamp(1, 72);
-            let overlay_height = overlay_lines.len().min(layout.work.height).max(1);
-            let overlay = Rect::new(
-                width.saturating_sub(overlay_width) / 2,
-                layout.work.bottom().saturating_sub(overlay_height),
-                overlay_width,
-                overlay_height,
-            );
-            frame.fill(overlay, "");
-            frame.draw(overlay, &tail_lines(&overlay_lines, overlay_height));
-        }
         frame.into_lines()
     }
 
@@ -3053,9 +3121,14 @@ impl InteractiveRoot {
         )
     }
 
-    fn render_transient_surface(&mut self, width: usize) -> Vec<String> {
+    fn render_transient_prompts(&self, width: usize) -> Vec<String> {
         let mut lines = self.render_pending_delegation_rejection_reason(width);
         lines.extend(self.render_pending_profile_task(width));
+        lines
+    }
+
+    fn render_modal_surface(&mut self, width: usize) -> Vec<String> {
+        let mut lines = Vec::new();
         if self.selecting_tree {
             if let Some(ref selector) = self.tree_selector {
                 lines.extend(selector.render(width));
@@ -3074,8 +3147,21 @@ impl InteractiveRoot {
             lines.extend(self.render_session_selector(width));
         } else if self.selecting_settings {
             lines.extend(self.render_settings_menu(width));
+        }
+        lines
+    }
+
+    fn render_completion_surface(&mut self, width: usize) -> Vec<String> {
+        self.render_slash_suggestions(width)
+    }
+
+    fn render_transient_surface(&mut self, width: usize) -> Vec<String> {
+        let mut lines = self.render_transient_prompts(width);
+        let modal = self.render_modal_surface(width);
+        if modal.is_empty() {
+            lines.extend(self.render_completion_surface(width));
         } else {
-            lines.extend(self.render_slash_suggestions(width));
+            lines.extend(modal);
         }
         lines
     }
@@ -3255,7 +3341,11 @@ impl Component for InteractiveRoot {
     }
 
     fn set_focused(&mut self, focused: bool) {
-        self.editor.set_focused(focused);
+        if focused {
+            self.apply_region_focus();
+        } else {
+            self.editor.set_focused(false);
+        }
     }
 
     fn focused(&self) -> bool {
