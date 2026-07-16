@@ -4,7 +4,7 @@ use pi_ai::api::conversation::{AssistantMessage, ContentBlock};
 use serde_json::Value;
 
 use super::HookFuture;
-use crate::agent::types::{AgentMessage, AgentToolResult};
+use crate::agent::types::{AgentMessage, AgentToolResult, ToolExecutionContext};
 
 pub type BeforeToolCallHook =
     Arc<dyn Fn(BeforeToolCallContext) -> HookFuture<Option<BeforeToolCallResult>> + Send + Sync>;
@@ -13,6 +13,7 @@ pub type AfterToolCallHook =
 
 #[derive(Clone)]
 pub struct BeforeToolCallContext {
+    pub execution_context: ToolExecutionContext,
     pub assistant_message: AssistantMessage,
     pub tool_call_id: String,
     pub tool_name: String,

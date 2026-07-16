@@ -67,6 +67,8 @@ async fn before_hook_blocks_tool_execution() {
     let mut config = _provider_guard.agent_config(faux_model(api));
     config.hooks.before_tool_call = Some(Arc::new(move |ctx| {
         assert_eq!(ctx.tool_name, "echo");
+        assert_eq!(ctx.execution_context.tool_call_id(), "tool_1");
+        assert_eq!(ctx.execution_context.tool_name(), "echo");
         Box::pin(async move {
             Ok(Some(BeforeToolCallResult {
                 block: true,
@@ -95,18 +97,24 @@ async fn before_hook_blocks_tool_execution() {
 
     let mut stream = agent.prompt("run");
     let mut saw_blocked_result = false;
+    let mut saw_tool_start = false;
     while let Some(event) = stream.next().await {
-        if let pi_agent_core::api::agent::AgentEvent::ToolCallEnd { result, .. } = event {
-            saw_blocked_result = result.is_error
-                && result
-                    .content
-                    .iter()
-                    .any(|block| matches!(block, ContentBlock::Text { text, .. } if text == "blocked by test"));
+        match event {
+            AgentEvent::ToolCallStart { .. } => saw_tool_start = true,
+            AgentEvent::ToolCallEnd { result, .. } => {
+                saw_blocked_result = result.is_error
+                    && result
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, ContentBlock::Text { text, .. } if text == "blocked by test"));
+            }
+            _ => {}
         }
     }
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(saw_blocked_result);
+    assert!(!saw_tool_start);
 }
 
 #[tokio::test]

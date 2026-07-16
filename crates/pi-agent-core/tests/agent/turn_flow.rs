@@ -794,6 +794,10 @@ async fn execute_tools_node_honors_before_hook_block() {
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(context.tool_results.len(), 1);
     assert!(context.tool_results[0].is_error);
+    assert!(!context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallStart { tool_call_id, .. } if tool_call_id == "call_1"
+    )));
     assert_eq!(
         text_content(&context.tool_results[0].content),
         "blocked by flow hook"

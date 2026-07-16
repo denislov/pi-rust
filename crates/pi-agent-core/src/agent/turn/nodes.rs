@@ -587,15 +587,14 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
     let executions = if use_sequential {
         let mut executions = Vec::with_capacity(pending.len());
         for call in pending {
-            ctx.emit(AgentEvent::ToolCallStart {
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            });
-
             let result = match before_tool_result(ctx, &call).await {
                 Some(result) => result,
                 None => {
+                    ctx.emit(AgentEvent::ToolCallStart {
+                        tool_call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    });
                     let tool = find_tool(&ctx.tools, &call.name);
                     let result = execute_tool_with_updates(ctx, &call, tool).await;
                     after_tool_result(ctx, &call, result).await
@@ -616,14 +615,6 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
         }
         executions
     } else {
-        for call in &pending {
-            ctx.emit(AgentEvent::ToolCallStart {
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            });
-        }
-
         let after_hook = ctx.config.hooks.after_tool_call.clone();
         let assistant_message = ctx.assistant_message.clone();
         let messages = ctx.messages.clone();
@@ -632,6 +623,15 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
             let blocked = before_tool_result(ctx, &call).await;
             let tool = find_tool(&ctx.tools, &call.name);
             prepared.push((call, tool, blocked));
+        }
+        for (call, _, blocked) in &prepared {
+            if blocked.is_none() {
+                ctx.emit(AgentEvent::ToolCallStart {
+                    tool_call_id: call.id.clone(),
+                    tool_name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                });
+            }
         }
 
         collect_parallel_tool_executions(ctx, prepared, after_hook, assistant_message, messages)
@@ -722,6 +722,13 @@ async fn before_tool_result(
     let hook = ctx.config.hooks.before_tool_call.clone()?;
     let assistant_message = ctx.assistant_message.clone()?;
     let hook_context = BeforeToolCallContext {
+        execution_context: ToolExecutionContext::new(
+            ctx.config.tool_execution_scope.clone(),
+            ctx.turn,
+            call.id.clone(),
+            call.name.clone(),
+            ctx.cancel_token.clone(),
+        ),
         assistant_message,
         tool_call_id: call.id.clone(),
         tool_name: call.name.clone(),
