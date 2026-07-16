@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use pi_agent_core::api::transcript::SessionTreeNode;
 use pi_ai::api::client::AiClient;
 
+use crate::authorization::ToolAuthorizationMode;
 use crate::plugins::PluginCapabilities;
 use crate::profiles::{ProfileId, ProfileKind};
 use crate::runtime::control::{OperationActivity, OperationKind};
@@ -15,6 +16,7 @@ pub struct CodingAgentSessionOptions {
     session_path: Option<PathBuf>,
     default_agent_profile_id: Option<ProfileId>,
     ai_client: Option<AiClient>,
+    tool_authorization_mode: ToolAuthorizationMode,
 }
 
 impl std::fmt::Debug for CodingAgentSessionOptions {
@@ -26,6 +28,7 @@ impl std::fmt::Debug for CodingAgentSessionOptions {
             .field("session_path", &self.session_path)
             .field("default_agent_profile_id", &self.default_agent_profile_id)
             .field("has_scoped_ai_client", &self.ai_client.is_some())
+            .field("tool_authorization_mode", &self.tool_authorization_mode)
             .finish()
     }
 }
@@ -65,6 +68,11 @@ impl CodingAgentSessionOptions {
         self
     }
 
+    pub fn with_tool_authorization_mode(mut self, mode: ToolAuthorizationMode) -> Self {
+        self.tool_authorization_mode = mode;
+        self
+    }
+
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
@@ -87,6 +95,10 @@ impl CodingAgentSessionOptions {
 
     pub(crate) fn ai_client(&self) -> Option<&AiClient> {
         self.ai_client.as_ref()
+    }
+
+    pub(crate) fn tool_authorization_mode(&self) -> ToolAuthorizationMode {
+        self.tool_authorization_mode
     }
 }
 

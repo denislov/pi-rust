@@ -101,6 +101,7 @@ pub(crate) use crate::runtime::operation::OperationIdempotencyKey;
 use crate::runtime::snapshot::SnapshotCoordinator;
 use crate::runtime::submission::PendingSubmissionLease;
 pub(crate) use crate::runtime::submission::SubmissionLeaseLifecycle;
+use crate::services::authorization::AuthorizationService;
 use crate::services::capability::CapabilityService;
 use crate::services::event::EventService;
 use crate::services::flow::FlowService;
@@ -129,6 +130,7 @@ pub struct CodingAgentSession {
     pub(super) default_plugin_load_options: PluginLoadOptions,
     pub(super) operation_control: OperationControl,
     pub(super) pending_delegation_confirmations: PendingDelegationConfirmationQueue,
+    pub(super) authorization_service: AuthorizationService,
     pub(super) capability_snapshots: CapabilitySnapshotService,
     pub(super) snapshot_coordinator: Arc<SnapshotCoordinator>,
     pub(super) client_service: ClientService,

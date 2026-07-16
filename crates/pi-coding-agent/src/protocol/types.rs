@@ -53,6 +53,40 @@ pub enum ProtocolEvent {
         tool_name: String,
         result: ToolExecutionResult,
     },
+    #[serde(rename = "tool_authorization_required")]
+    ToolAuthorizationRequired {
+        request: crate::authorization::ToolAuthorizationRequest,
+    },
+    #[serde(rename = "tool_authorization_approved")]
+    ToolAuthorizationApproved {
+        #[serde(rename = "authorizationId")]
+        authorization_id: String,
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    },
+    #[serde(rename = "tool_authorization_denied")]
+    ToolAuthorizationDenied {
+        #[serde(rename = "authorizationId")]
+        authorization_id: String,
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        reason: String,
+    },
+    #[serde(rename = "tool_authorization_cancelled")]
+    ToolAuthorizationCancelled {
+        #[serde(rename = "authorizationId")]
+        authorization_id: String,
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        reason: String,
+    },
     #[serde(rename = "turn_end")]
     TurnEnd {
         message: StoredAgentMessage,
@@ -664,6 +698,22 @@ pub enum RpcCommand {
     },
     #[serde(rename = "list_delegation_confirmations")]
     ListDelegationConfirmations { id: Option<String> },
+    #[serde(rename = "list_tool_authorizations")]
+    ListToolAuthorizations { id: Option<String> },
+    #[serde(rename = "approve_tool_authorization")]
+    ApproveToolAuthorization {
+        id: Option<String>,
+        #[serde(rename = "authorizationId")]
+        authorization_id: String,
+        scope: RpcToolAuthorizationApprovalScope,
+    },
+    #[serde(rename = "deny_tool_authorization")]
+    DenyToolAuthorization {
+        id: Option<String>,
+        #[serde(rename = "authorizationId")]
+        authorization_id: String,
+        reason: Option<String>,
+    },
     #[serde(rename = "approve_delegation")]
     ApproveDelegation {
         id: Option<String>,
@@ -719,6 +769,13 @@ pub enum RpcCommand {
     SetSessionName { id: Option<String>, name: String },
     #[serde(rename = "get_messages")]
     GetMessages { id: Option<String> },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RpcToolAuthorizationApprovalScope {
+    Once,
+    Operation,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -784,6 +841,8 @@ pub struct RpcSessionState {
     pub message_count: usize,
     #[serde(rename = "pendingMessageCount")]
     pub pending_message_count: usize,
+    #[serde(rename = "pendingToolAuthorizations")]
+    pub pending_tool_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
     pub capabilities: RpcCapabilities,
 }
 

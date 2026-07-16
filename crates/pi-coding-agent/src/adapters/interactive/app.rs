@@ -269,6 +269,10 @@ pub(super) fn welcome_line(keybindings: &KeybindingsManager) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authorization::{
+        ToolAuthorizationDecision, ToolAuthorizationPreview, ToolAuthorizationRequest,
+        ToolAuthorizationRisk, ToolAuthorizationScope,
+    };
     use crate::runtime::facade::{PendingDelegationConfirmation, ProfileKind};
     use pi_tui::api::input::StdinBuffer;
 
@@ -321,6 +325,30 @@ mod tests {
             modifiers,
             kind: pi_tui::api::input::KeyEventKind::Press,
         })
+    }
+
+    fn tool_authorization_request(id: &str, command: &str) -> ToolAuthorizationRequest {
+        ToolAuthorizationRequest {
+            authorization_id: id.into(),
+            operation_id: "op-tool".into(),
+            turn_id: "turn-tool".into(),
+            tool_call_id: format!("call-{id}"),
+            tool_name: "bash".into(),
+            risk: ToolAuthorizationRisk::ShellExecution,
+            scope: ToolAuthorizationScope::Shell {
+                cwd: "/workspace".into(),
+                command_fingerprint: "0123456789abcdef".into(),
+            },
+            preview: ToolAuthorizationPreview {
+                summary: "Execute a shell command".into(),
+                path: None,
+                command: Some(command.into()),
+                cwd: Some("/workspace".into()),
+                content_preview: None,
+            },
+            capability_generation: 1,
+            requested_at: "2026-07-17T00:00:00Z".into(),
+        }
     }
 
     #[test]
@@ -3309,6 +3337,155 @@ members = ["coder"]
         };
         assert_eq!(selection.operation_id.as_deref(), Some("op_1"));
         assert_eq!(selection.tool_call_id, "tool_delegate_agent");
+    }
+
+    #[test]
+    fn delegation_confirmation_event_opens_and_resolves_menu_automatically() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        type_text(&mut root, "draft remains");
+        let pending =
+            pending_delegation_confirmation("op-auto", "tool-auto", "review automatically");
+        root.apply_events(vec![UiEvent::DelegationConfirmationRequired {
+            pending: pending.clone(),
+        }]);
+
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Delegation confirmations"), "{rendered}");
+        assert!(rendered.contains("review automatically"), "{rendered}");
+        assert_eq!(root.editor.text(), "draft remains");
+
+        root.apply_events(vec![UiEvent::DelegationConfirmationResolved {
+            operation_id: pending.operation_id,
+            tool_call_id: pending.tool_call_id,
+        }]);
+        assert!(!root.has_active_delegation_confirmation_menu());
+    }
+
+    #[test]
+    fn tool_authorization_event_opens_focused_inline_surface_while_running() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Running);
+        root.apply_events(vec![UiEvent::ToolAuthorizationRequired {
+            request: tool_authorization_request("auth-1", "cargo test --workspace"),
+        }]);
+
+        let rendered = root.render(80).join("\n");
+        assert!(rendered.contains("Tool authorization (1/1)"), "{rendered}");
+        assert!(rendered.contains("cargo test --workspace"), "{rendered}");
+        assert!(rendered.contains("Allow once"), "{rendered}");
+        assert!(rendered.contains("Allow for operation"), "{rendered}");
+        assert!(rendered.contains("Esc deny"), "{rendered}");
+    }
+
+    #[test]
+    fn tool_authorization_keyboard_selects_operation_grant() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_status(InteractiveStatus::Running);
+        root.apply_events(vec![UiEvent::ToolAuthorizationRequired {
+            request: tool_authorization_request("auth-1", "cargo test"),
+        }]);
+
+        root.handle_input(&key_event("\x1b[B"));
+        root.handle_input(&key_event("\r"));
+
+        assert_eq!(root.take_action(), InteractiveAction::ToolAuthorization);
+        let (request, decision) = root
+            .take_pending_tool_authorization_decision()
+            .expect("authorization decision should be queued");
+        assert_eq!(request.authorization_id, "auth-1");
+        assert_eq!(decision, ToolAuthorizationDecision::AllowForOperation);
+    }
+
+    #[test]
+    fn tool_authorization_escape_denies_but_ctrl_c_aborts_operation() {
+        let mut denied = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        denied.set_status(InteractiveStatus::Running);
+        denied.apply_events(vec![UiEvent::ToolAuthorizationRequired {
+            request: tool_authorization_request("auth-deny", "cargo test"),
+        }]);
+        denied.handle_input(&key_event("\x1b"));
+        assert_eq!(denied.take_action(), InteractiveAction::ToolAuthorization);
+        assert!(matches!(
+            denied
+                .take_pending_tool_authorization_decision()
+                .expect("deny decision")
+                .1,
+            ToolAuthorizationDecision::Deny { reason: None }
+        ));
+
+        let mut aborted = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        aborted.set_status(InteractiveStatus::Running);
+        aborted.apply_events(vec![UiEvent::ToolAuthorizationRequired {
+            request: tool_authorization_request("auth-abort", "cargo test"),
+        }]);
+        aborted.handle_input(&key_event("\x03"));
+        assert_eq!(aborted.take_action(), InteractiveAction::AbortRunning);
+        assert!(aborted.has_pending_tool_authorization());
+    }
+
+    #[test]
+    fn tool_authorization_queue_is_deterministic_and_resize_safe() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.apply_events(vec![
+            UiEvent::ToolAuthorizationRequired {
+                request: tool_authorization_request(
+                    "auth-1",
+                    "a very long command whose rendered preview must stay inside the terminal width",
+                ),
+            },
+            UiEvent::ToolAuthorizationRequired {
+                request: tool_authorization_request("auth-2", "second command"),
+            },
+        ]);
+        let rendered = root.render(36);
+        let authorization_lines = rendered
+            .iter()
+            .skip_while(|line| !line.contains("Tool authorization"))
+            .take_while(|line| !line.contains("status: idle"))
+            .collect::<Vec<_>>();
+        assert!(
+            authorization_lines
+                .iter()
+                .all(|line| visible_width(line) <= 36),
+            "{}",
+            authorization_lines
+                .iter()
+                .map(|line| format!("{}: {line}", visible_width(line)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(rendered.join("\n").contains("Tool authorization (1/2)"));
+
+        root.apply_events(vec![UiEvent::ToolAuthorizationResolved {
+            authorization_id: "auth-1".into(),
+        }]);
+        let rendered = root.render(36).join("\n");
+        assert!(rendered.contains("Tool authorization (1/1)"), "{rendered}");
+        assert!(rendered.contains("second command"), "{rendered}");
     }
 
     #[test]

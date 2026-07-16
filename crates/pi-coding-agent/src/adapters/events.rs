@@ -156,6 +156,50 @@ impl CodingProtocolEventAdapter {
                 tool_name: name.clone(),
                 args: serde_json::from_str(arguments_json).unwrap_or(serde_json::Value::Null),
             }],
+            CodingAgentProductEventKind::Tool(
+                CodingAgentToolProductEvent::AuthorizationRequired { request },
+            ) => vec![ProtocolEvent::ToolAuthorizationRequired {
+                request: request.clone(),
+            }],
+            CodingAgentProductEventKind::Tool(
+                CodingAgentToolProductEvent::AuthorizationApproved {
+                    authorization_id,
+                    operation_id,
+                    tool_call_id,
+                    decision,
+                },
+            ) => vec![ProtocolEvent::ToolAuthorizationApproved {
+                authorization_id: authorization_id.clone(),
+                operation_id: operation_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                decision: decision.clone(),
+            }],
+            CodingAgentProductEventKind::Tool(
+                CodingAgentToolProductEvent::AuthorizationDenied {
+                    authorization_id,
+                    operation_id,
+                    tool_call_id,
+                    reason,
+                },
+            ) => vec![ProtocolEvent::ToolAuthorizationDenied {
+                authorization_id: authorization_id.clone(),
+                operation_id: operation_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                reason: reason.clone(),
+            }],
+            CodingAgentProductEventKind::Tool(
+                CodingAgentToolProductEvent::AuthorizationCancelled {
+                    authorization_id,
+                    operation_id,
+                    tool_call_id,
+                    reason,
+                },
+            ) => vec![ProtocolEvent::ToolAuthorizationCancelled {
+                authorization_id: authorization_id.clone(),
+                operation_id: operation_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                reason: reason.clone(),
+            }],
             CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Updated {
                 tool_call_id,
                 name,

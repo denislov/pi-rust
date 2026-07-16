@@ -372,6 +372,27 @@ pub enum CodingAgentMessageProductEvent {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum CodingAgentToolProductEvent {
+    AuthorizationRequired {
+        request: crate::authorization::ToolAuthorizationRequest,
+    },
+    AuthorizationApproved {
+        authorization_id: String,
+        operation_id: String,
+        tool_call_id: String,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    },
+    AuthorizationDenied {
+        authorization_id: String,
+        operation_id: String,
+        tool_call_id: String,
+        reason: String,
+    },
+    AuthorizationCancelled {
+        authorization_id: String,
+        operation_id: String,
+        tool_call_id: String,
+        reason: String,
+    },
     Started {
         operation_id: String,
         turn_id: String,
@@ -608,6 +629,18 @@ impl CodingAgentProductEventKind {
             Self::Message(CodingAgentMessageProductEvent::Delta { .. }) => "delta",
             Self::Message(CodingAgentMessageProductEvent::ThinkingDelta { .. }) => "thinking_delta",
             Self::Message(CodingAgentMessageProductEvent::Completed { .. }) => "completed",
+            Self::Tool(CodingAgentToolProductEvent::AuthorizationRequired { .. }) => {
+                "authorization_required"
+            }
+            Self::Tool(CodingAgentToolProductEvent::AuthorizationApproved { .. }) => {
+                "authorization_approved"
+            }
+            Self::Tool(CodingAgentToolProductEvent::AuthorizationDenied { .. }) => {
+                "authorization_denied"
+            }
+            Self::Tool(CodingAgentToolProductEvent::AuthorizationCancelled { .. }) => {
+                "authorization_cancelled"
+            }
             Self::Tool(CodingAgentToolProductEvent::Started { .. }) => "started",
             Self::Tool(CodingAgentToolProductEvent::Updated { .. }) => "updated",
             Self::Tool(CodingAgentToolProductEvent::Completed { .. }) => "completed",
@@ -801,7 +834,7 @@ mod tests {
     use pi_ai::api::conversation::{Cost, Usage};
 
     // product-event-inventory:start
-    const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 48] = [
+    const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 52] = [
         (
             "SessionOpened",
             CodingAgentProductEventFamily::Session,
@@ -1042,6 +1075,26 @@ mod tests {
             CodingAgentProductEventFamily::Session,
             "write_failed",
         ),
+        (
+            "ToolCallAuthorizationRequired",
+            CodingAgentProductEventFamily::Tool,
+            "authorization_required",
+        ),
+        (
+            "ToolCallAuthorizationApproved",
+            CodingAgentProductEventFamily::Tool,
+            "authorization_approved",
+        ),
+        (
+            "ToolCallAuthorizationDenied",
+            CodingAgentProductEventFamily::Tool,
+            "authorization_denied",
+        ),
+        (
+            "ToolCallAuthorizationCancelled",
+            CodingAgentProductEventFamily::Tool,
+            "authorization_cancelled",
+        ),
     ];
     // product-event-inventory:end
 
@@ -1132,6 +1185,26 @@ mod tests {
                 target_id,
                 task,
             }
+        };
+        let authorization_request = || crate::authorization::ToolAuthorizationRequest {
+            authorization_id: "authorization".into(),
+            operation_id: "op".into(),
+            turn_id: "turn".into(),
+            tool_call_id: "call".into(),
+            tool_name: "write".into(),
+            risk: crate::authorization::ToolAuthorizationRisk::FilesystemMutation,
+            scope: crate::authorization::ToolAuthorizationScope::Path {
+                path: "file".into(),
+            },
+            preview: crate::authorization::ToolAuthorizationPreview {
+                summary: "write file".into(),
+                path: Some("file".into()),
+                command: None,
+                cwd: None,
+                content_preview: Some("content".into()),
+            },
+            capability_generation: 2,
+            requested_at: "2026-07-17T00:00:00Z".into(),
         };
         let usage = Usage {
             input: 1,
@@ -1566,6 +1639,25 @@ mod tests {
                 status: CodingAgentSessionWriteFailureStatus::Definite,
             },
         ));
+        for event in [
+            crate::events::tool::ToolEvent::AuthorizationRequired {
+                request: authorization_request(),
+            },
+            crate::events::tool::ToolEvent::AuthorizationApproved {
+                request: authorization_request(),
+                decision: crate::authorization::ToolAuthorizationDecision::AllowOnce,
+            },
+            crate::events::tool::ToolEvent::AuthorizationDenied {
+                request: authorization_request(),
+                reason: "denied".into(),
+            },
+            crate::events::tool::ToolEvent::AuthorizationCancelled {
+                request: authorization_request(),
+                reason: "cancelled".into(),
+            },
+        ] {
+            projected.push(project_draft(0, event.into_product_draft()));
+        }
         // product-event-fixture:end
         for (index, event) in projected.iter_mut().enumerate() {
             event.sequence = ProductEventSequence::new(index as u64 + 1);
@@ -1671,7 +1763,7 @@ mod tests {
     fn exhaustive_inventory_covers_all_current_variants() {
         let projected = exhaustive_inventory_fixture();
         assert_eq!(projected.len(), EXPECTED_PUBLIC_EVENT_INVENTORY.len());
-        assert_eq!(projected.len(), 48);
+        assert_eq!(projected.len(), 52);
         for (index, (event, (_, family, kind))) in projected
             .iter()
             .zip(EXPECTED_PUBLIC_EVENT_INVENTORY.iter())
@@ -1682,7 +1774,7 @@ mod tests {
             assert_eq!(event.kind_name(), *kind, "inventory row {index}");
             assert_public_inventory_payload(index, event);
         }
-        let expected_counts = [6, 1, 6, 6, 4, 4, 2, 7, 10, 1, 1];
+        let expected_counts = [6, 1, 6, 6, 4, 8, 2, 7, 10, 1, 1];
         let families = [
             CodingAgentProductEventFamily::Session,
             CodingAgentProductEventFamily::Profile,
@@ -1736,7 +1828,7 @@ mod tests {
                 .iter()
                 .map(CodingAgentProductEvent::sequence)
                 .collect::<Vec<_>>(),
-            (1..=48).collect::<Vec<_>>()
+            (1..=52).collect::<Vec<_>>()
         );
     }
 
@@ -1983,6 +2075,36 @@ mod tests {
                 reason == "write failed"
                     && *status == CodingAgentSessionWriteFailureStatus::Definite
             }
+            (48, K::Tool(CodingAgentToolProductEvent::AuthorizationRequired { request })) => {
+                request.authorization_id == "authorization" && request.tool_name == "write"
+            }
+            (
+                49,
+                K::Tool(CodingAgentToolProductEvent::AuthorizationApproved {
+                    authorization_id,
+                    decision,
+                    ..
+                }),
+            ) => {
+                authorization_id == "authorization"
+                    && *decision == crate::authorization::ToolAuthorizationDecision::AllowOnce
+            }
+            (
+                50,
+                K::Tool(CodingAgentToolProductEvent::AuthorizationDenied {
+                    authorization_id,
+                    reason,
+                    ..
+                }),
+            ) => authorization_id == "authorization" && reason == "denied",
+            (
+                51,
+                K::Tool(CodingAgentToolProductEvent::AuthorizationCancelled {
+                    authorization_id,
+                    reason,
+                    ..
+                }),
+            ) => authorization_id == "authorization" && reason == "cancelled",
             _ => false,
         };
         assert!(

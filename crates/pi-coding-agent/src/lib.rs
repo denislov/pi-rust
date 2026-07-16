@@ -5,6 +5,7 @@
 
 mod adapters;
 mod app;
+mod authorization;
 mod events;
 mod operations;
 mod plugins;
@@ -29,6 +30,14 @@ mod tools;
 /// The categories below are the complete supported surface. Implementation
 /// owners stay private, and this module intentionally has no flat re-exports.
 pub mod api {
+    /// Tool invocation authorization requests and decisions.
+    pub mod authorization {
+        pub use crate::authorization::{
+            ToolAuthorizationDecision, ToolAuthorizationMode, ToolAuthorizationPreview,
+            ToolAuthorizationRequest, ToolAuthorizationRisk, ToolAuthorizationScope,
+        };
+    }
+
     /// Session lifecycle and the product runtime entry point.
     pub mod runtime {
         pub use crate::runtime::facade::{

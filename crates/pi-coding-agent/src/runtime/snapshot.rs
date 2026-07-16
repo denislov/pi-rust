@@ -150,6 +150,7 @@ pub(crate) struct SnapshotState {
     pub(crate) dropped_before: Option<ProductEventSequence>,
     pub(crate) recovery_revision: u64,
     pub(crate) shutdown_drain_boundary: Option<ProductEventSequence>,
+    pub(crate) pending_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
     shutdown_drain_eligibility: HashMap<ClientConnectionId, ClientGeneration>,
 }
 
@@ -168,6 +169,7 @@ impl Default for SnapshotState {
             dropped_before: None,
             recovery_revision: 0,
             shutdown_drain_boundary: None,
+            pending_authorizations: Vec::new(),
             shutdown_drain_eligibility: HashMap::new(),
         }
     }
@@ -855,6 +857,13 @@ impl SnapshotCoordinator {
             .expect("snapshot projection must be installed by session construction")
     }
 
+    pub(crate) fn set_pending_authorizations(
+        &self,
+        pending: Vec<crate::authorization::ToolAuthorizationRequest>,
+    ) {
+        self.state.lock().unwrap().pending_authorizations = pending;
+    }
+
     pub(crate) fn client_snapshot(
         &self,
         handle: &ClientHandle,
@@ -932,6 +941,7 @@ impl SnapshotCoordinator {
             projection.capabilities,
             projection.active_operation,
             client_drafts,
+            state.pending_authorizations.clone(),
         ))
     }
 
@@ -1092,6 +1102,7 @@ impl SnapshotCoordinator {
                 .chain(record.follow_up_drafts.iter())
                 .map(|draft| ClientDraft::new(draft.kind, draft.text.clone()))
                 .collect(),
+            Vec::new(),
         );
         let client_state = ClientSnapshotState {
             snapshot,

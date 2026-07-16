@@ -1,3 +1,4 @@
+use crate::authorization::ToolAuthorizationRequest;
 use crate::events::ProductEventSequence;
 use crate::protocol::version::ProtocolFamilyVersion;
 use crate::runtime::capability::CapabilityGeneration;
@@ -19,6 +20,7 @@ pub(crate) struct UiSnapshot {
     pub(crate) capabilities: CodingAgentCapabilities,
     pub(crate) active_operation: Option<OperationKind>,
     pub(crate) client_drafts: Vec<ClientDraft>,
+    pub(crate) pending_authorizations: Vec<ToolAuthorizationRequest>,
 }
 
 impl UiSnapshot {
@@ -29,6 +31,7 @@ impl UiSnapshot {
         capabilities: CodingAgentCapabilities,
         active_operation: Option<OperationKind>,
         client_drafts: Vec<ClientDraft>,
+        pending_authorizations: Vec<ToolAuthorizationRequest>,
     ) -> Self {
         Self {
             cursor,
@@ -37,6 +40,7 @@ impl UiSnapshot {
             capabilities,
             active_operation,
             client_drafts,
+            pending_authorizations,
         }
     }
 }
@@ -134,6 +138,7 @@ mod tests {
             capabilities(),
             Some(OperationKind::Prompt),
             Vec::new(),
+            Vec::new(),
         );
 
         assert_eq!(snapshot.cursor.last_event_sequence.get(), 7);
@@ -158,6 +163,7 @@ mod tests {
             },
             capabilities(),
             None,
+            Vec::new(),
             Vec::new(),
         );
 

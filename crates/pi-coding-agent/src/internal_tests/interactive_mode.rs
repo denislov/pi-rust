@@ -444,8 +444,6 @@ system_prompt = "Coder child instructions."
                 }
             }
             input.wait_for_idle().await;
-            input.send("/delegations\r").unwrap();
-            input.wait_for_consumed("/delegations\r").await;
             let child_started = child_started.notified();
             tokio::pin!(child_started);
             input.send("\r").unwrap();
@@ -462,7 +460,7 @@ system_prompt = "Coder child instructions."
     assert!(output.contains("confirmation required"), "{output:?}");
     assert!(output.contains("completed: child result"), "{output:?}");
     assert!(!output.contains("Delegation completed for"), "{output:?}");
-    assert!(output.contains("/delegation approve op_"), "{output:?}");
+    assert!(output.contains("Delegation confirmations"), "{output:?}");
     assert!(output.contains("Approving delegation"), "{output:?}");
     assert!(output.contains("child result"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
@@ -527,8 +525,6 @@ system_prompt = "Coder child instructions."
                 }
             }
             input.wait_for_idle().await;
-            input.send("/delegations\r").unwrap();
-            input.wait_for_consumed("/delegations\r").await;
             input.send("r").unwrap();
             input.wait_for_idle().await;
 

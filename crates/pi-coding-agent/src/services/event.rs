@@ -124,6 +124,53 @@ impl SelfHealingEditObserver for SelfHealingEditEventObserver {
 }
 
 impl EventService {
+    pub(crate) fn emit_tool_authorization_required(
+        &self,
+        request: crate::authorization::ToolAuthorizationRequest,
+    ) -> ProductEvent {
+        self.publish_without_root_terminal(
+            ToolEvent::AuthorizationRequired { request }.into_product_draft(),
+        )
+    }
+
+    pub(crate) fn emit_tool_authorization_approved(
+        &self,
+        request: crate::authorization::ToolAuthorizationRequest,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    ) -> ProductEvent {
+        self.publish_without_root_terminal(
+            ToolEvent::AuthorizationApproved { request, decision }.into_product_draft(),
+        )
+    }
+
+    pub(crate) fn emit_tool_authorization_denied(
+        &self,
+        request: crate::authorization::ToolAuthorizationRequest,
+        reason: impl Into<String>,
+    ) -> ProductEvent {
+        self.publish_without_root_terminal(
+            ToolEvent::AuthorizationDenied {
+                request,
+                reason: reason.into(),
+            }
+            .into_product_draft(),
+        )
+    }
+
+    pub(crate) fn emit_tool_authorization_cancelled(
+        &self,
+        request: crate::authorization::ToolAuthorizationRequest,
+        reason: impl Into<String>,
+    ) -> ProductEvent {
+        self.publish_without_root_terminal(
+            ToolEvent::AuthorizationCancelled {
+                request,
+                reason: reason.into(),
+            }
+            .into_product_draft(),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::with_snapshot_coordinator(SnapshotCoordinator::new())

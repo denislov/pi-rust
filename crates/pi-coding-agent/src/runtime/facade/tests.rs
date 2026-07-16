@@ -478,7 +478,10 @@ mod cases {
         AgentTool {
             name: "echo".into(),
             description: "echoes input".into(),
-            parameters: serde_json::json!({"type": "object"}),
+            parameters: serde_json::json!({
+                "type": "object",
+                "x-pi-authorization-risk": "workspace_local_read_only"
+            }),
             execution_mode: None,
             execute: Arc::new(|_context, args, _on_update| {
                 let text = args
@@ -5616,6 +5619,18 @@ runtime = "lua"
                 CodingAgentMessageProductEvent::Completed { .. } => "assistant_message_completed",
             },
             CodingAgentProductEventKind::Tool(event) => match event {
+                CodingAgentToolProductEvent::AuthorizationRequired { .. } => {
+                    "tool_authorization_required"
+                }
+                CodingAgentToolProductEvent::AuthorizationApproved { .. } => {
+                    "tool_authorization_approved"
+                }
+                CodingAgentToolProductEvent::AuthorizationDenied { .. } => {
+                    "tool_authorization_denied"
+                }
+                CodingAgentToolProductEvent::AuthorizationCancelled { .. } => {
+                    "tool_authorization_cancelled"
+                }
                 CodingAgentToolProductEvent::Started { .. } => "tool_call_started",
                 CodingAgentToolProductEvent::Updated { .. } => "tool_call_updated",
                 CodingAgentToolProductEvent::Completed { .. } => "tool_call_completed",

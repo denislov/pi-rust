@@ -33,6 +33,7 @@ impl CodingAgentSession {
             coordinator: self.snapshot_coordinator.clone(),
             operation_control: self.operation_control.clone(),
             event_service: self.event_service.clone(),
+            authorization_service: self.authorization_service.clone(),
         }
     }
 
@@ -42,6 +43,8 @@ impl CodingAgentSession {
         {
             return Ok(CodingAgentShutdownOutcome::AlreadyShutDown);
         }
+        self.authorization_service
+            .cancel_all("tool authorization cancelled by runtime shutdown");
         self.snapshot_coordinator
             .wait_for_active_operation_to_drain()
             .await;
@@ -106,6 +109,7 @@ impl CodingAgentSession {
             id,
             self.snapshot_coordinator.clone(),
             self.event_service.clone(),
+            self.authorization_service.clone(),
             handle,
             state,
         ))

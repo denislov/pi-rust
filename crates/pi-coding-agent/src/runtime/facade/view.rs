@@ -2,6 +2,27 @@ use super::*;
 use crate::session::id::{Clock, SystemClock};
 
 impl CodingAgentSession {
+    pub(crate) fn tool_authorization_control(
+        &self,
+    ) -> crate::services::authorization::AuthorizationService {
+        self.authorization_service.clone()
+    }
+
+    pub fn pending_tool_authorizations(
+        &self,
+    ) -> Vec<crate::authorization::ToolAuthorizationRequest> {
+        self.authorization_service.pending()
+    }
+
+    pub fn decide_tool_authorization(
+        &self,
+        authorization_id: &str,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    ) -> Result<(), CodingSessionError> {
+        self.authorization_service
+            .decide(authorization_id, decision)
+    }
+
     pub(in crate::runtime) fn default_agent_profile_id(&self) -> ProfileId {
         crate::operations::prompt::default_agent_profile_id(&self.persistence)
     }

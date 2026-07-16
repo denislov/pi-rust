@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -8,7 +9,7 @@ use pi_tui::api::input::{
     InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager, matches_key,
 };
 use pi_tui::api::render::{
-    ERROR, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, color_enabled, paint_with,
+    ERROR, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, USER, color_enabled, paint_with,
     truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
 };
 use pi_tui::api::theme::{MarkdownTheme, TuiTheme, dark_theme, light_theme};
@@ -39,6 +40,9 @@ use crate::adapters::interactive::transcript::TranscriptMutation;
 use crate::adapters::interactive::tree_selector::{TreeSelectorInput, TreeSelectorState};
 use crate::adapters::interactive::{Transcript, TranscriptItem, UiEvent};
 use crate::app::cli::request::profile_registry_for_cwd;
+use crate::authorization::{
+    ToolAuthorizationDecision, ToolAuthorizationRequest, ToolAuthorizationRisk,
+};
 use crate::config::{AuthStore, Settings};
 use crate::runtime::facade::{
     PendingDelegationConfirmation, ProfileId, ProfileRegistry, SelfHealingEditReplacement,
@@ -68,6 +72,7 @@ pub(super) enum InteractiveAction {
     PluginCommand,
     PluginUiDialog,
     DelegationConfirmation,
+    ToolAuthorization,
     AgentProfileUse,
     AgentInvocation,
     AgentTeam,
@@ -566,6 +571,10 @@ pub(super) struct InteractiveRoot {
         Option<PendingDelegationConfirmationCommand>,
     delegation_confirmation_menu: Option<DelegationConfirmationMenuState>,
     pending_delegation_rejection_reason: Option<PendingDelegationRejectionReason>,
+    tool_authorizations: VecDeque<ToolAuthorizationRequest>,
+    tool_authorization_selected: usize,
+    pending_tool_authorization_decision:
+        Option<(ToolAuthorizationRequest, ToolAuthorizationDecision)>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
     profile_menu: Option<ProfileMenuState>,
@@ -652,6 +661,8 @@ pub(super) struct InteractiveRenderState {
     active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
     delegation_confirmation_menu_state: Option<DelegationConfirmationMenuRenderState>,
     pending_delegation_rejection_reason: Option<PendingDelegationRejectionReason>,
+    tool_authorization_ids: Vec<String>,
+    tool_authorization_selected: usize,
     profile_menu_state: Option<ProfileMenuRenderState>,
     pending_profile_task: Option<PendingProfileTask>,
 }
@@ -751,6 +762,9 @@ impl InteractiveRoot {
             pending_delegation_confirmation_command: None,
             delegation_confirmation_menu: None,
             pending_delegation_rejection_reason: None,
+            tool_authorizations: VecDeque::new(),
+            tool_authorization_selected: 0,
+            pending_tool_authorization_decision: None,
             pending_plugin_ui_dialog: None,
             active_plugin_ui_dialog: None,
             profile_menu: None,
@@ -826,6 +840,23 @@ impl InteractiveRoot {
 
     pub(super) fn take_action(&mut self) -> InteractiveAction {
         std::mem::replace(&mut self.action, InteractiveAction::None)
+    }
+
+    pub(super) fn take_pending_tool_authorization_decision(
+        &mut self,
+    ) -> Option<(ToolAuthorizationRequest, ToolAuthorizationDecision)> {
+        self.pending_tool_authorization_decision.take()
+    }
+
+    pub(super) fn restore_tool_authorization(&mut self, request: ToolAuthorizationRequest) {
+        if self
+            .tool_authorizations
+            .iter()
+            .all(|pending| pending.authorization_id != request.authorization_id)
+        {
+            self.tool_authorizations.push_front(request);
+        }
+        self.tool_authorization_selected = 0;
     }
 
     pub(super) fn take_selected_model(&mut self) -> Option<Model> {
@@ -1141,6 +1172,28 @@ impl InteractiveRoot {
         self.slash_suggestions_dismissed_for = None;
     }
 
+    fn enqueue_delegation_confirmation(&mut self, pending: PendingDelegationConfirmation) {
+        if let Some(menu) = self.delegation_confirmation_menu.as_mut() {
+            menu.upsert(pending);
+        } else {
+            self.delegation_confirmation_menu =
+                Some(DelegationConfirmationMenuState::new(vec![pending]));
+        }
+        self.pending_delegation_rejection_reason = None;
+        self.profile_menu = None;
+        self.pending_profile_task = None;
+    }
+
+    fn resolve_delegation_confirmation(&mut self, operation_id: &str, tool_call_id: &str) {
+        let Some(menu) = self.delegation_confirmation_menu.as_mut() else {
+            return;
+        };
+        menu.remove(operation_id, tool_call_id);
+        if menu.is_empty() {
+            self.delegation_confirmation_menu = None;
+        }
+    }
+
     pub(super) fn has_active_delegation_confirmation_menu(&self) -> bool {
         self.delegation_confirmation_menu.is_some()
     }
@@ -1207,6 +1260,130 @@ impl InteractiveRoot {
             return Vec::new();
         };
         menu.render(width)
+    }
+
+    pub(super) fn has_pending_tool_authorization(&self) -> bool {
+        !self.tool_authorizations.is_empty()
+    }
+
+    pub(super) fn handle_tool_authorization_input(&mut self, event: &InputEvent) -> bool {
+        if self.tool_authorizations.is_empty() || matches_key(event, "ctrl+c") {
+            return false;
+        }
+        if matches_key(event, "escape") {
+            self.resolve_current_tool_authorization(ToolAuthorizationDecision::Deny {
+                reason: None,
+            });
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.up") {
+            self.tool_authorization_selected = (self.tool_authorization_selected + 2) % 3;
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.down") {
+            self.tool_authorization_selected = (self.tool_authorization_selected + 1) % 3;
+            return true;
+        }
+        let InputEvent::Key(key_event) = event else {
+            return true;
+        };
+        if key_event.kind == KeyEventKind::Release {
+            return true;
+        }
+        if matches!(key_event.key, Key::Tab) {
+            if key_event.modifiers.contains(KeyModifiers::SHIFT) {
+                self.tool_authorization_selected = (self.tool_authorization_selected + 2) % 3;
+            } else {
+                self.tool_authorization_selected = (self.tool_authorization_selected + 1) % 3;
+            }
+            return true;
+        }
+        if self.keybindings.matches(event, "tui.select.confirm") {
+            let decision = match self.tool_authorization_selected {
+                0 => ToolAuthorizationDecision::AllowOnce,
+                1 => ToolAuthorizationDecision::AllowForOperation,
+                _ => ToolAuthorizationDecision::Deny { reason: None },
+            };
+            self.resolve_current_tool_authorization(decision);
+        }
+        true
+    }
+
+    fn resolve_current_tool_authorization(&mut self, decision: ToolAuthorizationDecision) {
+        let Some(request) = self.tool_authorizations.pop_front() else {
+            return;
+        };
+        self.tool_authorization_selected = 0;
+        self.pending_tool_authorization_decision = Some((request, decision));
+        self.action = InteractiveAction::ToolAuthorization;
+    }
+
+    fn render_tool_authorization(&self, width: usize) -> Vec<String> {
+        let Some(request) = self.tool_authorizations.front() else {
+            return Vec::new();
+        };
+        let color = color_enabled();
+        let mut lines = vec![fit_line(
+            &paint_with(
+                &format!("Tool authorization (1/{})", self.tool_authorizations.len()),
+                &WARNING,
+                color,
+            ),
+            width,
+        )];
+        lines.push(fit_line(
+            &format!(
+                "  tool: {}  risk: {}  operation: {}",
+                request.tool_name,
+                tool_authorization_risk_label(request.risk),
+                request.operation_id
+            ),
+            width,
+        ));
+        lines.push(fit_line(&format!("  {}", request.preview.summary), width));
+        if let Some(path) = request.preview.path.as_deref() {
+            lines.push(fit_line(&format!("  path: {path}"), width));
+        }
+        if let Some(cwd) = request.preview.cwd.as_deref() {
+            lines.push(fit_line(&format!("  cwd: {cwd}"), width));
+        }
+        if let Some(command) = request.preview.command.as_deref() {
+            for (index, command_line) in command.lines().take(3).enumerate() {
+                let label = if index == 0 { "command" } else { "       " };
+                lines.push(fit_line(&format!("  {label}: {command_line}"), width));
+            }
+        }
+        if let Some(content) = request.preview.content_preview.as_deref() {
+            lines.push(fit_line("  preview:", width));
+            for content_line in content.lines().take(6) {
+                lines.push(fit_line(&format!("    {content_line}"), width));
+            }
+        }
+        for (index, label) in ["Allow once", "Allow for operation", "Deny"]
+            .into_iter()
+            .enumerate()
+        {
+            let marker = if index == self.tool_authorization_selected {
+                "->"
+            } else {
+                "  "
+            };
+            let line = format!("{marker} {label}");
+            if index == self.tool_authorization_selected {
+                lines.push(fit_line(&paint_with(&line, &USER, color), width));
+            } else {
+                lines.push(fit_line(&line, width));
+            }
+        }
+        lines.push(fit_line(
+            &paint_with(
+                "Up/Down or Tab choose · Enter confirm · Esc deny · Ctrl+C abort operation",
+                &SYSTEM,
+                color,
+            ),
+            width,
+        ));
+        lines
     }
 
     pub(super) fn has_active_profile_menu(&self) -> bool {
@@ -1605,6 +1782,42 @@ impl InteractiveRoot {
         let mut mutation = TranscriptMutation::default();
         for event in events {
             match event {
+                UiEvent::ToolAuthorizationRequired { request } => {
+                    if self
+                        .tool_authorizations
+                        .iter()
+                        .all(|pending| pending.authorization_id != request.authorization_id)
+                        && self
+                            .pending_tool_authorization_decision
+                            .as_ref()
+                            .is_none_or(|(pending, _)| {
+                                pending.authorization_id != request.authorization_id
+                            })
+                    {
+                        self.tool_authorizations.push_back(request);
+                    }
+                }
+                UiEvent::ToolAuthorizationResolved { authorization_id } => {
+                    self.tool_authorizations
+                        .retain(|request| request.authorization_id != authorization_id);
+                    if self
+                        .pending_tool_authorization_decision
+                        .as_ref()
+                        .is_some_and(|(request, _)| request.authorization_id == authorization_id)
+                    {
+                        self.pending_tool_authorization_decision = None;
+                    }
+                    self.tool_authorization_selected = self.tool_authorization_selected.min(2);
+                }
+                UiEvent::DelegationConfirmationRequired { pending } => {
+                    self.enqueue_delegation_confirmation(pending);
+                }
+                UiEvent::DelegationConfirmationResolved {
+                    operation_id,
+                    tool_call_id,
+                } => {
+                    self.resolve_delegation_confirmation(&operation_id, &tool_call_id);
+                }
                 UiEvent::UsageUpdate {
                     input,
                     output,
@@ -2011,6 +2224,12 @@ impl InteractiveRoot {
                 .as_ref()
                 .map(|menu| menu.render_state()),
             pending_delegation_rejection_reason: self.pending_delegation_rejection_reason.clone(),
+            tool_authorization_ids: self
+                .tool_authorizations
+                .iter()
+                .map(|request| request.authorization_id.clone())
+                .collect(),
+            tool_authorization_selected: self.tool_authorization_selected,
             profile_menu_state: self.profile_menu.as_ref().map(|menu| menu.render_state()),
             pending_profile_task: self.pending_profile_task.clone(),
         }
@@ -2021,6 +2240,7 @@ impl InteractiveRoot {
             || self.selecting_settings
             || self.selecting_session
             || self.delegation_confirmation_menu.is_some()
+            || !self.tool_authorizations.is_empty()
             || self.pending_delegation_rejection_reason.is_some()
             || self.profile_menu.is_some()
             || self.pending_profile_task.is_some()
@@ -2474,6 +2694,8 @@ impl Component for InteractiveRoot {
             if let Some(ref selector) = self.tree_selector {
                 lines.extend(selector.render(width));
             }
+        } else if !self.tool_authorizations.is_empty() {
+            lines.extend(self.render_tool_authorization(width));
         } else if self.active_plugin_ui_dialog.is_some() {
             lines.extend(self.render_plugin_dialog_form(width));
         } else if self.delegation_confirmation_menu.is_some() {
@@ -2654,6 +2876,16 @@ fn build_settings_list(
             enable_search: false,
         },
     )
+}
+
+fn tool_authorization_risk_label(risk: ToolAuthorizationRisk) -> &'static str {
+    match risk {
+        ToolAuthorizationRisk::ExternalRead => "external read",
+        ToolAuthorizationRisk::FilesystemMutation => "filesystem mutation",
+        ToolAuthorizationRisk::ShellExecution => "shell execution",
+        ToolAuthorizationRisk::PluginSideEffect => "plugin side effect",
+        ToolAuthorizationRisk::Unknown => "unknown",
+    }
 }
 
 fn format_http_idle_timeout_ms(timeout_ms: u64) -> String {

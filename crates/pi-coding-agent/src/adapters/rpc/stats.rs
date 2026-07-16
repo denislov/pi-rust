@@ -35,6 +35,7 @@ impl RpcState {
             auto_compaction_enabled: self.auto_compaction_enabled,
             message_count: self.messages.len(),
             pending_message_count: projection.pending_message_count,
+            pending_tool_authorizations: projection.pending_tool_authorizations,
             capabilities: projection.capabilities,
         }
     }
@@ -47,6 +48,7 @@ impl RpcState {
                 session_id: snapshot.session.session_id,
                 event_stream_id: Some(snapshot.cursor.stream_id),
                 pending_message_count: snapshot.drafts.len(),
+                pending_tool_authorizations: snapshot.pending_authorizations,
                 capabilities: if self.is_streaming() {
                     CodingAgentCapabilities::for_session_write_operation(
                         self.foreground
@@ -69,6 +71,7 @@ impl RpcState {
                 session_id: snapshot.session.session_id,
                 event_stream_id: Some(snapshot.cursor.stream_id),
                 pending_message_count: snapshot.drafts.len(),
+                pending_tool_authorizations: snapshot.pending_authorizations,
                 capabilities: snapshot.capabilities.into(),
                 snapshot_sequence: snapshot.cursor.last_event_sequence,
                 capability_generation: snapshot.cursor.capability_generation,
@@ -80,6 +83,7 @@ impl RpcState {
             session_id: self.fallback_session_id(),
             event_stream_id: None,
             pending_message_count: self.steering.len() + self.follow_up.len(),
+            pending_tool_authorizations: Vec::new(),
             capabilities: CodingAgentCapabilities::idle(self.active_session_path.is_some()).into(),
             snapshot_sequence: 0,
             capability_generation: 1,
@@ -176,6 +180,7 @@ struct RpcSessionProjection {
     session_id: String,
     event_stream_id: Option<String>,
     pending_message_count: usize,
+    pending_tool_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
     capabilities: RpcCapabilities,
     snapshot_sequence: u64,
     capability_generation: u64,

@@ -102,6 +102,7 @@ pub struct CodingAgentCapabilityControl {
     pub(crate) coordinator: Arc<SnapshotCoordinator>,
     pub(crate) operation_control: OperationControl,
     pub(crate) event_service: EventService,
+    pub(crate) authorization_service: crate::services::authorization::AuthorizationService,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +117,12 @@ impl CodingAgentCapabilityControl {
         let cancellation_requested_operation_ids = self
             .operation_control
             .cancel_capability_generations_before(generation);
+        for operation_id in &cancellation_requested_operation_ids {
+            self.authorization_service.cancel_operation(
+                operation_id,
+                "tool authorization cancelled by capability revocation",
+            );
+        }
         self.event_service
             .emit_capability_changed(InstalledCapabilityGeneration {
                 generation,
@@ -434,12 +441,14 @@ pub struct CodingAgentSnapshot {
     pub active_operation: Option<String>,
     pub drafts: Vec<CodingAgentDraft>,
     pub submitted_operation: Option<CodingAgentSubmittedOperation>,
+    pub pending_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CodingAgentClientConnection {
     coordinator: Arc<SnapshotCoordinator>,
     event_service: EventService,
+    authorization_service: crate::services::authorization::AuthorizationService,
     pub client_id: CodingAgentClientId,
     pub generation: CodingAgentConnectionGeneration,
     pub snapshot: CodingAgentSnapshot,
@@ -458,6 +467,24 @@ impl CodingAgentClientConnection {
             .client_state(&self.handle())
             .map(public_client_snapshot)
             .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub fn pending_tool_authorizations(
+        &self,
+    ) -> Result<Vec<crate::authorization::ToolAuthorizationRequest>, CodingSessionError> {
+        Ok(self.state()?.pending_authorizations)
+    }
+
+    pub fn decide_tool_authorization(
+        &self,
+        authorization_id: &str,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    ) -> Result<(), CodingSessionError> {
+        self.coordinator
+            .client_state(&self.handle())
+            .map_err(|error| registry_error(&self.client_id, error))?;
+        self.authorization_service
+            .decide(authorization_id, decision)
     }
 
     pub fn prompt_control(&self, operation_id: impl Into<String>) -> CodingAgentPromptControl {
@@ -909,6 +936,7 @@ impl From<UiSnapshot> for CodingAgentSnapshot {
             active_operation: snapshot
                 .active_operation
                 .map(|kind| kind.as_str().to_owned()),
+            pending_authorizations: snapshot.pending_authorizations,
             drafts: snapshot
                 .client_drafts
                 .into_iter()
@@ -1020,6 +1048,7 @@ pub(crate) fn public_client_connection(
     id: CodingAgentClientId,
     coordinator: Arc<SnapshotCoordinator>,
     event_service: EventService,
+    authorization_service: crate::services::authorization::AuthorizationService,
     handle: ClientHandle,
     state: ClientSnapshotState,
 ) -> CodingAgentClientConnection {
@@ -1027,6 +1056,7 @@ pub(crate) fn public_client_connection(
     CodingAgentClientConnection {
         coordinator,
         event_service,
+        authorization_service,
         client_id: id,
         generation: CodingAgentConnectionGeneration(handle.generation.0),
         snapshot: public_client_snapshot(state),

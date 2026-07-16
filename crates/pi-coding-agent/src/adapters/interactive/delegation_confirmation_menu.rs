@@ -51,6 +51,29 @@ impl DelegationConfirmationMenuState {
         }
     }
 
+    pub(super) fn upsert(&mut self, pending: PendingDelegationConfirmation) {
+        if let Some(existing) = self.pending.iter_mut().find(|existing| {
+            existing.operation_id == pending.operation_id
+                && existing.tool_call_id == pending.tool_call_id
+        }) {
+            *existing = pending;
+        } else {
+            self.pending.push(pending);
+        }
+        self.selected = self.selected.min(self.pending.len().saturating_sub(1));
+    }
+
+    pub(super) fn remove(&mut self, operation_id: &str, tool_call_id: &str) {
+        self.pending.retain(|pending| {
+            pending.operation_id != operation_id || pending.tool_call_id != tool_call_id
+        });
+        self.selected = self.selected.min(self.pending.len().saturating_sub(1));
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
     pub(super) fn render(&mut self, width: usize) -> Vec<String> {
         let color = color_enabled();
         self.selected = self.selected.min(self.pending.len().saturating_sub(1));

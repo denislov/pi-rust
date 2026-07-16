@@ -172,6 +172,8 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "team_profiles",
             "profile_diagnostics",
             "pending_delegation_confirmations",
+            "pending_tool_authorizations",
+            "decide_tool_authorization",
         ],
     );
     add_expectations(
@@ -189,6 +191,7 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "ui_snapshot",
             "product_events_after",
             "prompt_control_handle",
+            "tool_authorization_control",
             "plugin_commands",
             "plugin_ui_actions",
             "plugin_ui_dialogs",

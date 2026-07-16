@@ -262,8 +262,14 @@ fn build_agent_runtime(ctx: &mut PromptTurnContext) -> Result<Action, String> {
         .to_string()
     })?;
     let service = RuntimeService::new();
+    let authorization = ctx.authorization_hook_context();
     let build = service
-        .build_agent_runtime_with_capabilities(&runtime, ctx.plugin_service(), snapshot)
+        .build_agent_runtime_with_authorization(
+            &runtime,
+            ctx.plugin_service(),
+            snapshot,
+            authorization,
+        )
         .map_err(|error| error.to_string())?;
     for diagnostic in build.diagnostics {
         ctx.record_diagnostic(diagnostic);

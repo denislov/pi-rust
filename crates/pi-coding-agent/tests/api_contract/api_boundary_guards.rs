@@ -446,6 +446,7 @@ fn stable_api_has_only_scenario_categories_and_no_flat_exports() {
         module_body(&lib_source, "pub mod api").expect("stable api module should be balanced");
 
     let expected = BTreeSet::from([
+        "authorization",
         "cli",
         "client",
         "event",

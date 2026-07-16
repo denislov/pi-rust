@@ -10,6 +10,7 @@ impl CodingAgentSession {
             default_plugin_load_options(&options),
             profile_registry,
             runtime_service,
+            options.tool_authorization_mode(),
         )
     }
 
@@ -22,6 +23,7 @@ impl CodingAgentSession {
             default_plugin_load_options(&options),
             profile_registry,
             runtime_service,
+            options.tool_authorization_mode(),
         )
     }
 
@@ -36,6 +38,7 @@ impl CodingAgentSession {
             default_plugin_load_options(&options),
             profile_registry,
             runtime_service,
+            options.tool_authorization_mode(),
         )
     }
 
@@ -52,6 +55,7 @@ impl CodingAgentSession {
             default_plugin_load_options(&options),
             profile_registry_for_options(&options, None)?,
             runtime_service_for_options(&options),
+            options.tool_authorization_mode(),
         )
     }
 
@@ -65,6 +69,9 @@ impl CodingAgentSession {
             event_capacity,
             session.snapshot_coordinator.clone(),
         );
+        session
+            .authorization_service
+            .set_event_service(session.event_service.clone());
         Ok(session)
     }
 
@@ -80,6 +87,9 @@ impl CodingAgentSession {
             retained_capacity,
             session.snapshot_coordinator.clone(),
         );
+        session
+            .authorization_service
+            .set_event_service(session.event_service.clone());
         Ok(session)
     }
 
@@ -131,12 +141,18 @@ impl CodingAgentSession {
         default_plugin_load_options: PluginLoadOptions,
         profile_registry: ProfileRegistry,
         runtime_service: RuntimeService,
+        tool_authorization_mode: crate::authorization::ToolAuthorizationMode,
     ) -> Result<Self, CodingSessionError> {
         let mut session_service = session_service;
         let replay_state = replay_derived_owner_state(&mut session_service)?;
         let snapshot_coordinator = SnapshotCoordinator::new();
         let event_service = EventService::with_snapshot_coordinator(snapshot_coordinator.clone());
         let client_service = ClientService::new(snapshot_coordinator.clone());
+        let authorization_service = AuthorizationService::new(
+            tool_authorization_mode,
+            snapshot_coordinator.clone(),
+            event_service.clone(),
+        );
 
         let session = Self {
             persistence: SessionPersistence::Persistent(session_service),
@@ -151,6 +167,7 @@ impl CodingAgentSession {
                 snapshot_coordinator.clone(),
             ),
             pending_delegation_confirmations: replay_state.pending_delegation_confirmations,
+            authorization_service,
             capability_snapshots: CapabilitySnapshotService::with_snapshot_coordinator(
                 snapshot_coordinator.clone(),
             ),
@@ -171,14 +188,21 @@ impl CodingAgentSession {
         default_plugin_load_options: PluginLoadOptions,
         profile_registry: ProfileRegistry,
         runtime_service: RuntimeService,
+        tool_authorization_mode: crate::authorization::ToolAuthorizationMode,
     ) -> Result<Self, CodingSessionError> {
         let snapshot_coordinator = SnapshotCoordinator::new();
         let client_service = ClientService::new(snapshot_coordinator.clone());
+        let event_service = EventService::with_snapshot_coordinator(snapshot_coordinator.clone());
+        let authorization_service = AuthorizationService::new(
+            tool_authorization_mode,
+            snapshot_coordinator.clone(),
+            event_service.clone(),
+        );
         let session = Self {
             persistence: SessionPersistence::NonPersistent(state),
             runtime_service,
             flow_service: FlowService::new(),
-            event_service: EventService::with_snapshot_coordinator(snapshot_coordinator.clone()),
+            event_service,
             capability_service: CapabilityService::new(),
             plugin_service: PluginService::new(),
             profile_registry,
@@ -187,6 +211,7 @@ impl CodingAgentSession {
                 snapshot_coordinator.clone(),
             ),
             pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
+            authorization_service,
             capability_snapshots: CapabilitySnapshotService::with_snapshot_coordinator(
                 snapshot_coordinator.clone(),
             ),

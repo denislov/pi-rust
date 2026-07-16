@@ -111,6 +111,10 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         return;
     }
 
+    if root.has_pending_tool_authorization() && root.handle_tool_authorization_input(event) {
+        return;
+    }
+
     if root.status == InteractiveStatus::Idle
         && root.has_active_plugin_ui_dialog()
         && root.handle_plugin_dialog_form_input(event)

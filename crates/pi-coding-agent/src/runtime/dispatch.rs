@@ -280,6 +280,7 @@ impl CodingAgentSession {
                             &self.event_service,
                             &self.flow_service,
                             &mut self.pending_delegation_confirmations,
+                            &self.authorization_service,
                             options,
                             &snapshot,
                             operation_cancellation.clone(),

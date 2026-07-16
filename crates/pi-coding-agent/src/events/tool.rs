@@ -6,6 +6,21 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ToolEvent {
+    AuthorizationRequired {
+        request: crate::authorization::ToolAuthorizationRequest,
+    },
+    AuthorizationApproved {
+        request: crate::authorization::ToolAuthorizationRequest,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    },
+    AuthorizationDenied {
+        request: crate::authorization::ToolAuthorizationRequest,
+        reason: String,
+    },
+    AuthorizationCancelled {
+        request: crate::authorization::ToolAuthorizationRequest,
+        reason: String,
+    },
     Started {
         operation_id: String,
         turn_id: String,
@@ -39,6 +54,43 @@ pub(crate) enum ToolEvent {
 impl ToolEvent {
     pub(crate) fn into_product_draft(self) -> ProductEventDraft {
         let (event, operation_id, terminal_status) = match self {
+            Self::AuthorizationRequired { request } => (
+                CodingAgentToolProductEvent::AuthorizationRequired {
+                    request: request.clone(),
+                },
+                request.operation_id,
+                None,
+            ),
+            Self::AuthorizationApproved { request, decision } => (
+                CodingAgentToolProductEvent::AuthorizationApproved {
+                    authorization_id: request.authorization_id,
+                    operation_id: request.operation_id.clone(),
+                    tool_call_id: request.tool_call_id,
+                    decision,
+                },
+                request.operation_id,
+                None,
+            ),
+            Self::AuthorizationDenied { request, reason } => (
+                CodingAgentToolProductEvent::AuthorizationDenied {
+                    authorization_id: request.authorization_id,
+                    operation_id: request.operation_id.clone(),
+                    tool_call_id: request.tool_call_id,
+                    reason,
+                },
+                request.operation_id,
+                None,
+            ),
+            Self::AuthorizationCancelled { request, reason } => (
+                CodingAgentToolProductEvent::AuthorizationCancelled {
+                    authorization_id: request.authorization_id,
+                    operation_id: request.operation_id.clone(),
+                    tool_call_id: request.tool_call_id,
+                    reason,
+                },
+                request.operation_id,
+                None,
+            ),
             Self::Started {
                 operation_id,
                 turn_id,

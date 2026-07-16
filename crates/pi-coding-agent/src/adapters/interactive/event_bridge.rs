@@ -5,7 +5,7 @@ use crate::runtime::facade::{
     CodingAgentMessageProductEvent, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentProductEventUsage,
     CodingAgentRuntimeProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
-    ProductEvent, ProductEventSequence, ProfileKind, UiSnapshot,
+    ProductEvent, ProductEventSequence, ProfileId, ProfileKind, UiSnapshot,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +32,12 @@ pub enum UiEvent {
         call_id: String,
         result: String,
     },
+    ToolAuthorizationRequired {
+        request: crate::authorization::ToolAuthorizationRequest,
+    },
+    ToolAuthorizationResolved {
+        authorization_id: String,
+    },
     AgentError {
         error: String,
     },
@@ -47,6 +53,13 @@ pub enum UiEvent {
         child_operation_id: Option<String>,
         summary: Option<String>,
         is_error: bool,
+    },
+    DelegationConfirmationRequired {
+        pending: crate::runtime::facade::PendingDelegationConfirmation,
+    },
+    DelegationConfirmationResolved {
+        operation_id: String,
+        tool_call_id: String,
     },
     CompactionNotice {
         summary: String,
@@ -107,8 +120,16 @@ impl UiProjection {
 }
 
 fn snapshot_hydration_events(snapshot: &UiSnapshot) -> Vec<UiEvent> {
-    let _ = snapshot;
-    Vec::new()
+    let mut pending = snapshot.pending_authorizations.clone();
+    pending.sort_by(|left, right| {
+        left.requested_at
+            .cmp(&right.requested_at)
+            .then_with(|| left.authorization_id.cmp(&right.authorization_id))
+    });
+    pending
+        .into_iter()
+        .map(|request| UiEvent::ToolAuthorizationRequired { request })
+        .collect()
 }
 
 /// Stateless event bridge: converts typed product events to `Vec<UiEvent>`.
@@ -210,6 +231,24 @@ impl CodingEventBridge {
                 },
                 |event| vec![event],
             ),
+            CodingAgentProductEventKind::Tool(
+                CodingAgentToolProductEvent::AuthorizationRequired { request },
+            ) => vec![UiEvent::ToolAuthorizationRequired {
+                request: request.clone(),
+            }],
+            CodingAgentProductEventKind::Tool(
+                CodingAgentToolProductEvent::AuthorizationApproved {
+                    authorization_id, ..
+                }
+                | CodingAgentToolProductEvent::AuthorizationDenied {
+                    authorization_id, ..
+                }
+                | CodingAgentToolProductEvent::AuthorizationCancelled {
+                    authorization_id, ..
+                },
+            ) => vec![UiEvent::ToolAuthorizationResolved {
+                authorization_id: authorization_id.clone(),
+            }],
             CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Updated {
                 tool_call_id,
                 message,
@@ -297,6 +336,38 @@ impl CodingEventBridge {
                 error: format!("prompt aborted: {reason}"),
             }],
             CodingAgentProductEventKind::Delegation(payload) => {
+                let confirmation_required = match payload {
+                    CodingAgentDelegationProductEvent::ConfirmationRequired { context, reason } => {
+                        Some(UiEvent::DelegationConfirmationRequired {
+                            pending: crate::runtime::facade::PendingDelegationConfirmation {
+                                operation_id: context.operation_id.clone(),
+                                turn_id: context.turn_id.clone(),
+                                tool_call_id: context.tool_call_id.clone(),
+                                requesting_profile_id: ProfileId::from(
+                                    context.requesting_profile_id.as_str(),
+                                ),
+                                target_kind: match context.target_kind {
+                                    CodingAgentProductEventProfileKind::Agent => ProfileKind::Agent,
+                                    CodingAgentProductEventProfileKind::Team => ProfileKind::Team,
+                                },
+                                target_id: ProfileId::from(context.target_id.as_str()),
+                                task: context.task.clone(),
+                                reason: reason.clone(),
+                            },
+                        })
+                    }
+                    _ => None,
+                };
+                let confirmation_resolved = match payload {
+                    CodingAgentDelegationProductEvent::Approved { context }
+                    | CodingAgentDelegationProductEvent::Rejected { context, .. } => {
+                        Some(UiEvent::DelegationConfirmationResolved {
+                            operation_id: context.operation_id.clone(),
+                            tool_call_id: context.tool_call_id.clone(),
+                        })
+                    }
+                    _ => None,
+                };
                 let (ctx, status, summary, child, is_error) = match payload {
                     CodingAgentDelegationProductEvent::Requested { context } => {
                         (context, "requested", Some("requested".into()), None, false)
@@ -305,13 +376,7 @@ impl CodingEventBridge {
                         (
                             context,
                             "confirmation_required",
-                            Some(format!(
-                                "confirmation required: {reason}\nApprove: /delegation approve {} {}\nReject: /delegation reject {} {} [reason]\nList pending: /delegations",
-                                context.operation_id,
-                                context.tool_call_id,
-                                context.operation_id,
-                                context.tool_call_id
-                            )),
+                            Some(format!("confirmation required: {reason}")),
                             None,
                             false,
                         )
@@ -353,7 +418,7 @@ impl CodingEventBridge {
                         true,
                     ),
                 };
-                vec![UiEvent::DelegationBlock {
+                let mut events = vec![UiEvent::DelegationBlock {
                     call_id: ctx.tool_call_id.clone(),
                     target_kind: profile_kind_label(match ctx.target_kind {
                         CodingAgentProductEventProfileKind::Agent => ProfileKind::Agent,
@@ -366,7 +431,10 @@ impl CodingEventBridge {
                     child_operation_id: child.cloned(),
                     summary,
                     is_error,
-                }]
+                }];
+                events.extend(confirmation_required);
+                events.extend(confirmation_resolved);
+                events
             }
             CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
@@ -567,6 +635,10 @@ fn profile_kind_label(kind: ProfileKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authorization::{
+        ToolAuthorizationPreview, ToolAuthorizationRequest, ToolAuthorizationRisk,
+        ToolAuthorizationScope,
+    };
     use crate::events::message::MessageEvent;
     use crate::events::prompt_stream::PromptStreamEvent;
     use crate::events::runtime::RuntimeEvent;
@@ -582,6 +654,29 @@ mod tests {
             event.into_product_draft(),
             None,
         )
+    }
+
+    fn authorization_request(id: &str, requested_at: &str) -> ToolAuthorizationRequest {
+        ToolAuthorizationRequest {
+            authorization_id: id.into(),
+            operation_id: "op-auth".into(),
+            turn_id: "turn-auth".into(),
+            tool_call_id: format!("call-{id}"),
+            tool_name: "write".into(),
+            risk: ToolAuthorizationRisk::FilesystemMutation,
+            scope: ToolAuthorizationScope::Path {
+                path: "/workspace/file.txt".into(),
+            },
+            preview: ToolAuthorizationPreview {
+                summary: "Modify a file".into(),
+                path: Some("/workspace/file.txt".into()),
+                command: None,
+                cwd: None,
+                content_preview: Some("new content".into()),
+            },
+            capability_generation: 1,
+            requested_at: requested_at.into(),
+        }
     }
 
     fn capabilities() -> CodingAgentCapabilities {
@@ -633,6 +728,7 @@ mod tests {
             },
             capabilities(),
             None,
+            Vec::new(),
             Vec::new(),
         )
     }
@@ -688,6 +784,57 @@ mod tests {
         assert_eq!(projection.last_sequence, ProductEventSequence::new(7));
         assert!(projection.drain().is_empty());
         assert!(projection.drain().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ui_projection_reconstructs_pending_authorizations_in_request_order() {
+        let mut snapshot = snapshot(ProductEventSequence::new(7), "sess_projection").await;
+        snapshot.pending_authorizations = vec![
+            authorization_request("auth-later", "2026-07-17T00:00:02Z"),
+            authorization_request("auth-first", "2026-07-17T00:00:01Z"),
+        ];
+        let mut projection = UiProjection::from_snapshot(snapshot);
+
+        let events = projection.drain();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            UiEvent::ToolAuthorizationRequired { request }
+                if request.authorization_id == "auth-first"
+        ));
+        assert!(matches!(
+            &events[1],
+            UiEvent::ToolAuthorizationRequired { request }
+                if request.authorization_id == "auth-later"
+        ));
+    }
+
+    #[test]
+    fn authorization_product_events_open_and_resolve_the_ui_surface() {
+        let request = authorization_request("auth-1", "2026-07-17T00:00:01Z");
+        let mut bridge = CodingEventBridge::new();
+        let required =
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::AuthorizationRequired {
+                request: request.clone(),
+            });
+        assert_eq!(
+            bridge.handle_typed(&required),
+            vec![UiEvent::ToolAuthorizationRequired { request }]
+        );
+
+        let resolved =
+            CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::AuthorizationDenied {
+                authorization_id: "auth-1".into(),
+                operation_id: "op-auth".into(),
+                tool_call_id: "call-auth-1".into(),
+                reason: "denied".into(),
+            });
+        assert_eq!(
+            bridge.handle_typed(&resolved),
+            vec![UiEvent::ToolAuthorizationResolved {
+                authorization_id: "auth-1".into()
+            }]
+        );
     }
 
     #[tokio::test]

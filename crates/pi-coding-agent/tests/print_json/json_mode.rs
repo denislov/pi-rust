@@ -6,6 +6,7 @@ use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_coding_agent::api::cli::runner::run_cli_with_options;
 use pi_coding_agent::api::cli::runtime::{CliRunOptions, SessionMode, SessionRunOptions};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use support::ProviderGuard;
 
 fn faux_model(api: &str) -> Model {
@@ -91,7 +92,11 @@ async fn json_mode_emits_tool_execution_events() {
     let tool = pi_agent_core::api::tool::AgentTool::new_text(
         "echo",
         "echo input",
-        serde_json::json!({"type":"object","properties":{"text":{"type":"string"}}}),
+        serde_json::json!({
+            "type":"object",
+            "properties":{"text":{"type":"string"}},
+            "x-pi-authorization-risk":"workspace_local_read_only"
+        }),
         |_context, args| async move { Ok(format!("echo: {}", args["text"].as_str().unwrap_or(""))) },
     );
 
@@ -122,6 +127,84 @@ async fn json_mode_emits_tool_execution_events() {
         lines
             .iter()
             .any(|line| line["type"] == "tool_execution_end")
+    );
+}
+
+#[tokio::test]
+async fn json_mode_denies_unknown_tool_without_execution_or_protocol_corruption() {
+    let api = "pi-coding-json-tool-authorization-deny";
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![FauxResponse {
+                    text_deltas: vec![],
+                    thinking_deltas: vec![],
+                    tool_calls: vec![FauxToolCall {
+                        id: "tool_mutate".into(),
+                        name: "mutate".into(),
+                        deltas: vec!["{}".into()],
+                        final_arguments: serde_json::json!({}),
+                    }],
+                }],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxProvider::text_call("continued after denial", StopReason::Stop),
+        ])),
+    );
+    let executions = Arc::new(AtomicUsize::new(0));
+    let executions_for_tool = executions.clone();
+    let tool = pi_agent_core::api::tool::AgentTool::new_text(
+        "mutate",
+        "mutate external state",
+        serde_json::json!({"type":"object"}),
+        move |_context, _args| {
+            let executions = executions_for_tool.clone();
+            async move {
+                executions.fetch_add(1, Ordering::SeqCst);
+                Ok("mutated".to_string())
+            }
+        },
+    );
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        run_cli_with_options(
+            vec![
+                "--mode".to_string(),
+                "json".to_string(),
+                "mutate".to_string(),
+            ],
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: vec![tool],
+                register_builtins: false,
+                ai_client: Some(_provider_guard.ai_client()),
+                ..Default::default()
+            },
+        ),
+    )
+    .await
+    .expect("JSON mode must not wait for interactive authorization");
+
+    assert_eq!(output.exit_code, 0);
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let lines = json_lines(&output.stdout);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "tool_authorization_required")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["type"] == "tool_authorization_denied")
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line["type"] == "tool_execution_start")
     );
 }
 

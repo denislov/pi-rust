@@ -1,12 +1,13 @@
 use crate::support;
 
+use pi_agent_core::api::tool::AgentTool;
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_coding_agent::api::cli::runtime::{CliRunOptions, SessionRunOptions};
 use pi_coding_agent::api::protocol::run_rpc_mode_for_io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use support::{EnvGuard, ProviderGuard};
@@ -123,6 +124,150 @@ fn text_response(text: &str) -> FauxResponse {
         thinking_deltas: Vec::new(),
         tool_calls: Vec::new(),
     }
+}
+
+fn rpc_mutation_tool(executions: Arc<AtomicUsize>) -> AgentTool {
+    AgentTool::new_text(
+        "rpc_mutate",
+        "mutate state for RPC authorization testing",
+        serde_json::json!({"type": "object"}),
+        move |_context, _args| {
+            let executions = executions.clone();
+            async move {
+                executions.fetch_add(1, Ordering::SeqCst);
+                Ok("mutated".to_string())
+            }
+        },
+    )
+}
+
+#[tokio::test]
+async fn rpc_lists_and_approves_pending_tool_authorization_before_execution() {
+    let api = "pi-coding-rpc-tool-authorization";
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![FauxResponse {
+                    text_deltas: Vec::new(),
+                    thinking_deltas: Vec::new(),
+                    tool_calls: vec![FauxToolCall {
+                        id: "tool-rpc-mutate".into(),
+                        name: "rpc_mutate".into(),
+                        deltas: vec!["{}".into()],
+                        final_arguments: serde_json::json!({}),
+                    }],
+                }],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxProvider::text_call("approved and completed", StopReason::Stop),
+        ])),
+    );
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (mut input_writer, input_reader) = tokio::io::duplex(2048);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: vec![rpc_mutation_tool(executions.clone())],
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        executions.load(Ordering::SeqCst)
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"prompt-auth\",\"type\":\"prompt\",\"message\":\"mutate\"}\n")
+        .await
+        .unwrap();
+    let required = read_rpc_json_matching(&mut lines, "tool authorization request", |value| {
+        value["type"] == "tool_authorization_required"
+    })
+    .await;
+    let authorization_id = required["request"]["authorizationId"]
+        .as_str()
+        .expect("authorization request exposes its identity")
+        .to_owned();
+
+    input_writer
+        .write_all(b"{\"id\":\"state-auth\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let state = read_rpc_json_matching(&mut lines, "authorization state response", |value| {
+        value["type"] == "response" && value["command"] == "get_state"
+    })
+    .await;
+    assert_eq!(
+        state["data"]["pendingToolAuthorizations"][0]["authorizationId"],
+        authorization_id
+    );
+
+    input_writer
+        .write_all(b"{\"id\":\"list-auth\",\"type\":\"list_tool_authorizations\"}\n")
+        .await
+        .unwrap();
+    let listed = read_rpc_json_matching(&mut lines, "list authorization response", |value| {
+        value["type"] == "response" && value["command"] == "list_tool_authorizations"
+    })
+    .await;
+    assert_eq!(listed["success"], true, "{listed}");
+    assert_eq!(
+        listed["data"]["authorizations"][0]["authorizationId"],
+        authorization_id
+    );
+
+    let approve = serde_json::json!({
+        "id": "approve-auth",
+        "type": "approve_tool_authorization",
+        "authorizationId": authorization_id,
+        "scope": "once"
+    });
+    input_writer
+        .write_all(format!("{approve}\n").as_bytes())
+        .await
+        .unwrap();
+
+    let mut observed = Vec::new();
+    loop {
+        let value = read_rpc_json_line(&mut lines, "approved tool completion").await;
+        let terminal = value["type"] == "agent_end";
+        observed.push(value);
+        if terminal {
+            break;
+        }
+    }
+    assert!(observed.iter().any(|value| {
+        value["type"] == "response"
+            && value["command"] == "approve_tool_authorization"
+            && value["success"] == true
+    }));
+    assert!(
+        observed
+            .iter()
+            .any(|value| value["type"] == "tool_authorization_approved")
+    );
+    assert!(
+        observed
+            .iter()
+            .any(|value| value["type"] == "tool_execution_start")
+    );
+    assert!(
+        observed
+            .iter()
+            .any(|value| value["type"] == "tool_execution_end")
+    );
+
+    drop(input_writer);
+    assert_eq!(task.await.unwrap(), 1);
 }
 
 fn delegate_agent_response(tool_call_id: &str, agent_id: &str, task: &str) -> FauxResponse {

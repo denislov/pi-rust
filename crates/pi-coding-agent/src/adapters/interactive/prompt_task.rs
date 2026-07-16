@@ -117,6 +117,7 @@ pub(super) struct PluginCommandTaskResult {
 
 enum PromptTaskControlHandle {
     Prompt(mpsc::UnboundedSender<PromptTaskControl>),
+    Operation(mpsc::UnboundedSender<PromptTaskControl>),
     AbortOnly(Option<oneshot::Sender<()>>),
 }
 
@@ -125,6 +126,10 @@ enum PromptTaskControl {
     Abort,
     Steer(String),
     FollowUp(String),
+    DecideToolAuthorization {
+        authorization_id: String,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    },
 }
 
 pub(super) struct PromptTask {
@@ -404,6 +409,9 @@ impl PromptTask {
             PromptTaskControlHandle::Prompt(control) => {
                 let _ = control.send(PromptTaskControl::Abort);
             }
+            PromptTaskControlHandle::Operation(control) => {
+                let _ = control.send(PromptTaskControl::Abort);
+            }
             PromptTaskControlHandle::AbortOnly(abort) => {
                 if let Some(abort) = abort.take() {
                     let _ = abort.send(());
@@ -418,7 +426,7 @@ impl PromptTask {
             PromptTaskControlHandle::Prompt(control) => {
                 control.send(PromptTaskControl::Steer(text)).is_ok()
             }
-            PromptTaskControlHandle::AbortOnly(_) => false,
+            PromptTaskControlHandle::Operation(_) | PromptTaskControlHandle::AbortOnly(_) => false,
         }
     }
 
@@ -427,6 +435,23 @@ impl PromptTask {
             PromptTaskControlHandle::Prompt(control) => {
                 control.send(PromptTaskControl::FollowUp(text)).is_ok()
             }
+            PromptTaskControlHandle::Operation(_) | PromptTaskControlHandle::AbortOnly(_) => false,
+        }
+    }
+
+    pub(super) fn decide_tool_authorization(
+        &self,
+        authorization_id: String,
+        decision: crate::authorization::ToolAuthorizationDecision,
+    ) -> bool {
+        match &self.control {
+            PromptTaskControlHandle::Prompt(control)
+            | PromptTaskControlHandle::Operation(control) => control
+                .send(PromptTaskControl::DecideToolAuthorization {
+                    authorization_id,
+                    decision,
+                })
+                .is_ok(),
             PromptTaskControlHandle::AbortOnly(_) => false,
         }
     }
@@ -534,7 +559,7 @@ impl PromptTask {
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (abort_tx, abort_rx) = oneshot::channel();
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
             let result = run_coding_agent_team_task(
@@ -544,14 +569,14 @@ impl PromptTask {
                 task,
                 default_agent_profile_id,
                 event_tx,
-                abort_rx,
+                control_rx,
             )
             .await;
             let _ = done_tx.send(result);
         });
 
         Self {
-            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            control: PromptTaskControlHandle::Operation(control_tx),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -566,7 +591,7 @@ impl PromptTask {
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (abort_tx, abort_rx) = oneshot::channel();
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
             let result = run_coding_delegation_approval_task(
@@ -574,14 +599,14 @@ impl PromptTask {
                 operation_id,
                 tool_call_id,
                 event_tx,
-                abort_rx,
+                control_rx,
             )
             .await;
             let _ = done_tx.send(result);
         });
 
         Self {
-            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            control: PromptTaskControlHandle::Operation(control_tx),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -958,6 +983,7 @@ async fn run_coding_prompt_task(
     };
     let result = async {
         let prompt_control = session.prompt_control_handle()?;
+        let tool_authorization_control = session.tool_authorization_control();
         let mut receiver = session.subscribe_product_events();
         send_ui_snapshot(&event_tx, &session);
         let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
@@ -979,6 +1005,12 @@ async fn run_coding_prompt_task(
                             }
                             Some(PromptTaskControl::FollowUp(text)) => {
                                 prompt_control.follow_up(text)?;
+                            }
+                            Some(PromptTaskControl::DecideToolAuthorization {
+                                authorization_id,
+                                decision,
+                            }) => {
+                                tool_authorization_control.decide(&authorization_id, decision)?;
                             }
                             Some(PromptTaskControl::Abort) => {}
                             None => {
@@ -1047,6 +1079,7 @@ async fn run_coding_agent_invocation_task(
     };
     let result = async {
         let prompt_control = session.prompt_control_handle()?;
+        let tool_authorization_control = session.tool_authorization_control();
         let mut receiver = session.subscribe_product_events();
         send_ui_snapshot(&event_tx, &session);
         let invocation_options = AgentInvocationOptions::new(
@@ -1071,6 +1104,12 @@ async fn run_coding_agent_invocation_task(
                         }
                         Some(PromptTaskControl::FollowUp(text)) => {
                             prompt_control.follow_up(text)?;
+                        }
+                        Some(PromptTaskControl::DecideToolAuthorization {
+                            authorization_id,
+                            decision,
+                        }) => {
+                            tool_authorization_control.decide(&authorization_id, decision)?;
                         }
                         Some(PromptTaskControl::Abort) => {}
                         None => {
@@ -1113,7 +1152,7 @@ async fn run_coding_agent_team_task(
     task: String,
     default_agent_profile_id: ProfileId,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut abort_rx: oneshot::Receiver<()>,
+    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
 ) -> PromptTaskCompletion {
     let mut session = match existing_session {
         Some(session) => session,
@@ -1133,6 +1172,7 @@ async fn run_coding_agent_team_task(
     let result = async {
         let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
+        let tool_authorization_control = session.tool_authorization_control();
         send_ui_snapshot(&event_tx, &session);
         let team_options = AgentTeamOptions::new(
             team_id,
@@ -1146,9 +1186,23 @@ async fn run_coding_agent_team_task(
             let mut abort_requested = false;
             loop {
             tokio::select! {
-                _ = &mut abort_rx, if !abort_requested => {
-                    abort_requested = true;
-                    request_interactive_abort(&operation_control, OperationKind::AgentTeam)?;
+                control = control_rx.recv() => {
+                    match control {
+                        Some(PromptTaskControl::Abort) if !abort_requested => {
+                            abort_requested = true;
+                            request_interactive_abort(&operation_control, OperationKind::AgentTeam)?;
+                        }
+                        Some(PromptTaskControl::DecideToolAuthorization {
+                            authorization_id,
+                            decision,
+                        }) => {
+                            tool_authorization_control.decide(&authorization_id, decision)?;
+                        }
+                        Some(PromptTaskControl::Abort)
+                        | Some(PromptTaskControl::Steer(_))
+                        | Some(PromptTaskControl::FollowUp(_))
+                        | None => {}
+                    }
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1185,11 +1239,12 @@ async fn run_coding_delegation_approval_task(
     operation_id: String,
     tool_call_id: String,
     event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut abort_rx: oneshot::Receiver<()>,
+    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
 ) -> PromptTaskCompletion {
     let result = async {
         let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
+        let tool_authorization_control = session.tool_authorization_control();
         send_ui_snapshot(&event_tx, &session);
 
         let mut approval = Box::pin(session.run(CodingAgentOperation::ApproveDelegation {
@@ -1199,12 +1254,26 @@ async fn run_coding_delegation_approval_task(
         let mut abort_requested = false;
         loop {
             tokio::select! {
-                _ = &mut abort_rx, if !abort_requested => {
-                    abort_requested = true;
-                    request_interactive_abort(
-                        &operation_control,
-                        OperationKind::DelegationConfirmation,
-                    )?;
+                control = control_rx.recv() => {
+                    match control {
+                        Some(PromptTaskControl::Abort) if !abort_requested => {
+                            abort_requested = true;
+                            request_interactive_abort(
+                                &operation_control,
+                                OperationKind::DelegationConfirmation,
+                            )?;
+                        }
+                        Some(PromptTaskControl::DecideToolAuthorization {
+                            authorization_id,
+                            decision,
+                        }) => {
+                            tool_authorization_control.decide(&authorization_id, decision)?;
+                        }
+                        Some(PromptTaskControl::Abort)
+                        | Some(PromptTaskControl::Steer(_))
+                        | Some(PromptTaskControl::FollowUp(_))
+                        | None => {}
+                    }
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -2088,9 +2157,15 @@ async fn run_coding_fork_session_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
+    use crate::authorization::ToolAuthorizationDecision;
     use crate::events::message::MessageEvent;
     use crate::events::prompt_stream::PromptStreamEvent;
     use crate::runtime::facade::ProductEventSequence;
+    use pi_ai::api::conversation::StopReason;
+    use pi_ai::api::model::{Model, ModelCost, ModelInput};
+    use pi_ai::api::testing::{FauxProvider, FauxResponse, FauxToolCall};
+    use std::sync::Arc;
 
     fn product_event(sequence: u64, event: PromptStreamEvent) -> ProductEvent {
         ProductEvent::from_draft_for_tests(
@@ -2125,6 +2200,106 @@ mod tests {
             }
         }
         panic!("unterminated body for interactive task runner `{function_name}`");
+    }
+
+    fn authorization_test_model(api: &str) -> Model {
+        Model {
+            id: "authorization-test".into(),
+            name: "Authorization Test".into(),
+            api: api.into(),
+            provider: "test".into(),
+            base_url: String::new(),
+            reasoning: false,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost: ModelCost::default(),
+            context_window: 8_000,
+            max_tokens: 1_024,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_task_delivers_tool_authorization_decision_to_running_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let api = "interactive-prompt-task-authorization";
+        let provider = FauxProvider::with_call_queue(vec![
+            FauxProvider::single_call(
+                vec![FauxResponse {
+                    text_deltas: Vec::new(),
+                    thinking_deltas: Vec::new(),
+                    tool_calls: vec![FauxToolCall {
+                        id: "tool-write".into(),
+                        name: "write".into(),
+                        deltas: Vec::new(),
+                        final_arguments: serde_json::json!({
+                            "path": "authorized.txt",
+                            "content": "authorized"
+                        }),
+                    }],
+                }],
+                StopReason::ToolUse,
+            ),
+            FauxProvider::text_call("done", StopReason::Stop),
+        ]);
+        let provider_guard = crate::test_support::ProviderGuard::register(api, Arc::new(provider));
+        let cwd = temp.path().to_path_buf();
+        let mut task = PromptTask::spawn_prompt(
+            PromptRunOptions {
+                prompt: "write".into(),
+                model: authorization_test_model(api),
+                api_key: None,
+                auth_diagnostics: Vec::new(),
+                system_prompt: None,
+                max_turns: Some(5),
+                tools: crate::tools::builtin_tools(cwd.clone()),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session: Some(SessionRunOptions::disabled(cwd.clone())),
+                session_target: None,
+                session_name: None,
+                thinking_level: None,
+                tool_execution: None,
+                resources: pi_agent_core::api::resources::AgentResources::default(),
+                settings: None,
+                invocation: PromptInvocation::Text("write".into()),
+            },
+            None,
+            ProfileId::from("default"),
+        )
+        .unwrap();
+
+        let authorization_id = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let event = task.events.recv().await.expect("prompt task event stream");
+                if let PromptTaskEvent::Coding(event) = event
+                    && let crate::events::CodingAgentProductEventKind::Tool(
+                        crate::events::CodingAgentToolProductEvent::AuthorizationRequired {
+                            request,
+                        },
+                    ) = event.event()
+                {
+                    break request.authorization_id.clone();
+                }
+            }
+        })
+        .await
+        .expect("authorization request must be projected");
+        assert!(!cwd.join("authorized.txt").exists());
+        assert!(
+            task.decide_tool_authorization(authorization_id, ToolAuthorizationDecision::AllowOnce)
+        );
+
+        let completion = tokio::time::timeout(std::time::Duration::from_secs(2), task.done)
+            .await
+            .expect("prompt task must complete after approval")
+            .expect("prompt task completion channel");
+        assert!(matches!(completion, PromptTaskCompletion::Completed(_)));
+        assert_eq!(
+            std::fs::read_to_string(cwd.join("authorized.txt")).unwrap(),
+            "authorized"
+        );
     }
 
     #[test]

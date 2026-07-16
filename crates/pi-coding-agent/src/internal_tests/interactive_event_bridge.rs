@@ -386,9 +386,10 @@ fn coding_event_bridge_maps_delegation_confirmation_events() {
             summary,
             ..
         },
+        UiEvent::DelegationConfirmationRequired { pending },
     ] = events.as_slice()
     else {
-        panic!("expected one delegation block, got {events:?}");
+        panic!("expected delegation block and automatic confirmation, got {events:?}");
     };
     assert_eq!(call_id, "tool_delegate_agent");
     assert_eq!(target_kind, "agent");
@@ -397,14 +398,10 @@ fn coding_event_bridge_maps_delegation_confirmation_events() {
     assert_eq!(status, "confirmation_required");
     let text = summary.as_deref().expect("confirmation summary");
     assert!(text.contains("confirmation required"), "{text}");
-    assert!(
-        text.contains("/delegation approve op_1 tool_delegate_agent"),
-        "{text}"
-    );
-    assert!(
-        text.contains("/delegation reject op_1 tool_delegate_agent"),
-        "{text}"
-    );
+    assert_eq!(pending.operation_id, "op_1");
+    assert_eq!(pending.tool_call_id, "tool_delegate_agent");
+    assert_eq!(pending.target_id.as_str(), "coder");
+    assert_eq!(pending.reason, "profile policy requires confirmation");
 
     let completed = bridge.handle_product_event(&product_event(
         CodingAgentProductEventKind::Delegation(CodingAgentDelegationProductEvent::Completed {

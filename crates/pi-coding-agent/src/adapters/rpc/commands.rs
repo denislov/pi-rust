@@ -8,10 +8,12 @@ use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::open_new_runtime_session;
+use crate::authorization::ToolAuthorizationDecision;
 use crate::protocol::types::{
     RpcCommand, RpcDetachLifecycleEvent, RpcDetachResponse, RpcDetachStatus, RpcHelloResponse,
     RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement,
     RpcShutdownLifecycleEvent, RpcShutdownResponse, RpcShutdownStatus,
+    RpcToolAuthorizationApprovalScope,
 };
 use crate::protocol::version::{
     PRODUCT_EVENT_PROTOCOL_VERSION, RPC_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION,
@@ -488,6 +490,25 @@ impl RpcState {
             }
             RpcCommand::ListDelegationConfirmations { id } => {
                 self.handle_list_delegation_confirmations(id, writer).await
+            }
+            RpcCommand::ListToolAuthorizations { id } => {
+                self.handle_list_tool_authorizations(id, writer).await
+            }
+            RpcCommand::ApproveToolAuthorization {
+                id,
+                authorization_id,
+                scope,
+            } => {
+                self.handle_approve_tool_authorization(id, authorization_id, scope, writer)
+                    .await
+            }
+            RpcCommand::DenyToolAuthorization {
+                id,
+                authorization_id,
+                reason,
+            } => {
+                self.handle_deny_tool_authorization(id, authorization_id, reason, writer)
+                    .await
             }
             RpcCommand::ApproveDelegation {
                 id,
@@ -1059,6 +1080,145 @@ impl RpcState {
             ),
         )
         .await
+    }
+
+    async fn handle_list_tool_authorizations<W>(
+        &mut self,
+        id: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let authorizations = match self.pending_tool_authorizations() {
+            Ok(authorizations) => authorizations,
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "list_tool_authorizations", error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        write_rpc_response(
+            writer,
+            RpcResponse::success(
+                id,
+                "list_tool_authorizations",
+                Some(serde_json::json!({ "authorizations": authorizations })),
+            ),
+        )
+        .await
+    }
+
+    async fn handle_approve_tool_authorization<W>(
+        &mut self,
+        id: Option<String>,
+        authorization_id: String,
+        scope: RpcToolAuthorizationApprovalScope,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let decision = match scope {
+            RpcToolAuthorizationApprovalScope::Once => ToolAuthorizationDecision::AllowOnce,
+            RpcToolAuthorizationApprovalScope::Operation => {
+                ToolAuthorizationDecision::AllowForOperation
+            }
+        };
+        match self.decide_tool_authorization(&authorization_id, decision) {
+            Ok(()) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "approve_tool_authorization",
+                        Some(serde_json::json!({
+                            "authorizationId": authorization_id,
+                            "scope": match scope {
+                                RpcToolAuthorizationApprovalScope::Once => "once",
+                                RpcToolAuthorizationApprovalScope::Operation => "operation",
+                            },
+                        })),
+                    ),
+                )
+                .await
+            }
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "approve_tool_authorization", error.to_string()),
+                )
+                .await
+            }
+        }
+    }
+
+    async fn handle_deny_tool_authorization<W>(
+        &mut self,
+        id: Option<String>,
+        authorization_id: String,
+        reason: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        match self.decide_tool_authorization(
+            &authorization_id,
+            ToolAuthorizationDecision::Deny { reason },
+        ) {
+            Ok(()) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "deny_tool_authorization",
+                        Some(serde_json::json!({ "authorizationId": authorization_id })),
+                    ),
+                )
+                .await
+            }
+            Err(error) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error(id, "deny_tool_authorization", error.to_string()),
+                )
+                .await
+            }
+        }
+    }
+
+    fn pending_tool_authorizations(
+        &self,
+    ) -> Result<Vec<crate::authorization::ToolAuthorizationRequest>, CodingSessionError> {
+        if let Some(connection) = self.client_connection.as_ref() {
+            return connection.pending_tool_authorizations();
+        }
+        self.coding_session
+            .as_ref()
+            .map(CodingAgentSession::pending_tool_authorizations)
+            .ok_or_else(|| CodingSessionError::Input {
+                message: "no active coding session".into(),
+            })
+    }
+
+    fn decide_tool_authorization(
+        &self,
+        authorization_id: &str,
+        decision: ToolAuthorizationDecision,
+    ) -> Result<(), CodingSessionError> {
+        if let Some(connection) = self.client_connection.as_ref() {
+            return connection.decide_tool_authorization(authorization_id, decision);
+        }
+        self.coding_session
+            .as_ref()
+            .ok_or_else(|| CodingSessionError::Input {
+                message: "no active coding session".into(),
+            })?
+            .decide_tool_authorization(authorization_id, decision)
     }
 
     async fn handle_reject_delegation<W>(
@@ -1677,6 +1837,49 @@ mod tests {
         assert_eq!(cursor.snapshot_protocol_major, 2);
         assert_eq!(cursor.last_event_sequence, 7);
         assert_eq!(cursor.capability_generation, 3);
+    }
+
+    #[test]
+    fn rpc_tool_authorization_commands_are_typed() {
+        let list: RpcCommand = serde_json::from_value(json!({
+            "type": "list_tool_authorizations",
+            "id": "list-1"
+        }))
+        .unwrap();
+        assert!(matches!(
+            list,
+            RpcCommand::ListToolAuthorizations { id } if id.as_deref() == Some("list-1")
+        ));
+
+        let approve: RpcCommand = serde_json::from_value(json!({
+            "type": "approve_tool_authorization",
+            "authorizationId": "auth-1",
+            "scope": "operation"
+        }))
+        .unwrap();
+        assert!(matches!(
+            approve,
+            RpcCommand::ApproveToolAuthorization {
+                authorization_id,
+                scope: RpcToolAuthorizationApprovalScope::Operation,
+                ..
+            } if authorization_id == "auth-1"
+        ));
+
+        let deny: RpcCommand = serde_json::from_value(json!({
+            "type": "deny_tool_authorization",
+            "authorizationId": "auth-2",
+            "reason": "not approved"
+        }))
+        .unwrap();
+        assert!(matches!(
+            deny,
+            RpcCommand::DenyToolAuthorization {
+                authorization_id,
+                reason,
+                ..
+            } if authorization_id == "auth-2" && reason.as_deref() == Some("not approved")
+        ));
     }
 
     #[test]

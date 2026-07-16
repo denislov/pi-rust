@@ -225,6 +225,8 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
                 "AgentMessage",
                 "AgentResources",
                 "AgentStream",
+                "BeforeToolCallContext",
+                "BeforeToolCallResult",
                 "CompactionConfig",
                 "CompactionSettings",
                 "ProviderRequestSnapshot",

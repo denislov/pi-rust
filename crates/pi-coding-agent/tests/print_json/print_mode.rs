@@ -8,6 +8,7 @@ use pi_coding_agent::api::cli::command::CliError;
 use pi_coding_agent::api::cli::print::{PrintModeOptions, run_print_mode};
 use pi_coding_agent::api::cli::runtime::PromptInvocation;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use support::ProviderGuard;
 
 fn faux_model(api: &str) -> Model {
@@ -57,6 +58,25 @@ fn echo_tool() -> AgentTool {
                 text_signature: None,
             }];
             Box::pin(async move { Ok(AgentToolOutput::new(result)) })
+        }),
+    }
+}
+
+fn mutation_tool(executions: Arc<AtomicUsize>) -> AgentTool {
+    AgentTool {
+        name: "mutate_external_state".into(),
+        description: "mutates external state".into(),
+        parameters: serde_json::json!({"type": "object"}),
+        execution_mode: None,
+        execute: Arc::new(move |_context, _args, _on_update| {
+            let executions = executions.clone();
+            Box::pin(async move {
+                executions.fetch_add(1, Ordering::SeqCst);
+                Ok(AgentToolOutput::new(vec![ContentBlock::Text {
+                    text: "mutated".into(),
+                    text_signature: None,
+                }]))
+            })
         }),
     }
 }
@@ -215,4 +235,60 @@ async fn supports_tool_call_loop_with_injected_tool() {
     .unwrap();
 
     assert_eq!(output, "Tool completed");
+}
+
+#[tokio::test]
+async fn print_mode_denies_unknown_mutation_without_waiting_or_executing() {
+    let api = "pi-coding-print-tool-authorization-deny";
+    let _provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![FauxResponse {
+                    text_deltas: vec![],
+                    thinking_deltas: vec![],
+                    tool_calls: vec![FauxToolCall {
+                        id: "tool_mutate".into(),
+                        name: "mutate_external_state".into(),
+                        deltas: vec!["{}".into()],
+                        final_arguments: serde_json::json!({}),
+                    }],
+                }],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxCall {
+                responses: vec![text_response("Mutation was denied; continuing safely")],
+                stop_reason: StopReason::Stop,
+            },
+        ])),
+    );
+    let executions = Arc::new(AtomicUsize::new(0));
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        run_print_mode(PrintModeOptions {
+            prompt: "mutate".into(),
+            model: faux_model(api),
+            api_key: None,
+            system_prompt: None,
+            max_turns: Some(5),
+            tools: vec![mutation_tool(executions.clone())],
+            register_builtins: false,
+            ai_client: Some(_provider_guard.ai_client()),
+            session: None,
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: pi_agent_core::api::resources::AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text("mutate".into()),
+        }),
+    )
+    .await
+    .expect("print mode must not wait for interactive authorization")
+    .unwrap();
+
+    assert_eq!(output, "Mutation was denied; continuing safely");
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
 }

@@ -1,6 +1,7 @@
 use crate::app::bootstrap::{SessionMode, SessionRunOptions};
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
+use crate::authorization::ToolAuthorizationMode;
 use crate::runtime::facade::{
     CodingAgentSession, CodingAgentSessionHydration, CodingAgentSessionOptions,
     CodingAgentSessionTree, CodingSessionError, ProfileId,
@@ -109,13 +110,16 @@ pub(crate) async fn open_new_runtime_session(
             CodingAgentSession::create(
                 CodingAgentSessionOptions::new()
                     .with_cwd(options.cwd.clone())
-                    .with_session_log_root(session_root),
+                    .with_session_log_root(session_root)
+                    .with_tool_authorization_mode(ToolAuthorizationMode::Interactive),
             )
             .await
         }
         None => {
             CodingAgentSession::non_persistent(
-                CodingAgentSessionOptions::new().with_cwd(options.cwd.clone()),
+                CodingAgentSessionOptions::new()
+                    .with_cwd(options.cwd.clone())
+                    .with_tool_authorization_mode(ToolAuthorizationMode::Interactive),
             )
             .await
         }
@@ -130,7 +134,8 @@ pub(crate) async fn open_interactive_session(
     let Some(session_options) = session_options else {
         return Ok(CodingAgentSession::non_persistent(
             CodingAgentSessionOptions::new()
-                .with_default_agent_profile_id(default_agent_profile_id),
+                .with_default_agent_profile_id(default_agent_profile_id)
+                .with_tool_authorization_mode(ToolAuthorizationMode::Interactive),
         )
         .await?);
     };
@@ -138,7 +143,8 @@ pub(crate) async fn open_interactive_session(
         return Ok(CodingAgentSession::non_persistent(
             CodingAgentSessionOptions::new()
                 .with_cwd(session_options.cwd.clone())
-                .with_default_agent_profile_id(default_agent_profile_id),
+                .with_default_agent_profile_id(default_agent_profile_id)
+                .with_tool_authorization_mode(ToolAuthorizationMode::Interactive),
         )
         .await?);
     }
@@ -147,7 +153,8 @@ pub(crate) async fn open_interactive_session(
     let options = CodingAgentSessionOptions::new()
         .with_cwd(session_options.cwd.clone())
         .with_session_log_root(session_root)
-        .with_default_agent_profile_id(default_agent_profile_id);
+        .with_default_agent_profile_id(default_agent_profile_id)
+        .with_tool_authorization_mode(ToolAuthorizationMode::Interactive);
     match target.unwrap_or(&ResolvedSessionTarget::New) {
         ResolvedSessionTarget::New => Ok(CodingAgentSession::create(options).await?),
         ResolvedSessionTarget::OpenOrCreateId(session_id) => Ok(

@@ -135,6 +135,10 @@ The second and third columns are the stable typed public family and kind identit
 | `Diagnostic` | `diagnostic` | `diagnostic` |
 | `CapabilityChanged` | `capability` | `changed` |
 | `SessionWriteFailed` | `session` | `write_failed` |
+| `ToolCallAuthorizationRequired` | `tool` | `authorization_required` |
+| `ToolCallAuthorizationApproved` | `tool` | `authorization_approved` |
+| `ToolCallAuthorizationDenied` | `tool` | `authorization_denied` |
+| `ToolCallAuthorizationCancelled` | `tool` | `authorization_cancelled` |
 <!-- product-event-inventory:end -->
 
 The first column is a normalized owner-event name, not a Rust enum layout. The

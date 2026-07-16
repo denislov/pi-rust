@@ -764,6 +764,7 @@ fn handle_input_event<T: Terminal>(
         agent_invocation_request,
         agent_team_request,
         delegation_confirmation_command,
+        tool_authorization_decision,
         self_healing_edit_request,
         plugin_command_request,
         plugin_ui_dialog,
@@ -815,6 +816,11 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
+        let tool_authorization_decision = if action == InteractiveAction::ToolAuthorization {
+            root.take_pending_tool_authorization_decision()
+        } else {
+            None
+        };
         let self_healing_edit_request = if action == InteractiveAction::SelfHealingEdit {
             root.take_pending_self_healing_edit_request()
         } else {
@@ -851,6 +857,7 @@ fn handle_input_event<T: Terminal>(
             agent_invocation_request,
             agent_team_request,
             delegation_confirmation_command,
+            tool_authorization_decision,
             self_healing_edit_request,
             plugin_command_request,
             plugin_ui_dialog,
@@ -1045,6 +1052,22 @@ fn handle_input_event<T: Terminal>(
         InteractiveAction::AbortRunning => {
             if let Some(task) = running.as_mut() {
                 task.abort_once();
+            }
+            Ok(LoopControl::Continue(RenderRequest::FORCE))
+        }
+        InteractiveAction::ToolAuthorization => {
+            let Some((request, decision)) = tool_authorization_decision else {
+                return Ok(LoopControl::Continue(render_request));
+            };
+            let accepted = running.as_ref().is_some_and(|task| {
+                task.decide_tool_authorization(request.authorization_id.clone(), decision)
+            });
+            if !accepted {
+                let root = root_mut(tui, root_id)?;
+                root.restore_tool_authorization(request);
+                root.transcript.push(TranscriptItem::system(
+                    "Tool authorization decision could not be delivered to the active operation.",
+                ));
             }
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
@@ -2214,9 +2237,13 @@ fn ui_event_updates_visible_block(event: &UiEvent) -> bool {
             | UiEvent::ToolStarted { .. }
             | UiEvent::ToolFinished { .. }
             | UiEvent::ToolUpdated { .. }
+            | UiEvent::ToolAuthorizationRequired { .. }
+            | UiEvent::ToolAuthorizationResolved { .. }
             | UiEvent::AgentError { .. }
             | UiEvent::SystemNotice { .. }
             | UiEvent::DelegationBlock { .. }
+            | UiEvent::DelegationConfirmationRequired { .. }
+            | UiEvent::DelegationConfirmationResolved { .. }
             | UiEvent::CompactionNotice { .. }
     )
 }
@@ -2659,6 +2686,7 @@ mod tests {
             },
             capabilities(),
             None,
+            Vec::new(),
             Vec::new(),
         )
     }

@@ -29,6 +29,7 @@ use crate::operations::delegation::delegation_tools;
 use crate::operations::prompt::context::{CodingDiagnostic, RuntimeSnapshot};
 use crate::runtime::capability::{ModelCapability, OperationCapabilitySnapshot};
 use crate::runtime::facade::CodingSessionError;
+use crate::services::authorization::{AuthorizationHookContext, ToolAuthorizationInventory};
 use crate::services::plugin::PluginService;
 use crate::session::event::PersistedContentBlock;
 use crate::session::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
@@ -142,6 +143,16 @@ impl RuntimeService {
         plugin_service: &PluginService,
         snapshot: &OperationCapabilitySnapshot,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
+        self.build_agent_runtime_with_authorization(runtime, plugin_service, snapshot, None)
+    }
+
+    pub(crate) fn build_agent_runtime_with_authorization(
+        &self,
+        runtime: &RuntimeSnapshot,
+        plugin_service: &PluginService,
+        snapshot: &OperationCapabilitySnapshot,
+        authorization: Option<AuthorizationHookContext>,
+    ) -> Result<AgentRuntimeBuild, CodingSessionError> {
         let model_capability =
             ModelCapability::require(snapshot.model.as_ref(), runtime.profile_id())?;
         let provider_streamer = scoped_provider_streamer_for_runtime(runtime, model_capability)?;
@@ -153,22 +164,20 @@ impl RuntimeService {
             runtime.profile_delegation_policy(),
             runtime.delegation_target_inventory(),
         );
-        let tools = apply_tool_policy(
-            runtime,
-            plugin_service.collect_tools_with_capabilities(&snapshot.plugin),
-            &policy_tools,
-            &mut diagnostics,
-        )
-        .into_iter()
-        .filter(|tool| snapshot.tools.allows(&tool.name))
-        .filter_map(|tool| {
-            crate::tools::bind_builtin_tool_to_capabilities(
-                tool,
-                snapshot.filesystem.as_ref(),
-                snapshot.shell.as_ref(),
-            )
-        })
-        .collect::<Vec<_>>();
+        let plugin_tools = plugin_service.collect_tools_with_capabilities(&snapshot.plugin);
+        let authorization_inventory =
+            ToolAuthorizationInventory::new(&plugin_tools, runtime.tools());
+        let tools = apply_tool_policy(runtime, plugin_tools, &policy_tools, &mut diagnostics)
+            .into_iter()
+            .filter(|tool| snapshot.tools.allows(&tool.name))
+            .filter_map(|tool| {
+                crate::tools::bind_builtin_tool_to_capabilities(
+                    tool,
+                    snapshot.filesystem.as_ref(),
+                    snapshot.shell.as_ref(),
+                )
+            })
+            .collect::<Vec<_>>();
         #[cfg(test)]
         let tool_names = tools
             .iter()
@@ -197,6 +206,22 @@ impl RuntimeService {
         }
         config.provider_streamer = Some(provider_streamer);
         config.tool_execution_scope = Some(snapshot.operation_id.clone());
+        if let Some(authorization) = authorization {
+            let service = authorization.service;
+            let turn_id = authorization.turn_id;
+            let capability_snapshot = authorization.capability_snapshot;
+            config.hooks.before_tool_call = Some(Arc::new(move |context| {
+                let service = service.clone();
+                let turn_id = turn_id.clone();
+                let capability_snapshot = capability_snapshot.clone();
+                let inventory = authorization_inventory.clone();
+                Box::pin(async move {
+                    service
+                        .authorize(context, turn_id, capability_snapshot, inventory)
+                        .await
+                })
+            }));
+        }
 
         let agent = Agent::new(config);
         for tool in tools.into_iter().chain(policy_tools) {

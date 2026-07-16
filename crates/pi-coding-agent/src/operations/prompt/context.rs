@@ -28,6 +28,7 @@ use crate::profiles::{AgentProfile, DelegationPolicy, ProfileId, ProfileKind, Pr
 use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::control::PromptControlReceiver;
 use crate::runtime::facade::CodingSessionError;
+use crate::services::authorization::{AuthorizationHookContext, AuthorizationService};
 use crate::services::event::{AgentEventMappingContext, EventService, map_agent_event};
 use crate::services::plugin::PluginService;
 use crate::session::event::{
@@ -588,6 +589,7 @@ pub(crate) struct PromptTurnContext {
     prompt_control_receiver: Option<PromptControlReceiver>,
     operation_cancellation: Option<CancellationToken>,
     plugin_service: PluginService,
+    authorization_service: Option<AuthorizationService>,
     tool_session_call_ids: HashMap<String, String>,
     diagnostics: Vec<CodingDiagnostic>,
     requested_abort_reason: Option<String>,
@@ -619,6 +621,7 @@ impl PromptTurnContext {
             prompt_control_receiver: None,
             operation_cancellation: None,
             plugin_service: PluginService::new(),
+            authorization_service: None,
             tool_session_call_ids: HashMap::new(),
             diagnostics: Vec::new(),
             requested_abort_reason: None,
@@ -644,6 +647,20 @@ impl PromptTurnContext {
 
     pub(crate) fn plugin_service(&self) -> &PluginService {
         &self.plugin_service
+    }
+
+    pub(crate) fn set_authorization_service(&mut self, service: AuthorizationService) {
+        self.authorization_service = Some(service);
+    }
+
+    pub(crate) fn authorization_hook_context(&self) -> Option<AuthorizationHookContext> {
+        let service = self.authorization_service.as_ref()?;
+        let capability_snapshot = self.capability_snapshot.as_ref()?;
+        Some(AuthorizationHookContext {
+            service: service.clone(),
+            turn_id: self.turn_id().to_owned(),
+            capability_snapshot: capability_snapshot.clone(),
+        })
     }
 
     pub(crate) fn set_capability_snapshot(&mut self, snapshot: OperationCapabilitySnapshot) {

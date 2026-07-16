@@ -346,6 +346,10 @@ impl Transcript {
                 }))
             }
             UiEvent::UsageUpdate { .. } => TranscriptMutation::none(),
+            UiEvent::ToolAuthorizationRequired { .. }
+            | UiEvent::ToolAuthorizationResolved { .. }
+            | UiEvent::DelegationConfirmationRequired { .. }
+            | UiEvent::DelegationConfirmationResolved { .. } => TranscriptMutation::none(),
         }
     }
 
