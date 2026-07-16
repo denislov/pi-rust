@@ -24,7 +24,8 @@ use crate::session::event::{
 };
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use crate::session::replay::{
-    MessageStatus, SessionRecoverySummary, SessionReplay, ToolCallStatus, TranscriptItem,
+    MessageStatus, ReplayTreeLabel, SessionRecoverySummary, SessionReplay, ToolCallStatus,
+    TranscriptItem, fold_events,
 };
 #[cfg(test)]
 use crate::session::repository::StoreFailurePoint;
@@ -213,10 +214,82 @@ impl SessionService {
 
     fn leaf_tree_view(&self) -> Result<CodingAgentSessionTree, CodingSessionError> {
         let events = self.store.read_events(&self.handle)?;
+        let replay = fold_events(&events);
         Ok(build_leaf_tree(
             &events,
             self.handle.manifest().active_leaf_id.clone(),
+            &replay.tree_labels,
         ))
+    }
+
+    pub(crate) fn set_tree_label(
+        &mut self,
+        entry_id: &str,
+        label: Option<String>,
+        operation_id: &str,
+    ) -> Result<SessionTreeLabelUpdate, CodingSessionError> {
+        let entry_id = normalize_tree_entry_id(entry_id)?;
+        let label = normalize_tree_label(label);
+        let source_events = self.store.read_events(&self.handle)?;
+        if committed_leaf_cutoff(&source_events, &entry_id).is_none() {
+            return Err(CodingSessionError::Session {
+                message: format!("tree entry id not found in session: {entry_id}"),
+            });
+        }
+
+        let session_id = self.session_id().to_owned();
+        let mut ids = SystemIdGenerator;
+        let updated_at = SystemClock.now_rfc3339();
+        let events = vec![
+            SessionEventEnvelope::new(
+                session_id.clone(),
+                ids.next_event_id(),
+                updated_at.clone(),
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::SessionTreeLabel,
+                    runtime_generation: Default::default(),
+                },
+            )
+            .with_operation_id(operation_id),
+            SessionEventEnvelope::new(
+                session_id.clone(),
+                ids.next_event_id(),
+                updated_at.clone(),
+                SessionEventData::SessionTreeLabelUpdated {
+                    entry_id: entry_id.clone(),
+                    label: label.clone(),
+                },
+            )
+            .with_operation_id(operation_id),
+            SessionEventEnvelope::new(
+                session_id.clone(),
+                ids.next_event_id(),
+                updated_at.clone(),
+                SessionEventData::OperationCommitted { new_leaf_id: None },
+            )
+            .with_operation_id(operation_id),
+        ];
+        self.store.append_events(&self.handle, &events)?;
+        if let Err(error) = self.store.update_manifest(
+            &self.handle,
+            ManifestPatch::new().updated_at(updated_at.clone()),
+        ) {
+            return Err(CodingSessionError::PartialCommit {
+                operation_id: operation_id.to_owned(),
+                message: error.to_string(),
+            });
+        }
+        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
+            CodingSessionError::PartialCommit {
+                operation_id: operation_id.to_owned(),
+                message: error.to_string(),
+            }
+        })?;
+        Ok(SessionTreeLabelUpdate {
+            entry_id,
+            label,
+            updated_at,
+        })
     }
 
     pub(crate) fn clone_current(&self) -> Result<Self, CodingSessionError> {
@@ -1043,6 +1116,11 @@ impl SessionService {
                 &source_events[cutoff + 1..],
                 &target_leaf_id,
             );
+            let copied_leaf_ids = committed_leaf_ids(&source_events[..=cutoff]);
+            let tree_label_operations = tree_label_operation_ids_for_entries(
+                &source_events[cutoff + 1..],
+                &copied_leaf_ids,
+            );
             let copied_events = source_events[..=cutoff]
                 .iter()
                 .chain(source_events[cutoff + 1..].iter().filter(|event| {
@@ -1050,7 +1128,7 @@ impl SessionService {
                         event,
                         &target_leaf_id,
                         &branch_summary_operations,
-                    )
+                    ) || should_copy_tree_label_operation(event, &tree_label_operations)
                 }))
                 .filter(|event| should_copy_source_event(event))
                 .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
@@ -1289,6 +1367,45 @@ fn branch_summary_operation_ids_for_target(
         .collect()
 }
 
+fn committed_leaf_ids(events: &[SessionEventEnvelope]) -> HashSet<String> {
+    events
+        .iter()
+        .filter_map(|event| match &event.data {
+            SessionEventData::OperationCommitted {
+                new_leaf_id: Some(leaf_id),
+            } => Some(leaf_id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn tree_label_operation_ids_for_entries(
+    events: &[SessionEventEnvelope],
+    entry_ids: &HashSet<String>,
+) -> HashSet<String> {
+    events
+        .iter()
+        .filter_map(|event| match &event.data {
+            SessionEventData::SessionTreeLabelUpdated { entry_id, .. }
+                if entry_ids.contains(entry_id) =>
+            {
+                event.operation_id.clone()
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn should_copy_tree_label_operation(
+    event: &SessionEventEnvelope,
+    operation_ids: &HashSet<String>,
+) -> bool {
+    event
+        .operation_id
+        .as_ref()
+        .is_some_and(|operation_id| operation_ids.contains(operation_id))
+}
+
 fn should_copy_branch_summary_operation(
     event: &SessionEventEnvelope,
     target_leaf_id: &str,
@@ -1340,9 +1457,17 @@ struct LeafTreeEntry {
     text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionTreeLabelUpdate {
+    pub(crate) entry_id: String,
+    pub(crate) label: Option<String>,
+    pub(crate) updated_at: String,
+}
+
 fn build_leaf_tree(
     events: &[SessionEventEnvelope],
     active_leaf_id: Option<String>,
+    tree_labels: &HashMap<String, ReplayTreeLabel>,
 ) -> CodingAgentSessionTree {
     let mut operation_kinds = HashMap::new();
     let mut operation_inputs = HashMap::new();
@@ -1386,7 +1511,7 @@ fn build_leaf_tree(
     }
 
     CodingAgentSessionTree {
-        tree: leaf_tree(leaves),
+        tree: leaf_tree(leaves, tree_labels),
         active_leaf_id,
     }
 }
@@ -1404,7 +1529,10 @@ fn text_from_persisted_content(content: &[PersistedContentBlock]) -> String {
         .join("\n")
 }
 
-fn leaf_tree(leaves: Vec<LeafTreeEntry>) -> Vec<SessionTreeNode> {
+fn leaf_tree(
+    leaves: Vec<LeafTreeEntry>,
+    tree_labels: &HashMap<String, ReplayTreeLabel>,
+) -> Vec<SessionTreeNode> {
     let known_leaf_ids = leaves
         .iter()
         .map(|leaf| leaf.leaf_id.clone())
@@ -1423,12 +1551,13 @@ fn leaf_tree(leaves: Vec<LeafTreeEntry>) -> Vec<SessionTreeNode> {
             .or_default()
             .push(leaf);
     }
-    build_leaf_children(None, &mut children_by_parent)
+    build_leaf_children(None, &mut children_by_parent, tree_labels)
 }
 
 fn build_leaf_children(
     parent_leaf_id: Option<&str>,
     children_by_parent: &mut HashMap<Option<String>, Vec<LeafTreeEntry>>,
+    tree_labels: &HashMap<String, ReplayTreeLabel>,
 ) -> Vec<SessionTreeNode> {
     let key = parent_leaf_id.map(str::to_owned);
     let leaves = children_by_parent.remove(&key).unwrap_or_default();
@@ -1436,6 +1565,7 @@ fn build_leaf_children(
         .into_iter()
         .map(|leaf| {
             let leaf_id = leaf.leaf_id.clone();
+            let label = tree_labels.get(&leaf_id);
             let mut node = SessionTreeNode {
                 entry: SessionEntry::message(
                     leaf.leaf_id,
@@ -1450,13 +1580,32 @@ fn build_leaf_children(
                     },
                 ),
                 children: Vec::new(),
-                label: None,
-                label_timestamp: None,
+                label: label.and_then(|label| label.label.clone()),
+                label_timestamp: label
+                    .filter(|label| label.label.is_some())
+                    .map(|label| label.updated_at.clone()),
             };
-            node.children = build_leaf_children(Some(&leaf_id), children_by_parent);
+            node.children = build_leaf_children(Some(&leaf_id), children_by_parent, tree_labels);
             node
         })
         .collect()
+}
+
+fn normalize_tree_entry_id(value: &str) -> Result<String, CodingSessionError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(CodingSessionError::Input {
+            message: "tree entry id must not be empty".into(),
+        });
+    }
+    Ok(trimmed.to_owned())
+}
+
+fn normalize_tree_label(label: Option<String>) -> Option<String> {
+    label.and_then(|label| {
+        let label = label.trim();
+        (!label.is_empty()).then(|| label.to_owned())
+    })
 }
 
 fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessionTranscriptItem {
@@ -2561,6 +2710,127 @@ mod tests {
         assert_eq!(
             service.store.read_events(&service.handle).unwrap(),
             before_events
+        );
+    }
+
+    #[test]
+    fn tree_label_set_clear_and_reopen_use_durable_owner_timestamp() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_tree_label")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let leaf_id = record_prompt(&mut service, "label this prompt");
+
+        let set = service
+            .set_tree_label(&leaf_id, Some("  checkpoint  ".into()), "op_label_set")
+            .unwrap();
+
+        assert_eq!(set.entry_id, leaf_id);
+        assert_eq!(set.label.as_deref(), Some("checkpoint"));
+        let tree = SessionService::tree_view(&options).unwrap();
+        assert_eq!(tree.tree[0].label.as_deref(), Some("checkpoint"));
+        assert_eq!(
+            tree.tree[0].label_timestamp.as_deref(),
+            Some(set.updated_at.as_str())
+        );
+        let replay = service.replay().unwrap();
+        assert_eq!(
+            replay.tree_labels.get(&leaf_id),
+            Some(&ReplayTreeLabel {
+                label: Some("checkpoint".into()),
+                updated_at: set.updated_at.clone(),
+            })
+        );
+
+        drop(service);
+        let mut reopened = SessionService::open(&options).unwrap();
+        let reopened_tree = reopened.leaf_tree_view().unwrap();
+        assert_eq!(reopened_tree.tree[0].label.as_deref(), Some("checkpoint"));
+        assert_eq!(
+            reopened_tree.tree[0].label_timestamp.as_deref(),
+            Some(set.updated_at.as_str())
+        );
+
+        let cleared = reopened
+            .set_tree_label(&leaf_id, Some("   ".into()), "op_label_clear")
+            .unwrap();
+        assert_eq!(cleared.label, None);
+        let cleared_tree = reopened.leaf_tree_view().unwrap();
+        assert_eq!(cleared_tree.tree[0].label, None);
+        assert_eq!(cleared_tree.tree[0].label_timestamp, None);
+        assert_eq!(
+            reopened.replay().unwrap().tree_labels.get(&leaf_id),
+            Some(&ReplayTreeLabel {
+                label: None,
+                updated_at: cleared.updated_at,
+            })
+        );
+    }
+
+    #[test]
+    fn tree_label_rejects_unknown_entry_without_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_tree_label_unknown")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        record_prompt(&mut service, "known prompt");
+        let before_events = service.store.read_events(&service.handle).unwrap();
+
+        let error = service
+            .set_tree_label(
+                "leaf_missing",
+                Some("should not persist".into()),
+                "op_label_missing",
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code(), "session");
+        assert_eq!(
+            error.to_string(),
+            "session error: tree entry id not found in session: leaf_missing"
+        );
+        assert_eq!(
+            service.store.read_events(&service.handle).unwrap(),
+            before_events
+        );
+        assert!(service.replay().unwrap().tree_labels.is_empty());
+    }
+
+    #[test]
+    fn session_copy_preserves_post_commit_labels_for_copied_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_tree_label_copy")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let leaf_id = record_prompt(&mut service, "copy labeled prompt");
+        let update = service
+            .set_tree_label(&leaf_id, Some("copied label".into()), "op_label_copy")
+            .unwrap();
+
+        let copied = service.clone_current().unwrap();
+        let copied_tree = copied.leaf_tree_view().unwrap();
+
+        assert_eq!(copied_tree.tree[0].entry.id, leaf_id);
+        assert_eq!(copied_tree.tree[0].label.as_deref(), Some("copied label"));
+        assert_eq!(
+            copied_tree.tree[0].label_timestamp.as_deref(),
+            Some(update.updated_at.as_str())
+        );
+        assert_eq!(
+            copied
+                .store
+                .read_events(&copied.handle)
+                .unwrap()
+                .iter()
+                .filter(|event| matches!(
+                    event.data,
+                    SessionEventData::SessionTreeLabelUpdated { .. }
+                ))
+                .count(),
+            1
         );
     }
 

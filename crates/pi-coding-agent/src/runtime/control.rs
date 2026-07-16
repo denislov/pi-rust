@@ -28,6 +28,7 @@ pub(crate) enum OperationKind {
     Export,
     ForkSession,
     SwitchActiveLeaf,
+    SetSessionTreeLabel,
     SetDefaultAgentProfile,
     #[allow(dead_code)]
     SelfHealingEdit,
@@ -47,6 +48,7 @@ impl OperationKind {
             Self::Export => "export",
             Self::ForkSession => "fork_session",
             Self::SwitchActiveLeaf => "switch_active_leaf",
+            Self::SetSessionTreeLabel => "set_session_tree_label",
             Self::SetDefaultAgentProfile => "set_default_agent_profile",
             Self::SelfHealingEdit => "self_healing_edit",
         }
@@ -60,6 +62,7 @@ impl OperationKind {
             | Self::BranchSummary
             | Self::ForkSession
             | Self::SwitchActiveLeaf
+            | Self::SetSessionTreeLabel
             | Self::SelfHealingEdit => OperationClass::SessionWriteRoot,
             Self::PluginLoad | Self::SetDefaultAgentProfile => OperationClass::RuntimeWrite,
             Self::PluginCommand

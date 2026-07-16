@@ -44,6 +44,10 @@ pub(crate) enum Operation {
     SwitchActiveLeaf {
         target_leaf_id: String,
     },
+    SetSessionTreeLabel {
+        entry_id: String,
+        label: Option<String>,
+    },
     SetDefaultAgentProfile {
         profile_id: ProfileId,
     },
@@ -67,6 +71,7 @@ impl Operation {
             | Self::RejectDelegationConfirmation { .. }
             | Self::ForkSession { .. }
             | Self::SwitchActiveLeaf { .. }
+            | Self::SetSessionTreeLabel { .. }
             | Self::SetDefaultAgentProfile { .. }
             | Self::Export(_) => None,
         }
@@ -87,6 +92,7 @@ impl Operation {
             | Self::SelfHealingEdit(_)
             | Self::ForkSession { .. }
             | Self::SwitchActiveLeaf { .. }
+            | Self::SetSessionTreeLabel { .. }
             | Self::SetDefaultAgentProfile { .. } => SessionCapabilityAccess::Write,
         }
     }
@@ -106,6 +112,7 @@ impl Operation {
             | Self::RejectDelegationConfirmation { .. }
             | Self::ForkSession { .. }
             | Self::SwitchActiveLeaf { .. }
+            | Self::SetSessionTreeLabel { .. }
             | Self::SetDefaultAgentProfile { .. }
             | Self::Export(_) => None,
         }
@@ -201,6 +208,12 @@ impl Operation {
             ),
             Self::SwitchActiveLeaf { .. } => OperationMetadata::new(
                 Some(OperationKind::SwitchActiveLeaf),
+                OperationOrigin::ClientRoot,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::SyncMutable,
+            ),
+            Self::SetSessionTreeLabel { .. } => OperationMetadata::new(
+                Some(OperationKind::SetSessionTreeLabel),
                 OperationOrigin::ClientRoot,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::SyncMutable,
@@ -347,6 +360,11 @@ pub(crate) enum OperationOutcome {
     ForkSession,
     #[allow(dead_code)]
     SwitchActiveLeaf,
+    SessionTreeLabelChanged {
+        entry_id: String,
+        label: Option<String>,
+        updated_at: String,
+    },
     Export(ExportOutcome),
 }
 

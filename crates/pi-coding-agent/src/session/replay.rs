@@ -48,11 +48,18 @@ pub(crate) struct SessionReplay {
     pub(crate) cwd: Option<String>,
     pub(crate) active_leaf_id: Option<String>,
     pub(crate) leaves: Vec<ReplayLeaf>,
+    pub(crate) tree_labels: HashMap<String, ReplayTreeLabel>,
     pub(crate) transcript: Vec<TranscriptItem>,
     pub(crate) diagnostics: Vec<ReplayDiagnostic>,
     pub(crate) pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
     pub(crate) usage: ReplayUsageSummary,
     pub(crate) operation_statuses: HashMap<String, OperationReplayStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReplayTreeLabel {
+    pub(crate) label: Option<String>,
+    pub(crate) updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -159,6 +166,7 @@ struct ReplayBuilder {
     active_leaf_id: Option<String>,
     transcript: Vec<TranscriptItem>,
     leaves: Vec<ReplayLeaf>,
+    tree_labels: HashMap<String, ReplayTreeLabel>,
     diagnostics: Vec<ReplayDiagnostic>,
     message_indices: HashMap<String, usize>,
     tool_indices: HashMap<String, usize>,
@@ -198,6 +206,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         cwd: builder.cwd,
         active_leaf_id: builder.active_leaf_id,
         leaves: builder.leaves,
+        tree_labels: builder.tree_labels,
         transcript: builder.transcript,
         diagnostics: builder.diagnostics,
         pending_delegation_confirmations: builder.pending_delegation_confirmations,
@@ -312,6 +321,15 @@ impl ReplayBuilder {
             | SessionEventData::SelfHealingEditRepairAttempted { .. }
             | SessionEventData::SelfHealingEditCompleted { .. }
             | SessionEventData::MetadataUpdated { .. } => {}
+            SessionEventData::SessionTreeLabelUpdated { entry_id, label } => {
+                self.tree_labels.insert(
+                    entry_id.clone(),
+                    ReplayTreeLabel {
+                        label: label.clone(),
+                        updated_at: event.created_at.clone(),
+                    },
+                );
+            }
             SessionEventData::SessionCompactionCompleted {
                 summary,
                 first_kept_message_id,

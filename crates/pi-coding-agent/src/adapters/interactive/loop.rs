@@ -955,10 +955,22 @@ fn handle_input_event<T: Terminal>(
         prompt_context.auth_diagnostics = auth_diagnostics;
     }
 
-    // Tree label persistence for Rust-native sessions is not implemented yet.
-    {
-        let root = root_mut(tui, root_id)?;
-        let _ = root.take_pending_tree_label_change();
+    let tree_label_change = if running.is_none() {
+        root_mut(tui, root_id)?.take_pending_tree_label_change()
+    } else {
+        None
+    };
+    if let Some((entry_id, label)) = tree_label_change {
+        start_tree_label_task(
+            tui,
+            root_id,
+            entry_id,
+            label,
+            prompt_context,
+            running,
+            coding_session,
+        )?;
+        return Ok(LoopControl::Continue(RenderRequest::FORCE));
     }
 
     // Process tree navigation.
@@ -1437,6 +1449,40 @@ fn start_set_default_agent_profile_task<T: Terminal>(
     }
     *running = Some(PromptTask::spawn_set_default_agent_profile(
         session, profile_id,
+    )?);
+    if prompt_context.settings.terminal.show_progress {
+        set_terminal_progress(tui, true)?;
+    }
+    Ok(())
+}
+
+fn start_tree_label_task<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    entry_id: String,
+    label: Option<String>,
+    prompt_context: &PromptContext,
+    running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
+) -> Result<(), CliError> {
+    let is_rust_native = root_mut(tui, root_id)?
+        .active_session
+        .as_ref()
+        .is_some_and(|choice| choice.kind == SessionChoiceKind::RustNative);
+    if !is_rust_native || coding_session.is_none() {
+        root_mut(tui, root_id)?
+            .transcript
+            .push(TranscriptItem::system(
+                "No active Rust-native session for tree label changes.",
+            ));
+        return Ok(());
+    }
+    let session = coding_session
+        .take()
+        .expect("coding session was checked before starting tree label mutation");
+    root_mut(tui, root_id)?.set_status(InteractiveStatus::Running);
+    *running = Some(PromptTask::spawn_session_tree_label(
+        session, entry_id, label,
     )?);
     if prompt_context.settings.terminal.show_progress {
         set_terminal_progress(tui, true)?;
@@ -2311,6 +2357,15 @@ fn finish_prompt<T: Terminal>(
                 }
                 root.set_active_session_choice(choice);
             }
+            *coding_session = Some(result.session);
+        }
+        PromptTaskCompletion::Completed(PromptTaskResult::SessionTreeLabel(result)) => {
+            let notice = match result.label.as_deref() {
+                Some(label) => format!("Tree label updated: {label}"),
+                None => "Tree label cleared".to_string(),
+            };
+            root.apply_tree_label_update(&result.entry_id, result.label, result.updated_at);
+            root.transcript.push(TranscriptItem::system(notice));
             *coding_session = Some(result.session);
         }
         PromptTaskCompletion::Completed(PromptTaskResult::DelegationRejection(result)) => {
@@ -3197,13 +3252,62 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn tree_label_completion_restores_owner_and_reports_durable_result() {
+        let (mut tui, root_id) = test_tui();
+        let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let session_id = session.view().session_id.clone();
+        let mut coding_session = None;
+        let mut session_target = None;
+
+        finish_prompt(
+            &mut tui,
+            root_id,
+            PromptTaskCompletion::Completed(PromptTaskResult::SessionTreeLabel(
+                crate::adapters::interactive::prompt_task::SessionTreeLabelTaskResult {
+                    session,
+                    entry_id: "leaf_1".into(),
+                    label: Some("checkpoint".into()),
+                    updated_at: "2026-07-16T00:00:00Z".into(),
+                },
+            )),
+            &mut coding_session,
+            &mut session_target,
+        )
+        .unwrap();
+
+        assert_eq!(
+            coding_session.as_ref().unwrap().view().session_id,
+            session_id
+        );
+        assert!(
+            root_ref(&tui, root_id)
+                .unwrap()
+                .transcript
+                .items()
+                .iter()
+                .any(|item| matches!(
+                    item,
+                    TranscriptItem::System { text } if text == "Tree label updated: checkpoint"
+                ))
+        );
+    }
+
     #[test]
     fn interactive_loop_restores_owner_and_projects_completion_without_compat_subscription() {
         let source = include_str!("loop.rs");
         let compatibility_subscription = [".", "subscribe()"].concat();
+        let discarded_tree_label_intent =
+            ["let _ = root.take_pending_tree_label_change", "()"].concat();
 
         assert!(!source.contains(&compatibility_subscription));
+        assert!(!source.contains(&discarded_tree_label_intent));
         assert!(source.contains("UiProjection::new()"));
+        assert!(source.contains("let tree_label_change = if running.is_none()"));
+        assert!(source.contains("take_pending_tree_label_change()"));
+        assert!(source.contains("start_tree_label_task("));
         assert!(source.contains("PromptTaskCompletion::Failed(PromptTaskFailure"));
         assert!(source.contains("*coding_session = Some(session);"));
         assert!(source.contains("UiEvent::AgentError"));

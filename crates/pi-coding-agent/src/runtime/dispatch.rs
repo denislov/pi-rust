@@ -49,6 +49,7 @@ impl CodingAgentSession {
             | Operation::AgentTeam(_)
             | Operation::ForkSession { .. }
             | Operation::SwitchActiveLeaf { .. }
+            | Operation::SetSessionTreeLabel { .. }
             | Operation::SetDefaultAgentProfile { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
@@ -137,6 +138,26 @@ impl CodingAgentSession {
                 )?;
                 self.refresh_snapshot_projection();
                 Ok(OperationOutcome::SwitchActiveLeaf)
+            }
+            Operation::SetSessionTreeLabel { entry_id, label } => {
+                SessionWriteCapability::require(
+                    operation_permit
+                        .capability_snapshot()
+                        .session_write
+                        .as_ref(),
+                )?;
+                let update = crate::operations::session_navigation::set_tree_label(
+                    &mut self.persistence,
+                    &entry_id,
+                    label,
+                    &operation_permit.capability_snapshot().operation_id,
+                )?;
+                self.refresh_snapshot_projection();
+                Ok(OperationOutcome::SessionTreeLabelChanged {
+                    entry_id: update.entry_id,
+                    label: update.label,
+                    updated_at: update.updated_at,
+                })
             }
             Operation::SetDefaultAgentProfile { profile_id } => {
                 SessionWriteCapability::require(
@@ -439,6 +460,7 @@ impl CodingAgentSession {
                     | Operation::RejectDelegationConfirmation { .. }
                     | Operation::ForkSession { .. }
                     | Operation::SwitchActiveLeaf { .. }
+                    | Operation::SetSessionTreeLabel { .. }
                     | Operation::SetDefaultAgentProfile { .. } => {
                         Err(IntentRouter::unsupported_dispatch(&admission))
                     }

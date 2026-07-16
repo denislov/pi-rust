@@ -744,6 +744,7 @@ mod tests {
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
+            tree_labels: Default::default(),
             transcript: vec![
                 TranscriptItem::CompactionSummary {
                     summary: "summary of earlier work".into(),

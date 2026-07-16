@@ -388,11 +388,6 @@ fn export_transcript_html(
     std::fs::write(path, html).map_err(|error| error.to_string())
 }
 
-/// Get a current RFC3339 timestamp string for use in label changes etc.
-pub(super) fn current_timestamp() -> String {
-    pi_agent_core::api::transcript::create_timestamp()
-}
-
 fn html_escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for ch in text.chars() {
@@ -440,6 +435,11 @@ fn session_choice_from_rust_native(hydration: &CodingAgentSessionHydration) -> S
 mod tests {
     use super::*;
     use crate::runtime::facade::{CodingAgentSession, CodingAgentSessionOptions};
+    use crate::session::event::{
+        OperationKind, PersistedContentBlock, SessionEventData, SessionEventEnvelope,
+    };
+    use crate::session::repository::{CreateSessionOptions, ManifestPatch, SessionLogStore};
+    use pi_agent_core::api::transcript::TreeFilterMode;
 
     #[tokio::test]
     async fn export_rust_native_choice_uses_session_owned_export() {
@@ -514,5 +514,139 @@ mod tests {
             tree[0].children[0].children[0].entry.id,
             "rust_native_entry_2"
         );
+    }
+
+    #[test]
+    fn labeled_only_filter_consumes_replayed_rust_native_labels() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let session_id = "sess_replayed_labels";
+        let store = SessionLogStore::new(&root);
+        let handle = store
+            .create_session(CreateSessionOptions::new(
+                session_id,
+                "2026-07-16T00:00:00Z",
+            ))
+            .unwrap();
+        let event = |id: &str, operation_id: &str, data: SessionEventData| {
+            SessionEventEnvelope::new(session_id, id, "2026-07-16T00:00:01Z", data)
+                .with_operation_id(operation_id)
+        };
+        store
+            .append_events(
+                &handle,
+                &[
+                    SessionEventEnvelope::new(
+                        session_id,
+                        "evt_created",
+                        "2026-07-16T00:00:00Z",
+                        SessionEventData::SessionCreated { cwd: None },
+                    ),
+                    event(
+                        "evt_prompt_1_started",
+                        "op_prompt_1",
+                        SessionEventData::OperationStarted {
+                            operation: OperationKind::Prompt,
+                            runtime_generation: Default::default(),
+                        },
+                    ),
+                    event(
+                        "evt_prompt_1_input",
+                        "op_prompt_1",
+                        SessionEventData::TurnInputRecorded {
+                            content: vec![PersistedContentBlock::Text {
+                                text: "labeled prompt".into(),
+                            }],
+                        },
+                    ),
+                    event(
+                        "evt_prompt_1_commit",
+                        "op_prompt_1",
+                        SessionEventData::OperationCommitted {
+                            new_leaf_id: Some("leaf_1".into()),
+                        },
+                    ),
+                    event(
+                        "evt_label_started",
+                        "op_label",
+                        SessionEventData::OperationStarted {
+                            operation: OperationKind::SessionTreeLabel,
+                            runtime_generation: Default::default(),
+                        },
+                    ),
+                    event(
+                        "evt_label_updated",
+                        "op_label",
+                        SessionEventData::SessionTreeLabelUpdated {
+                            entry_id: "leaf_1".into(),
+                            label: Some("checkpoint".into()),
+                        },
+                    ),
+                    event(
+                        "evt_label_commit",
+                        "op_label",
+                        SessionEventData::OperationCommitted { new_leaf_id: None },
+                    ),
+                    event(
+                        "evt_prompt_2_started",
+                        "op_prompt_2",
+                        SessionEventData::OperationStarted {
+                            operation: OperationKind::Prompt,
+                            runtime_generation: Default::default(),
+                        },
+                    ),
+                    event(
+                        "evt_prompt_2_input",
+                        "op_prompt_2",
+                        SessionEventData::TurnInputRecorded {
+                            content: vec![PersistedContentBlock::Text {
+                                text: "unlabeled prompt".into(),
+                            }],
+                        },
+                    ),
+                    event(
+                        "evt_prompt_2_commit",
+                        "op_prompt_2",
+                        SessionEventData::OperationCommitted {
+                            new_leaf_id: Some("leaf_2".into()),
+                        },
+                    ),
+                ],
+            )
+            .unwrap();
+        store
+            .update_manifest(
+                &handle,
+                ManifestPatch::new().active_leaf_id(Some("leaf_2".into())),
+            )
+            .unwrap();
+        let choice = SessionChoice {
+            id: session_id.into(),
+            cwd: String::new(),
+            path: root.join(session_id),
+            created_at: "2026-07-16T00:00:00Z".into(),
+            name: None,
+            entry_count: 2,
+            active_leaf_id: Some("leaf_2".into()),
+            kind: SessionChoiceKind::RustNative,
+        };
+
+        let (tree, active_leaf_id) = rust_native_tree_for_choice(&choice).unwrap();
+        assert_eq!(tree[0].label.as_deref(), Some("checkpoint"));
+        assert_eq!(
+            tree[0].label_timestamp.as_deref(),
+            Some("2026-07-16T00:00:01Z")
+        );
+        let selector = crate::adapters::interactive::tree_selector::TreeSelectorState::new(
+            tree,
+            active_leaf_id,
+            TreeFilterMode::LabeledOnly,
+            80,
+        );
+        let rendered = selector.render(80).join("\n");
+
+        assert!(rendered.contains("checkpoint"), "{rendered}");
+        assert!(rendered.contains("labeled prompt"), "{rendered}");
+        assert!(!rendered.contains("unlabeled prompt"), "{rendered}");
     }
 }

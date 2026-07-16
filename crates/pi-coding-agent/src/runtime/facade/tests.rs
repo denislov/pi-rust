@@ -4374,6 +4374,64 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn canonical_tree_label_operation_persists_and_replays() {
+        let api = "coding-session-tree-label-operation";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("answer")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_session_id("sess_tree_label_operation")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
+        let leaf_id = match session
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                api, "label me",
+            )))
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success {
+                leaf_id: Some(leaf_id),
+                ..
+            }) => leaf_id,
+            other => panic!("expected prompt success, got {other:?}"),
+        };
+
+        let outcome = session
+            .run(CodingAgentOperation::SetSessionTreeLabel {
+                entry_id: leaf_id.clone(),
+                label: Some(" checkpoint ".into()),
+            })
+            .await
+            .unwrap();
+        let updated_at = match outcome {
+            CodingAgentOperationOutcome::SessionTreeLabelChanged {
+                entry_id,
+                label,
+                updated_at,
+            } => {
+                assert_eq!(entry_id, leaf_id);
+                assert_eq!(label.as_deref(), Some("checkpoint"));
+                updated_at
+            }
+            other => panic!("expected tree label outcome, got {other:?}"),
+        };
+
+        drop(session);
+        let reopened = CodingAgentSession::open(options.clone()).await.unwrap();
+        let tree = CodingAgentSession::tree_view(options).unwrap();
+        assert_eq!(reopened.view().session_id, "sess_tree_label_operation");
+        assert_eq!(tree.tree[0].label.as_deref(), Some("checkpoint"));
+        assert_eq!(
+            tree.tree[0].label_timestamp.as_deref(),
+            Some(updated_at.as_str())
+        );
+    }
+
+    #[tokio::test]
     async fn canonical_run_preserves_plugin_profile_and_delegation_contracts() {
         let api = "coding-session-canonical-delegation-decision";
         let _provider_guard = crate::test_support::ProviderGuard::register(

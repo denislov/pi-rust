@@ -450,6 +450,7 @@ mod tests {
                 | OperationKind::BranchSummary
                 | OperationKind::ForkSession
                 | OperationKind::SwitchActiveLeaf
+                | OperationKind::SetSessionTreeLabel
                 | OperationKind::SetDefaultAgentProfile
                 | OperationKind::SelfHealingEdit => SessionCapabilityAccess::Write,
                 OperationKind::PluginCommand

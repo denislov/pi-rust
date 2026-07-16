@@ -874,6 +874,18 @@ impl InteractiveRoot {
         self.pending_tree_label_change.take()
     }
 
+    pub(super) fn apply_tree_label_update(
+        &mut self,
+        entry_id: &str,
+        label: Option<String>,
+        updated_at: String,
+    ) {
+        if let Some(selector) = self.tree_selector.as_mut() {
+            let timestamp = label.as_ref().map(|_| updated_at);
+            selector.update_node_label(entry_id, label, timestamp);
+        }
+    }
+
     pub(super) fn take_settings_update(&mut self) -> Option<Settings> {
         self.settings_update.take()
     }

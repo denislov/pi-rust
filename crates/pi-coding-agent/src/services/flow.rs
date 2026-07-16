@@ -580,6 +580,7 @@ mod tests {
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
+            tree_labels: Default::default(),
             transcript: Vec::new(),
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
@@ -1718,6 +1719,7 @@ version = "0.1.0"
             cwd: Some("/workspace/pi-rust".into()),
             active_leaf_id: Some("leaf_1".into()),
             leaves: Vec::new(),
+            tree_labels: Default::default(),
             transcript: vec![TranscriptItem::UserInput {
                 turn_id: "turn_1".into(),
                 text: "hello <flow>".into(),

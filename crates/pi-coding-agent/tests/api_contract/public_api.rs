@@ -542,6 +542,10 @@ fn canonical_operation_runtime_variants_are_public() {
     let _ = CodingAgentOperation::SwitchActiveLeaf {
         target_leaf_id: "leaf_target".into(),
     };
+    let _ = CodingAgentOperation::SetSessionTreeLabel {
+        entry_id: "leaf_target".into(),
+        label: Some("checkpoint".into()),
+    };
     let plugin_load = CodingAgentPluginLoadOutcome {
         loaded_plugin_ids: vec!["sample".into()],
         diagnostics: vec![CodingAgentPluginDiagnostic {
@@ -557,6 +561,11 @@ fn canonical_operation_runtime_variants_are_public() {
     let _ = CodingAgentOperationOutcome::DelegationRejected;
     let _ = CodingAgentOperationOutcome::SessionForked;
     let _ = CodingAgentOperationOutcome::ActiveLeafSwitched;
+    let _ = CodingAgentOperationOutcome::SessionTreeLabelChanged {
+        entry_id: "leaf_target".into(),
+        label: Some("checkpoint".into()),
+        updated_at: "2026-07-16T00:00:00Z".into(),
+    };
 }
 
 #[tokio::test]

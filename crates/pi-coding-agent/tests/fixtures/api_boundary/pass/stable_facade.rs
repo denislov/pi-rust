@@ -10,7 +10,7 @@ fn prompt() -> PromptTurnOptions {
     PromptTurnOptions::new(PromptInvocation::Text("fixture".into()))
 }
 
-fn operations() -> [CodingAgentOperation; 15] {
+fn operations() -> [CodingAgentOperation; 16] {
     [
         CodingAgentOperation::Prompt(prompt()),
         CodingAgentOperation::Compact(prompt()),
@@ -46,6 +46,10 @@ fn operations() -> [CodingAgentOperation; 15] {
         },
         CodingAgentOperation::ForkSession { target_leaf_id: None },
         CodingAgentOperation::SwitchActiveLeaf { target_leaf_id: "leaf".into() },
+        CodingAgentOperation::SetSessionTreeLabel {
+            entry_id: "leaf".into(),
+            label: Some("checkpoint".into()),
+        },
         CodingAgentOperation::ExportCurrent,
         CodingAgentOperation::ExportCurrentHtml("session.html".into()),
     ]
@@ -67,6 +71,11 @@ fn outcomes(outcome: CodingAgentOperationOutcome) {
         | CodingAgentOperationOutcome::DelegationRejected
         | CodingAgentOperationOutcome::SessionForked
         | CodingAgentOperationOutcome::ActiveLeafSwitched => {}
+        CodingAgentOperationOutcome::SessionTreeLabelChanged {
+            entry_id,
+            label,
+            updated_at,
+        } => touch((entry_id, label, updated_at)),
         CodingAgentOperationOutcome::Export(value) => touch(value),
         CodingAgentOperationOutcome::ExportHtml(value) => touch(value),
     }

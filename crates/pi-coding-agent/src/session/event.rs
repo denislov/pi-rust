@@ -120,6 +120,11 @@ pub(crate) enum SessionEventData {
         source_leaf_id: String,
         target_leaf_id: String,
     },
+    #[serde(rename = "session.tree_label.updated")]
+    SessionTreeLabelUpdated {
+        entry_id: String,
+        label: Option<String>,
+    },
     #[serde(rename = "plugin.load.completed")]
     PluginLoadCompleted {
         loaded_plugin_ids: Vec<String>,
@@ -268,6 +273,7 @@ pub(crate) enum OperationKind {
     Export,
     PluginLoad,
     SelfHealingEdit,
+    SessionTreeLabel,
     Other { name: String },
 }
 
@@ -464,6 +470,13 @@ mod tests {
                     target_leaf_id: "leaf_target".into(),
                 },
                 "branch.summary.created",
+            ),
+            (
+                SessionEventData::SessionTreeLabelUpdated {
+                    entry_id: "leaf_target".into(),
+                    label: Some("checkpoint".into()),
+                },
+                "session.tree_label.updated",
             ),
             (
                 SessionEventData::PluginLoadCompleted {

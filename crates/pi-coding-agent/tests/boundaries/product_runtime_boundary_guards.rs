@@ -1158,7 +1158,7 @@ fn session_mutating_operation_owners_require_frozen_write_capability() {
         ("src/operations/self_healing_edit/mod.rs", 1),
         ("src/operations/plugin_load/mod.rs", 1),
         ("src/operations/delegation/execution.rs", 1),
-        ("src/runtime/dispatch.rs", 4),
+        ("src/runtime/dispatch.rs", 5),
     ];
 
     for (relative, expected) in owners {

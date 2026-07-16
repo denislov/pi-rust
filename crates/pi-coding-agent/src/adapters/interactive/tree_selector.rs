@@ -593,11 +593,6 @@ impl TreeSelectorState {
             self.label_input.clear();
             if let Some(eid) = entry_id {
                 let label_value = if label.is_empty() { None } else { Some(label) };
-                self.update_node_label(
-                    &eid,
-                    label_value.clone(),
-                    Some(crate::adapters::interactive::session_actions::current_timestamp()),
-                );
                 return TreeSelectorInput::SaveLabel {
                     entry_id: eid,
                     label: label_value,
@@ -1742,6 +1737,36 @@ mod tests {
             TreeSelectorState::new(tree, Some("u2".into()), TreeFilterMode::LabeledOnly, 80);
         assert_eq!(state.visible_nodes.len(), 1);
         assert_eq!(state.visible_nodes[0].entry_id, "u1");
+    }
+
+    #[test]
+    fn saving_label_emits_intent_without_optimistic_tree_mutation() {
+        let mut state = TreeSelectorState::new(
+            vec![user_node("u1", None, "hello")],
+            Some("u1".into()),
+            TreeFilterMode::Default,
+            80,
+        );
+        state.editing_label = true;
+        state.editing_label_entry_id = Some("u1".into());
+        state.label_input = "checkpoint".into();
+        let kbm = KeybindingsManager::new(
+            crate::adapters::interactive::keybindings::default_keybindings(),
+            Default::default(),
+        );
+        let enter = key_event(Key::Enter, pi_tui::api::input::KeyModifiers::empty());
+
+        let action = state.handle_input(&kbm, &enter);
+
+        assert_eq!(
+            action,
+            TreeSelectorInput::SaveLabel {
+                entry_id: "u1".into(),
+                label: Some("checkpoint".into()),
+            }
+        );
+        assert_eq!(state.tree[0].label, None);
+        assert_eq!(state.tree[0].label_timestamp, None);
     }
 
     #[test]

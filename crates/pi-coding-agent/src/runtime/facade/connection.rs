@@ -155,6 +155,7 @@ fn recovered_runtime_operation_kind(
         SessionKind::Export => Some(RuntimeKind::Export),
         SessionKind::PluginLoad => Some(RuntimeKind::PluginLoad),
         SessionKind::SelfHealingEdit => Some(RuntimeKind::SelfHealingEdit),
+        SessionKind::SessionTreeLabel => Some(RuntimeKind::SetSessionTreeLabel),
         SessionKind::Other { .. } => None,
     }
 }

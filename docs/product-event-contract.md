@@ -167,6 +167,7 @@ terminal events as applicable.
 | `RejectDelegation` | `DelegationRejected` |
 | `ForkSession` | `SessionForked` |
 | `SwitchActiveLeaf` | `ActiveLeafSwitched` |
+| `SetSessionTreeLabel` | `SessionTreeLabelChanged` |
 | `ExportCurrent` | `Export` |
 | `ExportCurrentHtml` | `ExportHtml` |
 <!-- operation-outcome-matrix:end -->

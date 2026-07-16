@@ -45,6 +45,7 @@ impl CodingAgentSession {
             | Operation::AgentTeam(_)
             | Operation::ForkSession { .. }
             | Operation::SwitchActiveLeaf { .. }
+            | Operation::SetSessionTreeLabel { .. }
             | Operation::SetDefaultAgentProfile { .. }
             | Operation::Export(_) => {}
         }

@@ -716,6 +716,7 @@ mod tests {
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
+            tree_labels: Default::default(),
             transcript: Vec::new(),
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
@@ -830,6 +831,7 @@ mod tests {
                     "session.compaction.completed"
                 }
                 SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
+                SessionEventData::SessionTreeLabelUpdated { .. } => "session.tree_label.updated",
                 SessionEventData::PluginLoadCompleted { .. } => "plugin.load.completed",
                 SessionEventData::DelegationFoldedUpdated { .. } => "delegation.folded.updated",
                 SessionEventData::SelfHealingEditStarted { .. } => "self_healing_edit.started",
@@ -1468,6 +1470,7 @@ mod tests {
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
+            tree_labels: Default::default(),
             transcript: vec![
                 TranscriptItem::UserInput {
                     turn_id: "turn_old".into(),

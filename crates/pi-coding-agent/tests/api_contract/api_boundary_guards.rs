@@ -754,6 +754,7 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
         "CodingAgentOperationOutcome::DelegationRejected",
         "CodingAgentOperationOutcome::SessionForked",
         "CodingAgentOperationOutcome::ActiveLeafSwitched",
+        "CodingAgentOperationOutcome::SessionTreeLabelChanged",
         "CodingAgentOperationOutcome::Export(",
         "CodingAgentOperationOutcome::ExportHtml(",
     ] {

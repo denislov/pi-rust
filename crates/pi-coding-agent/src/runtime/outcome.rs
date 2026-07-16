@@ -85,6 +85,10 @@ pub enum CodingAgentOperation {
     SwitchActiveLeaf {
         target_leaf_id: String,
     },
+    SetSessionTreeLabel {
+        entry_id: String,
+        label: Option<String>,
+    },
     ExportCurrent,
     ExportCurrentHtml(PathBuf),
 }
@@ -106,6 +110,11 @@ pub enum CodingAgentOperationOutcome {
     SessionForked,
     /// The requested existing leaf became active.
     ActiveLeafSwitched,
+    SessionTreeLabelChanged {
+        entry_id: String,
+        label: Option<String>,
+        updated_at: String,
+    },
     Export(CodingAgentSessionExport),
     ExportHtml(PathBuf),
 }
@@ -131,6 +140,7 @@ pub(crate) enum OperationOutcomeFamily {
     DelegationRejected,
     SessionForked,
     ActiveLeafSwitched,
+    SessionTreeLabelChanged,
     Export,
     ExportHtml,
 }
@@ -227,6 +237,7 @@ pub(crate) fn product_terminal_operation(
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
+        | OperationKind::SetSessionTreeLabel
         | OperationKind::SetDefaultAgentProfile
         | OperationKind::Export => return None,
     };
@@ -249,6 +260,7 @@ pub(crate) fn product_terminal_operation(
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
+        | OperationKind::SetSessionTreeLabel
         | OperationKind::SetDefaultAgentProfile
         | OperationKind::Export => unreachable!("non-terminal operation kind filtered above"),
     };
@@ -274,6 +286,7 @@ pub(crate) fn terminal_operation_kind(
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
+        | OperationKind::SetSessionTreeLabel
         | OperationKind::SetDefaultAgentProfile
         | OperationKind::Export => None,
     }
@@ -297,6 +310,7 @@ pub(crate) fn recovered_product_terminal_operation(
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
+        | OperationKind::SetSessionTreeLabel
         | OperationKind::SetDefaultAgentProfile => return None,
     };
     Some(CodingAgentProductEventTerminalOperation {
@@ -419,6 +433,14 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
+            Self::SetSessionTreeLabel { .. } => (
+                OperationKind::SetSessionTreeLabel,
+                OperationClass::SessionWriteRoot,
+                OperationDispatchMode::SyncMutable,
+                OperationOutcomeFamily::SessionTreeLabelChanged,
+                OperationTerminalPolicy::OutcomeAcknowledgement,
+                &[][..],
+            ),
             Self::ExportCurrent => (
                 OperationKind::Export,
                 OperationClass::ReadOnly,
@@ -505,6 +527,9 @@ impl CodingAgentOperation {
             Self::SwitchActiveLeaf { target_leaf_id } => {
                 Operation::SwitchActiveLeaf { target_leaf_id }
             }
+            Self::SetSessionTreeLabel { entry_id, label } => {
+                Operation::SetSessionTreeLabel { entry_id, label }
+            }
             Self::ExportCurrent => Operation::Export(ExportOptions::view()),
             Self::ExportCurrentHtml(path) => Operation::Export(ExportOptions::html(path)),
         }
@@ -527,6 +552,15 @@ impl CodingAgentOperationOutcome {
             OperationOutcome::SetDefaultAgentProfile => Self::DefaultAgentProfileChanged,
             OperationOutcome::ForkSession => Self::SessionForked,
             OperationOutcome::SwitchActiveLeaf => Self::ActiveLeafSwitched,
+            OperationOutcome::SessionTreeLabelChanged {
+                entry_id,
+                label,
+                updated_at,
+            } => Self::SessionTreeLabelChanged {
+                entry_id,
+                label,
+                updated_at,
+            },
             OperationOutcome::Export(outcome) => match outcome.path {
                 Some(path) => Self::ExportHtml(path),
                 None => Self::Export(outcome.export),
@@ -581,6 +615,7 @@ mod tests {
         RejectDelegationConfirmation,
         ForkSession,
         SwitchActiveLeaf,
+        SetSessionTreeLabel,
         ExportView,
         ExportHtml,
     }
@@ -600,6 +635,7 @@ mod tests {
         DelegationRejected,
         SessionForked,
         ActiveLeafSwitched,
+        SessionTreeLabelChanged,
         Export,
         ExportHtml,
     }
@@ -625,7 +661,7 @@ mod tests {
         PromptTurnOptions::new(PromptInvocation::Text("contract".into()))
     }
 
-    fn operation_contract_cases() -> [OperationContractCase; 15] {
+    fn operation_contract_cases() -> [OperationContractCase; 16] {
         [
             OperationContractCase {
                 public_variant: "Prompt",
@@ -816,6 +852,19 @@ mod tests {
                 expected_root_evidence: &[],
             },
             OperationContractCase {
+                public_variant: "SetSessionTreeLabel",
+                build_operation: || CodingAgentOperation::SetSessionTreeLabel {
+                    entry_id: "leaf_target".into(),
+                    label: Some("checkpoint".into()),
+                },
+                expected_internal: ExpectedInternalOperationVariant::SetSessionTreeLabel,
+                expected_dispatch: OperationDispatchMode::SyncMutable,
+                expected_outcome: ExpectedPublicOutcomeFamily::SessionTreeLabelChanged,
+                expected_submitted_kind: OperationKind::SetSessionTreeLabel,
+                expected_terminal_policy: OperationTerminalPolicy::OutcomeAcknowledgement,
+                expected_root_evidence: &[],
+            },
+            OperationContractCase {
                 public_variant: "ExportCurrent",
                 build_operation: || CodingAgentOperation::ExportCurrent,
                 expected_internal: ExpectedInternalOperationVariant::ExportView,
@@ -910,7 +959,7 @@ mod tests {
         }
     }
 
-    fn operation_outcome_projection_cases() -> [OutcomeProjectionCase; 15] {
+    fn operation_outcome_projection_cases() -> [OutcomeProjectionCase; 16] {
         [
             OutcomeProjectionCase {
                 internal_outcome: "Prompt",
@@ -980,6 +1029,15 @@ mod tests {
                 expected_outcome: ExpectedPublicOutcomeFamily::ActiveLeafSwitched,
             },
             OutcomeProjectionCase {
+                internal_outcome: "SessionTreeLabelChanged",
+                build_outcome: || OperationOutcome::SessionTreeLabelChanged {
+                    entry_id: "leaf_target".into(),
+                    label: Some("checkpoint".into()),
+                    updated_at: "2026-07-16T00:00:00Z".into(),
+                },
+                expected_outcome: ExpectedPublicOutcomeFamily::SessionTreeLabelChanged,
+            },
+            OutcomeProjectionCase {
                 internal_outcome: "Export(view)",
                 build_outcome: || {
                     OperationOutcome::Export(ExportOutcome {
@@ -1021,6 +1079,9 @@ mod tests {
             Operation::ForkSession { .. } => ExpectedInternalOperationVariant::ForkSession,
             Operation::SwitchActiveLeaf { .. } => {
                 ExpectedInternalOperationVariant::SwitchActiveLeaf
+            }
+            Operation::SetSessionTreeLabel { .. } => {
+                ExpectedInternalOperationVariant::SetSessionTreeLabel
             }
             Operation::SetDefaultAgentProfile { .. } => {
                 ExpectedInternalOperationVariant::SetDefaultAgentProfile
@@ -1070,6 +1131,9 @@ mod tests {
             CodingAgentOperationOutcome::ActiveLeafSwitched => {
                 ExpectedPublicOutcomeFamily::ActiveLeafSwitched
             }
+            CodingAgentOperationOutcome::SessionTreeLabelChanged { .. } => {
+                ExpectedPublicOutcomeFamily::SessionTreeLabelChanged
+            }
             CodingAgentOperationOutcome::Export(_) => ExpectedPublicOutcomeFamily::Export,
             CodingAgentOperationOutcome::ExportHtml(_) => ExpectedPublicOutcomeFamily::ExportHtml,
         }
@@ -1097,6 +1161,9 @@ mod tests {
             ExpectedPublicOutcomeFamily::SessionForked => OperationOutcomeFamily::SessionForked,
             ExpectedPublicOutcomeFamily::ActiveLeafSwitched => {
                 OperationOutcomeFamily::ActiveLeafSwitched
+            }
+            ExpectedPublicOutcomeFamily::SessionTreeLabelChanged => {
+                OperationOutcomeFamily::SessionTreeLabelChanged
             }
             ExpectedPublicOutcomeFamily::Export => OperationOutcomeFamily::Export,
             ExpectedPublicOutcomeFamily::ExportHtml => OperationOutcomeFamily::ExportHtml,
@@ -1133,14 +1200,14 @@ mod tests {
     fn operation_contract_covers_all_public_variants() {
         let cases = operation_contract_cases();
 
-        assert_eq!(cases.len(), 15);
+        assert_eq!(cases.len(), 16);
         assert_eq!(
             cases
                 .iter()
                 .map(|case| case.expected_outcome)
                 .collect::<HashSet<_>>()
                 .len(),
-            15
+            16
         );
         for case in &cases {
             let operation = (case.build_operation)().into_internal(PluginLoadOptions::new());
@@ -1205,10 +1272,10 @@ mod tests {
             }
         }
 
-        assert_eq!(cases.len(), 15);
-        assert_eq!(public_variants.len(), 15);
+        assert_eq!(cases.len(), 16);
+        assert_eq!(public_variants.len(), 16);
         assert_eq!(terminal_associated, 5);
-        assert_eq!(outcome_only, 10);
+        assert_eq!(outcome_only, 11);
     }
 
     #[test]
@@ -1355,7 +1422,7 @@ mod tests {
             .map(|case| case.expected_outcome)
             .collect::<HashSet<_>>();
 
-        assert_eq!(cases.len(), 15);
+        assert_eq!(cases.len(), 16);
         assert_eq!(projection_outcomes, contract_outcomes);
         for case in cases {
             let projected = CodingAgentOperationOutcome::from_internal((case.build_outcome)());

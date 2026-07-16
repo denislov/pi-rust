@@ -605,6 +605,7 @@ fn runtime_generation_for_operation(
             capability_generation: Some(BASELINE_CAPABILITY_GENERATION),
         },
         OperationKind::ManualCompaction
+        | OperationKind::SessionTreeLabel
         | OperationKind::BranchSummary
         | OperationKind::Export
         | OperationKind::SelfHealingEdit
@@ -690,6 +691,7 @@ mod tests {
                     "session.compaction.completed"
                 }
                 SessionEventData::BranchSummaryCreated { .. } => "branch.summary.created",
+                SessionEventData::SessionTreeLabelUpdated { .. } => "session.tree_label.updated",
             })
             .collect()
     }

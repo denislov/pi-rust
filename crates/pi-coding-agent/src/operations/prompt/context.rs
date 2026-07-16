@@ -804,6 +804,7 @@ impl PromptTurnContext {
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
+            tree_labels: Default::default(),
             transcript,
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),

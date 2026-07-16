@@ -3,7 +3,7 @@ use crate::runtime::facade::{
     CodingSessionError,
 };
 use crate::services::session::{ReplayDerivedOwnerState, replay_derived_owner_state};
-use crate::session::service::{SessionPersistence, SessionService};
+use crate::session::service::{SessionPersistence, SessionService, SessionTreeLabelUpdate};
 
 pub(crate) struct ForkTransition {
     pub(crate) session_service: SessionService,
@@ -47,6 +47,20 @@ pub(crate) fn switch_active_leaf(
         });
     };
     session_service.switch_active_leaf(target_leaf_id, operation_id)
+}
+
+pub(crate) fn set_tree_label(
+    persistence: &mut SessionPersistence,
+    entry_id: &str,
+    label: Option<String>,
+    operation_id: &str,
+) -> Result<SessionTreeLabelUpdate, CodingSessionError> {
+    let SessionPersistence::Persistent(session_service) = persistence else {
+        return Err(CodingSessionError::UnsupportedCapability {
+            capability: "session tree labels require a persistent Rust-native session".into(),
+        });
+    };
+    session_service.set_tree_label(entry_id, label, operation_id)
 }
 
 pub(crate) fn hydrate(

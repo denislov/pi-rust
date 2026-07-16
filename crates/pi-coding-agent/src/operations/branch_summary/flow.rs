@@ -386,6 +386,7 @@ impl BranchSummaryContext {
             cwd: self.replay.cwd.clone(),
             active_leaf_id: self.selected_source_leaf_id.clone(),
             leaves: Vec::new(),
+            tree_labels: Default::default(),
             transcript: self.selected_transcript.clone(),
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
@@ -828,6 +829,7 @@ mod tests {
                     transcript_end: 3,
                 },
             ],
+            tree_labels: Default::default(),
             transcript: vec![
                 TranscriptItem::UserInput {
                     turn_id: "turn_root".into(),
@@ -892,6 +894,7 @@ mod tests {
                     transcript_end: 3,
                 },
             ],
+            tree_labels: Default::default(),
             transcript: vec![
                 TranscriptItem::UserInput {
                     turn_id: "turn_root".into(),

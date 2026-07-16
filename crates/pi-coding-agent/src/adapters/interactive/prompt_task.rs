@@ -31,6 +31,7 @@ pub(super) enum PromptTaskResult {
     PluginReload(PluginReloadTaskResult),
     PluginCommand(PluginCommandTaskResult),
     SetDefaultAgentProfile(SetDefaultAgentProfileTaskResult),
+    SessionTreeLabel(SessionTreeLabelTaskResult),
     DelegationRejection(DelegationRejectionTaskResult),
     ForkSession(ForkSessionTaskResult),
 }
@@ -76,6 +77,13 @@ pub(super) struct DelegationApprovalTaskResult {
 
 pub(super) struct SetDefaultAgentProfileTaskResult {
     pub(super) session: CodingAgentSession,
+}
+
+pub(super) struct SessionTreeLabelTaskResult {
+    pub(super) session: CodingAgentSession,
+    pub(super) entry_id: String,
+    pub(super) label: Option<String>,
+    pub(super) updated_at: String,
 }
 
 pub(super) struct DelegationRejectionTaskResult {
@@ -203,6 +211,18 @@ impl PromptTask {
         Ok(Self::spawn_coding_set_default_agent_profile(
             existing_session,
             profile_id,
+        ))
+    }
+
+    pub(super) fn spawn_session_tree_label(
+        existing_session: CodingAgentSession,
+        entry_id: String,
+        label: Option<String>,
+    ) -> Result<Self, CliError> {
+        Ok(Self::spawn_coding_session_tree_label(
+            existing_session,
+            entry_id,
+            label,
         ))
     }
 
@@ -581,6 +601,36 @@ impl PromptTask {
             let result = run_coding_set_default_agent_profile_task(
                 existing_session,
                 profile_id,
+                event_tx,
+                abort_rx,
+            )
+            .await;
+            let _ = done_tx.send(result);
+        });
+
+        Self {
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
+            events: event_rx,
+            done: done_rx,
+            abort_requested: false,
+            events_closed: false,
+        }
+    }
+
+    fn spawn_coding_session_tree_label(
+        existing_session: CodingAgentSession,
+        entry_id: String,
+        label: Option<String>,
+    ) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, abort_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let result = run_coding_session_tree_label_task(
+                existing_session,
+                entry_id,
+                label,
                 event_tx,
                 abort_rx,
             )
@@ -1230,6 +1280,64 @@ async fn run_coding_set_default_agent_profile_task(
 
     complete_owned_task(session, result, |session, ()| {
         PromptTaskResult::SetDefaultAgentProfile(SetDefaultAgentProfileTaskResult { session })
+    })
+}
+
+async fn run_coding_session_tree_label_task(
+    mut session: CodingAgentSession,
+    entry_id: String,
+    label: Option<String>,
+    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    mut abort_rx: oneshot::Receiver<()>,
+) -> PromptTaskCompletion {
+    let result = async {
+        let mut receiver = session.subscribe_product_events();
+        send_ui_snapshot(&event_tx, &session);
+
+        let mut mutation =
+            Box::pin(session.run(CodingAgentOperation::SetSessionTreeLabel { entry_id, label }));
+        let update = loop {
+            tokio::select! {
+                _ = &mut abort_rx => {
+                    break Err(CliError::from(CodingSessionError::Cancelled));
+                }
+                event = receiver.recv() => {
+                    if let Ok(event) = event {
+                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
+                    }
+                }
+                outcome = &mut mutation => {
+                    break outcome
+                        .map_err(CliError::from)
+                        .map(|operation_outcome| match operation_outcome {
+                            CodingAgentOperationOutcome::SessionTreeLabelChanged {
+                                entry_id,
+                                label,
+                                updated_at,
+                            } => (entry_id, label, updated_at),
+                            _ => unreachable!(
+                                "session tree label operation returned a different public outcome"
+                            ),
+                        });
+                }
+            }
+        }?;
+
+        while let Ok(Some(event)) = receiver.try_recv() {
+            let _ = event_tx.send(PromptTaskEvent::Coding(event));
+        }
+
+        Ok(update)
+    }
+    .await;
+
+    complete_owned_task(session, result, |session, (entry_id, label, updated_at)| {
+        PromptTaskResult::SessionTreeLabel(SessionTreeLabelTaskResult {
+            session,
+            entry_id,
+            label,
+            updated_at,
+        })
     })
 }
 
@@ -2056,6 +2164,7 @@ mod tests {
             "run_coding_agent_team_task",
             "run_coding_delegation_approval_task",
             "run_coding_set_default_agent_profile_task",
+            "run_coding_session_tree_label_task",
             "run_coding_delegation_rejection_task",
             "run_coding_compact_task",
             "run_coding_self_healing_edit_task",
