@@ -8,6 +8,7 @@ use crate::adapters::rpc::state::{
 use crate::adapters::rpc::wire::{write_json_line, write_rpc_response};
 use crate::api::operation::{CodingAgentOperation, CodingAgentOperationOutcome};
 use crate::app::bootstrap::PromptInvocation;
+use crate::app::bootstrap::SessionMode;
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::{open_new_runtime_session, runtime_session_root};
@@ -27,6 +28,106 @@ use tokio::io::AsyncWrite;
 use tokio::sync::oneshot;
 
 impl RpcState {
+    pub(super) async fn handle_compact<W>(
+        &mut self,
+        id: Option<String>,
+        custom_instructions: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.has_active_operations() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "compact",
+                    "cannot compact while another operation is running",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+        if !matches!(self.options.session.mode, SessionMode::Enabled) {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "compact",
+                    "manual compaction requires a persistent Rust-native session",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let (mut session, session_root) = self.take_or_open_coding_session().await?;
+        let options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: String::new(),
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            auth_diagnostics: Vec::new(),
+            system_prompt: None,
+            max_turns: None,
+            tools: self.options.tools.clone(),
+            register_builtins: false,
+            ai_client: self.options.ai_client.clone(),
+            session: Some(self.options.session.clone()),
+            session_target: None,
+            session_name: self.session_name.clone(),
+            thinking_level: Some(self.thinking_level),
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: Some(self.effective_prompt_settings()),
+            invocation: PromptInvocation::Compact {
+                custom_instructions,
+            },
+        })
+        .with_mode(PromptTurnMode::Rpc);
+        self.ensure_client_connection(&session)?;
+        self.ensure_session_event_pump(&session);
+        let event_flush = self
+            .session_event_flush
+            .as_ref()
+            .expect("session event pump installed")
+            .clone();
+        let operation = CodingAgentOperation::Compact(options);
+        let (done_tx, done_rx) = oneshot::channel();
+
+        write_rpc_response(writer, RpcResponse::success(id, "compact", None)).await?;
+
+        let shutdown_handle = session.runtime_shutdown_handle();
+        self.active_shutdown_handle.get_or_insert(shutdown_handle);
+        tokio::spawn(async move {
+            let outcome =
+                session
+                    .run(operation)
+                    .await
+                    .map_err(CliError::from)
+                    .map(|operation_outcome| match operation_outcome {
+                        CodingAgentOperationOutcome::Compact(outcome) => outcome,
+                        _ => unreachable!(
+                            "manual compaction operation returned a different public outcome"
+                        ),
+                    });
+            flush_session_product_events(event_flush).await;
+            let _ = done_tx.send(CodingOperationTaskResult {
+                session: Some(session),
+                session_root,
+                outcome: CodingOperationOutcome::Compact(outcome),
+            });
+        });
+
+        self.is_compacting = true;
+        self.foreground = Some(RpcForegroundOperation {
+            done: done_rx,
+            operation_kind: OperationKind::Compact,
+            idempotency_key: None,
+        });
+        Ok(())
+    }
+
     pub(super) async fn handle_prompt<W>(
         &mut self,
         id: Option<String>,
@@ -887,6 +988,9 @@ impl RpcState {
         let Some(running) = self.foreground.take() else {
             return Ok(());
         };
+        if running.operation_kind == OperationKind::Compact {
+            self.is_compacting = false;
+        }
         self.mark_idempotency_complete(running.idempotency_key.as_ref());
         self.drain_session_product_events(writer).await?;
 
@@ -909,6 +1013,18 @@ impl RpcState {
                 } else if outcome.is_ok() {
                     self.active_leaf_id = None;
                     self.active_session_path = None;
+                }
+                outcome.as_ref().map(|_| ()).map_err(Clone::clone)
+            }
+            CodingOperationOutcome::Compact(outcome) => {
+                if let Ok(outcome) = outcome
+                    && let (Some(session_root), Some(session_id)) = (
+                        result.session_root.as_ref(),
+                        prompt_outcome_session_id(outcome),
+                    )
+                {
+                    self.active_leaf_id = prompt_outcome_leaf_id(outcome).map(ToString::to_string);
+                    self.active_session_path = Some(session_root.join(session_id));
                 }
                 outcome.as_ref().map(|_| ()).map_err(Clone::clone)
             }

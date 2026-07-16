@@ -257,6 +257,197 @@ async fn rpc_session_stats_use_persistent_replay_usage_and_tool_facts() {
 }
 
 #[tokio::test]
+async fn rpc_manual_compaction_runs_through_persistent_session_runtime() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-manual-compaction";
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("first response", StopReason::Stop),
+            FauxProvider::text_call("compact summary", StopReason::Stop),
+        ])),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(2048);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let mut session = SessionRunOptions::enabled(cwd);
+    session.session_dir = Some(sessions);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session,
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"prompt-compact\",\"type\":\"prompt\",\"message\":\"retain this history\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "pre-compaction prompt completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+
+    input_writer
+        .write_all(b"{\"id\":\"state-before-compact\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let before = read_rpc_json_matching(&mut lines, "pre-compaction state", |value| {
+        value["id"] == "state-before-compact"
+    })
+    .await;
+    assert_eq!(
+        before["data"]["capabilities"]["compact"]["status"],
+        "available"
+    );
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"compact-1\",\"type\":\"compact\",\"customInstructions\":\"preserve decisions\"}\n",
+        )
+        .await
+        .unwrap();
+    let accepted = read_rpc_json_matching(&mut lines, "compact acceptance", |value| {
+        value["id"] == "compact-1"
+    })
+    .await;
+    assert_eq!(accepted["success"], true, "{accepted}");
+
+    let ended = read_rpc_json_matching(&mut lines, "manual compaction completion", |value| {
+        value["type"] == "compaction_end"
+    })
+    .await;
+    assert_eq!(ended["reason"], "manual");
+    assert_eq!(ended["aborted"], false);
+    assert_eq!(ended["result"]["summary"], "compact summary");
+    assert!(ended["result"]["firstKeptMessageId"].as_str().is_some());
+    assert!(ended["result"]["tokensBefore"].as_u64().is_some());
+
+    input_writer
+        .write_all(b"{\"id\":\"state-after-compact\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let after = read_rpc_json_matching(&mut lines, "post-compaction state", |value| {
+        value["id"] == "state-after-compact"
+    })
+    .await;
+    assert_eq!(after["data"]["isCompacting"], false);
+    assert_eq!(
+        after["data"]["capabilities"]["compact"]["status"],
+        "available"
+    );
+
+    drop(input_writer);
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn rpc_manual_compaction_rejects_non_persistent_sessions() {
+    let api = "pi-coding-rpc-manual-compaction-disabled";
+    let provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let input = b"{\"id\":\"compact-disabled\",\"type\":\"compact\"}\n";
+    let mut output = Vec::new();
+
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ai_client: Some(provider_guard.ai_client()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let response = &parse_lines(&output)[0];
+    assert_eq!(response["success"], false);
+    assert_eq!(
+        response["error"],
+        "manual compaction requires a persistent Rust-native session"
+    );
+}
+
+#[tokio::test]
+async fn rpc_manual_compaction_rejects_while_an_operation_is_running() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-manual-compaction-busy";
+    let release = Arc::new(Notify::new());
+    let opened = Arc::new(AtomicBool::new(false));
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(PausingProvider {
+            release: release.clone(),
+            opened,
+        }),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(2048);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session: SessionRunOptions::enabled(cwd),
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"prompt-busy\",\"type\":\"prompt\",\"message\":\"hold\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "busy prompt start", |value| {
+        value["type"] == "message_update"
+    })
+    .await;
+
+    input_writer
+        .write_all(b"{\"id\":\"compact-busy\",\"type\":\"compact\"}\n")
+        .await
+        .unwrap();
+    let response = read_rpc_json_matching(&mut lines, "busy compact rejection", |value| {
+        value["id"] == "compact-busy"
+    })
+    .await;
+    assert_eq!(response["success"], false);
+    assert_eq!(
+        response["error"],
+        "cannot compact while another operation is running"
+    );
+
+    release.notify_one();
+    drop(input_writer);
+    await_rpc_task_completion(task, &release, "busy compact rpc task").await;
+}
+
+#[tokio::test]
 async fn rpc_lists_and_approves_pending_tool_authorization_before_execution() {
     let api = "pi-coding-rpc-tool-authorization";
     let provider_guard = ProviderGuard::register(
@@ -859,11 +1050,12 @@ async fn rpc_state_reports_capabilities_when_idle() {
             "requires persistent Rust-native session"
         );
     }
+    assert_eq!(capabilities["compact"]["status"], "disabled");
+    assert_eq!(
+        capabilities["compact"]["reason"],
+        "requires persistent Rust-native session"
+    );
     let unsupported = [
-        (
-            "compact",
-            "manual compaction is not connected to the RPC runtime in protocol 2.0",
-        ),
         ("fork", "RPC protocol 2.0 does not expose a fork command"),
         (
             "cloneSession",

@@ -557,17 +557,10 @@ impl RpcState {
                 write_rpc_response(writer, RpcResponse::success(id, "set_follow_up_mode", None))
                     .await
             }
-            RpcCommand::Compact { id, .. } => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(
-                        id,
-                        "compact",
-                        "manual compaction is not available in Rust M5",
-                    ),
-                )
-                .await
-            }
+            RpcCommand::Compact {
+                id,
+                custom_instructions,
+            } => self.handle_compact(id, custom_instructions, writer).await,
             RpcCommand::SetAutoCompaction { id, enabled } => {
                 self.auto_compaction_enabled = enabled;
                 write_rpc_response(

@@ -974,9 +974,7 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             abort: capabilities.abort.into(),
             steer: capabilities.steer.into(),
             follow_up: capabilities.follow_up.into(),
-            compact: rpc_unsupported(
-                "manual compaction is not connected to the RPC runtime in protocol 2.0",
-            ),
+            compact: capabilities.compact.into(),
             fork: rpc_unsupported("RPC protocol 2.0 does not expose a fork command"),
             clone_session: rpc_unsupported(
                 "RPC protocol 2.0 does not expose a cloneSession command",

@@ -87,6 +87,7 @@ pub(super) struct CodingOperationTaskResult {
 
 pub(super) enum CodingOperationOutcome {
     Prompt(Result<PromptTurnOutcome, CliError>),
+    Compact(Result<PromptTurnOutcome, CliError>),
     AgentInvocation(Result<AgentInvocationOutcome, CliError>),
     AgentTeam(Result<AgentTeamOutcome, CliError>),
     DelegationApproval(Result<(), CliError>),
