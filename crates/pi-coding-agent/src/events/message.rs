@@ -1,7 +1,7 @@
 use super::emission::ProductEventDraft;
 use super::{
-    CodingAgentMessageProductEvent, CodingAgentProductEventDurability, CodingAgentProductEventKind,
-    CodingAgentProductEventUsage,
+    CodingAgentImageContent, CodingAgentMessageProductEvent, CodingAgentProductEventDurability,
+    CodingAgentProductEventKind, CodingAgentProductEventUsage,
 };
 use pi_ai::api::conversation::Usage;
 
@@ -29,6 +29,7 @@ pub(crate) enum MessageEvent {
         turn_id: String,
         message_id: Option<String>,
         final_text: String,
+        images: Vec<CodingAgentImageContent>,
         usage: Usage,
     },
 }
@@ -81,6 +82,7 @@ impl MessageEvent {
                 turn_id,
                 message_id,
                 final_text,
+                images,
                 usage,
             } => (
                 CodingAgentMessageProductEvent::Completed {
@@ -88,6 +90,7 @@ impl MessageEvent {
                     turn_id,
                     message_id,
                     final_text,
+                    images,
                     usage: CodingAgentProductEventUsage {
                         input: usage.input,
                         output: usage.output,

@@ -316,6 +316,7 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
             &[
                 "Component",
                 "Editor",
+                "Image",
                 "Loader",
                 "Markdown",
                 "OverlayAnchor",
@@ -379,10 +380,13 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
         (
             "terminal",
             &[
+                "ImageProtocol",
                 "ProcessTerminal",
                 "Terminal",
+                "TerminalCapabilities",
                 "TerminalMode",
                 "TerminalSize",
+                "detect_terminal_capabilities_from_env",
             ],
         ),
         ("testing", &["TerminalOp", "VirtualTerminal"]),

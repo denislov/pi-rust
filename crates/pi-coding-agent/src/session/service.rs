@@ -1681,6 +1681,8 @@ fn coding_transcript_item_from_replay(item: TranscriptItem) -> CodingAgentSessio
         } => CodingAgentSessionTranscriptItem::Assistant {
             id: message_id,
             text: persisted_content_blocks_text(&content),
+            thinking: persisted_content_blocks_thinking(&content),
+            images: persisted_content_blocks_images(&content),
             done: !matches!(status, MessageStatus::Started),
         },
         TranscriptItem::ToolCall {
@@ -1747,17 +1749,45 @@ fn persisted_content_blocks_text(
 ) -> String {
     content
         .iter()
-        .map(|block| match block {
-            crate::session::event::PersistedContentBlock::Text { text } => text.clone(),
-            crate::session::event::PersistedContentBlock::Thinking { thinking, .. } => {
-                thinking.clone()
-            }
-            crate::session::event::PersistedContentBlock::Image { mime_type, .. } => {
-                format!("[image:{mime_type}]")
-            }
+        .filter_map(|block| match block {
+            crate::session::event::PersistedContentBlock::Text { text } => Some(text.clone()),
+            crate::session::event::PersistedContentBlock::Thinking { .. }
+            | crate::session::event::PersistedContentBlock::Image { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn persisted_content_blocks_thinking(
+    content: &[crate::session::event::PersistedContentBlock],
+) -> String {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            crate::session::event::PersistedContentBlock::Thinking { thinking, .. } => {
+                Some(thinking.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn persisted_content_blocks_images(
+    content: &[crate::session::event::PersistedContentBlock],
+) -> Vec<crate::events::CodingAgentImageContent> {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            crate::session::event::PersistedContentBlock::Image { mime_type, data } => {
+                Some(crate::events::CodingAgentImageContent {
+                    mime_type: mime_type.clone(),
+                    data: data.clone(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 impl From<SessionSummary> for CodingAgentSessionSummary {
@@ -1836,6 +1866,44 @@ mod tests {
     use crate::session::event::PersistedContentBlock;
     use crate::session::replay::OperationReplayStatus;
     use crate::session::repository::StoreFailurePoint;
+
+    #[test]
+    fn replay_hydration_keeps_assistant_content_kinds_structured() {
+        let item = coding_transcript_item_from_replay(TranscriptItem::AssistantMessage {
+            message_id: "message-1".into(),
+            content: vec![
+                PersistedContentBlock::Thinking {
+                    thinking: "reasoning".into(),
+                    thinking_signature: None,
+                    redacted: Some(false),
+                },
+                PersistedContentBlock::Text {
+                    text: "answer".into(),
+                },
+                PersistedContentBlock::Image {
+                    mime_type: "image/png".into(),
+                    data: "cG5n".into(),
+                },
+            ],
+            status: MessageStatus::Completed,
+        });
+
+        assert!(matches!(
+            item,
+            CodingAgentSessionTranscriptItem::Assistant {
+                text,
+                thinking,
+                images,
+                done: true,
+                ..
+            } if text == "answer"
+                && thinking == "reasoning"
+                && images == vec![crate::events::CodingAgentImageContent {
+                    mime_type: "image/png".into(),
+                    data: "cG5n".into(),
+                }]
+        ));
+    }
 
     fn authorization_request() -> ToolAuthorizationRequest {
         ToolAuthorizationRequest {

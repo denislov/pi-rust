@@ -150,6 +150,8 @@ pub(crate) enum CodingAgentSessionTranscriptItem {
     Assistant {
         id: String,
         text: String,
+        thinking: String,
+        images: Vec<crate::events::CodingAgentImageContent>,
         done: bool,
     },
     Tool {

@@ -2,9 +2,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use pi_tui::api::component::{CURSOR_MARKER, Component, Text};
+use pi_tui::api::component::{CURSOR_MARKER, Component, Image, Text};
 use pi_tui::api::render::{RenderStrategy, Tui, TuiError};
-use pi_tui::api::terminal::{Terminal, TerminalMode, TerminalSize};
+use pi_tui::api::terminal::{
+    ImageDimensions, ImageProtocol, Terminal, TerminalCapabilities, TerminalMode, TerminalSize,
+};
 use pi_tui::api::testing::{TerminalOp, VirtualTerminal};
 
 struct RawComponent {
@@ -436,6 +438,34 @@ fn kitty_image_cleanup_tracks_latest_rendered_frame() {
         !written.contains("\x1b_Ga=d,d=I,i=42,q=2\x1b\\"),
         "{written:?}"
     );
+}
+
+#[test]
+fn image_component_reserves_its_protocol_reported_rows_before_following_content() {
+    let terminal = VirtualTerminal::new(80, 10);
+    let mut tui = Tui::new(terminal);
+    tui.add_child(Box::new(
+        Image::new("payload", "image/png")
+            .dimensions(ImageDimensions {
+                width_px: 18,
+                height_px: 18,
+            })
+            .max_width_cells(10)
+            .image_id(7)
+            .capabilities(TerminalCapabilities {
+                images: Some(ImageProtocol::Kitty),
+                true_color: true,
+                hyperlinks: true,
+            }),
+    ));
+    tui.add_child(Box::new(Text::new("after image")));
+
+    tui.render_once().unwrap();
+
+    assert_eq!(tui.rendered_lines().len(), 6);
+    assert!(tui.rendered_lines()[0].contains("c=10,r=5,i=7"));
+    assert!(tui.rendered_lines()[1..5].iter().all(String::is_empty));
+    assert!(tui.rendered_lines()[5].contains("after image"));
 }
 
 #[test]

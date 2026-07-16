@@ -6,7 +6,9 @@ use pi_agent_core::api::transcript::create_session_id;
 use pi_tui::api::component::{Component, OverlayAnchor, OverlayMargin, OverlayOptions, SizeValue};
 use pi_tui::api::input::{InputEvent, StdinBuffer, is_key_release};
 use pi_tui::api::render::{RenderScheduler, Tui, TuiError};
-use pi_tui::api::terminal::{Terminal, TerminalMode, TerminalSize};
+use pi_tui::api::terminal::{
+    Terminal, TerminalMode, TerminalSize, detect_terminal_capabilities_from_env,
+};
 
 use crate::adapters::interactive::app::{PromptContext, build_prompt_context, session_label};
 use crate::adapters::interactive::event_bridge::UiProjection;
@@ -357,6 +359,10 @@ fn initialize_started_tui<T: Terminal>(
     {
         let root = root_mut(tui, root_id)?;
         root.set_fullscreen_viewport(fullscreen_viewport);
+        root.set_terminal_capabilities(detect_terminal_capabilities_from_env(
+            std::env::vars(),
+            || false,
+        ));
         root.model_rotation = prompt_context.model_rotation.clone();
         root.session_choices = prompt_context.session_choices.clone();
         root.model = Some(prompt_context.model.clone());
@@ -2344,6 +2350,7 @@ fn ui_event_updates_visible_block(event: &UiEvent) -> bool {
         UiEvent::AssistantDelta { .. }
             | UiEvent::ThinkingDelta { .. }
             | UiEvent::AssistantDone
+            | UiEvent::AssistantImages { .. }
             | UiEvent::ToolStarted { .. }
             | UiEvent::ToolFinished { .. }
             | UiEvent::ToolUpdated { .. }
@@ -3045,6 +3052,7 @@ mod tests {
                     turn_id: "turn_1".to_string(),
                     message_id: Some("msg_1".to_string()),
                     final_text: "hello".to_string(),
+                    images: Vec::new(),
                     usage: Usage::default(),
                 }),
             ),

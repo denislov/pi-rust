@@ -130,12 +130,19 @@ impl CodingProtocolEventAdapter {
             }
             CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Completed {
                 final_text,
+                images,
                 ..
             }) => {
                 let mut message = self.ensure_assistant();
                 if message.content.is_empty() && !final_text.is_empty() {
                     message.content = text_content(final_text);
                 }
+                message
+                    .content
+                    .extend(images.iter().map(|image| ContentBlock::Image {
+                        data: image.data.clone(),
+                        mime_type: image.mime_type.clone(),
+                    }));
                 let mut events = Vec::new();
                 if !self.assistant_open {
                     self.assistant_open = true;
@@ -1063,8 +1070,11 @@ fn stored_error_assistant(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::CodingAgentImageContent;
+    use crate::events::message::MessageEvent;
     use crate::events::recovery::RecoveryEvent;
     use crate::runtime::facade::{ProductEvent, ProductEventSequence};
+    use pi_ai::api::conversation::Usage;
 
     #[test]
     fn protocol_adapter_maps_operation_recovered_to_recovery_event() {
@@ -1117,5 +1127,42 @@ mod tests {
                 .push_internal_product_event(&product_event)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn protocol_adapter_retains_completed_assistant_images() {
+        let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+            "faux".into(),
+            "faux-provider".into(),
+            "faux-model".into(),
+        );
+        let product_event = ProductEvent::from_draft_for_tests(
+            ProductEventSequence::new(1),
+            MessageEvent::Completed {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                final_text: "caption".into(),
+                images: vec![CodingAgentImageContent {
+                    mime_type: "image/png".into(),
+                    data: "cG5n".into(),
+                }],
+                usage: Usage::default(),
+            }
+            .into_product_draft(),
+            None,
+        );
+
+        adapter.push_internal_product_event(&product_event);
+
+        assert!(adapter.current_assistant.as_ref().is_some_and(|message| {
+            message.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::Image { mime_type, data }
+                        if mime_type == "image/png" && data == "cG5n"
+                )
+            })
+        }));
     }
 }

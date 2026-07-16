@@ -365,8 +365,16 @@ pub enum CodingAgentMessageProductEvent {
         turn_id: String,
         message_id: Option<String>,
         final_text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<CodingAgentImageContent>,
         usage: CodingAgentProductEventUsage,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CodingAgentImageContent {
+    pub mime_type: String,
+    pub data: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -1462,6 +1470,7 @@ mod tests {
                 turn_id: "turn".into(),
                 message_id: Some("message".into()),
                 final_text: "done".into(),
+                images: Vec::new(),
                 usage,
             },
         ]
@@ -1691,6 +1700,45 @@ mod tests {
             serde_json::to_string(&CodingAgentProductEventDurability::LiveOnly).unwrap(),
             "{\"state\":\"live_only\"}"
         );
+    }
+
+    #[test]
+    fn completed_message_serializes_images_and_omits_an_empty_inventory() {
+        let usage = CodingAgentProductEventUsage {
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+            input_cost: 0.0,
+            output_cost: 0.0,
+            cache_read_cost: 0.0,
+            cache_write_cost: 0.0,
+        };
+        let event = CodingAgentMessageProductEvent::Completed {
+            operation_id: "op-1".into(),
+            turn_id: "turn-1".into(),
+            message_id: Some("message-1".into()),
+            final_text: "caption".into(),
+            images: vec![CodingAgentImageContent {
+                mime_type: "image/png".into(),
+                data: "cG5n".into(),
+            }],
+            usage: usage.clone(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["images"][0]["mime_type"], "image/png");
+        assert_eq!(json["images"][0]["data"], "cG5n");
+
+        let empty = CodingAgentMessageProductEvent::Completed {
+            operation_id: "op-1".into(),
+            turn_id: "turn-1".into(),
+            message_id: Some("message-1".into()),
+            final_text: "text only".into(),
+            images: Vec::new(),
+            usage,
+        };
+        assert!(serde_json::to_value(empty).unwrap().get("images").is_none());
     }
 
     #[test]

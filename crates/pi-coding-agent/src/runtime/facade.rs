@@ -11,16 +11,17 @@ mod view;
 pub use crate::events::{
     CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
     CodingAgentDelegationEventContext, CodingAgentDelegationProductEvent,
-    CodingAgentDiagnosticProductEvent, CodingAgentMessageProductEvent, CodingAgentProductEvent,
-    CodingAgentProductEventCapabilityRevocation, CodingAgentProductEventCheckOutput,
-    CodingAgentProductEventDeliveryClass, CodingAgentProductEventDiagnostic,
-    CodingAgentProductEventDurability, CodingAgentProductEventError, CodingAgentProductEventFamily,
-    CodingAgentProductEventKind, CodingAgentProductEventProfileKind,
-    CodingAgentProductEventReplacement, CodingAgentProductEventTerminalOperation,
-    CodingAgentProductEventTerminalOperationKind, CodingAgentProductEventTerminalStatus,
-    CodingAgentProductEventUsage, CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent,
-    CodingAgentSessionProductEvent, CodingAgentSessionWriteFailureStatus,
-    CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+    CodingAgentDiagnosticProductEvent, CodingAgentImageContent, CodingAgentMessageProductEvent,
+    CodingAgentProductEvent, CodingAgentProductEventCapabilityRevocation,
+    CodingAgentProductEventCheckOutput, CodingAgentProductEventDeliveryClass,
+    CodingAgentProductEventDiagnostic, CodingAgentProductEventDurability,
+    CodingAgentProductEventError, CodingAgentProductEventFamily, CodingAgentProductEventKind,
+    CodingAgentProductEventProfileKind, CodingAgentProductEventReplacement,
+    CodingAgentProductEventTerminalOperation, CodingAgentProductEventTerminalOperationKind,
+    CodingAgentProductEventTerminalStatus, CodingAgentProductEventUsage,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
+    CodingAgentSessionWriteFailureStatus, CodingAgentTeamProductEvent, CodingAgentToolProductEvent,
+    CodingAgentWorkflowProductEvent,
 };
 #[allow(unused_imports)]
 pub(crate) use crate::events::{ProductEvent, ProductEventSequence};

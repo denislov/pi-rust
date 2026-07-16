@@ -97,7 +97,7 @@ pub(super) fn hydrated_session_from_rust_native(
         transcript_items: hydration
             .transcript
             .into_iter()
-            .map(transcript_item_from_rust_native)
+            .flat_map(transcript_items_from_rust_native)
             .collect(),
         leaf_id: hydration.summary.active_leaf_id,
         cumulative_usage: CumulativeUsage {
@@ -180,6 +180,21 @@ fn rust_native_tree_from_hydrated_session(
                 is_error: *is_error,
                 timestamp: 0,
             },
+            TranscriptItem::Image { mime_type, data } => StoredAgentMessage::Assistant {
+                content: vec![ContentBlock::Image {
+                    data: data.clone(),
+                    mime_type: mime_type.clone(),
+                }],
+                api: "coding-session".to_string(),
+                provider: "coding-session".to_string(),
+                model: "coding-session".to_string(),
+                response_model: None,
+                response_id: None,
+                usage: StoredUsage::default(),
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                timestamp: 0,
+            },
             TranscriptItem::Error { text } => StoredAgentMessage::Custom {
                 custom_type: "error".to_string(),
                 content: vec![ContentBlock::Text {
@@ -229,11 +244,32 @@ fn rust_native_tree_from_hydrated_session(
     (child.into_iter().collect(), current_leaf_id)
 }
 
-fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> TranscriptItem {
-    match item {
+fn transcript_items_from_rust_native(
+    item: CodingAgentSessionTranscriptItem,
+) -> Vec<TranscriptItem> {
+    let item = match item {
         CodingAgentSessionTranscriptItem::User { text } => TranscriptItem::user(text),
-        CodingAgentSessionTranscriptItem::Assistant { id, text, done } => {
-            TranscriptItem::assistant(id, text, done)
+        CodingAgentSessionTranscriptItem::Assistant {
+            id,
+            text,
+            thinking,
+            images,
+            done,
+        } => {
+            let mut items = Vec::with_capacity(1 + images.len());
+            if !text.trim().is_empty() || !thinking.trim().is_empty() {
+                items.push(TranscriptItem::Assistant {
+                    id,
+                    markdown: text,
+                    thinking,
+                    done,
+                });
+            }
+            items.extend(images.into_iter().map(|image| TranscriptItem::Image {
+                mime_type: image.mime_type,
+                data: image.data,
+            }));
+            return items;
         }
         CodingAgentSessionTranscriptItem::Tool {
             call_id,
@@ -255,10 +291,12 @@ fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> T
             TranscriptItem::assistant("branch_summary", summary, true)
         }
         CodingAgentSessionTranscriptItem::Delegation {
+            tool_call_id,
             target_kind,
             target_id,
             task,
             status,
+            child_operation_id,
             summary,
             ..
         } => {
@@ -266,16 +304,23 @@ fn transcript_item_from_rust_native(item: CodingAgentSessionTranscriptItem) -> T
                 crate::runtime::facade::ProfileKind::Agent => "agent",
                 crate::runtime::facade::ProfileKind::Team => "team",
             };
-            let mut text =
-                format!("Delegation: {target_kind} {target_id}\nStatus: {status}\nTask: {task}");
-            if let Some(summary) = summary.filter(|summary| !summary.trim().is_empty()) {
-                text.push_str("\nSummary: ");
-                text.push_str(&summary);
+            TranscriptItem::Tool {
+                call_id: tool_call_id,
+                name: "delegation".into(),
+                args: serde_json::json!({
+                    "targetKind": target_kind,
+                    "targetId": target_id.as_str(),
+                    "task": task,
+                    "status": status,
+                    "childOperationId": child_operation_id,
+                }),
+                result: summary.filter(|summary| !summary.trim().is_empty()),
+                is_error: status == "failed",
             }
-            TranscriptItem::system(text)
         }
         CodingAgentSessionTranscriptItem::Diagnostic { message } => TranscriptItem::system(message),
-    }
+    };
+    vec![item]
 }
 
 pub(super) fn export_path_arg(args: &str) -> Option<String> {
@@ -370,6 +415,11 @@ fn export_transcript_html(
                 html_escape(name),
                 html_escape(result.as_deref().unwrap_or(""))
             )),
+            TranscriptItem::Image { mime_type, data } => body.push_str(&format!(
+                "<section class=\"message assistant image\"><h2>Assistant image</h2><img alt=\"Assistant image\" src=\"data:{};base64,{}\"></section>",
+                html_escape(mime_type),
+                html_escape(data),
+            )),
             TranscriptItem::Error { text } => body.push_str(&format!(
                 "<section class=\"message error\"><h2>Error</h2><pre>{}</pre></section>",
                 html_escape(text)
@@ -381,7 +431,7 @@ fn export_transcript_html(
     let html = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>{}</style></head><body><main><h1>{}</h1>{}</main></body></html>",
         html_escape(session_label),
-        "body{font-family:system-ui,sans-serif;margin:2rem;background:#101010;color:#f4f4f4}main{max-width:900px;margin:auto}.message{border:1px solid #444;padding:1rem;margin:1rem 0;border-radius:6px}pre{white-space:pre-wrap;font-family:ui-monospace,monospace}.user{border-color:#3b82f6}.assistant{border-color:#10b981}.tool{border-color:#a78bfa}.error{border-color:#ef4444;color:#fecaca}",
+        "body{font-family:system-ui,sans-serif;margin:2rem;background:#101010;color:#f4f4f4}main{max-width:900px;margin:auto}.message{border:1px solid #444;padding:1rem;margin:1rem 0;border-radius:6px}pre{white-space:pre-wrap;font-family:ui-monospace,monospace}img{max-width:100%;height:auto}.user{border-color:#3b82f6}.assistant{border-color:#10b981}.tool{border-color:#a78bfa}.error{border-color:#ef4444;color:#fecaca}",
         html_escape(session_label),
         body
     );
@@ -440,6 +490,66 @@ mod tests {
     };
     use crate::session::repository::{CreateSessionOptions, ManifestPatch, SessionLogStore};
     use pi_agent_core::api::transcript::TreeFilterMode;
+
+    #[test]
+    fn hydration_preserves_thinking_images_and_structured_delegation() {
+        let assistant =
+            transcript_items_from_rust_native(CodingAgentSessionTranscriptItem::Assistant {
+                id: "assistant-1".into(),
+                text: "answer".into(),
+                thinking: "reasoning".into(),
+                images: vec![crate::events::CodingAgentImageContent {
+                    mime_type: "image/png".into(),
+                    data: "cG5n".into(),
+                }],
+                done: true,
+            });
+        assert!(matches!(
+            &assistant[0],
+            TranscriptItem::Assistant { markdown, thinking, .. }
+                if markdown == "answer" && thinking == "reasoning"
+        ));
+        assert!(matches!(
+            &assistant[1],
+            TranscriptItem::Image { mime_type, data }
+                if mime_type == "image/png" && data == "cG5n"
+        ));
+
+        let delegation =
+            transcript_items_from_rust_native(CodingAgentSessionTranscriptItem::Delegation {
+                tool_call_id: "call-1".into(),
+                requesting_profile_id: crate::runtime::facade::ProfileId::from("default"),
+                target_kind: crate::runtime::facade::ProfileKind::Agent,
+                target_id: crate::runtime::facade::ProfileId::from("review"),
+                task: "review code".into(),
+                status: "completed".into(),
+                child_operation_id: Some("child-1".into()),
+                summary: Some("looks good".into()),
+            });
+        assert!(matches!(
+            &delegation[0],
+            TranscriptItem::Tool { name, result, .. }
+                if name == "delegation" && result.as_deref() == Some("looks good")
+        ));
+
+        let image_only =
+            transcript_items_from_rust_native(CodingAgentSessionTranscriptItem::Assistant {
+                id: "assistant-image-only".into(),
+                text: String::new(),
+                thinking: String::new(),
+                images: vec![crate::events::CodingAgentImageContent {
+                    mime_type: "image/jpeg".into(),
+                    data: "anBlZw==".into(),
+                }],
+                done: true,
+            });
+        assert_eq!(image_only.len(), 1);
+        assert!(matches!(
+            &image_only[0],
+            TranscriptItem::Image { mime_type, data }
+                if mime_type == "image/jpeg" && data == "anBlZw=="
+        ));
+    }
 
     #[tokio::test]
     async fn export_rust_native_choice_uses_session_owned_export() {

@@ -21,6 +21,10 @@ pub enum TranscriptItem {
         result: Option<String>,
         is_error: bool,
     },
+    Image {
+        mime_type: String,
+        data: String,
+    },
     Error {
         text: String,
     },
@@ -53,7 +57,13 @@ impl TranscriptItem {
     }
 
     pub(super) fn selectable(&self) -> bool {
-        !matches!(self, Self::System { .. })
+        match self {
+            Self::Assistant {
+                markdown, thinking, ..
+            } => !markdown.trim().is_empty() || !thinking.trim().is_empty(),
+            Self::System { .. } => false,
+            _ => true,
+        }
     }
 
     pub(super) fn foldable(&self) -> bool {
@@ -61,6 +71,18 @@ impl TranscriptItem {
             self,
             Self::Assistant { thinking, .. } if !thinking.trim().is_empty()
         ) || matches!(self, Self::Tool { .. })
+    }
+
+    fn has_tool_arguments(&self) -> bool {
+        match self {
+            Self::Tool { args, .. } => match args {
+                serde_json::Value::Null => false,
+                serde_json::Value::Object(object) => !object.is_empty(),
+                serde_json::Value::Array(array) => !array.is_empty(),
+                _ => true,
+            },
+            _ => false,
+        }
     }
 }
 
@@ -92,6 +114,7 @@ pub(super) struct TranscriptViewSnapshot {
     revision: u64,
     selected: Option<TranscriptBlockId>,
     display_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
+    tool_argument_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
 }
 
 impl TranscriptViewSnapshot {
@@ -109,6 +132,17 @@ impl TranscriptViewSnapshot {
             .copied()
             .unwrap_or_else(|| default_display_state(item))
     }
+
+    pub(super) fn tool_argument_state(
+        &self,
+        block_id: TranscriptBlockId,
+        item: &TranscriptItem,
+    ) -> TranscriptDisplayState {
+        self.tool_argument_states
+            .get(&block_id)
+            .copied()
+            .unwrap_or_else(|| default_tool_argument_state(item))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -117,6 +151,7 @@ pub(super) struct TranscriptViewState {
     selected: Option<TranscriptBlockId>,
     last_selectable: Option<TranscriptBlockId>,
     display_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
+    tool_argument_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
     revision: u64,
 }
 
@@ -129,6 +164,7 @@ impl TranscriptViewState {
             self.selected = None;
             self.last_selectable = None;
             self.display_states.clear();
+            self.tool_argument_states.clear();
             changed = true;
         }
 
@@ -153,6 +189,10 @@ impl TranscriptViewState {
         let before_len = self.display_states.len();
         self.display_states.retain(|id, _| visible_ids.contains(id));
         changed |= self.display_states.len() != before_len;
+        let before_len = self.tool_argument_states.len();
+        self.tool_argument_states
+            .retain(|id, _| visible_ids.contains(id));
+        changed |= self.tool_argument_states.len() != before_len;
         if changed {
             self.bump_revision();
         }
@@ -163,6 +203,7 @@ impl TranscriptViewState {
             revision: self.revision,
             selected: self.selected,
             display_states: self.display_states.clone(),
+            tool_argument_states: self.tool_argument_states.clone(),
         }
     }
 
@@ -202,6 +243,32 @@ impl TranscriptViewState {
         true
     }
 
+    pub(super) fn toggle_selected_arguments(&mut self, transcript: &Transcript) -> bool {
+        let Some(selected) = self.selected else {
+            return false;
+        };
+        let Some(item) = transcript.item_for_block(selected) else {
+            return false;
+        };
+        if !item.has_tool_arguments() {
+            return false;
+        }
+        let current = self
+            .tool_argument_states
+            .get(&selected)
+            .copied()
+            .unwrap_or_else(|| default_tool_argument_state(item));
+        self.tool_argument_states.insert(selected, current.next());
+        self.bump_revision();
+        true
+    }
+
+    pub(super) fn selected_has_tool_arguments(&self, transcript: &Transcript) -> bool {
+        self.selected
+            .and_then(|selected| transcript.item_for_block(selected))
+            .is_some_and(TranscriptItem::has_tool_arguments)
+    }
+
     pub(super) fn toggle_all(&mut self, transcript: &Transcript) -> bool {
         let foldable = transcript
             .view_entries()
@@ -211,18 +278,32 @@ impl TranscriptViewState {
             return false;
         }
         let all_expanded = foldable.iter().all(|(id, item)| {
-            self.display_states
+            let body_expanded = self
+                .display_states
                 .get(id)
                 .copied()
                 .unwrap_or_else(|| default_display_state(item))
-                == TranscriptDisplayState::Expanded
+                == TranscriptDisplayState::Expanded;
+            let arguments_expanded = !item.has_tool_arguments()
+                || self
+                    .tool_argument_states
+                    .get(id)
+                    .copied()
+                    .unwrap_or_else(|| default_tool_argument_state(item))
+                    == TranscriptDisplayState::Expanded;
+            body_expanded && arguments_expanded
         });
-        for (id, _) in foldable {
+        for (id, item) in foldable {
             if all_expanded {
                 self.display_states.remove(&id);
+                self.tool_argument_states.remove(&id);
             } else {
                 self.display_states
                     .insert(id, TranscriptDisplayState::Expanded);
+                if item.has_tool_arguments() {
+                    self.tool_argument_states
+                        .insert(id, TranscriptDisplayState::Expanded);
+                }
             }
         }
         self.bump_revision();
@@ -268,6 +349,21 @@ pub(super) fn default_display_state(item: &TranscriptItem) -> TranscriptDisplayS
         TranscriptItem::Tool { is_error: true, .. } => TranscriptDisplayState::Expanded,
         TranscriptItem::Tool { .. } => TranscriptDisplayState::Preview,
         _ => TranscriptDisplayState::Expanded,
+    }
+}
+
+fn default_tool_argument_state(item: &TranscriptItem) -> TranscriptDisplayState {
+    match item {
+        TranscriptItem::Tool { name, .. }
+            if matches!(
+                name.as_str(),
+                "read" | "bash" | "grep" | "find" | "ls" | "write" | "edit" | "delegation"
+            ) =>
+        {
+            TranscriptDisplayState::Collapsed
+        }
+        TranscriptItem::Tool { .. } => TranscriptDisplayState::Preview,
+        _ => TranscriptDisplayState::Collapsed,
     }
 }
 
@@ -576,6 +672,18 @@ impl Transcript {
             UiEvent::AssistantDelta { text } => self.append_assistant_delta(&text),
             UiEvent::ThinkingDelta { text } => self.append_assistant_thinking(&text),
             UiEvent::AssistantDone => self.mark_assistant_done(),
+            UiEvent::AssistantImages { images } => {
+                let mut mutation = TranscriptMutation::none();
+                for image in images {
+                    mutation.extend(TranscriptMutation::single(self.push_with_index(
+                        TranscriptItem::Image {
+                            mime_type: image.mime_type,
+                            data: image.data,
+                        },
+                    )));
+                }
+                mutation
+            }
             UiEvent::ToolStarted {
                 call_id,
                 name,
@@ -778,12 +886,7 @@ impl Transcript {
             return TranscriptMutation::single(index);
         }
 
-        TranscriptMutation::single(self.push_with_index(TranscriptItem::Assistant {
-            id: format!("assistant_{}", self.items.len()),
-            markdown: String::new(),
-            thinking: String::new(),
-            done: true,
-        }))
+        TranscriptMutation::none()
     }
 
     fn close_open_assistant(&mut self) -> TranscriptMutation {
@@ -942,6 +1045,29 @@ mod view_state_tests {
     }
 
     #[test]
+    fn image_only_completion_does_not_create_an_empty_assistant_block() {
+        let mut transcript = Transcript::new();
+        transcript.apply_event(UiEvent::AssistantDone);
+        transcript.apply_event(UiEvent::AssistantImages {
+            images: vec![crate::events::CodingAgentImageContent {
+                mime_type: "image/png".into(),
+                data: "cG5n".into(),
+            }],
+        });
+
+        assert_eq!(transcript.items().len(), 1);
+        assert!(matches!(
+            &transcript.items()[0],
+            TranscriptItem::Image { mime_type, data }
+                if mime_type == "image/png" && data == "cG5n"
+        ));
+
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        assert!(view.selected().is_some());
+    }
+
+    #[test]
     fn selection_moves_between_non_system_blocks_and_follows_new_tail() {
         let mut transcript = Transcript::new();
         transcript.push(TranscriptItem::system("notice"));
@@ -996,6 +1122,30 @@ mod view_state_tests {
         let first = transcript.view_entries().next().unwrap();
         assert_eq!(
             view.snapshot().display_state(first.0, first.1),
+            TranscriptDisplayState::Preview
+        );
+    }
+
+    #[test]
+    fn tool_arguments_have_independent_disclosure_state() {
+        let mut transcript = Transcript::new();
+        transcript.push(tool("call-1", false));
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let selected = view.selected().unwrap();
+        let item = transcript.item_for_block(selected).unwrap();
+
+        assert_eq!(
+            view.snapshot().tool_argument_state(selected, item),
+            TranscriptDisplayState::Collapsed
+        );
+        assert!(view.toggle_selected_arguments(&transcript));
+        assert_eq!(
+            view.snapshot().tool_argument_state(selected, item),
+            TranscriptDisplayState::Preview
+        );
+        assert_eq!(
+            view.snapshot().display_state(selected, item),
             TranscriptDisplayState::Preview
         );
     }

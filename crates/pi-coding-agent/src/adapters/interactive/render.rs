@@ -2,11 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use pi_tui::api::component::{Component, Loader, Markdown};
+use pi_tui::api::component::{Component, Image, Loader, Markdown};
 use pi_tui::api::render::{
     Color, ERROR, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, USER, paint_with, truncate_to_width,
     visible_width, wrap_text_with_ansi,
 };
+use pi_tui::api::terminal::TerminalCapabilities;
 use pi_tui::api::theme::MarkdownTheme;
 
 use crate::adapters::interactive::transcript::{
@@ -163,6 +164,9 @@ pub(super) struct TranscriptRenderOptions<'a> {
     pub view: Option<TranscriptViewSnapshot>,
     pub selected_block: Option<TranscriptBlockId>,
     pub selection_gutter: bool,
+    pub show_images: bool,
+    pub image_width_cells: u32,
+    pub terminal_capabilities: TerminalCapabilities,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -172,6 +176,7 @@ struct TranscriptBlockCacheKey {
     item_revision: u64,
     profile_hash: u64,
     display_state: TranscriptDisplayState,
+    tool_argument_state: TranscriptDisplayState,
     selected: bool,
     selection_gutter: bool,
 }
@@ -278,11 +283,13 @@ impl TranscriptRenderCache {
         let mut used_keys = HashSet::new();
 
         for (render_key, item) in transcript.render_entries() {
-            let (display_state, selected, selection_gutter) = block_view(render_key, item, opts);
+            let (display_state, tool_argument_state, selected, selection_gutter) =
+                block_view(render_key, item, opts);
             let block_key = block_cache_key(
                 render_key,
                 profile_hash,
                 display_state,
+                tool_argument_state,
                 selected,
                 selection_gutter,
             );
@@ -292,6 +299,7 @@ impl TranscriptRenderCache {
                 item,
                 opts,
                 display_state,
+                tool_argument_state,
                 selected,
                 selection_gutter,
             );
@@ -460,11 +468,13 @@ impl TranscriptRenderCache {
                 }
             };
 
-            let (display_state, selected, selection_gutter) = block_view(render_key, item, opts);
+            let (display_state, tool_argument_state, selected, selection_gutter) =
+                block_view(render_key, item, opts);
             let block_key = block_cache_key(
                 render_key,
                 profile_hash,
                 display_state,
+                tool_argument_state,
                 selected,
                 selection_gutter,
             );
@@ -473,6 +483,7 @@ impl TranscriptRenderCache {
                 item,
                 opts,
                 display_state,
+                tool_argument_state,
                 selected,
                 selection_gutter,
             );
@@ -569,6 +580,7 @@ impl TranscriptRenderCache {
         item: &TranscriptItem,
         opts: &TranscriptRenderOptions<'_>,
         display_state: TranscriptDisplayState,
+        tool_argument_state: TranscriptDisplayState,
         selected: bool,
         selection_gutter: bool,
     ) -> TranscriptBlockCacheEntry {
@@ -594,8 +606,13 @@ impl TranscriptRenderCache {
             opts.hidden_thinking_label,
             opts.styles,
             display_state,
+            tool_argument_state,
+            transcript_image_id(key.transcript_id, key.item_id),
             selected,
             selection_gutter,
+            opts.show_images,
+            opts.image_width_cells,
+            opts.terminal_capabilities,
         );
         let entry = TranscriptBlockCacheEntry {
             line_count: block.len(),
@@ -620,11 +637,13 @@ impl TranscriptRenderCache {
         let mut used_keys = HashSet::new();
 
         for (render_key, item) in transcript.render_entries() {
-            let (display_state, selected, selection_gutter) = block_view(render_key, item, opts);
+            let (display_state, tool_argument_state, selected, selection_gutter) =
+                block_view(render_key, item, opts);
             let block_key = block_cache_key(
                 render_key,
                 profile_hash,
                 display_state,
+                tool_argument_state,
                 selected,
                 selection_gutter,
             );
@@ -634,6 +653,7 @@ impl TranscriptRenderCache {
                 item,
                 opts,
                 display_state,
+                tool_argument_state,
                 selected,
                 selection_gutter,
             );
@@ -707,6 +727,7 @@ fn block_cache_key(
     render_key: TranscriptRenderKey,
     profile_hash: u64,
     display_state: TranscriptDisplayState,
+    tool_argument_state: TranscriptDisplayState,
     selected: bool,
     selection_gutter: bool,
 ) -> TranscriptBlockCacheKey {
@@ -716,6 +737,7 @@ fn block_cache_key(
         item_revision: render_key.item_revision,
         profile_hash,
         display_state,
+        tool_argument_state,
         selected,
         selection_gutter,
     }
@@ -725,15 +747,26 @@ fn block_view(
     render_key: TranscriptRenderKey,
     item: &TranscriptItem,
     opts: &TranscriptRenderOptions<'_>,
-) -> (TranscriptDisplayState, bool, bool) {
+) -> (TranscriptDisplayState, TranscriptDisplayState, bool, bool) {
     let block_id = render_key.block_id();
     let display_state = opts.view.as_ref().map_or_else(
         || legacy_display_state(item),
         |view| view.display_state(block_id, item),
     );
+    let tool_argument_state = opts
+        .view
+        .as_ref()
+        .map_or(TranscriptDisplayState::Collapsed, |view| {
+            view.tool_argument_state(block_id, item)
+        });
     let selection_gutter = opts.selection_gutter && item.selectable();
     let selected = selection_gutter && opts.selected_block == Some(block_id);
-    (display_state, selected, selection_gutter)
+    (
+        display_state,
+        tool_argument_state,
+        selected,
+        selection_gutter,
+    )
 }
 
 fn legacy_display_state(item: &TranscriptItem) -> TranscriptDisplayState {
@@ -799,6 +832,9 @@ pub(super) fn render_transcript_lines(
         view,
         selected_block,
         selection_gutter,
+        show_images,
+        image_width_cells,
+        terminal_capabilities,
     } = opts.clone();
 
     let mut lines = Vec::new();
@@ -814,6 +850,11 @@ pub(super) fn render_transcript_lines(
             || legacy_display_state(item),
             |view| view.display_state(block_id, item),
         );
+        let tool_argument_state = view
+            .as_ref()
+            .map_or(TranscriptDisplayState::Collapsed, |view| {
+                view.tool_argument_state(block_id, item)
+            });
         let item_selection_gutter = selection_gutter && item.selectable();
         let block = render_block(
             item,
@@ -825,8 +866,13 @@ pub(super) fn render_transcript_lines(
             hidden_thinking_label,
             styles,
             display_state,
+            tool_argument_state,
+            transcript_image_id(render_key.transcript_id, render_key.item_id),
             item_selection_gutter && selected_block == Some(block_id),
             item_selection_gutter,
+            show_images,
+            image_width_cells,
+            terminal_capabilities,
         );
         if block.is_empty() {
             continue;
@@ -853,6 +899,9 @@ fn render_profile_hash(opts: &TranscriptRenderOptions<'_>) -> u64 {
     opts.hidden_thinking_label.hash(&mut hasher);
     format!("{:?}", opts.markdown_theme).hash(&mut hasher);
     format!("{:?}", opts.styles).hash(&mut hasher);
+    opts.show_images.hash(&mut hasher);
+    opts.image_width_cells.hash(&mut hasher);
+    format!("{:?}", opts.terminal_capabilities).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -882,8 +931,13 @@ fn render_block(
     hidden_thinking_label: &str,
     styles: TranscriptStyles,
     display_state: TranscriptDisplayState,
+    tool_argument_state: TranscriptDisplayState,
+    image_id: u32,
     selected: bool,
     selection_gutter: bool,
+    show_images: bool,
+    image_width_cells: u32,
+    terminal_capabilities: TerminalCapabilities,
 ) -> Vec<String> {
     let content_width = if selection_gutter {
         width.saturating_sub(2).max(1)
@@ -927,7 +981,19 @@ fn render_block(
             color,
             &styles,
             display_state,
+            tool_argument_state,
             selection_gutter,
+        ),
+        TranscriptItem::Image { mime_type, data } => render_image_block(
+            mime_type,
+            data,
+            content_width,
+            show_images,
+            image_width_cells,
+            terminal_capabilities,
+            image_id,
+            &styles,
+            color,
         ),
         TranscriptItem::Error { text } => render_error_message(text, content_width, color, &styles),
     };
@@ -936,6 +1002,40 @@ fn render_block(
     } else {
         lines
     }
+}
+
+fn transcript_image_id(transcript_id: u64, item_id: u64) -> u32 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    transcript_id.hash(&mut hasher);
+    item_id.hash(&mut hasher);
+    let id = hasher.finish() as u32;
+    id.max(1)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_image_block(
+    mime_type: &str,
+    data: &str,
+    width: usize,
+    show_images: bool,
+    image_width_cells: u32,
+    terminal_capabilities: TerminalCapabilities,
+    image_id: u32,
+    styles: &TranscriptStyles,
+    color: bool,
+) -> Vec<String> {
+    if !show_images {
+        return vec![fit_line(
+            &paint_with(&format!("[Image: {mime_type}]"), &styles.system, color),
+            width,
+        )];
+    }
+    let max_width = image_width_cells.max(1).min(width.max(1) as u32);
+    let mut image = Image::new(data, mime_type)
+        .capabilities(terminal_capabilities)
+        .max_width_cells(max_width)
+        .image_id(image_id);
+    image.render(width)
 }
 
 fn apply_selection_gutter(lines: Vec<String>, width: usize, selected: bool) -> Vec<String> {
@@ -1165,6 +1265,7 @@ fn render_tool_block(
     color: bool,
     styles: &TranscriptStyles,
     display_state: TranscriptDisplayState,
+    tool_argument_state: TranscriptDisplayState,
     per_block_view: bool,
 ) -> Vec<String> {
     let status = match (result, is_error) {
@@ -1207,6 +1308,11 @@ fn render_tool_block(
     }
 
     let mut lines = vec![paint_bg_line(&header, width, bg, color)];
+    if per_block_view && tool_argument_state != TranscriptDisplayState::Collapsed {
+        for line in render_tool_arguments(args, tool_argument_state, width, color, styles) {
+            lines.push(paint_bg_line(&line, width, bg, color));
+        }
+    }
     if name == "delegation"
         && let Some(task) = string_arg(args, &["task"])
     {
@@ -1476,6 +1582,54 @@ fn render_tool_result_body(
     out
 }
 
+fn render_tool_arguments(
+    args: &serde_json::Value,
+    display_state: TranscriptDisplayState,
+    width: usize,
+    color: bool,
+    styles: &TranscriptStyles,
+) -> Vec<String> {
+    let serialized = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+    let source_lines = serialized.lines().collect::<Vec<_>>();
+    let limit = match display_state {
+        TranscriptDisplayState::Collapsed => 0,
+        TranscriptDisplayState::Preview => 3,
+        TranscriptDisplayState::Expanded => usize::MAX,
+    };
+    let shown = source_lines.len().min(limit);
+    let mut lines = vec![format!(
+        "  {}",
+        paint_with(
+            match display_state {
+                TranscriptDisplayState::Collapsed => "arguments · hidden",
+                TranscriptDisplayState::Preview => "arguments · preview",
+                TranscriptDisplayState::Expanded => "arguments · expanded",
+            },
+            &styles.system,
+            color,
+        )
+    )];
+    let content_width = width.saturating_sub(4).max(1);
+    for source in source_lines.iter().take(shown) {
+        let painted = paint_with(source, &styles.tool_output, color);
+        for wrapped in wrap_text_with_ansi(&painted, content_width) {
+            lines.push(format!("    {wrapped}"));
+        }
+    }
+    let omitted = source_lines.len().saturating_sub(shown);
+    if omitted > 0 {
+        lines.push(format!(
+            "    {}",
+            paint_with(
+                &format!("... {omitted} more argument lines"),
+                &styles.system,
+                color,
+            )
+        ));
+    }
+    lines
+}
+
 /// Self-rendered `edit` block: no tool bg, diff lines colored by
 /// added/removed/context, mirroring TS `renderShell: "self"`.
 fn render_edit_block(
@@ -1650,6 +1804,8 @@ pub(super) fn abbreviate_cwd(cwd: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine;
+
     use super::*;
     use crate::adapters::interactive::transcript::TranscriptViewState;
     use crate::theme::builtin_dark;
@@ -1755,7 +1911,22 @@ mod tests {
             view: None,
             selected_block: None,
             selection_gutter: false,
+            show_images: true,
+            image_width_cells: 60,
+            terminal_capabilities: TerminalCapabilities {
+                images: None,
+                true_color: false,
+                hyperlinks: false,
+            },
         }
+    }
+
+    fn png_base64(width: u32, height: u32) -> String {
+        let mut png = vec![0_u8; 24];
+        png[0..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        png[16..20].copy_from_slice(&width.to_be_bytes());
+        png[20..24].copy_from_slice(&height.to_be_bytes());
+        base64::engine::general_purpose::STANDARD.encode(png)
     }
 
     #[test]
@@ -1808,6 +1979,13 @@ mod tests {
             view: None,
             selected_block: None,
             selection_gutter: false,
+            show_images: true,
+            image_width_cells: 60,
+            terminal_capabilities: TerminalCapabilities {
+                images: None,
+                true_color: false,
+                hyperlinks: false,
+            },
         };
         let lines = render_transcript_lines(&transcript, &opts);
 
@@ -2482,5 +2660,74 @@ mod tests {
         assert!(collapsed.contains("delegate agent review completed"));
         assert!(!collapsed.contains("review the parser"), "{collapsed}");
         assert!(!collapsed.contains("No blocking issues."), "{collapsed}");
+    }
+
+    #[test]
+    fn generic_tool_arguments_default_to_bounded_preview() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Tool {
+            call_id: "plugin-1".into(),
+            name: "plugin.inspect".into(),
+            args: serde_json::json!({
+                "alpha": 1,
+                "beta": 2,
+                "gamma": 3,
+                "delta": 4
+            }),
+            result: Some("done".into()),
+            is_error: false,
+        });
+        let mut view = TranscriptViewState::default();
+        view.sync(&transcript);
+        let mut opts = test_opts(60, false);
+        opts.view = Some(view.snapshot());
+        opts.selected_block = view.selected();
+        opts.selection_gutter = true;
+
+        let preview = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(preview.contains("arguments · preview"), "{preview}");
+        assert!(preview.contains("\"alpha\": 1"), "{preview}");
+        assert!(preview.contains("more argument lines"), "{preview}");
+
+        assert!(view.toggle_selected_arguments(&transcript));
+        opts.view = Some(view.snapshot());
+        let expanded = render_transcript_lines(&transcript, &opts).join("\n");
+        assert!(expanded.contains("arguments · expanded"), "{expanded}");
+        assert!(expanded.contains("\"delta\": 4"), "{expanded}");
+        assert!(!expanded.contains("more argument lines"), "{expanded}");
+    }
+
+    #[test]
+    fn transcript_image_honors_visibility_capability_and_width_settings() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::Image {
+            mime_type: "image/png".into(),
+            data: png_base64(18, 18),
+        });
+        let mut opts = test_opts(80, false);
+        opts.image_width_cells = 10;
+        opts.terminal_capabilities = TerminalCapabilities {
+            images: Some(pi_tui::api::terminal::ImageProtocol::Kitty),
+            true_color: true,
+            hyperlinks: true,
+        };
+
+        let rendered = render_transcript_lines(&transcript, &opts);
+        assert_eq!(rendered.len(), 5, "{rendered:?}");
+        assert!(rendered[0].starts_with("\x1b_G"), "{rendered:?}");
+        assert!(rendered[0].contains("c=10,r=5,i="), "{rendered:?}");
+        assert!(rendered[1..].iter().all(String::is_empty));
+
+        opts.show_images = false;
+        let hidden = render_transcript_lines(&transcript, &opts);
+        assert_eq!(hidden, ["[Image: image/png]"]);
+        assert!(!hidden[0].contains("\x1b_G"));
+
+        opts.show_images = true;
+        opts.terminal_capabilities.images = None;
+        let fallback = render_transcript_lines(&transcript, &opts);
+        assert_eq!(fallback.len(), 1);
+        assert!(fallback[0].contains("image/png"), "{fallback:?}");
+        assert!(!fallback[0].contains("\x1b_G"));
     }
 }

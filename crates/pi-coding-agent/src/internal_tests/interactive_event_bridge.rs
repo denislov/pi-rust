@@ -10,7 +10,7 @@ use pi_coding_agent::adapters::interactive::{
 };
 use pi_coding_agent::api::event::{
     CodingAgentCapabilityProductEvent, CodingAgentDelegationEventContext,
-    CodingAgentDelegationProductEvent, CodingAgentMessageProductEvent,
+    CodingAgentDelegationProductEvent, CodingAgentImageContent, CodingAgentMessageProductEvent,
     CodingAgentProductEventCapabilityRevocation, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentSessionProductEvent,
     CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
@@ -96,6 +96,7 @@ fn coding_event_bridge_maps_assistant_events() {
             turn_id: "turn_1".to_string(),
             message_id: Some("msg_1".to_string()),
             final_text: "hello".to_string(),
+            images: Vec::new(),
             usage: product_usage(Usage {
                 input: 100,
                 output: 50,
@@ -136,6 +137,7 @@ fn coding_event_bridge_maps_assistant_events() {
             turn_id: "turn_1".to_string(),
             message_id: Some("msg_2".to_string()),
             final_text: "world".to_string(),
+            images: Vec::new(),
             usage: product_usage(Usage {
                 input: 30,
                 output: 20,
@@ -177,6 +179,7 @@ fn coding_event_bridge_marks_zero_usage_context_unknown() {
             turn_id: "turn_1".to_string(),
             message_id: Some("msg_1".to_string()),
             final_text: "hello".to_string(),
+            images: Vec::new(),
             usage: product_usage(Usage::default()),
         },
     )));
@@ -195,6 +198,42 @@ fn coding_event_bridge_marks_zero_usage_context_unknown() {
             },
         ]
     );
+}
+
+#[test]
+fn coding_event_bridge_projects_assistant_images_as_structured_blocks() {
+    let mut bridge = CodingEventBridge::new();
+    let image = CodingAgentImageContent {
+        mime_type: "image/png".into(),
+        data: "cG5n".into(),
+    };
+    let events = bridge.handle_product_event(&product_event(CodingAgentProductEventKind::Message(
+        CodingAgentMessageProductEvent::Completed {
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            message_id: Some("msg_1".into()),
+            final_text: "caption".into(),
+            images: vec![image.clone()],
+            usage: product_usage(Usage::default()),
+        },
+    )));
+
+    assert!(matches!(events[0], UiEvent::AssistantDone));
+    assert_eq!(
+        events[1],
+        UiEvent::AssistantImages {
+            images: vec![image]
+        }
+    );
+    let mut transcript = Transcript::new();
+    for event in events {
+        transcript.apply_event(event);
+    }
+    assert!(matches!(
+        transcript.items().last(),
+        Some(TranscriptItem::Image { mime_type, data })
+            if mime_type == "image/png" && data == "cG5n"
+    ));
 }
 
 #[test]

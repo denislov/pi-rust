@@ -53,7 +53,8 @@ fn image_component_renders_kitty_sequence_when_supported() {
 
     let lines = image.render(80);
 
-    assert_eq!(lines.len(), 1);
+    assert_eq!(lines.len(), 5);
     assert!(lines[0].starts_with("\x1b_G"));
     assert!(lines[0].contains("c=10,r=5,i=99"), "{lines:?}");
+    assert!(lines[1..].iter().all(String::is_empty));
 }

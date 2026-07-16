@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::runtime::facade::CodingAgentProductEvent;
 use crate::runtime::facade::{
-    CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent,
+    CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent, CodingAgentImageContent,
     CodingAgentMessageProductEvent, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentProductEventUsage,
     CodingAgentRuntimeProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
@@ -18,6 +18,9 @@ pub enum UiEvent {
         text: String,
     },
     AssistantDone,
+    AssistantImages {
+        images: Vec<CodingAgentImageContent>,
+    },
     ToolStarted {
         call_id: String,
         name: String,
@@ -194,6 +197,7 @@ impl CodingEventBridge {
                 vec![UiEvent::ThinkingDelta { text: text.clone() }]
             }
             CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Completed {
+                images,
                 usage,
                 ..
             }) => {
@@ -201,20 +205,24 @@ impl CodingEventBridge {
                     0 => None,
                     tokens => Some(tokens),
                 };
-                vec![
-                    UiEvent::AssistantDone,
-                    UiEvent::UsageUpdate {
-                        input: usage.input,
-                        output: usage.output,
-                        cache_read: usage.cache_read,
-                        cache_write: usage.cache_write,
-                        cost: usage.input_cost
-                            + usage.output_cost
-                            + usage.cache_read_cost
-                            + usage.cache_write_cost,
-                        context_tokens,
-                    },
-                ]
+                let mut events = vec![UiEvent::AssistantDone];
+                if !images.is_empty() {
+                    events.push(UiEvent::AssistantImages {
+                        images: images.clone(),
+                    });
+                }
+                events.push(UiEvent::UsageUpdate {
+                    input: usage.input,
+                    output: usage.output,
+                    cache_read: usage.cache_read,
+                    cache_write: usage.cache_write,
+                    cost: usage.input_cost
+                        + usage.output_cost
+                        + usage.cache_read_cost
+                        + usage.cache_write_cost,
+                    context_tokens,
+                });
+                events
             }
             CodingAgentProductEventKind::Tool(CodingAgentToolProductEvent::Started {
                 tool_call_id,

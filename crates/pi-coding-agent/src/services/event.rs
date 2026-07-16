@@ -1278,6 +1278,7 @@ fn map_assistant_event(
                 turn_id: context.turn_id.clone(),
                 message_id: context.assistant_message_id.clone(),
                 final_text: assistant_text(&message.content),
+                images: assistant_images(&message.content),
                 usage: message.usage.clone(),
             })]
         }
@@ -1311,6 +1312,21 @@ fn assistant_text(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn assistant_images(content: &[ContentBlock]) -> Vec<crate::events::CodingAgentImageContent> {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Image { mime_type, data } => {
+                Some(crate::events::CodingAgentImageContent {
+                    mime_type: mime_type.clone(),
+                    data: data.clone(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn map_delegation_tool_event(
@@ -2027,6 +2043,7 @@ mod tests {
                 turn_id: "turn_1".into(),
                 message_id: Some("msg_1".into()),
                 final_text: "done".into(),
+                images: Vec::new(),
                 usage: Usage::default(),
             })]
         );
@@ -2041,6 +2058,37 @@ mod tests {
                 }
             ),
             Vec::new(),
+        );
+    }
+
+    #[test]
+    fn maps_assistant_images_into_completed_product_content() {
+        let context = mapping_context();
+        let mut message = assistant_message("caption");
+        message.content.push(ContentBlock::Image {
+            mime_type: "image/png".into(),
+            data: "cG5n".into(),
+        });
+
+        assert_eq!(
+            map_agent_event(
+                &context,
+                &AgentEvent::LlmEvent(AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message,
+                }),
+            ),
+            vec![PromptStreamEvent::Message(MessageEvent::Completed {
+                operation_id: "op_1".into(),
+                turn_id: "turn_1".into(),
+                message_id: Some("msg_1".into()),
+                final_text: "caption".into(),
+                images: vec![crate::events::CodingAgentImageContent {
+                    mime_type: "image/png".into(),
+                    data: "cG5n".into(),
+                }],
+                usage: Usage::default(),
+            })]
         );
     }
 

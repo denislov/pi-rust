@@ -290,6 +290,13 @@ mod tests {
             view: None,
             selected_block: None,
             selection_gutter: false,
+            show_images: true,
+            image_width_cells: 60,
+            terminal_capabilities: pi_tui::api::terminal::TerminalCapabilities {
+                images: None,
+                true_color: false,
+                hyperlinks: false,
+            },
         }
     }
 

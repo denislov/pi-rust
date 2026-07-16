@@ -14,6 +14,7 @@ use pi_tui::api::render::{
     USER, color_enabled, paint_with, truncate_to_width, truncate_to_width_with_ellipsis,
     visible_width,
 };
+use pi_tui::api::terminal::TerminalCapabilities;
 use pi_tui::api::theme::{MarkdownTheme, TuiTheme, dark_theme, light_theme};
 
 use crate::adapters::interactive::app::{PromptContext, welcome_line};
@@ -657,6 +658,7 @@ pub(super) struct InteractiveRoot {
     pub(super) viewport_width: usize,
     pub(super) viewport_height: usize,
     fullscreen_viewport: bool,
+    terminal_capabilities: TerminalCapabilities,
     focus_ring: FocusRing<InteractiveRegion>,
     context_tab: ContextTab,
     context_open: bool,
@@ -872,6 +874,11 @@ impl InteractiveRoot {
             viewport_width: 80,
             viewport_height: 24,
             fullscreen_viewport: false,
+            terminal_capabilities: TerminalCapabilities {
+                images: None,
+                true_color: false,
+                hyperlinks: false,
+            },
             focus_ring,
             context_tab: ContextTab::Ops,
             context_open: false,
@@ -2654,6 +2661,9 @@ impl InteractiveRoot {
             .then(|| self.transcript_view.selected())
             .flatten(),
             selection_gutter: self.fullscreen_viewport,
+            show_images: self.settings.terminal.show_images,
+            image_width_cells: self.settings.terminal.image_width_cells,
+            terminal_capabilities: self.terminal_capabilities,
         }
     }
 
@@ -2738,6 +2748,13 @@ impl InteractiveRoot {
         self.refresh_shell_focus();
     }
 
+    pub(super) fn set_terminal_capabilities(&mut self, capabilities: TerminalCapabilities) {
+        if self.terminal_capabilities != capabilities {
+            self.terminal_capabilities = capabilities;
+            self.render_cache.clear();
+        }
+    }
+
     fn sync_transcript_view(&mut self) {
         if self.fullscreen_viewport {
             self.transcript_view.sync(&self.transcript);
@@ -2815,6 +2832,10 @@ impl InteractiveRoot {
                     || matches_key(event, "ctrl+o")
                 {
                     self.toggle_selected_transcript_block();
+                    return true;
+                }
+                if matches_key(event, "a") {
+                    self.toggle_selected_transcript_arguments();
                     return true;
                 }
                 if matches_key(event, "pageup") {
@@ -3159,6 +3180,13 @@ impl InteractiveRoot {
             width,
         ));
         let focused = match self.focus_ring.current() {
+            Some(InteractiveRegion::Conversation)
+                if self
+                    .transcript_view
+                    .selected_has_tool_arguments(&self.transcript) =>
+            {
+                "Up/Down select · Enter result · A arguments"
+            }
             Some(InteractiveRegion::Conversation) => "Up/Down select · Enter disclose",
             Some(InteractiveRegion::Context) => "Left/Right  tabs",
             Some(InteractiveRegion::Composer) => "Enter  submit",
@@ -3283,6 +3311,27 @@ impl InteractiveRoot {
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
         let changed = self.transcript_view.toggle_selected(&self.transcript);
+        if !changed {
+            return false;
+        }
+        if let Some(previous_rows) = previous_rows {
+            let current_rows = self.transcript_total_rows();
+            self.transcript.preserve_scrolled_view_after_row_change(
+                previous_scroll_offset,
+                previous_rows,
+                current_rows,
+            );
+        }
+        self.ensure_selected_transcript_visible();
+        true
+    }
+
+    fn toggle_selected_transcript_arguments(&mut self) -> bool {
+        let previous_scroll_offset = self.transcript.scroll_offset();
+        let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
+        let changed = self
+            .transcript_view
+            .toggle_selected_arguments(&self.transcript);
         if !changed {
             return false;
         }
@@ -3693,8 +3742,10 @@ fn format_http_idle_timeout_ms(timeout_ms: u64) -> String {
 mod transcript_viewport_tests {
     use std::path::PathBuf;
 
+    use base64::Engine;
     use pi_tui::api::component::Component;
     use pi_tui::api::input::{InputEvent, parse_key};
+    use pi_tui::api::terminal::{ImageProtocol, TerminalCapabilities};
 
     use crate::adapters::interactive::UiEvent;
     use crate::adapters::interactive::transcript::TranscriptItem;
@@ -3790,6 +3841,14 @@ mod transcript_viewport_tests {
         }
     }
 
+    fn png_base64() -> String {
+        let mut png = vec![0_u8; 24];
+        png[0..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        png[16..20].copy_from_slice(&18_u32.to_be_bytes());
+        png[20..24].copy_from_slice(&18_u32.to_be_bytes());
+        base64::engine::general_purpose::STANDARD.encode(png)
+    }
+
     #[test]
     fn conversation_keys_select_and_disclose_only_the_active_block() {
         let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
@@ -3803,6 +3862,16 @@ mod transcript_viewport_tests {
         root.apply_region_focus();
 
         assert!(root.handle_shell_input(&key("\x1b[A")));
+        assert!(root.handle_shell_input(&key("a")));
+        let arguments_preview = root.transcript_lines_at(80, 3).join("\n");
+        assert!(
+            arguments_preview.contains("arguments · preview"),
+            "{arguments_preview}"
+        );
+        assert!(
+            arguments_preview.contains("run-alpha"),
+            "{arguments_preview}"
+        );
         assert!(root.handle_shell_input(&key("\r")));
         let first_expanded = root.transcript_lines_at(80, 3).join("\n");
         assert!(first_expanded.contains("alpha-1"), "{first_expanded}");
@@ -3889,5 +3958,29 @@ mod transcript_viewport_tests {
             result: "one".into(),
         }]);
         assert_eq!(root.transcript.scroll_offset(), before_growth);
+    }
+
+    #[test]
+    fn root_projects_terminal_image_settings_into_transcript_rendering() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_terminal_capabilities(TerminalCapabilities {
+            images: Some(ImageProtocol::Kitty),
+            true_color: true,
+            hyperlinks: true,
+        });
+        root.transcript.push(TranscriptItem::Image {
+            mime_type: "image/png".into(),
+            data: png_base64(),
+        });
+        root.settings.terminal.image_width_cells = 8;
+
+        let rendered = root.transcript_lines_at(40, 3);
+        assert!(rendered.iter().any(|line| line.contains("c=8,r=4,i=")));
+
+        root.settings.terminal.show_images = false;
+        let hidden = root.transcript_lines_at(40, 3).join("\n");
+        assert!(hidden.contains("[Image: image/png]"), "{hidden}");
+        assert!(!hidden.contains("\x1b_G"), "{hidden}");
     }
 }

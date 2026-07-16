@@ -198,6 +198,7 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
             turn_id: "turn_1".into(),
             message_id: Some("msg_1".into()),
             final_text: "hello".into(),
+            images: Vec::new(),
             usage: product_usage(Usage::default()),
         }),
         CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted {
@@ -288,6 +289,7 @@ fn product_event_protocol_adapter_does_not_emit_flow_node_fields() {
             turn_id: "turn_prompt".into(),
             message_id: Some("msg_prompt".into()),
             final_text: "hello".into(),
+            images: Vec::new(),
             usage: product_usage(Usage::default()),
         }),
         CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptCompleted {

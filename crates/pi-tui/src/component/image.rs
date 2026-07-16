@@ -120,7 +120,11 @@ impl Component for Image {
             },
             self.cell_dimensions,
         ) {
-            Some(rendered) => vec![rendered.sequence],
+            Some(rendered) => {
+                let mut lines = vec![rendered.sequence];
+                lines.resize(rendered.rows.max(1) as usize, String::new());
+                lines
+            }
             None => vec![self.fallback(width)],
         }
     }

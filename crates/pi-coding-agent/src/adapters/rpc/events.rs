@@ -85,6 +85,7 @@ mod tests {
                 turn_id: "turn_1".into(),
                 message_id: Some("msg_1".into()),
                 final_text: "hello".into(),
+                images: Vec::new(),
                 usage: Usage::default(),
             }),
         ]
