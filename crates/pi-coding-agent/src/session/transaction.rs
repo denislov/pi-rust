@@ -454,6 +454,11 @@ where
         Ok(())
     }
 
+    pub(crate) fn checkpoint(&mut self) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.flush_pending()
+    }
+
     pub(crate) fn commit(&mut self, new_leaf_id: Option<String>) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
         self.push_event(SessionEventData::OperationCommitted {
@@ -683,6 +688,10 @@ mod tests {
                     "delegation.confirmation.rejected"
                 }
                 SessionEventData::DelegationFoldedUpdated { .. } => "delegation.folded.updated",
+                SessionEventData::ToolAuthorizationRequested { .. } => {
+                    "tool.authorization.requested"
+                }
+                SessionEventData::ToolAuthorizationResolved { .. } => "tool.authorization.resolved",
                 SessionEventData::SessionCreated { .. } => "session.created",
                 SessionEventData::SessionCloned { .. } => "session.cloned",
                 SessionEventData::SessionForked { .. } => "session.forked",

@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::authorization::ToolAuthorizationRequest;
 use crate::profiles::{ProfileId, ProfileKind};
 use crate::session::event::{
     DiagnosticLevel, PersistedContentBlock, PersistedDelegationRuntimeSeed,
@@ -52,6 +53,7 @@ pub(crate) struct SessionReplay {
     pub(crate) transcript: Vec<TranscriptItem>,
     pub(crate) diagnostics: Vec<ReplayDiagnostic>,
     pub(crate) pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
+    pub(crate) pending_tool_authorizations: Vec<ToolAuthorizationRequest>,
     pub(crate) usage: ReplayUsageSummary,
     pub(crate) operation_statuses: HashMap<String, OperationReplayStatus>,
 }
@@ -175,6 +177,7 @@ struct ReplayBuilder {
     operation_kinds: HashMap<String, crate::session::event::OperationKind>,
     operation_transcript_starts: HashMap<String, usize>,
     pending_delegation_confirmations: Vec<ReplayPendingDelegationConfirmation>,
+    pending_tool_authorizations: BTreeMap<String, ToolAuthorizationRequest>,
     usage: ReplayUsageSummary,
     operation_statuses: HashMap<String, OperationReplayStatus>,
 }
@@ -189,7 +192,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         builder.observe_operation_status(event);
         if let Some(operation_id) = event.operation_id.as_deref()
             && !finalized_operations.contains(operation_id)
-            && !is_delegation_confirmation_event(&event.data)
+            && !is_out_of_band_operation_event(&event.data)
         {
             continue;
         }
@@ -202,6 +205,15 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         ));
     }
 
+    let mut pending_tool_authorizations = builder
+        .pending_tool_authorizations
+        .into_values()
+        .collect::<Vec<_>>();
+    pending_tool_authorizations.sort_by(|left, right| {
+        left.requested_at
+            .cmp(&right.requested_at)
+            .then_with(|| left.authorization_id.cmp(&right.authorization_id))
+    });
     SessionReplay {
         session_id: builder.session_id.unwrap_or_default(),
         cwd: builder.cwd,
@@ -211,17 +223,20 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
         transcript: builder.transcript,
         diagnostics: builder.diagnostics,
         pending_delegation_confirmations: builder.pending_delegation_confirmations,
+        pending_tool_authorizations,
         usage: builder.usage,
         operation_statuses: builder.operation_statuses,
     }
 }
 
-fn is_delegation_confirmation_event(data: &SessionEventData) -> bool {
+fn is_out_of_band_operation_event(data: &SessionEventData) -> bool {
     matches!(
         data,
         SessionEventData::DelegationConfirmationRequested { .. }
             | SessionEventData::DelegationConfirmationApproved { .. }
             | SessionEventData::DelegationConfirmationRejected { .. }
+            | SessionEventData::ToolAuthorizationRequested { .. }
+            | SessionEventData::ToolAuthorizationResolved { .. }
     )
 }
 
@@ -245,7 +260,7 @@ fn incomplete_operation_ids(
     let mut seen = HashSet::new();
     let mut incomplete = Vec::new();
     for event in events {
-        if is_delegation_confirmation_event(&event.data) {
+        if is_out_of_band_operation_event(&event.data) {
             continue;
         }
         let Some(operation_id) = event.operation_id.as_deref() else {
@@ -419,6 +434,31 @@ impl ReplayBuilder {
                     child_operation_id: child_operation_id.clone(),
                     summary: summary.clone(),
                 });
+            }
+            SessionEventData::ToolAuthorizationRequested { request } => {
+                if self
+                    .pending_tool_authorizations
+                    .insert(request.authorization_id.clone(), request.clone())
+                    .is_some()
+                {
+                    self.warn(format!(
+                        "duplicate pending tool authorization: {}",
+                        request.authorization_id
+                    ));
+                }
+            }
+            SessionEventData::ToolAuthorizationResolved {
+                authorization_id, ..
+            } => {
+                if self
+                    .pending_tool_authorizations
+                    .remove(authorization_id)
+                    .is_none()
+                {
+                    self.warn(format!(
+                        "tool authorization resolution references unknown pending request: {authorization_id}"
+                    ));
+                }
             }
             SessionEventData::OperationCommitted { new_leaf_id } => {
                 if let Some(new_leaf_id) = new_leaf_id {
@@ -842,7 +882,13 @@ fn tool_result_summary(result: &PersistedToolResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::event::{OperationKind, PersistedRole};
+    use crate::authorization::{
+        ToolAuthorizationDecision, ToolAuthorizationPreview, ToolAuthorizationRisk,
+        ToolAuthorizationScope,
+    };
+    use crate::session::event::{
+        OperationKind, PersistedRole, PersistedToolAuthorizationResolution,
+    };
     use pi_ai::api::model::{Model, ModelCost, ModelInput};
 
     fn event(
@@ -864,6 +910,29 @@ mod tests {
 
     fn op_event(event_id: &str, data: SessionEventData) -> SessionEventEnvelope {
         event(event_id, Some("op_1"), Some("turn_1"), data)
+    }
+
+    fn authorization_request() -> ToolAuthorizationRequest {
+        ToolAuthorizationRequest {
+            authorization_id: "auth_1".into(),
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: "call_1".into(),
+            tool_name: "write".into(),
+            risk: ToolAuthorizationRisk::FilesystemMutation,
+            scope: ToolAuthorizationScope::Path {
+                path: "/workspace/file.txt".into(),
+            },
+            preview: ToolAuthorizationPreview {
+                summary: "Modify a file".into(),
+                path: Some("/workspace/file.txt".into()),
+                command: None,
+                cwd: None,
+                content_preview: Some("<redacted>".into()),
+            },
+            capability_generation: 1,
+            requested_at: "2026-07-17T00:00:00Z".into(),
+        }
     }
 
     fn delegation_runtime_seed() -> PersistedDelegationRuntimeSeed {
@@ -922,6 +991,44 @@ mod tests {
             Some("turn_parent"),
             SessionEventData::OperationCommitted { new_leaf_id: None },
         )
+    }
+
+    #[test]
+    fn unresolved_tool_authorization_replays_even_for_incomplete_operation() {
+        let request = authorization_request();
+        let replay = fold_events(&[op_event(
+            "evt_auth",
+            SessionEventData::ToolAuthorizationRequested {
+                request: request.clone(),
+            },
+        )]);
+
+        assert_eq!(replay.pending_tool_authorizations, vec![request]);
+        assert!(replay.operation_statuses.is_empty());
+    }
+
+    #[test]
+    fn durable_tool_authorization_resolution_removes_pending_request() {
+        let replay = fold_events(&[
+            op_event(
+                "evt_request",
+                SessionEventData::ToolAuthorizationRequested {
+                    request: authorization_request(),
+                },
+            ),
+            op_event(
+                "evt_resolution",
+                SessionEventData::ToolAuthorizationResolved {
+                    authorization_id: "auth_1".into(),
+                    resolution: PersistedToolAuthorizationResolution::Approved {
+                        decision: ToolAuthorizationDecision::AllowOnce,
+                    },
+                },
+            ),
+        ]);
+
+        assert!(replay.pending_tool_authorizations.is_empty());
+        assert!(replay.diagnostics.is_empty());
     }
 
     #[test]

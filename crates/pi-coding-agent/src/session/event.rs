@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::authorization::{ToolAuthorizationDecision, ToolAuthorizationRequest};
 use crate::operations::delegation::DelegationLineageEntry;
 use crate::profiles::{ProfileId, ProfileKind};
 use pi_ai::api::conversation::Usage;
@@ -168,6 +169,13 @@ pub(crate) enum SessionEventData {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
     },
+    #[serde(rename = "tool.authorization.requested")]
+    ToolAuthorizationRequested { request: ToolAuthorizationRequest },
+    #[serde(rename = "tool.authorization.resolved")]
+    ToolAuthorizationResolved {
+        authorization_id: String,
+        resolution: PersistedToolAuthorizationResolution,
+    },
     #[serde(rename = "operation.started")]
     OperationStarted {
         operation: OperationKind,
@@ -262,6 +270,15 @@ pub(crate) enum SessionEventData {
     MetadataUpdated { key: String, value: Value },
     #[serde(rename = "active_leaf.changed")]
     ActiveLeafChanged { leaf_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub(crate) enum PersistedToolAuthorizationResolution {
+    Approved { decision: ToolAuthorizationDecision },
+    Denied { reason: String },
+    Cancelled { reason: String },
+    Interrupted { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -392,6 +409,9 @@ pub(crate) enum DiagnosticLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authorization::{
+        ToolAuthorizationPreview, ToolAuthorizationRisk, ToolAuthorizationScope,
+    };
     use pi_ai::api::model::{ModelCost, ModelInput};
     use serde_json::json;
 
@@ -566,6 +586,21 @@ mod tests {
                 "delegation.folded.updated",
             ),
             (
+                SessionEventData::ToolAuthorizationRequested {
+                    request: test_authorization_request(),
+                },
+                "tool.authorization.requested",
+            ),
+            (
+                SessionEventData::ToolAuthorizationResolved {
+                    authorization_id: "auth_1".into(),
+                    resolution: PersistedToolAuthorizationResolution::Approved {
+                        decision: ToolAuthorizationDecision::AllowOnce,
+                    },
+                },
+                "tool.authorization.resolved",
+            ),
+            (
                 SessionEventData::OperationStarted {
                     operation: OperationKind::Prompt,
                     runtime_generation: PersistedRuntimeGenerationRef::default(),
@@ -714,6 +749,29 @@ mod tests {
             serde_json::to_value(&envelope).unwrap()["kind"],
             "operation.recovered"
         );
+    }
+
+    fn test_authorization_request() -> ToolAuthorizationRequest {
+        ToolAuthorizationRequest {
+            authorization_id: "auth_1".into(),
+            operation_id: "op_1".into(),
+            turn_id: "turn_1".into(),
+            tool_call_id: "call_1".into(),
+            tool_name: "write".into(),
+            risk: ToolAuthorizationRisk::FilesystemMutation,
+            scope: ToolAuthorizationScope::Path {
+                path: "/workspace/file.txt".into(),
+            },
+            preview: ToolAuthorizationPreview {
+                summary: "Modify a file".into(),
+                path: Some("/workspace/file.txt".into()),
+                command: None,
+                cwd: None,
+                content_preview: Some("<redacted>".into()),
+            },
+            capability_generation: 1,
+            requested_at: "2026-07-17T00:00:00Z".into(),
+        }
     }
 
     fn test_delegation_runtime_seed() -> PersistedDelegationRuntimeSeed {

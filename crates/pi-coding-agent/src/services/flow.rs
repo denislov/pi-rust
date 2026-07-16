@@ -584,6 +584,7 @@ mod tests {
             transcript: Vec::new(),
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         });
@@ -1816,6 +1817,7 @@ version = "0.1.0"
             }],
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         };

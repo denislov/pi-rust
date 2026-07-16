@@ -40,6 +40,7 @@ use crate::session::id::{SystemClock, SystemIdGenerator};
 use crate::session::replay::{MessageStatus, SessionReplay, TranscriptItem};
 #[cfg(test)]
 use crate::session::repository::{SessionHandle, SessionLogStore};
+use crate::session::service::SessionEventWriter;
 use crate::session::transaction::TurnTransaction;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -639,6 +640,7 @@ pub(crate) struct PromptTurnContext {
     operation_cancellation: Option<CancellationToken>,
     plugin_service: PluginService,
     authorization_service: Option<AuthorizationService>,
+    authorization_event_writer: Option<SessionEventWriter>,
     tool_session_call_ids: HashMap<String, String>,
     diagnostics: Vec<CodingDiagnostic>,
     requested_abort_reason: Option<String>,
@@ -671,6 +673,7 @@ impl PromptTurnContext {
             operation_cancellation: None,
             plugin_service: PluginService::new(),
             authorization_service: None,
+            authorization_event_writer: None,
             tool_session_call_ids: HashMap::new(),
             diagnostics: Vec::new(),
             requested_abort_reason: None,
@@ -702,6 +705,10 @@ impl PromptTurnContext {
         self.authorization_service = Some(service);
     }
 
+    pub(crate) fn set_authorization_event_writer(&mut self, writer: SessionEventWriter) {
+        self.authorization_event_writer = Some(writer);
+    }
+
     pub(crate) fn authorization_hook_context(&self) -> Option<AuthorizationHookContext> {
         let service = self.authorization_service.as_ref()?;
         let capability_snapshot = self.capability_snapshot.as_ref()?;
@@ -709,6 +716,7 @@ impl PromptTurnContext {
             service: service.clone(),
             turn_id: self.turn_id().to_owned(),
             capability_snapshot: capability_snapshot.clone(),
+            event_writer: self.authorization_event_writer.clone(),
         })
     }
 
@@ -874,6 +882,7 @@ impl PromptTurnContext {
             transcript,
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         });
@@ -1005,6 +1014,7 @@ impl PromptTurnContext {
             })?;
         if let Some(transaction) = self.transaction.as_mut() {
             transaction.record_user_input(content)?;
+            transaction.checkpoint()?;
         }
         Ok(())
     }

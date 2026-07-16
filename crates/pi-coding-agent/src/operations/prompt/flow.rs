@@ -740,6 +740,7 @@ mod tests {
             transcript: Vec::new(),
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         });
@@ -868,6 +869,10 @@ mod tests {
                 SessionEventData::DelegationConfirmationRejected { .. } => {
                     "delegation.confirmation.rejected"
                 }
+                SessionEventData::ToolAuthorizationRequested { .. } => {
+                    "tool.authorization.requested"
+                }
+                SessionEventData::ToolAuthorizationResolved { .. } => "tool.authorization.resolved",
             })
             .collect()
     }
@@ -1419,8 +1424,11 @@ mod tests {
 
         flow.run(&mut context).await.unwrap();
 
+        let durable_events = store.read_events(&handle).unwrap();
+        let mut kinds = event_kinds(&durable_events);
+        kinds.extend(session_event_kinds(&context));
         assert_eq!(
-            session_event_kinds(&context),
+            kinds,
             vec![
                 "operation.started",
                 "turn.started",
@@ -1429,17 +1437,11 @@ mod tests {
                 "message.completed",
             ]
         );
-        assert!(
-            context
-                .pending_session_events()
-                .iter()
-                .any(|event| matches!(
-                    &event.data,
-                    SessionEventData::TurnInputRecorded { content }
-                        if serde_json::to_value(content).unwrap()[0]["data"]["text"] == "hello"
-                ))
-        );
-        assert!(store.read_events(&handle).unwrap().is_empty());
+        assert!(durable_events.iter().any(|event| matches!(
+            &event.data,
+            SessionEventData::TurnInputRecorded { content }
+                if serde_json::to_value(content).unwrap()[0]["data"]["text"] == "hello"
+        )));
     }
 
     #[tokio::test]
@@ -1506,6 +1508,7 @@ mod tests {
             ],
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         });

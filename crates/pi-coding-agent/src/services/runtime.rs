@@ -210,14 +210,22 @@ impl RuntimeService {
             let service = authorization.service;
             let turn_id = authorization.turn_id;
             let capability_snapshot = authorization.capability_snapshot;
+            let event_writer = authorization.event_writer;
             config.hooks.before_tool_call = Some(Arc::new(move |context| {
                 let service = service.clone();
                 let turn_id = turn_id.clone();
                 let capability_snapshot = capability_snapshot.clone();
                 let inventory = authorization_inventory.clone();
+                let event_writer = event_writer.clone();
                 Box::pin(async move {
                     service
-                        .authorize(context, turn_id, capability_snapshot, inventory)
+                        .authorize_with_event_writer(
+                            context,
+                            turn_id,
+                            capability_snapshot,
+                            inventory,
+                            event_writer,
+                        )
                         .await
                 })
             }));
@@ -823,6 +831,7 @@ mod tests {
                 message: "ignored".into(),
             }],
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: crate::session::replay::ReplayUsageSummary {
                 last_context_tokens: Some(95_000),
                 last_context_message_id: Some("msg_1".into()),

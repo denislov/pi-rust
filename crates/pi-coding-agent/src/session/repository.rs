@@ -2,7 +2,6 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
-#[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -18,6 +17,7 @@ use crate::session::event::SessionEventEnvelope;
 #[derive(Debug, Clone)]
 pub(crate) struct SessionLogStore {
     root: PathBuf,
+    append_lock: Arc<Mutex<()>>,
     #[cfg(test)]
     failures: Arc<Mutex<StoreFailureState>>,
 }
@@ -107,6 +107,7 @@ impl SessionLogStore {
     pub(crate) fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
+            append_lock: Arc::new(Mutex::new(())),
             #[cfg(test)]
             failures: Arc::new(Mutex::new(StoreFailureState::default())),
         }
@@ -313,6 +314,7 @@ impl SessionLogStore {
         handle: &SessionHandle,
         events: &[SessionEventEnvelope],
     ) -> Result<(), CodingSessionError> {
+        let _append_guard = self.append_lock.lock().unwrap();
         #[cfg(test)]
         self.fail_if_injected(StoreFailurePoint::AppendEvents)?;
         let event_log_path = event_log_path(&handle.session_dir, &handle.manifest)?;
@@ -817,6 +819,7 @@ mod tests {
         OperationKind, PersistedContentBlock, PersistedRole, PersistedToolResult, SessionEventData,
     };
     use crate::session::replay::{MessageStatus, ToolCallStatus, TranscriptItem};
+    use std::sync::Barrier;
 
     fn create_options(session_id: &str) -> CreateSessionOptions {
         CreateSessionOptions::new(session_id, "2026-06-29T00:00:00Z")
@@ -1028,6 +1031,49 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(raw_sequences, vec![1, 2]);
+    }
+
+    #[test]
+    fn cloned_store_serializes_concurrent_event_appends() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(create_options("sess_concurrent_append"))
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(8));
+        let threads = (0..8)
+            .map(|index| {
+                let store = store.clone();
+                let handle = handle.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store
+                        .append_events(
+                            &handle,
+                            &[event(
+                                "sess_concurrent_append",
+                                &format!("evt_{index}"),
+                                SessionEventData::TurnStarted {},
+                            )],
+                        )
+                        .unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let events = store.read_events(&handle).unwrap();
+        assert_eq!(events.len(), 8);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.session_sequence.unwrap())
+                .collect::<Vec<_>>(),
+            (1..=8).collect::<Vec<_>>()
+        );
     }
 
     #[test]

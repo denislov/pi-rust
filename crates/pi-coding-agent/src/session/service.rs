@@ -20,7 +20,8 @@ use crate::runtime::facade::{
 use crate::services::event::EventService;
 use crate::session::event::{
     OperationKind, PersistedContentBlock, PersistedDelegationRuntimeSeed,
-    PersistedDelegationStatus, PersistedPluginDiagnostic, SessionEventData, SessionEventEnvelope,
+    PersistedDelegationStatus, PersistedPluginDiagnostic, PersistedToolAuthorizationResolution,
+    SessionEventData, SessionEventEnvelope,
 };
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use crate::session::replay::{
@@ -51,6 +52,43 @@ pub(crate) struct SessionService {
     store: SessionLogStore,
     handle: SessionHandle,
     startup_recovery_markers: Vec<StartupRecoveryMarker>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SessionEventWriter {
+    store: SessionLogStore,
+    handle: SessionHandle,
+}
+
+impl SessionEventWriter {
+    pub(crate) fn append(
+        &self,
+        operation_id: &str,
+        turn_id: &str,
+        data: Vec<SessionEventData>,
+    ) -> Result<(), CodingSessionError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let session_id = self.handle.manifest().session_id.clone();
+        let mut ids = SystemIdGenerator;
+        let clock = SystemClock;
+        let updated_at = clock.now_rfc3339();
+        let events = data
+            .into_iter()
+            .map(|data| {
+                SessionEventEnvelope::new(
+                    session_id.clone(),
+                    ids.next_event_id(),
+                    updated_at.clone(),
+                    data,
+                )
+                .with_operation_id(operation_id)
+                .with_turn_id(turn_id)
+            })
+            .collect::<Vec<_>>();
+        self.store.append_events(&self.handle, &events)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -938,6 +976,13 @@ impl SessionService {
         self.store.replay_session(&self.handle)
     }
 
+    pub(crate) fn event_writer(&self) -> SessionEventWriter {
+        SessionEventWriter {
+            store: self.store.clone(),
+            handle: self.handle.clone(),
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn recovery_summary(&self) -> Result<SessionRecoverySummary, CodingSessionError> {
         Ok(self.replay()?.recovery_summary())
@@ -946,7 +991,8 @@ impl SessionService {
     fn apply_startup_recovery(&mut self) -> Result<(), CodingSessionError> {
         let replay = self.replay()?;
         let in_doubt_operations = replay.recovery_summary().in_doubt_operations;
-        if in_doubt_operations.is_empty() {
+        let pending_tool_authorizations = replay.pending_tool_authorizations;
+        if in_doubt_operations.is_empty() && pending_tool_authorizations.is_empty() {
             return Ok(());
         }
 
@@ -955,6 +1001,8 @@ impl SessionService {
         let clock = SystemClock;
         let recovered_at = clock.now_rfc3339();
         let reason = "startup recovery marked incomplete operation in-doubt".to_owned();
+        let authorization_reason =
+            "startup recovery interrupted unresolved tool authorization".to_owned();
         let operation_facts = self
             .store
             .read_events(&self.handle)?
@@ -991,7 +1039,7 @@ impl SessionService {
                 }
             })
             .collect::<Vec<_>>();
-        let events = markers
+        let mut events = markers
             .iter()
             .map(|marker| {
                 SessionEventEnvelope::new(
@@ -1006,6 +1054,21 @@ impl SessionService {
                 .with_operation_id(marker.operation_id.clone())
             })
             .collect::<Vec<_>>();
+        events.extend(pending_tool_authorizations.into_iter().map(|request| {
+            SessionEventEnvelope::new(
+                session_id.clone(),
+                ids.next_event_id(),
+                recovered_at.clone(),
+                SessionEventData::ToolAuthorizationResolved {
+                    authorization_id: request.authorization_id,
+                    resolution: PersistedToolAuthorizationResolution::Interrupted {
+                        reason: authorization_reason.clone(),
+                    },
+                },
+            )
+            .with_operation_id(request.operation_id)
+            .with_turn_id(request.turn_id)
+        }));
 
         self.store.append_events(&self.handle, &events)?;
         self.store
@@ -1766,9 +1829,36 @@ fn normalized_path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authorization::{
+        ToolAuthorizationDecision, ToolAuthorizationPreview, ToolAuthorizationRequest,
+        ToolAuthorizationRisk, ToolAuthorizationScope,
+    };
     use crate::session::event::PersistedContentBlock;
     use crate::session::replay::OperationReplayStatus;
     use crate::session::repository::StoreFailurePoint;
+
+    fn authorization_request() -> ToolAuthorizationRequest {
+        ToolAuthorizationRequest {
+            authorization_id: "auth_recover".into(),
+            operation_id: "op_auth".into(),
+            turn_id: "turn_auth".into(),
+            tool_call_id: "call_auth".into(),
+            tool_name: "write".into(),
+            risk: ToolAuthorizationRisk::FilesystemMutation,
+            scope: ToolAuthorizationScope::Path {
+                path: "/workspace/config.json".into(),
+            },
+            preview: ToolAuthorizationPreview {
+                summary: "Modify a file".into(),
+                path: Some("/workspace/config.json".into()),
+                command: None,
+                cwd: None,
+                content_preview: Some("{\"token\":\"<redacted>\"}".into()),
+            },
+            capability_generation: 7,
+            requested_at: "2026-07-17T00:00:00Z".into(),
+        }
+    }
 
     #[test]
     fn create_uses_explicit_session_id() {
@@ -1996,6 +2086,161 @@ mod tests {
             .count();
 
         assert_eq!(recovered_count, 1);
+    }
+
+    #[test]
+    fn startup_recovery_interrupts_unresolved_authorization_once_without_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(CreateSessionOptions::new(
+                "sess_auth_recovery",
+                "2026-07-17T00:00:00Z",
+            ))
+            .unwrap();
+        let request = authorization_request();
+        let events = [
+            SessionEventEnvelope::new(
+                "sess_auth_recovery",
+                "evt_started",
+                "2026-07-17T00:00:01Z",
+                SessionEventData::OperationStarted {
+                    operation: OperationKind::Prompt,
+                    runtime_generation: Default::default(),
+                },
+            )
+            .with_operation_id(request.operation_id.clone())
+            .with_turn_id(request.turn_id.clone()),
+            SessionEventEnvelope::new(
+                "sess_auth_recovery",
+                "evt_auth_requested",
+                request.requested_at.clone(),
+                SessionEventData::ToolAuthorizationRequested {
+                    request: request.clone(),
+                },
+            )
+            .with_operation_id(request.operation_id.clone())
+            .with_turn_id(request.turn_id.clone()),
+        ];
+        store.append_events(&handle, &events).unwrap();
+
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_auth_recovery")
+            .with_session_log_root(temp.path());
+        let first = SessionService::open(&options).unwrap();
+        assert!(
+            first
+                .replay()
+                .unwrap()
+                .pending_tool_authorizations
+                .is_empty()
+        );
+        let _second = SessionService::open(&options).unwrap();
+
+        let reopened = store.open_session_id("sess_auth_recovery").unwrap();
+        let events = store.read_events(&reopened).unwrap();
+        let resolutions = events
+            .iter()
+            .filter_map(|event| match &event.data {
+                SessionEventData::ToolAuthorizationResolved {
+                    authorization_id,
+                    resolution,
+                } if authorization_id == "auth_recover" => Some(resolution),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(resolutions.len(), 1);
+        assert!(matches!(
+            resolutions[0],
+            PersistedToolAuthorizationResolution::Interrupted { reason }
+                if reason.contains("startup recovery")
+        ));
+        assert!(!events.iter().any(|event| matches!(
+            event.data,
+            SessionEventData::ToolAuthorizationResolved {
+                resolution: PersistedToolAuthorizationResolution::Approved { .. },
+                ..
+            }
+        )));
+        let serialized = events
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect::<String>();
+        assert!(!serialized.contains("super-secret-value"));
+        assert!(serialized.contains("<redacted>"));
+    }
+
+    #[test]
+    fn startup_recovery_preserves_existing_approval_without_synthesizing_another_resolution() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(CreateSessionOptions::new(
+                "sess_auth_approved",
+                "2026-07-17T00:00:00Z",
+            ))
+            .unwrap();
+        let request = authorization_request();
+        let events = [
+            SessionEventEnvelope::new(
+                "sess_auth_approved",
+                "evt_auth_requested",
+                request.requested_at.clone(),
+                SessionEventData::ToolAuthorizationRequested {
+                    request: request.clone(),
+                },
+            )
+            .with_operation_id(request.operation_id.clone())
+            .with_turn_id(request.turn_id.clone()),
+            SessionEventEnvelope::new(
+                "sess_auth_approved",
+                "evt_auth_approved",
+                "2026-07-17T00:00:01Z",
+                SessionEventData::ToolAuthorizationResolved {
+                    authorization_id: request.authorization_id.clone(),
+                    resolution: PersistedToolAuthorizationResolution::Approved {
+                        decision: ToolAuthorizationDecision::AllowOnce,
+                    },
+                },
+            )
+            .with_operation_id(request.operation_id)
+            .with_turn_id(request.turn_id),
+        ];
+        store.append_events(&handle, &events).unwrap();
+
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_auth_approved")
+            .with_session_log_root(temp.path());
+        let service = SessionService::open(&options).unwrap();
+        assert!(
+            service
+                .replay()
+                .unwrap()
+                .pending_tool_authorizations
+                .is_empty()
+        );
+
+        let reopened = store.open_session_id("sess_auth_approved").unwrap();
+        let events = store.read_events(&reopened).unwrap();
+        let resolutions = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.data,
+                    SessionEventData::ToolAuthorizationResolved { .. }
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(resolutions.len(), 1);
+        assert!(matches!(
+            resolutions[0].data,
+            SessionEventData::ToolAuthorizationResolved {
+                resolution: PersistedToolAuthorizationResolution::Approved {
+                    decision: ToolAuthorizationDecision::AllowOnce,
+                },
+                ..
+            }
+        ));
     }
 
     #[test]

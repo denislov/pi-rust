@@ -390,6 +390,7 @@ impl BranchSummaryContext {
             transcript: self.selected_transcript.clone(),
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         };
@@ -849,6 +850,7 @@ mod tests {
             ],
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         }
@@ -914,6 +916,7 @@ mod tests {
             ],
             diagnostics: Vec::new(),
             pending_delegation_confirmations: Vec::new(),
+            pending_tool_authorizations: Vec::new(),
             usage: Default::default(),
             operation_statuses: Default::default(),
         };

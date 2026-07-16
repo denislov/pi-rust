@@ -293,6 +293,7 @@ impl PromptOperation<'_> {
                     PromptTurnContext::new(PromptTurnIds::new(operation_id, turn_id), options);
                 context.set_plugin_service(self.plugin_service.clone());
                 context.set_authorization_service(self.authorization_service.clone());
+                context.set_authorization_event_writer(session_service.event_writer());
                 context.set_session_id(session_service.session_id().to_owned());
                 context.set_replay(replay);
                 context.set_transaction(transaction);
