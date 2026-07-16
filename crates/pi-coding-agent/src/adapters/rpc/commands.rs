@@ -13,8 +13,8 @@ use crate::operations::prompt::context::QueuedPromptInput;
 use crate::protocol::types::{
     RpcCommand, RpcDetachLifecycleEvent, RpcDetachResponse, RpcDetachStatus, RpcHelloResponse,
     RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement,
-    RpcShutdownLifecycleEvent, RpcShutdownResponse, RpcShutdownStatus,
-    RpcToolAuthorizationApprovalScope,
+    RpcSessionNamePersistence, RpcSetSessionNameResponse, RpcShutdownLifecycleEvent,
+    RpcShutdownResponse, RpcShutdownStatus, RpcToolAuthorizationApprovalScope,
 };
 use crate::protocol::version::{
     PRODUCT_EVENT_PROTOCOL_VERSION, RPC_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION,
@@ -615,8 +615,22 @@ impl RpcState {
                     .await?;
                     return Ok(());
                 }
-                self.session_name = Some(name);
-                write_rpc_response(writer, RpcResponse::success(id, "set_session_name", None)).await
+                self.session_name = Some(name.clone());
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "set_session_name",
+                        Some(
+                            serde_json::to_value(RpcSetSessionNameResponse {
+                                name,
+                                persistence: RpcSessionNamePersistence::AdapterLocal,
+                            })
+                            .expect("set-session-name response serializes"),
+                        ),
+                    ),
+                )
+                .await
             }
             RpcCommand::GetMessages { id } => {
                 write_rpc_response(
@@ -778,7 +792,7 @@ impl RpcState {
             ai_client: self.options.ai_client.clone(),
             session: Some(self.options.session.clone()),
             session_target: None,
-            session_name: self.session_name.clone(),
+            session_name: None,
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),

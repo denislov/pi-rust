@@ -835,6 +835,8 @@ pub struct RpcSessionState {
     pub negotiated_protocol: RpcNegotiatedProtocolState,
     #[serde(rename = "sessionName", skip_serializing_if = "Option::is_none")]
     pub session_name: Option<String>,
+    #[serde(rename = "sessionNamePersistence")]
+    pub session_name_persistence: RpcSessionNamePersistence,
     #[serde(rename = "autoCompactionEnabled")]
     pub auto_compaction_enabled: bool,
     #[serde(rename = "messageCount")]
@@ -844,6 +846,18 @@ pub struct RpcSessionState {
     #[serde(rename = "pendingToolAuthorizations")]
     pub pending_tool_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
     pub capabilities: RpcCapabilities,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RpcSessionNamePersistence {
+    AdapterLocal,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RpcSetSessionNameResponse {
+    pub name: String,
+    pub persistence: RpcSessionNamePersistence,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

@@ -277,6 +277,11 @@ impl RuntimeService {
                     );
                     let mut message = replay_assistant_message(runtime);
                     message.content = replay_content_blocks(content);
+                    if replay.usage.last_context_message_id.as_deref() == Some(message_id.as_str())
+                        && let Some(context_tokens) = replay.usage.last_context_tokens
+                    {
+                        message.usage.total_tokens = context_tokens;
+                    }
                     pending_assistant = Some((message_id.clone(), message));
                 }
                 TranscriptItem::ToolCall {
@@ -818,7 +823,11 @@ mod tests {
                 message: "ignored".into(),
             }],
             pending_delegation_confirmations: Vec::new(),
-            usage: Default::default(),
+            usage: crate::session::replay::ReplayUsageSummary {
+                last_context_tokens: Some(95_000),
+                last_context_message_id: Some("msg_1".into()),
+                ..Default::default()
+            },
             operation_statuses: Default::default(),
         };
 
@@ -855,6 +864,7 @@ mod tests {
                         arguments: serde_json::json!({"path": "src/lib.rs"}),
                         thought_signature: None,
                 }]
+                    && message.usage.total_tokens == 95_000
         ));
         assert!(matches!(
             &messages[3],

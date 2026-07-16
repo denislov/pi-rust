@@ -9,6 +9,7 @@ use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
 use pi_coding_agent::api::cli::runtime::{CliRunOptions, SessionRunOptions};
 use pi_coding_agent::api::protocol::run_rpc_mode_for_io;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -885,6 +886,11 @@ struct RecordingProvider {
     contexts: Arc<Mutex<Vec<Context>>>,
 }
 
+struct ScriptedUsageProvider {
+    contexts: Arc<Mutex<Vec<Context>>>,
+    responses: Mutex<VecDeque<(String, Usage)>>,
+}
+
 impl pi_ai::api::provider::ApiProvider for RecordingProvider {
     fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
         self.contexts.lock().unwrap().push(ctx);
@@ -896,6 +902,32 @@ impl pi_ai::api::provider::ApiProvider for RecordingProvider {
                 text: "multimodal complete".into(),
                 text_signature: None,
             });
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
+impl pi_ai::api::provider::ApiProvider for ScriptedUsageProvider {
+    fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        self.contexts.lock().unwrap().push(ctx);
+        let (text, usage) = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("scripted usage provider response");
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            let mut message = AssistantMessage::empty("scripted-usage", &model_id);
+            message.provider = Some("scripted-usage".into());
+            message.content.push(ContentBlock::Text {
+                text,
+                text_signature: None,
+            });
+            message.usage = usage;
             yield AssistantMessageEvent::Done {
                 reason: StopReason::Stop,
                 message,
@@ -3637,6 +3669,261 @@ async fn rpc_queue_mode_setters_change_provider_queue_drain_behavior() {
             contexts[1]
         );
     }
+}
+
+#[tokio::test]
+async fn rpc_auto_compaction_setter_changes_provider_call_behavior() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-auto-compaction-behavior";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let near_limit_usage = Usage {
+        input: 95_000,
+        total_tokens: 95_000,
+        ..Usage::default()
+    };
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(ScriptedUsageProvider {
+            contexts: contexts.clone(),
+            responses: Mutex::new(VecDeque::from([
+                ("seed answer".into(), near_limit_usage.clone()),
+                ("disabled answer".into(), near_limit_usage),
+                ("summary of near-limit history".into(), Usage::default()),
+                ("enabled answer".into(), Usage::default()),
+            ])),
+        }),
+    );
+    let mut model = faux_model(api);
+    model.context_window = 100_000;
+    let mut session = SessionRunOptions::enabled(cwd);
+    session.session_dir = Some(sessions);
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(32 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(model),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session,
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"compact-seed\",\"type\":\"prompt\",\"message\":\"seed history\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "compaction seed start", |value| {
+        value["type"] == "agent_start"
+    })
+    .await;
+    let _ = read_rpc_json_matching(&mut lines, "compaction seed end", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+
+    input_writer
+        .write_all(b"{\"id\":\"compact-off\",\"type\":\"set_auto_compaction\",\"enabled\":false}\n")
+        .await
+        .unwrap();
+    let disabled = read_rpc_json_matching(&mut lines, "disable auto compaction", |value| {
+        value["id"] == "compact-off"
+    })
+    .await;
+    assert_eq!(disabled["success"], true, "{disabled}");
+    input_writer
+        .write_all(b"{\"id\":\"compact-disabled-prompt\",\"type\":\"prompt\",\"message\":\"without compaction\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "disabled compaction start", |value| {
+        value["type"] == "agent_start"
+    })
+    .await;
+    let _ = read_rpc_json_matching(&mut lines, "disabled compaction end", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    assert_eq!(contexts.lock().unwrap().len(), 2);
+
+    input_writer
+        .write_all(b"{\"id\":\"compact-on\",\"type\":\"set_auto_compaction\",\"enabled\":true}\n")
+        .await
+        .unwrap();
+    let enabled = read_rpc_json_matching(&mut lines, "enable auto compaction", |value| {
+        value["id"] == "compact-on"
+    })
+    .await;
+    assert_eq!(enabled["success"], true, "{enabled}");
+    input_writer
+        .write_all(b"{\"id\":\"compact-enabled-prompt\",\"type\":\"prompt\",\"message\":\"with compaction\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "enabled compaction start", |value| {
+        value["type"] == "agent_start"
+    })
+    .await;
+    let _ = read_rpc_json_matching(&mut lines, "enabled compaction end", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    drop(input_writer);
+    task.await.unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 4, "{contexts:#?}");
+    assert_eq!(contexts[2].messages.len(), 1, "{:#?}", contexts[2]);
+    assert!(matches!(contexts[2].messages[0], Message::User { .. }));
+    assert!(contexts[3].messages.iter().any(|message| matches!(
+        message,
+        Message::User { content }
+            if content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Text { text, .. }
+                    if text.contains("summary of near-limit history")
+            ))
+    )));
+}
+
+#[tokio::test]
+async fn rpc_session_name_is_explicit_adapter_local_display_state() {
+    let api = "pi-coding-rpc-session-name-display";
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("first", StopReason::Stop),
+            FauxProvider::text_call("second", StopReason::Stop),
+        ])),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(32 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"name-bootstrap\",\"type\":\"prompt\",\"message\":\"first\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "name bootstrap end", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"set-name\",\"type\":\"set_session_name\",\"name\":\"Review workspace\"}\n",
+        )
+        .await
+        .unwrap();
+    let set_name = read_rpc_json_matching(&mut lines, "set session name", |value| {
+        value["id"] == "set-name"
+    })
+    .await;
+    assert_eq!(
+        set_name["data"],
+        serde_json::json!({
+            "name": "Review workspace",
+            "persistence": "adapter_local"
+        })
+    );
+
+    input_writer
+        .write_all(b"{\"id\":\"named-state\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let named = read_rpc_json_matching(&mut lines, "named state", |value| {
+        value["id"] == "named-state"
+    })
+    .await;
+    assert_eq!(named["data"]["sessionName"], "Review workspace");
+    assert_eq!(named["data"]["sessionNamePersistence"], "adapter_local");
+
+    input_writer
+        .write_all(b"{\"id\":\"name-detach\",\"type\":\"detach\"}\n")
+        .await
+        .unwrap();
+    let detached = read_rpc_json_matching(&mut lines, "name detach", |value| {
+        value["id"] == "name-detach"
+    })
+    .await;
+    assert_eq!(detached["success"], true, "{detached}");
+    input_writer
+        .write_all(b"{\"id\":\"detached-name-state\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let detached_state = read_rpc_json_matching(&mut lines, "detached name state", |value| {
+        value["id"] == "detached-name-state"
+    })
+    .await;
+    assert_eq!(detached_state["data"]["sessionName"], "Review workspace");
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"name-reconnect-prompt\",\"type\":\"prompt\",\"message\":\"second\"}\n",
+        )
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "name reconnect end", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    input_writer
+        .write_all(b"{\"id\":\"reconnected-name-state\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let reconnected = read_rpc_json_matching(&mut lines, "reconnected name state", |value| {
+        value["id"] == "reconnected-name-state"
+    })
+    .await;
+    assert_eq!(reconnected["data"]["sessionName"], "Review workspace");
+
+    input_writer
+        .write_all(b"{\"id\":\"new-after-name\",\"type\":\"new_session\"}\n")
+        .await
+        .unwrap();
+    let new_session = read_rpc_json_matching(&mut lines, "new session after name", |value| {
+        value["id"] == "new-after-name"
+    })
+    .await;
+    assert_eq!(new_session["success"], true, "{new_session}");
+    input_writer
+        .write_all(b"{\"id\":\"new-name-state\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let reset = read_rpc_json_matching(&mut lines, "reset name state", |value| {
+        value["id"] == "new-name-state"
+    })
+    .await;
+    assert!(reset["data"].get("sessionName").is_none(), "{reset}");
+    assert_eq!(reset["data"]["sessionNamePersistence"], "adapter_local");
+
+    drop(input_writer);
+    task.await.unwrap();
 }
 
 #[tokio::test]

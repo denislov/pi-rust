@@ -1,6 +1,6 @@
 use crate::adapters::rpc::state::RpcState;
 use crate::protocol::types::RpcCapabilities;
-use crate::protocol::types::RpcSessionState;
+use crate::protocol::types::{RpcSessionNamePersistence, RpcSessionState};
 use crate::protocol::types::{RpcSessionStats, RpcSessionTokenStats};
 use crate::protocol::version::{ProtocolFamilyVersion, UI_SNAPSHOT_PROTOCOL_VERSION};
 use crate::runtime::facade::{
@@ -36,6 +36,7 @@ impl RpcState {
             snapshot_version: projection.snapshot_version,
             negotiated_protocol: self.negotiated_protocol.clone(),
             session_name: self.session_name.clone(),
+            session_name_persistence: RpcSessionNamePersistence::AdapterLocal,
             auto_compaction_enabled: self.auto_compaction_enabled,
             message_count: self.messages.len(),
             pending_message_count: projection.pending_message_count,

@@ -70,6 +70,7 @@ pub(crate) struct ReplayUsageSummary {
     pub(crate) cache_write: u32,
     pub(crate) cost: f64,
     pub(crate) last_context_tokens: Option<u32>,
+    pub(crate) last_context_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,6 +337,7 @@ impl ReplayBuilder {
                 tokens_before,
             } => {
                 self.usage.last_context_tokens = None;
+                self.usage.last_context_message_id = None;
                 self.apply_compaction_completed(summary, first_kept_message_id, *tokens_before);
             }
             SessionEventData::BranchSummaryCreated {
@@ -469,7 +471,7 @@ impl ReplayBuilder {
                 finish_reason: _,
                 usage,
             } => {
-                self.record_assistant_usage(usage);
+                self.record_assistant_usage(message_id, usage);
                 if self.complete_message(message_id, content.clone()).is_err() {
                     self.warn(format!(
                         "message completion references unknown message: {message_id}"
@@ -599,7 +601,7 @@ impl ReplayBuilder {
         });
     }
 
-    fn record_assistant_usage(&mut self, usage: &Usage) {
+    fn record_assistant_usage(&mut self, message_id: &str, usage: &Usage) {
         self.usage.input = self.usage.input.saturating_add(usage.input);
         self.usage.output = self.usage.output.saturating_add(usage.output);
         self.usage.cache_read = self.usage.cache_read.saturating_add(usage.cache_read);
@@ -610,6 +612,7 @@ impl ReplayBuilder {
         let context_tokens = calculate_context_tokens(usage);
         if context_tokens > 0 {
             self.usage.last_context_tokens = Some(context_tokens);
+            self.usage.last_context_message_id = Some(message_id.to_owned());
         }
     }
 

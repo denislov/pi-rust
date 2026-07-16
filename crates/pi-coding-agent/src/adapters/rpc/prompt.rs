@@ -19,8 +19,8 @@ use crate::protocol::types::{
 };
 use crate::runtime::facade::{
     AgentInvocationOptions, AgentTeamOptions, CodingAgentControlId, CodingAgentDraft,
-    CodingAgentDraftId, CodingAgentDraftKind, CodingAgentReconnect, CodingAgentSession,
-    CodingAgentShutdownOutcome, CodingAgentSnapshotCursor, CodingSessionError,
+    CodingAgentDraftId, CodingAgentDraftKind, CodingAgentLifecycleRejection, CodingAgentReconnect,
+    CodingAgentSession, CodingAgentShutdownOutcome, CodingAgentSnapshotCursor, CodingSessionError,
     OperationIdempotencyKey, OperationKind, ProductEvent, ProductEventSequence, ProfileId,
     ProfileKind, PromptTurnMode, PromptTurnOptions,
 };
@@ -76,7 +76,7 @@ impl RpcState {
             ai_client: self.options.ai_client.clone(),
             session: Some(self.options.session.clone()),
             session_target: None,
-            session_name: self.session_name.clone(),
+            session_name: None,
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
@@ -455,7 +455,7 @@ impl RpcState {
             ai_client: self.options.ai_client.clone(),
             session: Some(self.options.session.clone()),
             session_target: None,
-            session_name: self.session_name.clone(),
+            session_name: None,
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
@@ -642,7 +642,7 @@ impl RpcState {
             ai_client: self.options.ai_client.clone(),
             session: Some(self.options.session.clone()),
             session_target: None,
-            session_name: self.session_name.clone(),
+            session_name: None,
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
@@ -905,7 +905,7 @@ impl RpcState {
             ai_client: self.options.ai_client.clone(),
             session: Some(self.options.session.clone()),
             session_target: None,
-            session_name: self.session_name.clone(),
+            session_name: None,
             thinking_level: Some(self.thinking_level),
             tool_execution: None,
             resources: AgentResources::default(),
@@ -1007,7 +1007,21 @@ impl RpcState {
         for protocol_event in pushed.protocol_events {
             write_json_line(writer, &protocol_event).await?;
         }
+        self.acknowledge_delivered_product_event(&event)?;
         Ok(())
+    }
+
+    fn acknowledge_delivered_product_event(&self, event: &ProductEvent) -> Result<(), CliError> {
+        let Some(connection) = &self.client_connection else {
+            return Ok(());
+        };
+        match connection.acknowledge(event.sequence()) {
+            Ok(_) => Ok(()),
+            Err(CodingSessionError::Lifecycle {
+                reason: CodingAgentLifecycleRejection::RuntimeShutDown,
+            }) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub(super) async fn finish_coding_running_prompt<W>(
@@ -1158,6 +1172,7 @@ impl RpcState {
                     for protocol_event in pushed.protocol_events {
                         write_json_line(writer, &protocol_event).await?;
                     }
+                    self.acknowledge_delivered_product_event(&event)?;
                 }
                 RpcQueuedProductEvent::Overflow { skipped } => {
                     write_rpc_response(
