@@ -1,11 +1,12 @@
 [package]
 name = "pi-coding-agent"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 [features]
 default = []
 test-harness = []
+test-support = ["pi-agent-core/test-support", "pi-ai/test-support", "pi-tui/test-support"]
 
 [dependencies]
 dirs = "6"
@@ -32,4 +33,11 @@ unicode-normalization = "0.1"
 
 [dev-dependencies]
 async-stream = "0.3"
+pi-agent-core = { path = "../pi-agent-core", features = ["test-support"] }
+pi-ai = { path = "../pi-ai", features = ["test-support"] }
+pi-tui = { path = "../pi-tui", features = ["test-support"] }
 tempfile = "3"
+
+[[example]]
+name = "manual_test"
+required-features = ["test-support"]

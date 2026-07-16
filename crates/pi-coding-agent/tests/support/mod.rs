@@ -3,15 +3,18 @@
 use std::ffi::{OsStr, OsString};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pi_ai::api::AiClient;
-use pi_ai::api::ApiProvider;
-use pi_ai::api::Usage;
-use pi_coding_agent::api::{
+use pi_ai::api::client::AiClient;
+use pi_ai::api::conversation::Usage;
+use pi_ai::api::provider::ApiProvider;
+use pi_coding_agent::api::event::{
     CodingAgentProductEvent, CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
     CodingAgentProductEventError, CodingAgentProductEventKind, CodingAgentProductEventReplacement,
-    CodingAgentProductEventUsage, CodingSessionError, SelfHealingEditCheckOutput,
-    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+    CodingAgentProductEventUsage,
 };
+use pi_coding_agent::api::operation::{
+    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+};
+use pi_coding_agent::api::runtime::CodingSessionError;
 use serde_json::json;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -98,13 +101,27 @@ impl ProviderGuard {
 
 #[allow(dead_code)]
 pub fn product_event(event: CodingAgentProductEventKind) -> CodingAgentProductEvent {
+    let delivery_class = match &event {
+        CodingAgentProductEventKind::Workflow(
+            pi_coding_agent::api::event::CodingAgentWorkflowProductEvent::OperationRecovered {
+                ..
+            },
+        ) => "recovery",
+        CodingAgentProductEventKind::Capability(_)
+        | CodingAgentProductEventKind::Runtime(
+            pi_coding_agent::api::event::CodingAgentRuntimeProductEvent::ShutDown,
+        ) => "control",
+        _ => "data",
+    };
     serde_json::from_value(json!({
+        "stream_id": "test-stream",
         "sequence": 1,
         "event": event,
         "operation_id": null,
         "terminal_status": null,
         "terminal_operation": null,
         "durability": { "state": "live_only" },
+        "delivery_class": delivery_class,
     }))
     .expect("typed product-event fixture must deserialize")
 }

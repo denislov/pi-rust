@@ -1,6 +1,7 @@
 use super::wire;
-use crate::types::{ContentBlock, Context, Message, Model, StreamOptions, Tool};
-use crate::util::tool_call_id::normalize_tool_call_id;
+use crate::model::Model;
+use crate::protocol::{ContentBlock, Context, Message, StreamOptions, Tool};
+use crate::providers::common::normalize_tool_call_id;
 
 const EMPTY_TEXT_PLACEHOLDER: &str = "<empty>";
 

@@ -1,14 +1,10 @@
 #![allow(dead_code)]
 
-use pi_coding_agent::api::{
-    AgentInvocationOptions, AgentInvocationOutcome, AgentTeamMemberOutcome, AgentTeamOptions,
-    AgentTeamOutcome, BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
-    CodingAgentPluginDiagnostic, CodingAgentPluginLoadOutcome, CodingAgentSessionExport,
-    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
-    CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingSessionError,
-    PendingDelegationConfirmation, ProfileId, PromptInvocation, PromptTurnOptions,
-    PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditReplacement, SelfHealingEditRequest,
-};
+use pi_coding_agent::api::runtime::{CodingAgentSessionOptions, CodingSessionError};
+use pi_coding_agent::api::operation::{AgentInvocationOptions, AgentInvocationOutcome, AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome, PendingDelegationConfirmation, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditReplacement, SelfHealingEditRequest};
+use pi_coding_agent::api::client::{CodingAgentSnapshot, CodingAgentSnapshotCursor};
+use pi_coding_agent::api::view::{CodingAgentPluginDiagnostic, CodingAgentSessionExport, CodingAgentSessionSummary, CodingAgentSessionView, ProfileId};
+use pi_coding_agent::api::cli::runtime::{PromptInvocation};
 
 fn prompt() -> PromptTurnOptions {
     PromptTurnOptions::new(PromptInvocation::Text("fixture".into()))

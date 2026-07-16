@@ -1,7 +1,7 @@
 //! Internal owner tests for the read tool.
 
-use pi_ai::api::ContentBlock;
-use pi_coding_agent::tools::read::read_execute;
+use pi_ai::api::conversation::ContentBlock;
+use pi_coding_agent::tools::filesystem::read::read_execute;
 use tempfile::tempdir;
 
 fn text(b: &[ContentBlock]) -> String {

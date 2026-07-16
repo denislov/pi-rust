@@ -1,6 +1,5 @@
 //! Owner-crate behavior tests for private product adapters and built-in tools.
 
-#[path = "../../tests/support/mod.rs"]
 mod support;
 
 mod file_mutation_queue;

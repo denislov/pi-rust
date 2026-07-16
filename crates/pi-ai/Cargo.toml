@@ -1,7 +1,15 @@
 [package]
 name = "pi-ai"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
+
+[features]
+default = []
+test-support = []
+
+[[example]]
+name = "faux_stream"
+required-features = ["test-support"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

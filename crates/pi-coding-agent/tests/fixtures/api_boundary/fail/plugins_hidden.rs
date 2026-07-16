@@ -1,2 +1,2 @@
-use pi_coding_agent::{coding_session::{plugin_load_flow::PluginLoadOptions, profiles::{ProfileRegistry, ProfileRegistryOptions}}, plugins::PluginRegistry};
+use pi_coding_agent::operations::plugin_load::flow::PluginLoadOptions;
 fn main() {}

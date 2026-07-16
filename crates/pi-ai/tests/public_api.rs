@@ -1,20 +1,80 @@
 mod support;
 
 use async_stream::stream;
-use pi_ai::api::{
-    AiClient, AnthropicMessagesCompat, ApiProvider, AssistantImages, AssistantMessage,
-    AssistantMessageEvent, CacheControlFormat, ContentBlock, Context, Cost,
-    EnvProviderAuthResolver, EventStream, ImageContent, ImageInput, ImageOutput, ImagesContext,
-    ImagesModel, ImagesModelCost, ImagesModelOutput, ImagesUsage, Message, Model, ModelCompat,
-    ModelCost, ModelInput, OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting,
-    ProviderAuth, ProviderAuthDiagnostic, ProviderAuthResolver, ProviderError, ProviderErrorKind,
-    ProviderPayloadHook, ProviderPayloadHookFuture, ProviderRegistry, ProviderResponseHook,
-    ProviderResponseHookFuture, ProviderResponseInfo, ProviderStreamHooks, RetryConfig, StopReason,
-    StreamOptions, TextContent, ThinkingConfig, ThinkingFormat, ThinkingLevelMap,
-    ThinkingLevelValue, Tool, Usage, VercelGatewayRouting, all_models, builtin_provider_apis,
-    calculate_cost, complete, env_api_key, get_model, get_models, get_providers,
-    is_retryable_status, lookup_model, parse_retry_after_ms, register_builtins_into,
+use pi_ai::api::auth::{
+    EnvProviderAuthResolver, ProviderAuth, ProviderAuthDiagnostic, ProviderAuthResolver,
+    env_api_key,
 };
+use pi_ai::api::client::AiClient;
+use pi_ai::api::compatibility::{
+    AnthropicMessagesCompat, CacheControlFormat, ModelCompat, OpenAICompletionsCompat,
+    OpenAIResponsesCompat, OpenRouterRouting, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue,
+    VercelGatewayRouting,
+};
+use pi_ai::api::conversation::{
+    AssistantMessage, ContentBlock, Context, Cost, Message, StopReason, Tool, Usage,
+};
+use pi_ai::api::error::{ProviderError, ProviderErrorKind};
+use pi_ai::api::hooks::{
+    ProviderPayloadHook, ProviderPayloadHookFuture, ProviderResponseHook,
+    ProviderResponseHookFuture, ProviderResponseInfo, ProviderStreamHooks,
+};
+use pi_ai::api::images::{
+    AssistantImages, ImageContent, ImageInput, ImageOutput, ImagesContext, ImagesModel,
+    ImagesModelCost, ImagesModelOutput, ImagesUsage, TextContent,
+};
+use pi_ai::api::model::{
+    Model, ModelCost, ModelInput, ThinkingConfig, all_models, calculate_cost, get_model,
+    get_models, get_providers, lookup_model,
+};
+use pi_ai::api::provider::{
+    ApiProvider, ProviderRegistry, builtin_provider_apis, register_builtins_into,
+};
+use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions, complete};
+use pi_ai::api::transport::{RetryConfig, is_retryable_status, parse_retry_after_ms};
+
+#[test]
+fn categorized_api_facade_exposes_intentional_contract_groups() {
+    use pi_ai::api::auth::{EnvProviderAuthResolver, ProviderAuthDiagnostic};
+    use pi_ai::api::client::AiClient;
+    use pi_ai::api::compatibility::ModelCompat;
+    use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Usage};
+    use pi_ai::api::error::{ProviderError, ProviderErrorKind};
+    use pi_ai::api::hooks::{ProviderResponseInfo, ProviderStreamHooks};
+    use pi_ai::api::images::{ImageInput, ImagesContext};
+    use pi_ai::api::model::{Model, ThinkingConfig, lookup_model};
+    use pi_ai::api::provider::{ApiProvider, ProviderRegistry};
+    use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions, complete};
+    use pi_ai::api::transport::RetryConfig;
+
+    fn accepts<T>() {}
+
+    accepts::<AiClient>();
+    accepts::<EnvProviderAuthResolver>();
+    accepts::<ProviderAuthDiagnostic>();
+    accepts::<ModelCompat>();
+    accepts::<AssistantMessage>();
+    accepts::<ContentBlock>();
+    accepts::<Context>();
+    accepts::<Usage>();
+    accepts::<ProviderError>();
+    accepts::<ProviderErrorKind>();
+    accepts::<ProviderResponseInfo>();
+    accepts::<ProviderStreamHooks>();
+    accepts::<ImageInput>();
+    accepts::<ImagesContext>();
+    accepts::<Model>();
+    accepts::<ThinkingConfig>();
+    accepts::<ProviderRegistry>();
+    accepts::<AssistantMessageEvent>();
+    accepts::<EventStream>();
+    accepts::<StreamOptions>();
+    accepts::<RetryConfig>();
+
+    let _ = lookup_model as fn(&str) -> Option<Model>;
+    let _ = complete;
+    let _ = std::mem::size_of::<Option<&dyn ApiProvider>>();
+}
 use std::sync::{Arc, Mutex};
 use support::EnvGuard;
 

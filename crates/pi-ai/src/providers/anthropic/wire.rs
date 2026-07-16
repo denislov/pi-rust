@@ -125,6 +125,9 @@ pub enum ContentBlockStart {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
+// Variant names intentionally mirror Anthropic's streamed delta vocabulary and
+// stay explicit at conversion call sites.
+#[allow(clippy::enum_variant_names)]
 pub enum ContentBlockDelta {
     #[serde(rename = "text_delta")]
     TextDelta { text: String },

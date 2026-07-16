@@ -1,7 +1,7 @@
 //! Internal owner tests for the grep tool.
 
-use pi_ai::api::ContentBlock;
-use pi_coding_agent::tools::grep::grep_execute;
+use pi_ai::api::conversation::ContentBlock;
+use pi_coding_agent::tools::filesystem::grep::grep_execute;
 use tempfile::tempdir;
 
 fn text(blocks: &[ContentBlock]) -> String {

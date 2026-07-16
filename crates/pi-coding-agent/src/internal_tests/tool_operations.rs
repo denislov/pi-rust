@@ -1,13 +1,13 @@
 //! Internal owner tests for injected tool operations.
 
 use futures::future::{BoxFuture, FutureExt};
-use pi_ai::api::ContentBlock;
+use pi_ai::api::conversation::ContentBlock;
 use pi_coding_agent::tools::ShellCapability;
-use pi_coding_agent::tools::bash::{BashOperations, BashOptions};
-use pi_coding_agent::tools::bash::{bash_execute_with_operations, bash_tool_with_operations};
-use pi_coding_agent::tools::edit::{EditOperations, edit_execute_with_operations};
-use pi_coding_agent::tools::read::{ReadOperations, read_execute_with_operations};
-use pi_coding_agent::tools::write::{WriteOperations, write_execute_with_operations};
+use pi_coding_agent::tools::filesystem::edit::{EditOperations, edit_execute_with_operations};
+use pi_coding_agent::tools::filesystem::read::{ReadOperations, read_execute_with_operations};
+use pi_coding_agent::tools::filesystem::write::{WriteOperations, write_execute_with_operations};
+use pi_coding_agent::tools::shell::{BashOperations, BashOptions};
+use pi_coding_agent::tools::shell::{bash_execute_with_operations, bash_tool_with_operations};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
@@ -171,7 +171,7 @@ impl BashOperations for FakeBashOps {
         cwd: &'a Path,
         args: serde_json::Value,
         _options: &'a BashOptions,
-        on_update: Option<pi_agent_core::api::ToolUpdateCallback>,
+        on_update: Option<pi_agent_core::api::tool::ToolUpdateCallback>,
     ) -> BoxFuture<'a, Result<Vec<ContentBlock>, String>> {
         async move {
             let command = args
@@ -184,7 +184,7 @@ impl BashOperations for FakeBashOps {
                 .unwrap()
                 .push((cwd.to_path_buf(), command));
             if let Some(on_update) = on_update {
-                on_update(pi_agent_core::api::AgentToolOutput::new(vec![
+                on_update(pi_agent_core::api::tool::AgentToolOutput::new(vec![
                     ContentBlock::Text {
                         text: "fake update".into(),
                         text_signature: None,
@@ -207,7 +207,7 @@ async fn bash_can_use_injected_operations_and_stream_updates() {
     let updates = Arc::new(Mutex::new(Vec::new()));
     let update_sink = {
         let updates = updates.clone();
-        Arc::new(move |output: pi_agent_core::api::AgentToolOutput| {
+        Arc::new(move |output: pi_agent_core::api::tool::AgentToolOutput| {
             updates.lock().unwrap().push(text(&output.content));
         })
     };
@@ -240,9 +240,13 @@ async fn bash_tool_accepts_injected_operations() {
     let tool =
         bash_tool_with_operations(ShellCapability::new(cwd.path().to_path_buf()), ops.clone());
 
-    let output = (tool.execute)(serde_json::json!({"command": "from tool"}), None)
-        .await
-        .unwrap();
+    let output = (tool.execute)(
+        pi_agent_core::api::tool::ToolExecutionContext::standalone(tool.name.clone()),
+        serde_json::json!({"command": "from tool"}),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(text(&output.content), "fake final");
     assert_eq!(ops.calls.lock().unwrap()[0].1, "from tool");

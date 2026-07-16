@@ -1,18 +1,20 @@
 pub mod auth;
 pub mod convert;
 pub mod datetime;
-pub mod process;
 pub mod sigv4;
+pub mod stream;
 pub mod wire;
 
 use async_stream::stream;
 use futures::StreamExt;
 
-use crate::registry::ApiProvider;
-use crate::stream::EventStream;
-use crate::types::{
-    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
+use crate::protocol::{
+    AssistantMessage, AssistantMessageEvent, Context, StopReason, StreamOptions,
 };
+
+use crate::model::Model;
+use crate::protocol::stream::EventStream;
+use crate::registry::ApiProvider;
 pub use auth::auth_headers;
 use convert::build_request;
 
@@ -150,7 +152,7 @@ impl ApiProvider for BedrockProvider {
             }
 
             let body_stream = response.bytes_stream().map(|r| r.map_err(|e| e.to_string()));
-            let mut event_stream = process::process(Box::pin(body_stream), model, cancel);
+            let mut event_stream = stream::process(Box::pin(body_stream), model, cancel);
             while let Some(event) = event_stream.next().await {
                 yield event;
             }

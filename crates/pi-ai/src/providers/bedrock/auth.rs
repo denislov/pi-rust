@@ -1,5 +1,5 @@
 use super::sigv4;
-use crate::types::StreamOptions;
+use crate::protocol::StreamOptions;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]

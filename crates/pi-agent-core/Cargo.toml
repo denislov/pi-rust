@@ -1,7 +1,11 @@
 [package]
 name = "pi-agent-core"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
+
+[features]
+default = []
+test-support = ["pi-ai/test-support"]
 
 [dependencies]
 pi-ai = { path = "../pi-ai" }
@@ -19,5 +23,30 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 [dev-dependencies]
+pi-ai = { path = "../pi-ai", features = ["test-support"] }
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
+
+[[example]]
+name = "loop_example"
+required-features = ["test-support"]
+
+[[test]]
+name = "agent"
+required-features = ["test-support"]
+
+[[test]]
+name = "api_contract"
+required-features = ["test-support"]
+
+[[test]]
+name = "execution"
+required-features = ["test-support"]
+
+[[test]]
+name = "flow"
+required-features = ["test-support"]
+
+[[test]]
+name = "tool_hooks"
+required-features = ["test-support"]

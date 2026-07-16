@@ -1,14 +1,13 @@
 #![allow(dead_code)]
 
 use async_stream::stream;
-use pi_agent_core::api::{AgentConfig, ProviderStreamer};
-use pi_ai::api::EventStream;
+use pi_agent_core::api::agent::{AgentConfig, ProviderStreamer};
+use pi_ai::api::client::AiClient;
+use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, StopReason};
+use pi_ai::api::model::{Model, ModelCost, ModelInput};
+use pi_ai::api::provider::ApiProvider;
+use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::FauxResponse;
-use pi_ai::api::{AiClient, ApiProvider};
-use pi_ai::api::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
-    StopReason, StreamOptions,
-};
 use std::sync::{Arc, Mutex};
 
 /// A scripted LLM response for one turn.

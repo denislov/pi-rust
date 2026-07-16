@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Color, Style};
+use crate::render::{Color, Style};
 
 /// Optional syntax-highlighting callback for code blocks, mirroring TS
 /// `MarkdownTheme.highlightCode`. Given `(code, lang)`, returns one painted

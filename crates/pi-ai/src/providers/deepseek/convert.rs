@@ -1,5 +1,6 @@
 use super::wire::{ChatCompletionRequest, ChatMessage};
-use crate::types::{ContentBlock, Context, Message, Model, StreamOptions};
+use crate::model::Model;
+use crate::protocol::{ContentBlock, Context, Message, StreamOptions};
 use serde_json::json;
 
 pub fn build_request(

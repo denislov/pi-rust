@@ -1,0 +1,36 @@
+pub(crate) mod flow;
+
+use crate::profiles::ProfileRegistry;
+use crate::runtime::capability::OperationCapabilitySnapshot;
+use crate::runtime::control::{OperationControl, PromptControlReceiver};
+use crate::runtime::facade::CodingSessionError;
+use crate::services::event::EventService;
+use crate::services::flow::FlowService;
+use crate::services::plugin::PluginService;
+use flow::{AgentInvocationContext, AgentInvocationOptions, AgentInvocationOutcome};
+
+pub(crate) async fn run(
+    options: AgentInvocationOptions,
+    scheduler_parent_operation_id: String,
+    prompt_control_receiver: Option<PromptControlReceiver>,
+    profile_registry: &ProfileRegistry,
+    plugin_service: &PluginService,
+    event_service: &EventService,
+    flow_service: &FlowService,
+    operation_control: &OperationControl,
+    parent_capability_snapshot: OperationCapabilitySnapshot,
+) -> Result<AgentInvocationOutcome, CodingSessionError> {
+    let mut context = AgentInvocationContext::new(
+        options,
+        profile_registry.clone(),
+        plugin_service.clone(),
+        event_service.clone(),
+        operation_control.clone(),
+    )
+    .with_parent_capability_snapshot(parent_capability_snapshot)
+    .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
+    if let Some(receiver) = prompt_control_receiver {
+        context.set_prompt_control_receiver(receiver);
+    }
+    flow_service.run_agent_invocation(&mut context).await
+}

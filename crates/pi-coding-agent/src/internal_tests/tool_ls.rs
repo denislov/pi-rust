@@ -1,7 +1,7 @@
 //! Internal owner tests for the directory-listing tool.
 
-use pi_ai::api::ContentBlock;
-use pi_coding_agent::tools::ls::ls_execute;
+use pi_ai::api::conversation::ContentBlock;
+use pi_coding_agent::tools::filesystem::ls::ls_execute;
 use tempfile::tempdir;
 
 fn text(blocks: &[ContentBlock]) -> String {

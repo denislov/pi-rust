@@ -4,9 +4,10 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::error::ProviderError;
-use crate::stream::EventStream;
-use crate::types::{AssistantMessage, AssistantMessageEvent, Model, StopReason, StreamOptions};
-use crate::util::http::RetryConfig;
+use crate::model::Model;
+use crate::protocol::stream::EventStream;
+use crate::protocol::{AssistantMessage, AssistantMessageEvent, StopReason, StreamOptions};
+use crate::transport::retry::RetryConfig;
 
 pub fn send_json_stream<F>(
     _client: &reqwest::Client,
@@ -118,7 +119,7 @@ where
             let response_headers = headers_to_json(response.headers());
 
             if let Some(hooks) = hooks.as_ref() {
-                let response_info = crate::types::ProviderResponseInfo {
+                let response_info = crate::protocol::ProviderResponseInfo {
                     status: Some(status),
                     headers: Some(response_headers.clone()),
                 };
@@ -136,7 +137,7 @@ where
             }
 
             if !response.status().is_success() {
-                if crate::util::http::is_retryable_status(status) && attempt < retry_cfg.max_retries {
+                if crate::transport::retry::is_retryable_status(status) && attempt < retry_cfg.max_retries {
                     let retry_delay = match retry_delay_ms(response.headers(), &retry_cfg) {
                         Ok(ms) => ms,
                         Err(e) => {
@@ -202,9 +203,9 @@ fn should_retry(error: &Option<ProviderError>, cfg: &RetryConfig, attempt: u32) 
         Some(e) => match e.kind {
             super::error::ProviderErrorKind::Network => true,
             super::error::ProviderErrorKind::Timeout => true,
-            super::error::ProviderErrorKind::HttpStatus => {
-                e.status.is_some_and(crate::util::http::is_retryable_status)
-            }
+            super::error::ProviderErrorKind::HttpStatus => e
+                .status
+                .is_some_and(crate::transport::retry::is_retryable_status),
             _ => false,
         },
         None => false,
@@ -242,7 +243,7 @@ fn retry_delay_ms(headers: &reqwest::header::HeaderMap, cfg: &RetryConfig) -> Re
     let retry_after = headers
         .get("retry-after")
         .and_then(|value| value.to_str().ok());
-    crate::util::http::parse_retry_after_ms(retry_after, cfg)
+    crate::transport::retry::parse_retry_after_ms(retry_after, cfg)
 }
 
 async fn wait_before_retry(delay_ms: u64, cancel: Option<&CancellationToken>) -> bool {

@@ -1,7 +1,8 @@
 use super::wire;
-use crate::compat::ThinkingFormat;
+use crate::compatibility::ThinkingFormat;
+use crate::model::Model;
+use crate::protocol::{ContentBlock, Context, Message, StreamOptions};
 use crate::providers::openai::common::{CompatFlags, resolve_completions_compat};
-use crate::types::{ContentBlock, Context, Message, Model, StreamOptions};
 
 pub fn build_request(
     model: &Model,

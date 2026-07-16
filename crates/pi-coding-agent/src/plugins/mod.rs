@@ -1,24 +1,26 @@
 mod capability;
-mod command;
+mod contributions;
 mod error;
-mod hook;
-mod keybind;
+mod manifest;
 mod registry;
-mod tool;
-mod ui;
 
 pub(crate) use capability::PluginCapabilities;
-pub(crate) use command::{CommandDefinition, CommandProvider, CommandRegistrationHost};
-pub(crate) use error::PluginError;
+pub(crate) use contributions::command::{
+    CommandDefinition, CommandProvider, CommandRegistrationHost,
+};
 #[allow(unused_imports)]
-pub(crate) use hook::{
+pub(crate) use contributions::hook::{
     HookDiagnostic, HookFailurePolicy, HookOutcome, HookProvider, HookRegistration,
     HookRegistrationHost, PromptHookContext, PromptHookPoint,
 };
-pub(crate) use keybind::{KeybindDefinition, KeybindProvider, KeybindRegistrationHost};
-pub(crate) use registry::{PluginId, PluginMetadata, PluginRegistry, PluginSource};
-pub(crate) use tool::{ToolProvider, ToolRegistrationHost};
+pub(crate) use contributions::keybind::{
+    KeybindDefinition, KeybindProvider, KeybindRegistrationHost,
+};
+pub(crate) use contributions::tool::{ToolProvider, ToolRegistrationHost};
 #[allow(unused_imports)]
-pub(crate) use ui::{
+pub(crate) use contributions::ui::{
     UiActionDefinition, UiDialogDefinition, UiDialogFieldDefinition, UiProvider, UiRegistrationHost,
 };
+pub(crate) use error::PluginError;
+pub(crate) use manifest::{PluginId, PluginMetadata, PluginSource};
+pub(crate) use registry::PluginRegistry;

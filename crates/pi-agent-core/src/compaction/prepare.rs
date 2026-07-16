@@ -1,5 +1,5 @@
+use crate::agent::types::{AgentMessage, CompactionSettings};
 use crate::compaction::estimate::estimate_tokens;
-use crate::types::{AgentMessage, CompactionSettings};
 
 /// Check if compaction should trigger based on context usage.
 ///
@@ -63,7 +63,7 @@ pub fn prepare_compaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_ai::api::ContentBlock;
+    use pi_ai::api::conversation::ContentBlock;
 
     fn user_msg(text: &str) -> AgentMessage {
         AgentMessage::UserText {

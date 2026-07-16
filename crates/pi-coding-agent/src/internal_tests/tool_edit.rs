@@ -1,9 +1,9 @@
 //! Internal owner tests for the edit tool.
 
-use pi_agent_core::api::AgentToolOutput;
-use pi_ai::api::ContentBlock;
-use pi_coding_agent::api::builtin_tools;
-use pi_coding_agent::tools::edit::edit_execute;
+use pi_agent_core::api::tool::AgentToolOutput;
+use pi_ai::api::conversation::ContentBlock;
+use pi_coding_agent::api::cli::resources::builtin_tools;
+use pi_coding_agent::tools::filesystem::edit::edit_execute;
 use tempfile::tempdir;
 
 fn text(output: &AgentToolOutput) -> String {
@@ -29,6 +29,7 @@ async fn builtin_edit_tool_reports_self_healing_workflow_details() {
         .expect("builtin edit tool should exist");
 
     let output = (tool.execute)(
+        pi_agent_core::api::tool::ToolExecutionContext::standalone(tool.name.clone()),
         serde_json::json!({
             "path":"f.txt",
             "edits":[{"oldText":"world","newText":"rust"}]
@@ -61,6 +62,7 @@ async fn builtin_edit_tool_preserves_edit_error_message() {
         .expect("builtin edit tool should exist");
 
     let error = (tool.execute)(
+        pi_agent_core::api::tool::ToolExecutionContext::standalone(tool.name.clone()),
         serde_json::json!({
             "path":"f.txt",
             "edits":[{"oldText":"xyz","newText":"q"}]

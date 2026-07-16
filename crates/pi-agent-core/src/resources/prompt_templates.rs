@@ -1,8 +1,8 @@
-use crate::resources::frontmatter::parse_frontmatter;
-use crate::types::{
+use crate::agent::types::{
     DiagnosticSeverity, PromptTemplate, ResourceDiagnostic, SourceTag, SourcedPromptTemplate,
     SourcedResourceDiagnostic,
 };
+use crate::resources::frontmatter::parse_frontmatter;
 use std::path::PathBuf;
 
 pub fn load_prompt_templates(paths: &[PathBuf]) -> (Vec<PromptTemplate>, Vec<ResourceDiagnostic>) {

@@ -53,7 +53,7 @@ fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-/// Deserialize a [`ColorValue`] directly from theme JSON. Reuses [`parse`]
+/// Deserialize a [`ColorValue`] directly from theme JSON. Reuses [`ColorValue::parse`]
 /// so serde-driven and manual parsing share one source of truth.
 impl<'de> Deserialize<'de> for ColorValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

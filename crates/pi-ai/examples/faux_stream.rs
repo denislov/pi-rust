@@ -1,7 +1,9 @@
 use futures::StreamExt;
-use pi_ai::api::ProviderRegistry;
-use pi_ai::providers::faux::{FauxProvider, FauxResponse};
-use pi_ai::types::*;
+use pi_ai::api::conversation::{ContentBlock, Context, Message};
+use pi_ai::api::model::{Model, ModelCost, ModelInput};
+use pi_ai::api::provider::ProviderRegistry;
+use pi_ai::api::stream::AssistantMessageEvent;
+use pi_ai::api::testing::{FauxProvider, FauxResponse};
 use std::sync::Arc;
 
 #[tokio::main]

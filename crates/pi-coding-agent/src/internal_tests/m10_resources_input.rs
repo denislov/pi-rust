@@ -1,21 +1,24 @@
 //! Internal owner tests spanning resources, input, tools, and the interactive harness.
 
 use super::support::ProviderGuard;
-use pi_agent_core::api::ThinkingLevel;
-use pi_ai::api::ApiProvider;
-use pi_ai::api::EventStream;
-use pi_ai::api::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Model, ModelCost, ModelInput,
-    StopReason, StreamOptions,
+use pi_agent_core::api::agent::ThinkingLevel;
+use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
+use pi_ai::api::model::{Model, ModelCost, ModelInput};
+use pi_ai::api::provider::ApiProvider;
+use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
+use pi_coding_agent::adapters::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
+use pi_coding_agent::api::cli::command::parse_args;
+use pi_coding_agent::api::cli::configuration::{parse_model_rotation, select_model};
+use pi_coding_agent::api::cli::input::{
+    ImageProcessingOptions, ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
+    process_at_file_references_with_options, process_at_file_references_with_processing_options,
 };
-use pi_coding_agent::api::{
-    ImageProcessingOptions, ImageResizeOptions, PrintModeOptions, PromptInvocation,
+use pi_coding_agent::api::cli::print::{PrintModeOptions, run_print_mode};
+use pi_coding_agent::api::cli::resources::{
     ResourceLoadOptions, ToolFilter, builtin_tools, discover_context_files, filter_tools,
-    load_cli_resources_with_options, merge_stdin_prompt, parse_args, parse_model_rotation,
-    process_at_file_references, process_at_file_references_with_options,
-    process_at_file_references_with_processing_options, run_print_mode, select_model,
+    load_cli_resources_with_options,
 };
-use pi_coding_agent::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
+use pi_coding_agent::api::cli::runtime::PromptInvocation;
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -407,7 +410,7 @@ async fn multimodal_prompt_content_reaches_provider_context() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::api::AgentResources::default(),
+        resources: pi_agent_core::api::resources::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Content(vec![
             ContentBlock::Text {
@@ -427,7 +430,7 @@ async fn multimodal_prompt_content_reaches_provider_context() {
     let contexts = contexts.lock().unwrap();
     let first_message = contexts[0].messages.first().expect("first message");
     let content = match first_message {
-        pi_ai::api::Message::User { content } => content,
+        Message::User { content } => content,
         _ => panic!("expected user message"),
     };
     assert!(content.iter().any(
@@ -456,7 +459,7 @@ async fn interactive_prompt_file_image_reaches_provider_context() {
     let contexts = contexts.lock().unwrap();
     let first_message = contexts[0].messages.first().expect("first message");
     let content = match first_message {
-        pi_ai::api::Message::User { content } => content,
+        Message::User { content } => content,
         _ => panic!("expected user message"),
     };
     assert!(content.iter().any(
@@ -580,11 +583,11 @@ fn parses_m10_cli_flags_and_filters_tools() {
 #[test]
 fn no_builtin_tools_keeps_custom_tools() {
     let mut tools = builtin_tools(tempfile::tempdir().unwrap().path().to_path_buf());
-    tools.push(pi_agent_core::api::AgentTool::new_text(
+    tools.push(pi_agent_core::api::tool::AgentTool::new_text(
         "custom",
         "custom tool",
         serde_json::json!({"type":"object"}),
-        |_| async { Ok("custom".to_string()) },
+        |_, _| async { Ok("custom".to_string()) },
     ));
 
     let filtered = filter_tools(

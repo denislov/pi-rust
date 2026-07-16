@@ -1,0 +1,347 @@
+pub(crate) mod context;
+pub(crate) mod flow;
+
+use crate::operations::delegation::{
+    DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
+    PendingDelegationConfirmationState, delegation_lineage_for_request,
+};
+use crate::profiles::{ProfileId, ProfileKind, ProfileRegistry};
+use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapability};
+use crate::runtime::control::OperationControl;
+use crate::runtime::facade::CodingSessionError;
+use crate::services::event::EventService;
+use crate::services::flow::FlowService;
+use crate::services::plugin::PluginService;
+use crate::services::session::apply_finalized_session_write;
+use crate::session::event::PersistedDelegationStatus;
+use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
+use crate::session::service::{FinalizedSessionWrite, SessionPersistence, SessionService};
+use context::{
+    CodingDiagnostic, PromptTurnContext, PromptTurnIds, PromptTurnOptions, PromptTurnOutcome,
+};
+use tokio_util::sync::CancellationToken;
+
+struct PromptOperation<'a> {
+    persistence: &'a mut SessionPersistence,
+    operation_control: &'a mut OperationControl,
+    profile_registry: &'a ProfileRegistry,
+    plugin_service: &'a PluginService,
+    event_service: &'a EventService,
+    flow_service: &'a FlowService,
+    pending_delegation_confirmations: &'a mut PendingDelegationConfirmationQueue,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run(
+    persistence: &mut SessionPersistence,
+    operation_control: &mut OperationControl,
+    profile_registry: &ProfileRegistry,
+    plugin_service: &PluginService,
+    event_service: &EventService,
+    flow_service: &FlowService,
+    pending_delegation_confirmations: &mut PendingDelegationConfirmationQueue,
+    options: PromptTurnOptions,
+    snapshot: &OperationCapabilitySnapshot,
+    cancellation: Option<CancellationToken>,
+) -> Result<PromptTurnOutcome, CodingSessionError> {
+    PromptOperation {
+        persistence,
+        operation_control,
+        profile_registry,
+        plugin_service,
+        event_service,
+        flow_service,
+        pending_delegation_confirmations,
+    }
+    .run_inner(options, snapshot, cancellation)
+    .await
+}
+
+pub(crate) fn apply_default_agent_profile(
+    persistence: &SessionPersistence,
+    profile_registry: &ProfileRegistry,
+    mut options: PromptTurnOptions,
+) -> Result<PromptTurnOptions, CodingSessionError> {
+    let profile_id = default_agent_profile_id(persistence);
+    let mut diagnostics = Vec::new();
+    let profile = match profile_registry.agent(profile_id.as_str()) {
+        Some(profile) => profile,
+        None => {
+            diagnostics.push(CodingDiagnostic::warning(format!(
+                "default agent profile {} could not be resolved; using built-in default profile",
+                profile_id
+            )));
+            profile_registry
+                .agent("default")
+                .ok_or_else(|| CodingSessionError::Config {
+                    message: "built-in default agent profile is not available".into(),
+                })?
+        }
+    };
+    options.apply_agent_profile(profile, diagnostics)?;
+    Ok(options)
+}
+
+pub(crate) fn default_agent_profile_id(persistence: &SessionPersistence) -> ProfileId {
+    match persistence {
+        SessionPersistence::Persistent(session_service) => {
+            session_service.default_agent_profile_id().clone()
+        }
+        SessionPersistence::NonPersistent(state) => state.default_agent_profile_id.clone(),
+    }
+}
+
+impl PromptOperation<'_> {
+    async fn run_inner(
+        &mut self,
+        options: PromptTurnOptions,
+        snapshot: &OperationCapabilitySnapshot,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<PromptTurnOutcome, CodingSessionError> {
+        if options.runtime().is_none() {
+            return Err(CodingSessionError::Config {
+                message: "prompt turn options do not include a runtime snapshot".into(),
+            });
+        }
+        let mut context = self.prepare_prompt_context(options, snapshot, cancellation)?;
+        let operation_id = context.operation_id().to_owned();
+        let turn_id = context.turn_id().to_owned();
+
+        self.event_service
+            .emit_prompt_started(operation_id, turn_id);
+        let mut outcome = match self.flow_service.run_prompt_turn(&mut context).await {
+            Ok(outcome) => outcome,
+            Err(error) => match context.abort_reason() {
+                Some(reason) => {
+                    context.finish_abort(reason.to_owned(), context.session_id().map(str::to_owned))
+                }
+                None => context.finish_failure(error),
+            },
+        };
+        if outcome.is_success() {
+            match context.authorize_delegation_requests(0) {
+                Ok(decisions) => {
+                    let decisions = decisions.to_vec();
+                    let prompt_options = context.options().clone();
+                    if let Err(error) = self
+                        .execute_authorized_delegations(&mut context, &decisions, prompt_options)
+                        .await
+                    {
+                        self.event_service.emit_diagnostic(
+                            Some(context.operation_id().to_owned()),
+                            format!("delegation execution failed: {error}"),
+                        );
+                    }
+                }
+                Err(error) => {
+                    outcome = context.finish_failure(error);
+                }
+            }
+        }
+        let finalized = match self.finalize_prompt_transaction(&mut context, &outcome) {
+            Ok(finalized) => finalized,
+            Err(error) => {
+                outcome = context.finish_failure(error.clone());
+                SessionService::failed_prompt_transaction(context.operation_id().to_owned(), &error)
+            }
+        };
+        apply_finalized_session_write(&mut outcome, &finalized);
+
+        if !context.live_events_enabled() {
+            self.event_service
+                .emit_events_before_prompt_outcome(context.coding_events());
+        }
+        self.event_service.emit_session_write_events(&finalized);
+        self.event_service.emit_prompt_outcome(&outcome);
+        Ok(outcome)
+    }
+
+    async fn execute_authorized_delegations(
+        &mut self,
+        context: &mut PromptTurnContext,
+        decisions: &[DelegationAuthorizationDecision],
+        prompt_options: PromptTurnOptions,
+    ) -> Result<(), CodingSessionError> {
+        let parent_capability_snapshot = context.capability_snapshot().cloned();
+        for decision in decisions {
+            match decision {
+                DelegationAuthorizationDecision::Approved {
+                    request,
+                    child_delegation_depth,
+                } => {
+                    self.event_service.emit_delegation_approved(request);
+                    let outcome = match request.target_kind {
+                        ProfileKind::Agent => {
+                            crate::operations::delegation::execution::execute_agent(
+                                self.flow_service,
+                                self.profile_registry.clone(),
+                                self.plugin_service.clone(),
+                                self.event_service.clone(),
+                                self.operation_control.clone(),
+                                request,
+                                prompt_options.clone(),
+                                *child_delegation_depth,
+                                delegation_lineage_for_request(&[], request),
+                                parent_capability_snapshot.clone(),
+                            )
+                            .await
+                        }
+                        ProfileKind::Team => {
+                            crate::operations::delegation::execution::execute_team(
+                                self.flow_service,
+                                self.profile_registry.clone(),
+                                self.plugin_service.clone(),
+                                self.event_service.clone(),
+                                self.operation_control.clone(),
+                                request,
+                                prompt_options.clone(),
+                                *child_delegation_depth,
+                                delegation_lineage_for_request(&[], request),
+                                parent_capability_snapshot.clone(),
+                            )
+                            .await
+                        }
+                    };
+                    crate::operations::delegation::confirmation::adopt_pending(
+                        self.persistence,
+                        self.pending_delegation_confirmations,
+                        self.event_service,
+                        outcome.pending_confirmations,
+                    )?;
+                    match outcome.execution {
+                        Ok(execution) => {
+                            context.record_delegation_folded_update(
+                                request,
+                                PersistedDelegationStatus::Completed,
+                                Some(execution.child_operation_id),
+                                Some(execution.final_text),
+                            )?;
+                        }
+                        Err(error) => {
+                            context.record_delegation_folded_update(
+                                request,
+                                PersistedDelegationStatus::Failed,
+                                None,
+                                Some(error.to_string()),
+                            )?;
+                            return Err(error);
+                        }
+                    }
+                }
+                DelegationAuthorizationDecision::RequiresConfirmation {
+                    request,
+                    reason,
+                    child_delegation_depth,
+                } => {
+                    context.record_delegation_folded_update(
+                        request,
+                        PersistedDelegationStatus::ConfirmationRequired,
+                        None,
+                        Some(reason.clone()),
+                    )?;
+                    let pending = PendingDelegationConfirmationState {
+                        request: request.clone(),
+                        prompt_options: prompt_options.clone(),
+                        reason: reason.clone(),
+                        requested_at: SystemClock.now_rfc3339(),
+                        child_delegation_depth: *child_delegation_depth,
+                        delegation_lineage: delegation_lineage_for_request(&[], request),
+                    };
+                    crate::operations::delegation::confirmation::queue_pending(
+                        self.persistence,
+                        self.pending_delegation_confirmations,
+                        self.event_service,
+                        pending,
+                        true,
+                    )?;
+                }
+                DelegationAuthorizationDecision::Rejected { request, reason } => {
+                    self.event_service.emit_delegation_rejected(request, reason);
+                    context.record_delegation_folded_update(
+                        request,
+                        PersistedDelegationStatus::Rejected,
+                        None,
+                        Some(reason.clone()),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn prepare_prompt_context(
+        &mut self,
+        options: PromptTurnOptions,
+        snapshot: &OperationCapabilitySnapshot,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<PromptTurnContext, CodingSessionError> {
+        let event_service = self.event_service.clone();
+        let prompt_control_receiver = self.operation_control.take_prompt_control_receiver();
+        match &mut self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                let replay = session_service.replay()?;
+                let transaction = session_service.begin_prompt_transaction_with_snapshot(snapshot);
+                let operation_id = transaction.operation_id().to_owned();
+                let turn_id = transaction.turn_id().to_owned();
+                let mut context =
+                    PromptTurnContext::new(PromptTurnIds::new(operation_id, turn_id), options);
+                context.set_plugin_service(self.plugin_service.clone());
+                context.set_session_id(session_service.session_id().to_owned());
+                context.set_replay(replay);
+                context.set_transaction(transaction);
+                if let Some(receiver) = prompt_control_receiver {
+                    context.set_prompt_control_receiver(receiver);
+                }
+                if let Some(cancellation) = cancellation.clone() {
+                    context.set_operation_cancellation(cancellation);
+                }
+                context.enable_live_events(event_service);
+                context.set_capability_snapshot(snapshot.clone());
+                Ok(context)
+            }
+            SessionPersistence::NonPersistent(state) => {
+                let mut ids = SystemIdGenerator;
+                let mut context = PromptTurnContext::new(
+                    PromptTurnIds::new(snapshot.operation_id.clone(), ids.next_turn_id()),
+                    options,
+                );
+                context.set_plugin_service(self.plugin_service.clone());
+                context
+                    .set_non_persistent_session(state.runtime_id.clone(), state.transcript.clone());
+                if let Some(receiver) = prompt_control_receiver {
+                    context.set_prompt_control_receiver(receiver);
+                }
+                if let Some(cancellation) = cancellation {
+                    context.set_operation_cancellation(cancellation);
+                }
+                context.enable_live_events(event_service);
+                context.set_capability_snapshot(snapshot.clone());
+                Ok(context)
+            }
+        }
+    }
+
+    fn finalize_prompt_transaction(
+        &mut self,
+        context: &mut PromptTurnContext,
+        outcome: &PromptTurnOutcome,
+    ) -> Result<FinalizedSessionWrite, CodingSessionError> {
+        let operation_id = context.operation_id().to_owned();
+        let transaction = context.take_transaction();
+        match &mut self.persistence {
+            SessionPersistence::Persistent(session_service) => {
+                let snapshot = context.capability_snapshot().ok_or_else(|| {
+                    CodingSessionError::UnsupportedCapability {
+                        capability: "prompt session write requires operation capability snapshot"
+                            .into(),
+                    }
+                })?;
+                SessionWriteCapability::require(snapshot.session_write.as_ref())?;
+                session_service.finalize_prompt_transaction(transaction, operation_id, outcome)
+            }
+            SessionPersistence::NonPersistent(state) => {
+                Ok(state.finalize_prompt_transaction(context, outcome))
+            }
+        }
+    }
+}

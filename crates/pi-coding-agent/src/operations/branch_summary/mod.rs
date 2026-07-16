@@ -1,0 +1,176 @@
+use self::flow::{
+    BranchSummaryContext, BranchSummaryOptions, branch_summary_failed_outcome,
+    branch_summary_outcome_text, branch_summary_success_outcome,
+};
+use crate::operations::prompt::context::{PromptTurnOptions, PromptTurnOutcome, RuntimeSnapshot};
+use crate::runtime::capability::{
+    OperationCapabilitySnapshot, SessionReadCapability, SessionWriteCapability,
+};
+use crate::runtime::facade::CodingSessionError;
+use crate::services::event::EventService;
+use crate::services::flow::FlowService;
+use crate::services::session::apply_finalized_session_write;
+use crate::session::id::{IdGenerator, SystemIdGenerator};
+use crate::session::service::{SessionPersistence, SessionService};
+
+pub(crate) mod flow;
+
+pub(crate) fn reused_outcome(
+    persistence: &SessionPersistence,
+    options: &PromptTurnOptions,
+    source_leaf_id: &str,
+    target_leaf_id: &str,
+    snapshot: &OperationCapabilitySnapshot,
+) -> Result<Option<PromptTurnOutcome>, CodingSessionError> {
+    SessionReadCapability::require(snapshot.session_read.as_ref())?;
+    let runtime = branch_summary_runtime(options)?;
+    let SessionPersistence::Persistent(session_service) = persistence else {
+        return Err(CodingSessionError::UnsupportedCapability {
+            capability: "branch summary without persistent session".into(),
+        });
+    };
+    let Some(summary) = session_service.branch_summary_for(source_leaf_id, target_leaf_id)? else {
+        return Ok(None);
+    };
+    let mut ids = SystemIdGenerator;
+    let operation_id = ids.next_operation_id();
+    let turn_id = ids.next_turn_id();
+    Ok(Some(branch_summary_success_outcome(
+        operation_id,
+        turn_id,
+        session_service.session_id().to_owned(),
+        session_service.active_leaf_id().map(str::to_owned),
+        &runtime,
+        summary,
+    )))
+}
+
+pub(crate) async fn run(
+    session_service: &mut SessionService,
+    flow_service: &FlowService,
+    event_service: &EventService,
+    options: PromptTurnOptions,
+    source_leaf_id: String,
+    target_leaf_id: String,
+    custom_instructions: Option<String>,
+    snapshot: &OperationCapabilitySnapshot,
+) -> Result<PromptTurnOutcome, CodingSessionError> {
+    SessionReadCapability::require(snapshot.session_read.as_ref())?;
+    SessionWriteCapability::require(snapshot.session_write.as_ref())?;
+    let runtime = branch_summary_runtime(&options)?;
+    let mut branch_options = BranchSummaryOptions::new()
+        .with_source_leaf_id(source_leaf_id)
+        .with_target_leaf_id(target_leaf_id)
+        .with_runtime(runtime.clone());
+    if let Some(custom_instructions) = custom_instructions {
+        branch_options = branch_options.with_custom_instructions(custom_instructions);
+    }
+    let replay = session_service.replay()?;
+    let transaction = session_service.begin_branch_summary_transaction();
+    let mut context =
+        BranchSummaryContext::new(branch_options, replay, transaction, snapshot.clone());
+    let operation_id = context.operation_id().to_owned();
+    let turn_id = context.turn_id().to_owned();
+
+    match flow_service.run_branch_summary(&mut context).await {
+        Ok(branch_summary) => {
+            let final_text = branch_summary_outcome_text(&branch_summary);
+            let mut outcome = branch_summary_success_outcome(
+                operation_id.clone(),
+                turn_id,
+                session_service.session_id().to_owned(),
+                session_service.active_leaf_id().map(str::to_owned),
+                &runtime,
+                final_text,
+            );
+            let finalized = session_service
+                .commit_branch_summary_transaction(context.take_transaction(), operation_id)?;
+            apply_finalized_session_write(&mut outcome, &finalized);
+            event_service.emit_session_write_events(&finalized);
+            Ok(outcome)
+        }
+        Err(error) => {
+            let mut outcome =
+                branch_summary_failed_outcome(operation_id.clone(), turn_id, error.clone());
+            let finalized = session_service.fail_prompt_transaction(
+                context.take_transaction(),
+                operation_id,
+                error.code(),
+                error.to_string(),
+            )?;
+            apply_finalized_session_write(&mut outcome, &finalized);
+            event_service.emit_session_write_events(&finalized);
+            Ok(outcome)
+        }
+    }
+}
+
+fn branch_summary_runtime(
+    options: &PromptTurnOptions,
+) -> Result<RuntimeSnapshot, CodingSessionError> {
+    options
+        .runtime()
+        .cloned()
+        .ok_or_else(|| CodingSessionError::Config {
+            message: "branch summary options do not include a runtime snapshot".into(),
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use pi_agent_core::api::agent::AgentResources;
+
+    use super::*;
+    use crate::app::bootstrap::PromptInvocation;
+    use crate::app::cli::prompt_options::PromptRunOptions;
+    use crate::profiles::ProfileId;
+    use crate::runtime::capability::OperationCapabilitySnapshot;
+    use crate::session::service::{SessionPersistence, TransientSessionState};
+
+    fn prompt_options() -> PromptTurnOptions {
+        PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+            prompt: "summarize".into(),
+            model: pi_ai::api::model::lookup_model("claude-haiku-4-5").unwrap(),
+            api_key: None,
+            auth_diagnostics: Vec::new(),
+            system_prompt: None,
+            max_turns: Some(1),
+            tools: Vec::new(),
+            register_builtins: false,
+            ai_client: None,
+            session: None,
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: None,
+            resources: AgentResources::default(),
+            settings: None,
+            invocation: PromptInvocation::Text("summarize".into()),
+        })
+    }
+
+    #[test]
+    fn reused_outcome_requires_session_read_capability() {
+        let persistence = SessionPersistence::NonPersistent(TransientSessionState::new(
+            ProfileId::from("default"),
+        ));
+        let mut snapshot = OperationCapabilitySnapshot::permissive("op_branch_reuse");
+        snapshot.session_read = None;
+
+        let error = reused_outcome(
+            &persistence,
+            &prompt_options(),
+            "leaf_source",
+            "leaf_target",
+            &snapshot,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "unsupported_capability");
+        assert!(
+            error
+                .to_string()
+                .contains("session read capability is not granted")
+        );
+    }
+}

@@ -3,7 +3,7 @@
 // No API key needed — uses scripted responses.
 // This example exercises run_print_mode(), which currently reaches providers
 // through pi-coding-agent's runtime compatibility boundary. Direct
-// provider-facing examples should prefer scoped pi_ai::api::ProviderRegistry/AiClient.
+// Provider-facing examples should prefer the scoped categorized client facade.
 //
 // Usage:
 //   cargo run -p pi-coding-agent --example manual_test
@@ -11,10 +11,11 @@
 // Or with custom prompt:
 //   cargo run -p pi-coding-agent --example manual_test -- hello world
 
-use pi_ai::api::AiClient;
+use pi_ai::api::client::AiClient;
+use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::testing::FauxProvider;
-use pi_ai::api::{Model, ModelCost, ModelInput};
-use pi_coding_agent::api::{PrintModeOptions, PromptInvocation, run_print_mode};
+use pi_coding_agent::api::cli::print::{PrintModeOptions, run_print_mode};
+use pi_coding_agent::api::cli::runtime::PromptInvocation;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -77,7 +78,7 @@ async fn main() {
         session_name: None,
         thinking_level: None,
         tool_execution: None,
-        resources: pi_agent_core::api::AgentResources::default(),
+        resources: pi_agent_core::api::resources::AgentResources::default(),
         settings: None,
         invocation: PromptInvocation::Text(invocation_text),
     };

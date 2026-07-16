@@ -42,7 +42,7 @@ pub struct ExportSection {
 impl ThemeJson {
     /// Resolve every `colors` token against `vars`, producing a
     /// [`ResolvedTheme`]. Unknown color keys are ignored here; required-token
-    /// validation is handled by [`missing_tokens`] / the resource loader.
+    /// validation is handled by [`Self::missing_tokens`] / the resource loader.
     pub fn resolve_colors(&self) -> Result<ResolvedTheme, ResolveError> {
         let mut fg_colors = HashMap::new();
         let mut bg_colors = HashMap::new();

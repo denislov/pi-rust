@@ -233,8 +233,8 @@ pub struct ResolvedKey {
 }
 
 impl ResolvedKey {
-    pub fn provider_auth_diagnostic(&self) -> pi_ai::api::ProviderAuthDiagnostic {
-        pi_ai::api::ProviderAuthDiagnostic {
+    pub fn provider_auth_diagnostic(&self) -> pi_ai::api::auth::ProviderAuthDiagnostic {
+        pi_ai::api::auth::ProviderAuthDiagnostic {
             field: "api_key".into(),
             source: match (&self.source, &self.material) {
                 (KeySource::Cli, AuthMaterialKind::ApiKey) => "cli:api_key".into(),
@@ -264,7 +264,7 @@ pub fn resolve_api_key(
             });
         }
     }
-    if let Some(value) = pi_ai::api::env_api_key(provider) {
+    if let Some(value) = pi_ai::api::auth::env_api_key(provider) {
         return Some(ResolvedKey {
             value,
             source: KeySource::Env,

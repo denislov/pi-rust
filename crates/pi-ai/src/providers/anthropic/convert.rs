@@ -1,14 +1,15 @@
 use super::wire;
-use crate::types::{ContentBlock, Context, Message, Model, StreamOptions};
-use crate::util::tool_call_id::normalize_tool_call_id;
+use crate::model::Model;
+use crate::protocol::{ContentBlock, Context, Message, StreamOptions};
+use crate::providers::common::normalize_tool_call_id;
 
 /// Map pi stop-reason string to our StopReason enum.
-pub fn map_stop_reason(s: &str) -> crate::types::StopReason {
+pub fn map_stop_reason(s: &str) -> crate::protocol::StopReason {
     match s {
-        "end_turn" => crate::types::StopReason::Stop,
-        "max_tokens" => crate::types::StopReason::Length,
-        "tool_use" => crate::types::StopReason::ToolUse,
-        _ => crate::types::StopReason::Error,
+        "end_turn" => crate::protocol::StopReason::Stop,
+        "max_tokens" => crate::protocol::StopReason::Length,
+        "tool_use" => crate::protocol::StopReason::ToolUse,
+        _ => crate::protocol::StopReason::Error,
     }
 }
 
@@ -197,7 +198,7 @@ fn convert_content(blocks: &[ContentBlock]) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ModelCost, ModelInput};
+    use crate::model::{ModelCost, ModelInput};
 
     #[test]
     fn normalize_valid_id_passes_through() {
@@ -214,14 +215,17 @@ mod tests {
 
     #[test]
     fn map_stop_reason_end_turn() {
-        assert_eq!(map_stop_reason("end_turn"), crate::types::StopReason::Stop);
+        assert_eq!(
+            map_stop_reason("end_turn"),
+            crate::protocol::StopReason::Stop
+        );
     }
 
     #[test]
     fn map_stop_reason_tool_use() {
         assert_eq!(
             map_stop_reason("tool_use"),
-            crate::types::StopReason::ToolUse
+            crate::protocol::StopReason::ToolUse
         );
     }
 
@@ -229,7 +233,7 @@ mod tests {
     fn map_stop_reason_max_tokens() {
         assert_eq!(
             map_stop_reason("max_tokens"),
-            crate::types::StopReason::Length
+            crate::protocol::StopReason::Length
         );
     }
 
@@ -237,7 +241,7 @@ mod tests {
     fn map_stop_reason_unknown() {
         assert_eq!(
             map_stop_reason("weird_reason"),
-            crate::types::StopReason::Error
+            crate::protocol::StopReason::Error
         );
     }
 

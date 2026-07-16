@@ -1,7 +1,7 @@
 //! Internal owner tests for the bash tool.
 
-use pi_ai::api::ContentBlock;
-use pi_coding_agent::tools::bash::{
+use pi_ai::api::conversation::ContentBlock;
+use pi_coding_agent::tools::shell::{
     BashOptions, BashSpawnContext, bash_execute, bash_execute_with_options,
     bash_execute_with_options_and_update,
 };
@@ -112,7 +112,7 @@ async fn supports_shell_options_prefix_and_spawn_hook() {
 async fn streams_output_update_before_process_exits() {
     let d = tempdir().unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let on_update = Arc::new(move |update: pi_agent_core::api::AgentToolOutput| {
+    let on_update = Arc::new(move |update: pi_agent_core::api::tool::AgentToolOutput| {
         let text = update
             .content
             .iter()

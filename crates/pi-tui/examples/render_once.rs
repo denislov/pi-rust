@@ -1,4 +1,6 @@
-use pi_tui::{ProcessTerminal, Text, Tui};
+use pi_tui::api::component::Text;
+use pi_tui::api::render::Tui;
+use pi_tui::api::terminal::ProcessTerminal;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let terminal = ProcessTerminal::new();

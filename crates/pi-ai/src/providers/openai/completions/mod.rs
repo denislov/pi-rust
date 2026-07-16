@@ -1,16 +1,18 @@
 pub mod convert;
-pub mod process;
+pub mod stream;
 pub mod wire;
 
 use async_stream::stream;
 
+use crate::protocol::{
+    AssistantMessage, AssistantMessageEvent, Context, StopReason, StreamOptions,
+};
+
+use crate::model::Model;
+use crate::protocol::stream::EventStream;
 use crate::registry::ApiProvider;
-use crate::stream::EventStream;
 use crate::transport::headers::merge_headers;
 use crate::transport::http::send_json_stream;
-use crate::types::{
-    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
-};
 use convert::build_request;
 
 pub struct OpenAICompletionsProvider {
@@ -84,7 +86,7 @@ impl ApiProvider for OpenAICompletionsProvider {
             "openai-completions",
             request,
             serde_json::to_value(&req_body).unwrap_or_default(),
-            |body_stream, model, cancel| process::process(body_stream, model, cancel),
+            |body_stream, model, cancel| stream::process(body_stream, model, cancel),
         )
     }
 }

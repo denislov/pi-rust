@@ -7,16 +7,19 @@ fn root_public_modules_are_marked_migration_private() {
     let lib_source = fs::read_to_string(crate_root.join("src/lib.rs")).expect("read pi-ai lib.rs");
     let mut violations = Vec::new();
     let mut previous_non_empty = "";
+    let mut brace_depth = 0_usize;
 
     for (line_index, line) in lib_source.lines().enumerate() {
         let trimmed = line.trim();
-        if let Some(module) = trimmed.strip_prefix("pub mod ").and_then(|module| {
-            module
-                .trim_end_matches(';')
-                .trim_end_matches('{')
-                .split_whitespace()
-                .next()
-        }) && module != "api"
+        if brace_depth == 0
+            && let Some(module) = trimmed.strip_prefix("pub mod ").and_then(|module| {
+                module
+                    .trim_end_matches(';')
+                    .trim_end_matches('{')
+                    .split_whitespace()
+                    .next()
+            })
+            && module != "api"
             && previous_non_empty != "#[doc(hidden)]"
         {
             violations.push(format!(
@@ -28,11 +31,36 @@ fn root_public_modules_are_marked_migration_private() {
         if !trimmed.is_empty() {
             previous_non_empty = trimmed;
         }
+
+        brace_depth = brace_depth
+            .saturating_add(line.matches('{').count())
+            .saturating_sub(line.matches('}').count());
     }
 
     assert!(
         violations.is_empty(),
-        "pi_ai::api is the stable facade; root public modules must be explicitly migration-private:\n{}",
+        "pi_ai::api must remain the only public root module:\n{}",
         violations.join("\n")
+    );
+}
+
+#[test]
+fn testing_facade_requires_explicit_test_support() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let api_source = fs::read_to_string(crate_root.join("src/api.rs")).expect("read pi-ai api.rs");
+    let testing_module = api_source
+        .find("pub mod testing")
+        .expect("categorized testing facade should exist");
+    let prefix = &api_source[..testing_module];
+    let previous_non_empty = prefix
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim);
+
+    assert_eq!(
+        previous_non_empty,
+        Some("#[cfg(any(test, feature = \"test-support\"))]"),
+        "pi_ai::api::testing must be absent from normal dependency builds"
     );
 }

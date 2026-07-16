@@ -1,7 +1,7 @@
 //! Internal owner tests for the find tool.
 
-use pi_ai::api::ContentBlock;
-use pi_coding_agent::tools::find::find_execute;
+use pi_ai::api::conversation::ContentBlock;
+use pi_coding_agent::tools::filesystem::find::find_execute;
 use tempfile::tempdir;
 
 fn text(blocks: &[ContentBlock]) -> String {

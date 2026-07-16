@@ -1,4 +1,4 @@
-use crate::types::{DiagnosticSeverity, ResourceDiagnostic};
+use crate::agent::types::{DiagnosticSeverity, ResourceDiagnostic};
 use serde_yaml::Value;
 
 pub fn parse_frontmatter(content: &str) -> (Value, String, Vec<ResourceDiagnostic>) {

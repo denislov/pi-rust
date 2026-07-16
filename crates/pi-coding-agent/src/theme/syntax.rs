@@ -249,11 +249,11 @@ fn single_color_lines(code: &str, theme: &ResolvedTheme) -> Vec<String> {
 /// Render `text` with the given resolved color as ANSI, using `pi-tui`'s
 /// paint layer. `Default` leaves text uncolored.
 fn paint(text: &str, color: ResolvedColor) -> String {
-    use pi_tui::{Color, Style, paint_with_level};
+    use pi_tui::api::render::{Color, ColorLevel, Style, paint_with_level};
     let style = Style::fg(match color {
         ResolvedColor::Default => Color::Default,
         ResolvedColor::Hex(r, g, b) => Color::Rgb(r, g, b),
         ResolvedColor::Ansi256(n) => Color::Ansi256(n),
     });
-    paint_with_level(text, &style, pi_tui::ColorLevel::TrueColor)
+    paint_with_level(text, &style, ColorLevel::TrueColor)
 }

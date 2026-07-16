@@ -1,4 +1,4 @@
-use crate::compat::ThinkingFormat;
+use crate::compatibility::ThinkingFormat;
 
 #[derive(Debug, Clone, Default)]
 pub struct CompatFlags {
@@ -11,8 +11,8 @@ pub struct CompatFlags {
     pub requires_reasoning_content_on_assistant_messages: bool,
 }
 
-pub fn resolve_completions_compat(model: &crate::types::Model) -> CompatFlags {
-    let compat = crate::compat::OpenAICompletionsCompat::from_model(model);
+pub fn resolve_completions_compat(model: &crate::model::Model) -> CompatFlags {
+    let compat = crate::compatibility::OpenAICompletionsCompat::from_model(model);
     let mut flags = CompatFlags {
         supports_developer_role: false,
         supports_reasoning_effort: false,

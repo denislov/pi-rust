@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use super::support::EnvGuard;
 use async_stream::stream;
-use pi_ai::api::ApiProvider;
-use pi_ai::api::{
-    AssistantMessage, AssistantMessageEvent, Context, EventStream, Model, StopReason, StreamOptions,
-};
-use pi_coding_agent::interactive::test_harness::{
+use pi_ai::api::conversation::{AssistantMessage, Context, StopReason};
+use pi_ai::api::model::Model;
+use pi_ai::api::provider::ApiProvider;
+use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
+use pi_coding_agent::adapters::interactive::test_harness::{
     ScriptedInteractiveOutput, run_scripted_idle_interactive,
     run_scripted_interactive_with_provider_chunks,
 };

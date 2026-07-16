@@ -4,16 +4,21 @@ use super::support::{
     product_check_output, product_diagnostic, product_error, product_event, product_replacement,
     product_usage,
 };
-use pi_ai::api::{Cost, Usage};
-use pi_coding_agent::api::{
+use pi_ai::api::conversation::{Cost, Usage};
+use pi_coding_agent::adapters::interactive::{
+    CodingEventBridge, Transcript, TranscriptItem, UiEvent,
+};
+use pi_coding_agent::api::event::{
     CodingAgentCapabilityProductEvent, CodingAgentDelegationEventContext,
     CodingAgentDelegationProductEvent, CodingAgentMessageProductEvent,
     CodingAgentProductEventCapabilityRevocation, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentSessionProductEvent,
-    CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent, CodingSessionError,
+    CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
+};
+use pi_coding_agent::api::operation::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
-use pi_coding_agent::interactive::{CodingEventBridge, Transcript, TranscriptItem, UiEvent};
+use pi_coding_agent::api::runtime::CodingSessionError;
 
 #[test]
 fn ui_events_apply_to_transcript() {
@@ -593,6 +598,7 @@ fn coding_event_bridge_ignores_session_write_and_capability_events() {
         CodingAgentProductEventKind::Capability(CodingAgentCapabilityProductEvent::Changed {
             generation: 1,
             revocation: CodingAgentProductEventCapabilityRevocation::FutureOnly,
+            cancellation_requested_operation_ids: Vec::new(),
         }),
     ];
 

@@ -1,8 +1,11 @@
 use futures::StreamExt;
-use pi_agent_core::api::{Agent, AgentConfig, AgentEvent, AgentTool, AgentToolOutput};
-use pi_ai::api::AiClient;
+use pi_agent_core::api::agent::{Agent, AgentConfig, AgentEvent, AgentMessage};
+use pi_agent_core::api::tool::{AgentTool, AgentToolOutput};
+use pi_ai::api::client::AiClient;
+use pi_ai::api::conversation::{ContentBlock, StopReason};
+use pi_ai::api::model::{Model, ModelCost, ModelInput};
+use pi_ai::api::stream::AssistantMessageEvent;
 use pi_ai::api::testing::FauxProvider;
-use pi_ai::api::{ContentBlock, Model, ModelCost, ModelInput, StopReason};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -50,7 +53,7 @@ async fn main() {
         description: "Search the web".into(),
         parameters: serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
         execution_mode: None,
-        execute: Arc::new(|_args, _on_update| {
+        execute: Arc::new(|_context, _args, _on_update| {
             Box::pin(async move {
                 Ok(AgentToolOutput::new(vec![ContentBlock::Text {
                     text: "search results: 42 is the answer".into(),
@@ -70,7 +73,7 @@ async fn main() {
             }
             AgentEvent::BeforeProviderRequest { .. } => {}
             AgentEvent::LlmEvent(e) => {
-                if let pi_ai::api::AssistantMessageEvent::TextDelta { delta, .. } = &e {
+                if let AssistantMessageEvent::TextDelta { delta, .. } = &e {
                     print!("{}", delta);
                 }
             }
@@ -102,26 +105,26 @@ async fn main() {
     println!("\n=== Final messages ({}) ===", agent.messages().len());
     for msg in agent.messages() {
         match msg {
-            pi_agent_core::api::AgentMessage::UserText { text, .. } => println!("  User: {}", text),
-            pi_agent_core::api::AgentMessage::Assistant { .. } => {
+            AgentMessage::UserText { text, .. } => println!("  User: {}", text),
+            AgentMessage::Assistant { .. } => {
                 println!("  Assistant (response)")
             }
-            pi_agent_core::api::AgentMessage::ToolResult { tool_call_id, .. } => {
+            AgentMessage::ToolResult { tool_call_id, .. } => {
                 println!("  ToolResult: {}", tool_call_id)
             }
-            pi_agent_core::api::AgentMessage::SystemPrompt { text, .. } => {
+            AgentMessage::SystemPrompt { text, .. } => {
                 println!("  System: {}", text)
             }
-            pi_agent_core::api::AgentMessage::CompactionSummary { summary, .. } => {
+            AgentMessage::CompactionSummary { summary, .. } => {
                 println!("  Compaction: {}", summary)
             }
-            pi_agent_core::api::AgentMessage::BashExecution { command, .. } => {
+            AgentMessage::BashExecution { command, .. } => {
                 println!("  BashExecution: {}", command)
             }
-            pi_agent_core::api::AgentMessage::Custom { custom_type, .. } => {
+            AgentMessage::Custom { custom_type, .. } => {
                 println!("  Custom: {}", custom_type)
             }
-            pi_agent_core::api::AgentMessage::BranchSummary { from_id, .. } => {
+            AgentMessage::BranchSummary { from_id, .. } => {
                 println!("  BranchSummary from {}", from_id)
             }
         }

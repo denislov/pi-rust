@@ -1,66 +1,27 @@
-#[doc(hidden)]
-pub mod compat;
-#[doc(hidden)]
-pub mod images;
-#[doc(hidden)]
-pub mod models;
-#[doc(hidden)]
-pub mod providers;
+mod client;
+mod compatibility;
+mod images;
+mod model;
+// Provider wire fields are intentionally deserialized even when the generic
+// runtime does not read every field, and several provider helpers are exercised
+// only by owner tests. Keep the allowance scoped to this private implementation
+// tree; it is not part of the public facade contract.
+mod protocol;
+#[allow(dead_code, unused_imports)]
+mod providers;
 mod registry;
-#[doc(hidden)]
-pub mod stream;
-#[doc(hidden)]
-pub mod transport;
-#[doc(hidden)]
-pub mod types;
-#[doc(hidden)]
-pub mod util;
+#[cfg(any(test, feature = "test-support"))]
+mod testing;
+mod transport;
+
+#[cfg(test)]
+extern crate self as pi_ai;
+#[cfg(test)]
+mod internal_tests;
 
 /// Stable facade for embedding `pi-ai`.
 ///
-/// The root modules remain public during migration. New downstream code should
-/// prefer this module for APIs that are intended to stay stable. Provider
-/// registration and streaming are scoped to `AiClient` or `ProviderRegistry`.
-pub mod api {
-    pub use crate::compat::{
-        AnthropicMessagesCompat, CacheControlFormat, ModelCompat, OpenAICompletionsCompat,
-        OpenAIResponsesCompat, OpenRouterRouting, ThinkingFormat, ThinkingLevelMap,
-        ThinkingLevelValue, VercelGatewayRouting,
-    };
-    pub use crate::images::{
-        AssistantImages, ImageContent, ImageInput, ImageOutput, ImagesContext, ImagesModel,
-        ImagesModelCost, ImagesModelOutput, ImagesUsage, TextContent,
-    };
-    pub use crate::models::{
-        all_models, calculate_cost, get_model, get_models, get_providers, lookup_model,
-    };
-    pub use crate::providers::{builtin_provider_apis, register_builtins_into};
-    pub use crate::registry::{
-        AiClient, ApiProvider, EnvProviderAuthResolver, ProviderAuth, ProviderAuthResolver,
-        ProviderRegistry,
-    };
-    pub use crate::stream::{EventStream, complete};
-    pub use crate::transport::error::{ProviderError, ProviderErrorKind};
-    pub use crate::types::hooks::{
-        ProviderPayloadHook, ProviderPayloadHookFuture, ProviderResponseHook,
-        ProviderResponseHookFuture,
-    };
-    pub use crate::types::{
-        AssistantMessage, AssistantMessageDiagnostic, AssistantMessageEvent, ContentBlock, Context,
-        Cost, DiagnosticErrorInfo, Message, Model, ModelCost, ModelInput, ProviderAuthDiagnostic,
-        ProviderResponseInfo, ProviderStreamHooks, StopReason, StreamOptions, ThinkingConfig, Tool,
-        Usage,
-    };
-    pub use crate::util::env_keys::env_api_key;
-    pub use crate::util::http::{RetryConfig, is_retryable_status, parse_retry_after_ms};
-    pub use crate::util::json_repair::{
-        parse_streaming_json, repair_json, try_parse_streaming_json,
-    };
-
-    /// Deterministic provider fixtures for downstream tests and examples.
-    pub mod testing {
-        pub use crate::providers::faux::{
-            FauxCall, FauxProvider, FauxResponse, FauxState, FauxToolCall,
-        };
-    }
-}
+/// Implementation owners are private. Provider registration and streaming are
+/// scoped to `AiClient` or `ProviderRegistry`; downstream code imports only a
+/// categorized path under this module.
+pub mod api;

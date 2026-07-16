@@ -1,16 +1,18 @@
 pub mod convert;
-pub mod process;
+pub mod stream;
 pub mod wire;
 
 use async_stream::stream;
 use futures::StreamExt;
 
-use crate::registry::ApiProvider;
-use crate::stream::EventStream;
-use crate::types::{
-    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
+use crate::protocol::{
+    AssistantMessage, AssistantMessageEvent, Context, StopReason, StreamOptions,
 };
-use crate::util::http::RetryConfig;
+
+use crate::model::Model;
+use crate::protocol::stream::EventStream;
+use crate::registry::ApiProvider;
+use crate::transport::retry::RetryConfig;
 use convert::build_request;
 
 pub struct GoogleGenerativeAiProvider {
@@ -139,7 +141,7 @@ impl ApiProvider for GoogleGenerativeAiProvider {
                 .bytes_stream()
                 .map(|r| r.map_err(|e| e.to_string()));
 
-            let mut event_stream = process::process(body_stream, model, cancel);
+            let mut event_stream = stream::process(body_stream, model, cancel);
             while let Some(event) = event_stream.next().await {
                 yield event;
             }

@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/pi-agent-core",
+   'crates/pi-ai', "crates/pi-coding-agent", "crates/pi-mom", "crates/pi-pods", "crates/pi-tui", "crates/pi-web-ui",
+]
+
+[workspace.package]
+version = "0.2.0"
+
+[package]
+name = "pi-rust"
+version.workspace = true
+edition = "2024"
+
+[dependencies]

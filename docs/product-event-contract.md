@@ -21,24 +21,41 @@ part of the public product event protocol.
 A public product event has the following semantic fields:
 
 ```text
+stream_id
 sequence
 family and kind identity
 typed family payload
 optional operation association
+optional parent/root operation lineage
+optional session association from an event-owned durable/session fact
 optional terminal status and terminal operation metadata
 durability metadata
+delivery class (`data`, `terminal`, `control`, or `recovery`)
 ```
 
 Rules:
 
-1. `sequence` is assigned by the live event service and is strictly increasing within one live
-   stream.
+- `stream_id` is an opaque identity created once per runtime; it is independent
+  from `session_id` and must equal the `stream_id` in every snapshot cursor and
+  RPC `get_state.data.eventStreamId` produced by that runtime;
+- root operations expose `root_operation_id == operation_id` and no parent;
+- child operations expose their direct parent and the stable root across nested lineage;
+- session association is absent unless the event itself carries the session fact; consumers must
+  not infer it from whichever session happens to be current when an event is delivered;
+
+1. `sequence` is assigned by the live event service and is strictly increasing within one
+   `stream_id`; reconnect rejects a cursor from another stream even when its sequence is otherwise
+   valid.
 2. Family and kind identity are defined by the typed event variant. They must not be derived from
    Rust `Debug` output.
 3. `operation_id`, when present, is the stable correlation key shared by operation execution,
    product events, durable session facts, snapshots, and protocol outcomes.
-4. A root operation publishes at most one normalized terminal operation event. Session write
-   completion is not a substitute for the root operation terminal event.
+4. Every submitted operation declares one terminal publication policy.
+   `ProductEvent` policy publishes exactly one normalized root terminal event.
+   `OutcomeAcknowledgement` policy publishes no synthetic terminal event and
+   remains terminal in the client snapshot until its exact outcome
+   acknowledgement is accepted. Session write completion is not a substitute
+   for either contract.
 5. Live product events are not durable merely because they were delivered. Durability is explicit
    in the event envelope.
 6. Unknown required family or kind semantics fail closed. Adapters must not silently reinterpret an
@@ -62,11 +79,13 @@ Rules:
 
 ## Authoritative Event Inventory
 
-The first column is the compatibility/internal variant name used by the executable fixture. The
-second and third columns are the stable typed public family and kind identities for protocol `1.0`.
+The first column is the normalized owner-event identity used by the executable fixture. It may come
+from a family-local owner enum such as `SessionWriteEvent`, not from one global compatibility enum.
+The second and third columns are the stable typed public family and kind identities for protocol
+`2.0`.
 
 <!-- product-event-inventory:start -->
-| Internal variant | Public family | Public kind |
+| Owner event | Public family | Public kind |
 |---|---|---|
 | `SessionOpened` | `session` | `opened` |
 | `SessionWritePending` | `session` | `write_pending` |
@@ -114,7 +133,15 @@ second and third columns are the stable typed public family and kind identities 
 | `OperationRecovered` | `workflow` | `operation_recovered` |
 | `Diagnostic` | `diagnostic` | `diagnostic` |
 | `CapabilityChanged` | `capability` | `changed` |
+| `SessionWriteFailed` | `session` | `write_failed` |
 <!-- product-event-inventory:end -->
+
+The first column is a normalized owner-event name, not a Rust enum layout. The
+executable inventory composes owner-local lifecycle enums, the closed
+`PromptStreamEvent` union, and the single-purpose `SessionCompactionEvent` and
+`RecoveryEvent` structs. There is no centralized `CodingAgentEvent` enum.
+Reintroducing one global semantic event bucket or an internal-to-public mapping
+is a boundary violation.
 
 ## Operation And Outcome Matrix
 
@@ -150,27 +177,65 @@ The current public durability states are:
 ```text
 LiveOnly
 PendingSessionWrite { operation_id }
-Durable { session_id, ... }
+Durable { session_id }
+DerivedFromSession { session_id, source_operation_id, recovery_id }
+PersistenceUncertain { operation_id }
+PersistenceFailed { operation_id, reason }
 ```
 
 `PendingSessionWrite` announces intent to persist and is not a committed fact. A corresponding
-durable event is authoritative only after the session transaction commits. A skipped or failed
-write remains live-only unless a separate durable recovery fact is committed.
+durable event is authoritative only after the session transaction commits. `WriteSkipped` means no
+write was attempted. `WriteFailed` carries either `definite` or `uncertain`: definite failure uses
+`PersistenceFailed`, while an append/manifest/reopen path that may already have written data uses
+`PersistenceUncertain`.
+
+`DerivedFromSession` identifies a ProductEvent projected from an already committed durable fact;
+startup recovery uses the original operation ID and recovery marker as its source reference.
+`PersistenceUncertain` means part of the transaction may already be durable and clients must not
+interpret the associated failure as a clean rollback.
+`PersistenceFailed` means the owner established that the write did not commit; it must not be used
+for an I/O path where a partial append cannot be excluded.
 
 `SessionEvent` remains the durable source of truth. There is no required one-to-one mapping between
 ProductEvent and SessionEvent: streaming deltas may be live-only, and one durable transaction may
 produce several product-level lifecycle events.
+
+## Pressure And Delivery Classes
+
+Every envelope declares one delivery class:
+
+- `data`: ordinary lifecycle, streaming, tool, message, diagnostic, and local terminal updates;
+- `terminal`: an authoritative root terminal operation event;
+- `control`: capability-generation and runtime-shutdown projections;
+- `recovery`: a durable recovery projection.
+
+All classes use one bounded sequence and retained window. Publishers do not block on slow clients.
+Any observed sequence loss fails closed: incremental replay is rejected and the client must obtain a
+fresh snapshot before resuming. The runtime never selectively replays terminal/control/recovery
+events across a missing data prefix, because doing so would expose terminal facts without their
+required state boundary. Control commands and cancellation authority use their own bounded control
+paths; the ProductEvent control class is projection only.
 
 ## Terminal Semantics
 
 Terminal status and terminal operation metadata are normalized independently from family payloads.
 For an operation-associated terminal event:
 
-- the envelope operation id and terminal operation id must identify the same root operation;
+- the envelope operation id identifies the admitted root operation whose descriptor authorized the
+  terminal evidence;
 - terminal operation kind must match the submitted operation descriptor;
+- terminal operation metadata is derived from the admitted operation kind plus exact permitted root
+  evidence, never from the event variant alone;
+- Prompt terminal payload, local terminal status, partial-commit durability, and root evidence are
+  constructed by `PromptEvent`; Prompt Flow context stores only idempotent completion state and does
+  not cache a second terminal event;
+- Agent invocation and Team terminal evidence are constructed by their owner events. Team
+  cancellation publishes `agent_team_aborted`; it is not normalized as a generic team failure;
 - exactly one terminal status is observable for a root operation in one stream;
 - a committed session-write event does not by itself terminate Prompt, Compact, or another root
   workflow;
+- tool, message, delegation, and session-write events may expose a local terminal status while
+  keeping terminal operation metadata absent;
 - recovery publishes an explicit recovered/in-doubt semantic rather than synthesizing ordinary
   success.
 
@@ -197,6 +262,6 @@ unknown required feature = fail closed
 patch change = implementation detail, not a protocol field
 ```
 
-The `0.2.0` architecture convergence work will define ProductEvent protocol `2.0`. Until that
-contract is accepted, this document and its executable inventory remain the authoritative `1.0`
-baseline used for differential tests and migration review.
+The `0.2` prerelease train establishes ProductEvent protocol `2.0`. This
+document and its executable inventory are the authoritative `2.0` contract.
+The durable session writer remains independently versioned at `1`.

@@ -6,12 +6,14 @@ use base64::Engine;
 use futures::StreamExt;
 use std::collections::BTreeMap;
 
+use crate::protocol::{
+    AssistantMessage, AssistantMessageEvent, Context, StopReason, StreamOptions,
+};
+
+use crate::model::Model;
+use crate::protocol::stream::EventStream;
 use crate::providers::openai::responses;
 use crate::registry::ApiProvider;
-use crate::stream::EventStream;
-use crate::types::{
-    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
-};
 use convert::build_request;
 
 const DEFAULT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
@@ -203,7 +205,7 @@ impl ApiProvider for OpenAICodexResponsesProvider {
             }
 
             let body_stream = response.bytes_stream().map(|r| r.map_err(|e| e.to_string()));
-            let mut event_stream = responses::process::process(body_stream, model, cancel);
+            let mut event_stream = responses::stream::process(body_stream, model, cancel);
             while let Some(event) = event_stream.next().await {
                 yield event;
             }

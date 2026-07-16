@@ -1,8 +1,10 @@
-use crate::coding_session::{CapabilityStatus, CodingAgentCapabilities};
 use crate::protocol::version::{ProtocolFamilyVersion, RequestedProtocolVersion};
-use pi_agent_core::api::StoredAgentMessage;
-use pi_agent_core::api::{QueueMode, ThinkingLevel};
-use pi_ai::api::{AssistantMessageEvent, ContentBlock, Model};
+use crate::runtime::facade::{CapabilityStatus, CodingAgentCapabilities};
+use pi_agent_core::api::agent::{QueueMode, ThinkingLevel};
+use pi_agent_core::api::transcript::StoredAgentMessage;
+use pi_ai::api::conversation::ContentBlock;
+use pi_ai::api::model::Model;
+use pi_ai::api::stream::AssistantMessageEvent;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::Display;
@@ -62,6 +64,13 @@ pub enum ProtocolEvent {
         steering: Vec<String>,
         #[serde(rename = "followUp")]
         follow_up: Vec<String>,
+    },
+    #[serde(rename = "session_write_failed")]
+    SessionWriteFailed {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        status: String,
+        reason: String,
     },
     #[serde(rename = "compaction_start")]
     CompactionStart { reason: CompactionReason },
@@ -562,7 +571,7 @@ pub enum RpcCommand {
             rename = "afterSnapshotCursor",
             skip_serializing_if = "Option::is_none"
         )]
-        after_snapshot_cursor: Option<crate::coding_session::CodingAgentSnapshotCursor>,
+        after_snapshot_cursor: Option<crate::runtime::facade::CodingAgentSnapshotCursor>,
         #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
     },
@@ -744,6 +753,8 @@ pub struct RpcSessionState {
     pub session_file: Option<String>,
     #[serde(rename = "sessionId")]
     pub session_id: String,
+    #[serde(rename = "eventStreamId", skip_serializing_if = "Option::is_none")]
+    pub event_stream_id: Option<String>,
     #[serde(rename = "clientId", skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(rename = "snapshotSequence")]

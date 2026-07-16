@@ -1,7 +1,6 @@
 use super::wire;
-use crate::types::{
-    ContentBlock, Context, Message, Model, ModelInput, StreamOptions, ThinkingConfig,
-};
+use crate::model::{Model, ModelInput};
+use crate::protocol::{ContentBlock, Context, Message, StreamOptions, ThinkingConfig};
 
 pub fn build_request(
     model: &Model,

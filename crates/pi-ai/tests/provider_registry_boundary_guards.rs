@@ -158,7 +158,7 @@ fn azure_openai_runtime_env_defaults_stay_behind_provider_auth_resolver() {
         .parent()
         .and_then(Path::parent)
         .expect("crate should live under crates/pi-ai");
-    let provider_file = crate_root.join("src/providers/azure_openai_responses.rs");
+    let provider_file = crate_root.join("src/providers/azure_openai_responses/mod.rs");
     let mut violations = Vec::new();
 
     collect_provider_env_patterns(
@@ -253,11 +253,7 @@ fn collect_provider_source_violations(
 #[test]
 fn pi_ai_api_facade_keeps_global_provider_runtime_helpers_out() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let lib_source = fs::read_to_string(crate_root.join("src/lib.rs")).expect("read pi-ai lib.rs");
-    let api_facade = lib_source
-        .split_once("pub mod api {")
-        .map(|(_, api_facade)| api_facade)
-        .expect("pi_ai::api facade should exist");
+    let api_facade = fs::read_to_string(crate_root.join("src/api.rs")).expect("read pi-ai api.rs");
 
     for global_helper in ["register,", "stream_model,"] {
         assert!(
@@ -270,8 +266,8 @@ fn pi_ai_api_facade_keeps_global_provider_runtime_helpers_out() {
 #[test]
 fn registry_global_runtime_helpers_are_removed() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let registry_source =
-        fs::read_to_string(crate_root.join("src/registry.rs")).expect("read pi-ai registry.rs");
+    let registry_source = fs::read_to_string(crate_root.join("src/registry/mod.rs"))
+        .expect("read pi-ai registry owner");
 
     for helper in [
         "pub fn register(api: &str",

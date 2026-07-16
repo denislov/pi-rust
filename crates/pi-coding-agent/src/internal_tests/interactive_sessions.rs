@@ -1,15 +1,15 @@
 //! Internal owner tests for interactive session handling.
 
-use pi_agent_core::api::{
+use pi_agent_core::api::transcript::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, create_timestamp,
 };
-use pi_ai::api::StopReason;
+use pi_ai::api::conversation::StopReason;
 use pi_ai::api::testing::{FauxProvider, FauxResponse};
-use pi_coding_agent::api::CliArgs;
-use pi_coding_agent::interactive::test_harness::{
+use pi_coding_agent::adapters::interactive::test_harness::{
     run_scripted_interactive_with_args_and_session_dir, run_scripted_interactive_with_session_dir,
     run_scripted_interactive_with_session_dir_and_waits,
 };
+use pi_coding_agent::api::cli::command::CliArgs;
 
 fn text_response(text: &str) -> FauxResponse {
     FauxResponse {
@@ -1755,7 +1755,7 @@ fn write_legacy_session(
             None,
             timestamp.clone(),
             StoredAgentMessage::User {
-                content: vec![pi_ai::api::ContentBlock::Text {
+                content: vec![pi_ai::api::conversation::ContentBlock::Text {
                     text: user_text.to_string(),
                     text_signature: None,
                 }],
@@ -1768,7 +1768,7 @@ fn write_legacy_session(
             Some("entry-user".to_string()),
             timestamp.clone(),
             StoredAgentMessage::Assistant {
-                content: vec![pi_ai::api::ContentBlock::Text {
+                content: vec![pi_ai::api::conversation::ContentBlock::Text {
                     text: assistant_text.to_string(),
                     text_signature: None,
                 }],

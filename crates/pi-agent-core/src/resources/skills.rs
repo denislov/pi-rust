@@ -1,8 +1,8 @@
-use crate::resources::frontmatter::parse_frontmatter;
-use crate::types::{
+use crate::agent::types::{
     DiagnosticSeverity, ResourceDiagnostic, Skill, SourceTag, SourcedResourceDiagnostic,
     SourcedSkill,
 };
+use crate::resources::frontmatter::parse_frontmatter;
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
 

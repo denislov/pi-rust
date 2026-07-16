@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::types::Skill;
+use crate::agent::types::Skill;
 
 pub fn format_skills_for_system_prompt(skills: &[Skill]) -> String {
     if skills.is_empty() {
@@ -232,229 +232,119 @@ mod tests {
         assert!(text.contains("use best practices"));
     }
 
-    #[test]
-    fn template_invocation_replaces_positional_args() {
-        // $N is replaced, but ${N} without :-default is NOT replaced (TS-compatible)
-        let result = format_prompt_template_invocation(
-            "review",
-            "Review $1 and ${2}",
-            &["foo".to_string(), "bar".to_string()],
-        );
-        assert_eq!(result, "Review foo and ${2}");
-    }
-
-    #[test]
-    fn template_invocation_replaces_arg_arguments() {
-        let result = format_prompt_template_invocation(
-            "test",
-            "Args: $ARGUMENTS",
-            &["a".to_string(), "b".to_string()],
-        );
-        assert_eq!(result, "Args: a b");
-    }
-
-    #[test]
-    fn template_invocation_replaces_at_all() {
-        let result = format_prompt_template_invocation(
-            "test",
-            "Args: $@",
-            &["a".to_string(), "b".to_string()],
-        );
-        assert_eq!(result, "Args: a b");
-    }
-
     // ── parse_command_args tests ──────────────────────────────────────
-
-    #[test]
-    fn parse_args_whitespace_split() {
-        assert_eq!(parse_command_args("a b c"), vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn parse_args_extra_spaces() {
-        assert_eq!(parse_command_args("a  b   c"), vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn parse_args_double_quotes() {
-        assert_eq!(
-            parse_command_args("\"first arg\" second"),
-            vec!["first arg", "second"]
-        );
-    }
-
-    #[test]
-    fn parse_args_single_quotes() {
-        assert_eq!(
-            parse_command_args("'first arg' second"),
-            vec!["first arg", "second"]
-        );
-    }
-
-    #[test]
-    fn parse_args_empty_input() {
-        let empty: Vec<String> = Vec::new();
-        assert_eq!(parse_command_args(""), empty);
-    }
-
-    #[test]
-    fn parse_args_whitespace_only() {
-        let empty: Vec<String> = Vec::new();
-        assert_eq!(parse_command_args("   \t\n"), empty);
-    }
-
-    #[test]
-    fn parse_args_unicode() {
-        assert_eq!(
-            parse_command_args("日本語 🎉 café"),
-            vec!["日本語", "🎉", "café"]
-        );
-    }
 
     // ── substitute_args tests ─────────────────────────────────────────
 
-    #[test]
-    fn substitute_arg_arguments_all_args() {
-        assert_eq!(
-            substitute_args("Test: $ARGUMENTS", &["a".into(), "b".into(), "c".into()]),
-            "Test: a b c"
-        );
+    fn owned_args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
     }
 
     #[test]
-    fn substitute_at_all_args() {
-        assert_eq!(
-            substitute_args("Test: $@", &["a".into(), "b".into(), "c".into()]),
-            "Test: a b c"
-        );
+    fn template_invocation_applies_supported_placeholder_classes() {
+        for (template, expected) in [
+            ("Review $1 and ${2}", "Review foo and ${2}"),
+            ("Args: $ARGUMENTS", "Args: foo bar"),
+            ("Args: $@", "Args: foo bar"),
+        ] {
+            assert_eq!(
+                format_prompt_template_invocation(
+                    "template",
+                    template,
+                    &owned_args(&["foo", "bar"]),
+                ),
+                expected
+            );
+        }
     }
 
     #[test]
-    fn substitute_at_and_arguments_identical() {
-        let args = ["foo".into(), "bar".into(), "baz".into()];
-        assert_eq!(
-            substitute_args("Test: $@", &args),
-            substitute_args("Test: $ARGUMENTS", &args)
-        );
+    fn parse_command_args_covers_whitespace_quotes_empty_and_unicode() {
+        for (input, expected) in [
+            ("a b c", vec!["a", "b", "c"]),
+            ("a  b   c", vec!["a", "b", "c"]),
+            ("\"first arg\" second", vec!["first arg", "second"]),
+            ("'first arg' second", vec!["first arg", "second"]),
+            ("", vec![]),
+            ("   \t\n", vec![]),
+            ("日本語 🎉 café", vec!["日本語", "🎉", "café"]),
+        ] {
+            assert_eq!(parse_command_args(input), expected, "input: {input:?}");
+        }
     }
 
     #[test]
-    fn substitute_no_recursive_patterns_in_args() {
+    fn substitute_all_args_aliases_and_literal_rules() {
+        for (template, args, expected) in [
+            ("Test: $ARGUMENTS", &[][..], "Test: "),
+            ("Test: $@", &[][..], "Test: "),
+            ("Test: $1", &[][..], "Test: "),
+            ("Test: $ARGUMENTS", &["a", "b", "c"][..], "Test: a b c"),
+            ("Test: $@", &["a", "b", "c"][..], "Test: a b c"),
+            ("$ARGUMENTS and $ARGUMENTS", &["a", "b"][..], "a b and a b"),
+            ("$@ and $@", &["a", "b"][..], "a b and a b"),
+            (
+                "$arguments $Arguments $ARGUMENTS",
+                &["a", "b"][..],
+                "$arguments $Arguments a b",
+            ),
+            (
+                "$ARGUMENTS",
+                &["日本語", "🎉", "café"][..],
+                "日本語 🎉 café",
+            ),
+            ("$A $$ $ $ARGS", &["a"][..], "$A $$ $ $ARGS"),
+            ("${1}", &["a"][..], "${1}"),
+        ] {
+            assert_eq!(
+                substitute_args(template, &owned_args(args)),
+                expected,
+                "template: {template:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn substitute_positional_defaults_and_out_of_range_values() {
+        for (template, args, expected) in [
+            (
+                "List exactly ${1:-7} next steps",
+                &[][..],
+                "List exactly 7 next steps",
+            ),
+            (
+                "List exactly ${1:-7} next steps",
+                &["3"][..],
+                "List exactly 3 next steps",
+            ),
+            ("Mode: ${1:-brief}", &[""][..], "Mode: brief"),
+            ("$1 $2 $3 $4 $5", &["a", "b"][..], "a b   "),
+        ] {
+            assert_eq!(substitute_args(template, &owned_args(args)), expected);
+        }
+    }
+
+    #[test]
+    fn substitute_array_slice_classes() {
+        let args = owned_args(&["a", "b", "c", "d"]);
+        for (template, expected) in [
+            ("${@:2}", "b c d"),
+            ("${@:2:2}", "b c"),
+            ("${@:0}", "a b c d"),
+        ] {
+            assert_eq!(substitute_args(template, &args), expected);
+        }
+    }
+
+    #[test]
+    fn substitute_does_not_recursively_expand_argument_content() {
         assert_eq!(
-            substitute_args("$ARGUMENTS", &["$1".into(), "$ARGUMENTS".into()]),
+            substitute_args("$ARGUMENTS", &owned_args(&["$1", "$ARGUMENTS"])),
             "$1 $ARGUMENTS"
         );
         assert_eq!(
-            substitute_args("$@", &["$100".into(), "$1".into()]),
+            substitute_args("$@", &owned_args(&["$100", "$1"])),
             "$100 $1"
-        );
-    }
-
-    #[test]
-    fn substitute_positional_default_when_missing() {
-        assert_eq!(
-            substitute_args("List exactly ${1:-7} next steps", &[]),
-            "List exactly 7 next steps"
-        );
-    }
-
-    #[test]
-    fn substitute_positional_default_when_present() {
-        assert_eq!(
-            substitute_args("List exactly ${1:-7} next steps", &["3".into()]),
-            "List exactly 3 next steps"
-        );
-    }
-
-    #[test]
-    fn substitute_positional_default_when_empty() {
-        assert_eq!(
-            substitute_args("Mode: ${1:-brief}", &["".into()]),
-            "Mode: brief"
-        );
-    }
-
-    #[test]
-    fn substitute_array_slice_from_n() {
-        assert_eq!(
-            substitute_args("${@:2}", &["a".into(), "b".into(), "c".into(), "d".into()]),
-            "b c d"
-        );
-    }
-
-    #[test]
-    fn substitute_array_slice_with_length() {
-        assert_eq!(
-            substitute_args(
-                "${@:2:2}",
-                &["a".into(), "b".into(), "c".into(), "d".into()]
-            ),
-            "b c"
-        );
-    }
-
-    #[test]
-    fn substitute_array_slice_zero_as_one() {
-        assert_eq!(
-            substitute_args("${@:0}", &["a".into(), "b".into(), "c".into()]),
-            "a b c"
-        );
-    }
-
-    #[test]
-    fn substitute_empty_args_array() {
-        let empty: Vec<String> = Vec::new();
-        assert_eq!(substitute_args("Test: $ARGUMENTS", &empty), "Test: ");
-        assert_eq!(substitute_args("Test: $@", &empty), "Test: ");
-        assert_eq!(substitute_args("Test: $1", &empty), "Test: ");
-    }
-
-    #[test]
-    fn substitute_multiple_occurrences() {
-        assert_eq!(
-            substitute_args("$ARGUMENTS and $ARGUMENTS", &["a".into(), "b".into()]),
-            "a b and a b"
-        );
-        assert_eq!(
-            substitute_args("$@ and $@", &["a".into(), "b".into()]),
-            "a b and a b"
-        );
-    }
-
-    #[test]
-    fn substitute_out_of_range_numbered() {
-        assert_eq!(
-            substitute_args("$1 $2 $3 $4 $5", &["a".into(), "b".into()]),
-            "a b   "
-        );
-    }
-
-    #[test]
-    fn substitute_non_matching_patterns_pass_through() {
-        assert_eq!(
-            substitute_args("$A $$ $ $ARGS", &["a".into()]),
-            "$A $$ $ $ARGS"
-        );
-        // Plain ${1} (without :-default) is NOT substituted
-        assert_eq!(substitute_args("${1}", &["a".into()]), "${1}");
-    }
-
-    #[test]
-    fn substitute_case_sensitive() {
-        assert_eq!(
-            substitute_args(
-                "$arguments $Arguments $ARGUMENTS",
-                &["a".into(), "b".into()]
-            ),
-            "$arguments $Arguments a b"
-        );
-    }
-
-    #[test]
-    fn substitute_unicode() {
-        assert_eq!(
-            substitute_args("$ARGUMENTS", &["日本語".into(), "🎉".into(), "café".into()]),
-            "日本語 🎉 café"
         );
     }
 

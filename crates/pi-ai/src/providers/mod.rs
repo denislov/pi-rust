@@ -1,16 +1,12 @@
 pub mod anthropic;
 pub mod azure_openai_responses;
 pub mod bedrock;
-pub mod cloudflare;
+pub mod common;
 pub mod deepseek;
-pub mod faux;
-pub mod github_copilot_headers;
 pub mod google;
-pub mod images;
 pub mod mistral;
 pub mod openai;
 pub mod openai_codex_responses;
-pub mod process_framework;
 
 use crate::registry::{ApiProvider, ProviderRegistry};
 use std::sync::Arc;

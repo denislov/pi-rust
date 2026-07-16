@@ -1,16 +1,18 @@
 pub mod convert;
-pub mod process;
+pub mod stream;
 pub mod wire;
 
 use async_stream::stream;
 
-use crate::registry::ApiProvider;
-use crate::stream::EventStream;
-use crate::types::{
-    AssistantMessage, AssistantMessageEvent, Context, Model, StopReason, StreamOptions,
+use crate::protocol::{
+    AssistantMessage, AssistantMessageEvent, Context, StopReason, StreamOptions,
 };
+
+use crate::model::Model;
+use crate::protocol::stream::EventStream;
+use crate::registry::ApiProvider;
 use convert::build_request;
-use process::response_to_events;
+use stream::response_to_events;
 use wire::ChatCompletionResponse;
 
 pub struct DeepSeekProvider {

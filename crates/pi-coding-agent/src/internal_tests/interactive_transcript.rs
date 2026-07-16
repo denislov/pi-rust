@@ -1,7 +1,7 @@
 //! Internal owner tests for the interactive transcript.
 
-use pi_coding_agent::interactive::UiEvent;
-use pi_coding_agent::interactive::{Transcript, TranscriptItem};
+use pi_coding_agent::adapters::interactive::UiEvent;
+use pi_coding_agent::adapters::interactive::{Transcript, TranscriptItem};
 
 #[test]
 fn transcript_scrolls_within_bounds() {

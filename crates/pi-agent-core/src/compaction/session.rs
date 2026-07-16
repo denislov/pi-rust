@@ -37,7 +37,7 @@ impl SessionEntry {
         id: String,
         parent_id: Option<String>,
         timestamp: String,
-        thinking_level: crate::types::ThinkingLevel,
+        thinking_level: crate::agent::types::ThinkingLevel,
     ) -> Self {
         let mut fields = Map::new();
         fields.insert(

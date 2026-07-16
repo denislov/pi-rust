@@ -1,3 +1,10 @@
+mod types;
+
+pub use types::{
+    AgentResources, DiagnosticSeverity, PromptTemplate, ResourceDiagnostic, Skill, SourceTag,
+    SourcedPromptTemplate, SourcedResourceDiagnostic, SourcedSkill,
+};
+
 pub mod frontmatter;
 pub mod prompt_templates;
 pub mod skills;

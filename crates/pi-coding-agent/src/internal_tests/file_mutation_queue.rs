@@ -1,6 +1,6 @@
 //! Internal owner tests for the file-mutation queue.
 
-use pi_coding_agent::tools::file_mutation_queue::with_file_mutation_queue;
+use pi_coding_agent::tools::mutation_queue::with_file_mutation_queue;
 use std::time::Duration;
 use tokio::sync::oneshot;
 

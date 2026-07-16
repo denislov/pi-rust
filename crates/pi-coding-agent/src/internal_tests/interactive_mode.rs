@@ -6,21 +6,19 @@ use std::time::Duration;
 
 use super::support::{EnvGuard, ProviderGuard};
 use futures::stream;
-use pi_ai::api::ApiProvider;
-use pi_ai::api::EventStream;
+use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
+use pi_ai::api::model::{Model, lookup_model};
+use pi_ai::api::provider::ApiProvider;
+use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::{FauxProvider, FauxResponse};
-use pi_ai::api::{
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Context, Message, Model, StopReason,
-    StreamOptions,
-};
-use pi_coding_agent::interactive::test_harness::{
+use pi_coding_agent::adapters::interactive::test_harness::{
     ScriptedInputDriver, ScriptedInteractiveOutput, run_scripted_idle_interactive,
     run_scripted_idle_interactive_with_ai_client, run_scripted_idle_interactive_with_delays,
     run_scripted_idle_interactive_with_size, run_scripted_interactive,
     run_scripted_interactive_with_observed_provider_driver,
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
-use pi_tui::TerminalOp;
+use pi_tui::api::testing::TerminalOp;
 use tokio::sync::Notify;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -1085,7 +1083,7 @@ async fn scripted_interactive_model_command_switches_footer_model() {
 #[tokio::test]
 async fn scripted_interactive_model_command_changes_next_prompt_model() {
     let _guard = ENV_LOCK.lock().await;
-    let target_model = pi_ai::api::lookup_model("claude-haiku-4-5").expect("known model");
+    let target_model = lookup_model("claude-haiku-4-5").expect("known model");
     let model_ids = Arc::new(Mutex::new(Vec::new()));
     let _provider_guard = ProviderGuard::register(
         &target_model.api,
@@ -1111,7 +1109,7 @@ async fn scripted_interactive_model_command_changes_next_prompt_model() {
 #[tokio::test]
 async fn scripted_interactive_model_selector_confirms_filtered_model() {
     let _guard = ENV_LOCK.lock().await;
-    let default_model = pi_ai::api::lookup_model("claude-sonnet-4-5").expect("known default model");
+    let default_model = lookup_model("claude-sonnet-4-5").expect("known default model");
     let _provider_guard = ProviderGuard::register(
         &default_model.api,
         Arc::new(RecordingModelProvider {
@@ -1192,7 +1190,7 @@ async fn scripted_interactive_model_selector_lists_configured_provider_models() 
 #[tokio::test]
 async fn scripted_interactive_model_command_refreshes_api_key_for_new_provider() {
     let _guard = ENV_LOCK.lock().await;
-    let target_model = pi_ai::api::lookup_model("gpt-5").expect("known model");
+    let target_model = lookup_model("gpt-5").expect("known model");
     let model_ids = Arc::new(Mutex::new(Vec::new()));
     let api_keys = Arc::new(Mutex::new(Vec::new()));
     let _provider_guard = ProviderGuard::register(
@@ -1351,11 +1349,13 @@ async fn scripted_interactive_name_updates_footer_session_label() {
 
 #[test]
 fn embedded_interactive_lifecycle_is_detach_only_and_owner_shutdown_is_top_level() {
-    let loop_source = include_str!("../interactive/loop.rs");
-    let app_source = include_str!("../interactive/app.rs");
+    let loop_source = include_str!("../adapters/interactive/loop.rs");
+    let app_source = include_str!("../adapters/interactive/app.rs");
+    let shutdown_source = include_str!("../app/shutdown.rs");
     assert!(loop_source.contains("detach_interactive_client"));
     assert!(loop_source.contains("connection.detach()"));
     assert!(!loop_source.contains("session.shutdown().await"));
-    assert!(app_source.contains("session.shutdown().await"));
+    assert!(app_source.contains("shutdown_session(result.coding_session.take()).await"));
+    assert!(shutdown_source.contains("session.shutdown().await"));
     assert!(app_source.contains("result.coding_session.take()"));
 }

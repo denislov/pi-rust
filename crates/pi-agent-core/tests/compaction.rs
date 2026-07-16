@@ -2,10 +2,13 @@ mod common;
 
 use common::{ProviderGuard, faux_model_with_window};
 use futures::StreamExt;
-use pi_agent_core::api::{Agent, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings};
-use pi_agent_core::api::{estimate_tokens, prepare_compaction, should_compact};
+use pi_agent_core::api::agent::{
+    Agent, AgentEvent, AgentMessage, CompactionConfig, CompactionSettings,
+};
+use pi_agent_core::api::compaction::{estimate_tokens, prepare_compaction, should_compact};
+use pi_ai::api::conversation::{AssistantMessage, ContentBlock, StopReason};
+use pi_ai::api::stream::StreamOptions;
 use pi_ai::api::testing::FauxProvider;
-use pi_ai::api::{ContentBlock, StopReason, StreamOptions};
 use std::sync::Arc;
 
 fn user_msg(text: &str) -> AgentMessage {
@@ -26,7 +29,7 @@ fn compaction_msg(summary: &str, tokens: u32) -> AgentMessage {
 /// Build an assistant message carrying provider `usage.total_tokens`, used to
 /// anchor `estimate_context_tokens` in runtime compaction tests.
 fn assistant_with_usage(total_tokens: u32) -> AgentMessage {
-    let mut msg = pi_ai::api::AssistantMessage::empty("test", "test-model");
+    let mut msg = AssistantMessage::empty("test", "test-model");
     msg.usage.total_tokens = total_tokens;
     msg.stop_reason = StopReason::Stop;
     AgentMessage::Assistant {
@@ -44,7 +47,7 @@ fn estimate_text_tokens() {
 
 #[test]
 fn estimate_tokens_ignores_assistant_usage_and_uses_content_size() {
-    let mut assistant = pi_ai::api::AssistantMessage::empty("test", "test-model");
+    let mut assistant = AssistantMessage::empty("test", "test-model");
     assistant.usage.total_tokens = 30_000;
     assistant.content.push(ContentBlock::Text {
         text: "assistant content".into(),
