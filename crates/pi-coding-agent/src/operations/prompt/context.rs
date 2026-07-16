@@ -21,10 +21,10 @@ use crate::plugins::{PromptHookContext, PromptHookPoint};
 
 use crate::events::prompt_stream::PromptStreamEvent;
 use crate::operations::delegation::{
-    DelegationAuthorizationDecision, DelegationLineageEntry,
+    DelegationAuthorizationDecision, DelegationLineageEntry, DelegationTargetInventory,
     authorize_delegation_requests_with_lineage,
 };
-use crate::profiles::{AgentProfile, DelegationPolicy, ProfileId, ProfileKind};
+use crate::profiles::{AgentProfile, DelegationPolicy, ProfileId, ProfileKind, ProfileRegistry};
 use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::control::PromptControlReceiver;
 use crate::runtime::facade::CodingSessionError;
@@ -138,6 +138,7 @@ impl PromptTurnOptions {
     pub(crate) fn apply_agent_profile(
         &mut self,
         profile: &AgentProfile,
+        registry: &ProfileRegistry,
         diagnostics: Vec<CodingDiagnostic>,
     ) -> Result<(), CodingSessionError> {
         let runtime = self
@@ -146,13 +147,14 @@ impl PromptTurnOptions {
             .ok_or_else(|| CodingSessionError::Config {
                 message: "prompt turn options do not include a runtime snapshot".into(),
             })?;
-        runtime.apply_agent_profile(profile, diagnostics);
+        runtime.apply_agent_profile(profile, registry, diagnostics);
         Ok(())
     }
 
     pub(crate) fn apply_delegated_agent_profile(
         &mut self,
         profile: &AgentProfile,
+        registry: &ProfileRegistry,
         diagnostics: Vec<CodingDiagnostic>,
     ) -> Result<(), CodingSessionError> {
         let runtime = self
@@ -161,7 +163,7 @@ impl PromptTurnOptions {
             .ok_or_else(|| CodingSessionError::Config {
                 message: "prompt turn options do not include a runtime snapshot".into(),
             })?;
-        runtime.apply_delegated_agent_profile(profile, diagnostics);
+        runtime.apply_delegated_agent_profile(profile, registry, diagnostics);
         Ok(())
     }
 }
@@ -321,6 +323,7 @@ pub(crate) struct RuntimeSnapshot {
     session_run_options: Option<SessionRunOptions>,
     profile_id: Option<ProfileId>,
     profile_delegation_policy: Option<DelegationPolicy>,
+    delegation_target_inventory: DelegationTargetInventory,
     profile_tool_allowlist: Option<Vec<String>>,
     profile_skill_allowlist: Option<Vec<String>>,
     profile_diagnostics: Vec<CodingDiagnostic>,
@@ -344,6 +347,10 @@ impl std::fmt::Debug for RuntimeSnapshot {
             .field("session_run_options", &self.session_run_options)
             .field("profile_id", &self.profile_id)
             .field("profile_delegation_policy", &self.profile_delegation_policy)
+            .field(
+                "delegation_target_inventory",
+                &self.delegation_target_inventory,
+            )
             .field("profile_tool_allowlist", &self.profile_tool_allowlist)
             .field("profile_skill_allowlist", &self.profile_skill_allowlist)
             .field("profile_diagnostics", &self.profile_diagnostics)
@@ -389,6 +396,7 @@ impl RuntimeSnapshot {
             session_run_options: session,
             profile_id: None,
             profile_delegation_policy: None,
+            delegation_target_inventory: DelegationTargetInventory::default(),
             profile_tool_allowlist: None,
             profile_skill_allowlist: None,
             profile_diagnostics: Vec::new(),
@@ -409,9 +417,10 @@ impl RuntimeSnapshot {
     pub(crate) fn apply_agent_profile(
         &mut self,
         profile: &AgentProfile,
+        registry: &ProfileRegistry,
         diagnostics: Vec<CodingDiagnostic>,
     ) {
-        self.apply_agent_profile_core(profile, diagnostics);
+        self.apply_agent_profile_core(profile, registry, diagnostics);
         self.profile_tool_allowlist = (!profile.tools.is_empty()).then(|| profile.tools.clone());
         self.profile_skill_allowlist = (!profile.skills.is_empty()).then(|| profile.skills.clone());
     }
@@ -419,9 +428,10 @@ impl RuntimeSnapshot {
     pub(crate) fn apply_delegated_agent_profile(
         &mut self,
         profile: &AgentProfile,
+        registry: &ProfileRegistry,
         diagnostics: Vec<CodingDiagnostic>,
     ) {
-        self.apply_agent_profile_core(profile, diagnostics);
+        self.apply_agent_profile_core(profile, registry, diagnostics);
         self.profile_tool_allowlist = Some(profile.tools.clone());
         self.profile_skill_allowlist = Some(profile.skills.clone());
     }
@@ -429,6 +439,7 @@ impl RuntimeSnapshot {
     fn apply_agent_profile_core(
         &mut self,
         profile: &AgentProfile,
+        registry: &ProfileRegistry,
         mut diagnostics: Vec<CodingDiagnostic>,
     ) {
         self.profile_diagnostics.append(&mut diagnostics);
@@ -448,6 +459,8 @@ impl RuntimeSnapshot {
         }
         self.profile_id = Some(profile.id.clone());
         self.profile_delegation_policy = Some(profile.delegation.clone());
+        self.delegation_target_inventory =
+            DelegationTargetInventory::from_registry(registry, &profile.delegation);
     }
 
     pub(crate) fn model(&self) -> &Model {
@@ -510,6 +523,10 @@ impl RuntimeSnapshot {
 
     pub(crate) fn profile_delegation_policy(&self) -> Option<&DelegationPolicy> {
         self.profile_delegation_policy.as_ref()
+    }
+
+    pub(crate) fn delegation_target_inventory(&self) -> &DelegationTargetInventory {
+        &self.delegation_target_inventory
     }
 
     pub(crate) fn profile_tool_allowlist(&self) -> Option<&[String]> {
@@ -1665,6 +1682,8 @@ mod tests {
     #[test]
     fn prompt_turn_context_authorizes_queued_delegation_from_runtime_policy() {
         let mut options = PromptTurnOptions::from_prompt_run_options(session_prompt_options());
+        let registry =
+            ProfileRegistry::load(crate::profiles::ProfileRegistryOptions::new()).unwrap();
         options
             .apply_agent_profile(
                 &AgentProfile {
@@ -1688,6 +1707,7 @@ mod tests {
                     source: ProfileSource::BuiltIn,
                     path: None,
                 },
+                &registry,
                 Vec::new(),
             )
             .unwrap();

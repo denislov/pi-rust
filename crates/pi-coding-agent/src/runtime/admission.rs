@@ -152,12 +152,8 @@ impl CodingAgentSession {
         );
         if let Some(profile) = self.active_agent_profile() {
             names.extend(
-                crate::operations::delegation::delegation_tools(
-                    Some(&profile.id),
-                    Some(&profile.delegation),
-                )
-                .into_iter()
-                .map(|tool| tool.name),
+                crate::operations::delegation::delegation_tool_names(&profile.delegation)
+                    .map(str::to_owned),
             );
         }
         names.sort();

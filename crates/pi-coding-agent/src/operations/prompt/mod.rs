@@ -78,7 +78,7 @@ pub(crate) fn apply_default_agent_profile(
                 })?
         }
     };
-    options.apply_agent_profile(profile, diagnostics)?;
+    options.apply_agent_profile(profile, profile_registry, diagnostics)?;
     Ok(options)
 }
 

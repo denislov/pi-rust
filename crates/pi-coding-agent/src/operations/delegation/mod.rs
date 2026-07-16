@@ -11,6 +11,7 @@ use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::operations::prompt::context::{DelegationRequest, PromptTurnMode, PromptTurnOptions};
 use crate::profiles::{
     AgentProfile, DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind,
+    ProfileRegistry,
 };
 use crate::runtime::capability::{
     ActorId, ModelCapability, OperationCapabilitySnapshot, ToolCapabilitySet, tool_uses_filesystem,
@@ -24,9 +25,47 @@ const DELEGATION_CONFIRMATION_TTL_HOURS: i64 = 24;
 pub(crate) mod confirmation;
 pub(crate) mod execution;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DelegationTargetInventory {
+    agents: Vec<DelegationTarget>,
+    teams: Vec<DelegationTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DelegationTarget {
+    id: ProfileId,
+    display_name: String,
+    description: Option<String>,
+}
+
+impl DelegationTargetInventory {
+    pub(crate) fn from_registry(registry: &ProfileRegistry, policy: &DelegationPolicy) -> Self {
+        let agents = registry
+            .agents()
+            .filter(|profile| target_is_allowed(&policy.allowed_agents, &profile.id))
+            .map(|profile| DelegationTarget {
+                id: profile.id.clone(),
+                display_name: profile.display_name.clone(),
+                description: profile.description.clone(),
+            })
+            .collect();
+        let teams = registry
+            .teams()
+            .filter(|profile| target_is_allowed(&policy.allowed_teams, &profile.id))
+            .map(|profile| DelegationTarget {
+                id: profile.id.clone(),
+                display_name: profile.display_name.clone(),
+                description: profile.description.clone(),
+            })
+            .collect();
+        Self { agents, teams }
+    }
+}
+
 pub(crate) fn delegation_tools(
     profile_id: Option<&ProfileId>,
     policy: Option<&DelegationPolicy>,
+    inventory: &DelegationTargetInventory,
 ) -> Vec<AgentTool> {
     let Some(policy) = policy else {
         return Vec::new();
@@ -35,13 +74,32 @@ pub(crate) fn delegation_tools(
         .cloned()
         .unwrap_or_else(|| ProfileId::from("default"));
     let mut tools = Vec::new();
-    if policy.allow_delegate_agent {
-        tools.push(delegate_agent_tool(profile_id.clone(), policy.clone()));
+    if policy.allow_delegate_agent && !inventory.agents.is_empty() {
+        tools.push(delegate_agent_tool(
+            profile_id.clone(),
+            policy.clone(),
+            &inventory.agents,
+        ));
     }
-    if policy.allow_delegate_team {
-        tools.push(delegate_team_tool(profile_id, policy.clone()));
+    if policy.allow_delegate_team && !inventory.teams.is_empty() {
+        tools.push(delegate_team_tool(
+            profile_id,
+            policy.clone(),
+            &inventory.teams,
+        ));
     }
     tools
+}
+
+pub(crate) fn delegation_tool_names(
+    policy: &DelegationPolicy,
+) -> impl Iterator<Item = &'static str> {
+    [
+        policy.allow_delegate_agent.then_some("delegate_agent"),
+        policy.allow_delegate_team.then_some("delegate_team"),
+    ]
+    .into_iter()
+    .flatten()
 }
 
 pub(crate) fn capability_snapshot_for_delegated_profile(
@@ -56,10 +114,9 @@ pub(crate) fn capability_snapshot_for_delegated_profile(
         .filter(|name| parent.tools.allows(name))
         .cloned()
         .collect::<Vec<_>>();
-    for tool in delegation_tools(Some(&profile.id), Some(&profile.delegation)) {
-        if parent.tools.allows(&tool.name) && !released_tools.iter().any(|name| name == &tool.name)
-        {
-            released_tools.push(tool.name);
+    for tool_name in delegation_tool_names(&profile.delegation) {
+        if parent.tools.allows(tool_name) && !released_tools.iter().any(|name| name == tool_name) {
+            released_tools.push(tool_name.to_owned());
         }
     }
     let releases_filesystem = released_tools.iter().any(|name| tool_uses_filesystem(name));
@@ -537,11 +594,19 @@ fn confirmation_reason(request: &DelegationRequest, policy: &DelegationPolicy) -
     }
 }
 
-fn delegate_agent_tool(profile_id: ProfileId, policy: DelegationPolicy) -> AgentTool {
+fn delegate_agent_tool(
+    profile_id: ProfileId,
+    policy: DelegationPolicy,
+    targets: &[DelegationTarget],
+) -> AgentTool {
     AgentTool::new_text(
         "delegate_agent",
-        "Request bounded help from another configured agent profile. The session owner validates policy before any child work is allowed.",
-        delegation_parameters("agent_id"),
+        delegation_description(
+            "Request bounded help from another configured agent profile. The session owner validates policy before any child work is allowed.",
+            "agent",
+            targets,
+        ),
+        delegation_parameters("agent_id", "agent", targets),
         move |_context, args| {
             let profile_id = profile_id.clone();
             let policy = policy.clone();
@@ -550,11 +615,19 @@ fn delegate_agent_tool(profile_id: ProfileId, policy: DelegationPolicy) -> Agent
     )
 }
 
-fn delegate_team_tool(profile_id: ProfileId, policy: DelegationPolicy) -> AgentTool {
+fn delegate_team_tool(
+    profile_id: ProfileId,
+    policy: DelegationPolicy,
+    targets: &[DelegationTarget],
+) -> AgentTool {
     AgentTool::new_text(
         "delegate_team",
-        "Request bounded help from a configured team profile. The session owner validates policy before any child work is allowed.",
-        delegation_parameters("team_id"),
+        delegation_description(
+            "Request bounded help from a configured team profile. The session owner validates policy before any child work is allowed.",
+            "team",
+            targets,
+        ),
+        delegation_parameters("team_id", "team", targets),
         move |_context, args| {
             let profile_id = profile_id.clone();
             let policy = policy.clone();
@@ -563,13 +636,43 @@ fn delegate_team_tool(profile_id: ProfileId, policy: DelegationPolicy) -> AgentT
     )
 }
 
-fn delegation_parameters(target_field: &str) -> serde_json::Value {
+fn delegation_description(base: &str, kind: &str, targets: &[DelegationTarget]) -> String {
+    let inventory = targets
+        .iter()
+        .map(|target| {
+            let display_name = single_line(&target.display_name);
+            match target.description.as_deref().map(single_line) {
+                Some(description) if !description.is_empty() => {
+                    format!("- {}: {} - {}", target.id, display_name, description)
+                }
+                _ => format!("- {}: {}", target.id, display_name),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{base}\n\nAvailable {kind} profiles:\n{inventory}")
+}
+
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn delegation_parameters(
+    target_field: &str,
+    target_kind: &str,
+    targets: &[DelegationTarget],
+) -> serde_json::Value {
+    let target_ids = targets
+        .iter()
+        .map(|target| target.id.as_str())
+        .collect::<Vec<_>>();
     let mut properties = serde_json::Map::new();
     properties.insert(
         target_field.to_string(),
         serde_json::json!({
             "type": "string",
-            "description": "Configured agent or team profile id"
+            "description": format!("Configured {target_kind} profile id"),
+            "enum": target_ids
         }),
     );
     properties.insert(
@@ -675,12 +778,15 @@ fn delegation_response(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use pi_agent_core::api::tool::AgentToolOutput;
     use pi_ai::api::conversation::ContentBlock;
+    use tempfile::tempdir;
 
     use super::*;
     use crate::operations::prompt::context::DelegationRequest;
-    use crate::profiles::{DelegationConfirmationMode, ProfileKind};
+    use crate::profiles::{DelegationConfirmationMode, ProfileKind, ProfileRegistryOptions};
 
     #[tokio::test]
     async fn delegate_agent_tool_accepts_allowed_request() {
@@ -690,7 +796,9 @@ mod tests {
             allowed_agents: vec![ProfileId::from("coder")],
             ..DelegationPolicy::default()
         };
-        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy));
+        let registry = test_registry();
+        let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
+        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory);
 
         assert_eq!(
             tools
@@ -720,7 +828,9 @@ mod tests {
             allowed_agents: vec![ProfileId::from("coder")],
             ..DelegationPolicy::default()
         };
-        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy));
+        let registry = test_registry();
+        let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
+        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory);
 
         let response = run_tool(
             &tools[0],
@@ -744,7 +854,9 @@ mod tests {
             allowed_teams: vec![ProfileId::from("implementation")],
             ..DelegationPolicy::default()
         };
-        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy));
+        let registry = test_registry();
+        let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
+        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory);
 
         assert_eq!(
             tools
@@ -761,6 +873,93 @@ mod tests {
         .await;
         assert_eq!(response["status"], "rejected");
         assert!(response["message"].as_str().unwrap().contains("max_depth"));
+    }
+
+    #[test]
+    fn built_in_agent_inventory_is_projected_into_schema_and_description() {
+        let registry = ProfileRegistry::load(ProfileRegistryOptions::new()).unwrap();
+        let profile = registry.agent("default").unwrap();
+        let inventory = DelegationTargetInventory::from_registry(&registry, &profile.delegation);
+
+        let tools = delegation_tools(Some(&profile.id), Some(&profile.delegation), &inventory);
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "delegate_agent");
+        assert_eq!(
+            tools[0].parameters["properties"]["agent_id"]["enum"],
+            serde_json::json!(["check", "explore", "review"])
+        );
+        for expected in [
+            "check: Check - Read-only helper for safe verification planning and diagnostics",
+            "explore: Explore - Read-only helper for context gathering and codebase exploration",
+            "review: Review - Read-only helper for review and risk analysis",
+        ] {
+            assert!(
+                tools[0].description.contains(expected),
+                "missing inventory entry {expected:?}: {}",
+                tools[0].description
+            );
+        }
+    }
+
+    #[test]
+    fn inventory_filters_missing_allowlist_ids_and_expands_empty_allowlists() {
+        let registry = test_registry();
+        let filtered_policy = DelegationPolicy {
+            allow_delegate_agent: true,
+            max_depth: 1,
+            allowed_agents: vec![ProfileId::from("coder"), ProfileId::from("missing")],
+            ..DelegationPolicy::default()
+        };
+        let filtered_inventory =
+            DelegationTargetInventory::from_registry(&registry, &filtered_policy);
+        let filtered_tools = delegation_tools(
+            Some(&ProfileId::from("planner")),
+            Some(&filtered_policy),
+            &filtered_inventory,
+        );
+        assert_eq!(
+            filtered_tools[0].parameters["properties"]["agent_id"]["enum"],
+            serde_json::json!(["coder"])
+        );
+
+        let all_policy = DelegationPolicy {
+            allow_delegate_agent: true,
+            allow_delegate_team: true,
+            max_depth: 1,
+            ..DelegationPolicy::default()
+        };
+        let all_inventory = DelegationTargetInventory::from_registry(&registry, &all_policy);
+        let all_tools = delegation_tools(
+            Some(&ProfileId::from("planner")),
+            Some(&all_policy),
+            &all_inventory,
+        );
+        assert_eq!(
+            all_tools[0].parameters["properties"]["agent_id"]["enum"],
+            serde_json::json!(["check", "coder", "default", "explore", "review", "reviewer"])
+        );
+        assert_eq!(
+            all_tools[1].parameters["properties"]["team_id"]["enum"],
+            serde_json::json!(["implementation"])
+        );
+    }
+
+    #[test]
+    fn delegation_tool_is_not_exposed_without_an_effective_target() {
+        let registry = test_registry();
+        let policy = DelegationPolicy {
+            allow_delegate_agent: true,
+            max_depth: 1,
+            allowed_agents: vec![ProfileId::from("missing")],
+            ..DelegationPolicy::default()
+        };
+        let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
+
+        assert!(
+            delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -897,5 +1096,44 @@ mod tests {
             })
             .expect("text output");
         serde_json::from_str(text).unwrap()
+    }
+
+    fn test_registry() -> ProfileRegistry {
+        let root = tempdir().unwrap();
+        write_profile(
+            &root.path().join("agents/coder.toml"),
+            r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+description = "Implementation agent"
+"#,
+        );
+        write_profile(
+            &root.path().join("agents/reviewer.toml"),
+            r#"
+schema_version = 1
+id = "reviewer"
+display_name = "Reviewer"
+description = "Review agent"
+"#,
+        );
+        write_profile(
+            &root.path().join("teams/implementation.toml"),
+            r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+description = "Coder and reviewer"
+supervisor = "deterministic"
+members = ["coder", "reviewer"]
+"#,
+        );
+        ProfileRegistry::load(ProfileRegistryOptions::new().with_project_root(root.path())).unwrap()
+    }
+
+    fn write_profile(path: &Path, content: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
     }
 }

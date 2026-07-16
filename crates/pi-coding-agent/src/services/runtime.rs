@@ -148,8 +148,11 @@ impl RuntimeService {
 
         let mut diagnostics = runtime.profile_diagnostics().to_vec();
         let resources = apply_skill_policy(runtime, &mut diagnostics);
-        let policy_tools =
-            delegation_tools(runtime.profile_id(), runtime.profile_delegation_policy());
+        let policy_tools = delegation_tools(
+            runtime.profile_id(),
+            runtime.profile_delegation_policy(),
+            runtime.delegation_target_inventory(),
+        );
         let tools = apply_tool_policy(
             runtime,
             plugin_service.collect_tools_with_capabilities(&snapshot.plugin),

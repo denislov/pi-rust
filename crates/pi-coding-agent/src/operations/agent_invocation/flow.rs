@@ -360,9 +360,9 @@ impl AgentInvocationContext {
         let mut prompt_options = self.options.prompt_options.clone();
         prompt_options.set_invocation(PromptInvocation::Text(self.options.task.clone()));
         if self.options.delegation_depth > 0 {
-            prompt_options.apply_delegated_agent_profile(profile, Vec::new())?;
+            prompt_options.apply_delegated_agent_profile(profile, &self.registry, Vec::new())?;
         } else {
-            prompt_options.apply_agent_profile(profile, Vec::new())?;
+            prompt_options.apply_agent_profile(profile, &self.registry, Vec::new())?;
         }
         if prompt_options.runtime().is_none() {
             return Err(CodingSessionError::Config {

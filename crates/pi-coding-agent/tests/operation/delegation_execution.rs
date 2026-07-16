@@ -1741,7 +1741,15 @@ allow_delegate_agent = true
 max_depth = 1
 max_parallel_children = 1
 require_confirmation = "never"
-allowed_agents = ["missing-coder"]
+allowed_agents = ["available-helper", "missing-coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/available-helper.toml"),
+        r#"
+schema_version = 1
+id = "available-helper"
+display_name = "Available Helper"
 "#,
     );
     let _env_guard = EnvGuard::with_pi_rust_dir(global);

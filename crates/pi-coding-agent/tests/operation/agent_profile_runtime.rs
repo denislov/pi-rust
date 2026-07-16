@@ -128,6 +128,26 @@ allowed_agents = ["coder"]
 allowed_teams = ["implementation"]
 "#,
     );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+description = "Implements focused code changes"
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/teams/implementation.toml"),
+        r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+description = "Plans, implements, and reviews changes"
+supervisor = "deterministic"
+members = ["coder"]
+"#,
+    );
     let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "profile-runtime-delegation-api";
@@ -159,16 +179,45 @@ allowed_teams = ["implementation"]
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
-    let tool_names = calls[0]
+    let tools = calls[0]
         .context
         .tools
         .as_ref()
-        .expect("delegation tools should be exposed to provider context")
+        .expect("delegation tools should be exposed to provider context");
+    let tool_names = tools
         .iter()
         .map(|tool| tool.name.as_str())
         .collect::<Vec<_>>();
     assert!(tool_names.contains(&"delegate_agent"));
     assert!(tool_names.contains(&"delegate_team"));
+    let delegate_agent = tools
+        .iter()
+        .find(|tool| tool.name == "delegate_agent")
+        .unwrap();
+    assert_eq!(
+        delegate_agent.parameters["properties"]["agent_id"]["enum"],
+        serde_json::json!(["coder"])
+    );
+    assert!(
+        delegate_agent
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("coder: Coder - Implements focused code changes")
+    );
+    let delegate_team = tools
+        .iter()
+        .find(|tool| tool.name == "delegate_team")
+        .unwrap();
+    assert_eq!(
+        delegate_team.parameters["properties"]["team_id"]["enum"],
+        serde_json::json!(["implementation"])
+    );
+    assert!(
+        delegate_team.description.as_deref().unwrap().contains(
+            "implementation: Implementation Team - Plans, implements, and reviews changes"
+        )
+    );
     let PromptTurnOutcome::Success { diagnostics, .. } = outcome else {
         panic!("expected successful prompt outcome: {outcome:#?}");
     };
@@ -178,6 +227,59 @@ allowed_teams = ["implementation"]
             .all(|diagnostic| !diagnostic.message.contains("is not available yet")),
         "delegation availability warnings should be retired: {diagnostics:#?}"
     );
+}
+
+#[tokio::test]
+async fn built_in_default_profile_projects_helper_inventory_to_provider_request() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "profile-runtime-default-delegation-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(vec![api.into()], calls.clone());
+    let mut session = CodingAgentSession::create(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd)
+            .with_session_id("sess_default_delegation_inventory")
+            .with_session_log_root(temp.path().join("sessions")),
+    )
+    .await
+    .unwrap();
+
+    session
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "inspect delegation inventory",
+        )))
+        .await
+        .unwrap();
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let delegate_agent = calls[0]
+        .context
+        .tools
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|tool| tool.name == "delegate_agent")
+        .expect("built-in default profile should expose delegate_agent");
+    assert_eq!(
+        delegate_agent.parameters["properties"]["agent_id"]["enum"],
+        serde_json::json!(["check", "explore", "review"])
+    );
+    let description = delegate_agent.description.as_deref().unwrap();
+    for expected in ["check: Check", "explore: Explore", "review: Review"] {
+        assert!(
+            description.contains(expected),
+            "provider-visible description is missing {expected:?}: {description}"
+        );
+    }
 }
 
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
