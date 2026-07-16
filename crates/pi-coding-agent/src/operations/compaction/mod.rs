@@ -6,6 +6,7 @@ use crate::operations::prompt::context::PromptTurnOutcome;
 use crate::runtime::capability::{
     OperationCapabilitySnapshot, SessionReadCapability, SessionWriteCapability,
 };
+use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
 use crate::services::flow::FlowService;
@@ -20,6 +21,7 @@ pub(crate) async fn run(
     event_service: &EventService,
     options: ManualCompactionOptions,
     snapshot: &OperationCapabilitySnapshot,
+    cancellation: Option<OperationCancellationHandle>,
 ) -> Result<PromptTurnOutcome, CodingSessionError> {
     SessionReadCapability::require(snapshot.session_read.as_ref())?;
     SessionWriteCapability::require(snapshot.session_write.as_ref())?;
@@ -31,6 +33,22 @@ pub(crate) async fn run(
 
     match flow_service.run_manual_compaction(&mut context).await {
         Ok(compaction) => {
+            if let Some(cancellation) = cancellation
+                && let Err(error) = cancellation.close()
+            {
+                let mut outcome =
+                    manual_compaction_failed_outcome(operation_id.clone(), turn_id, error.clone());
+                let finalized = session_service.fail_prompt_transaction(
+                    context.take_transaction(),
+                    operation_id,
+                    error.code(),
+                    error.to_string(),
+                )?;
+                apply_finalized_session_write(&mut outcome, &finalized);
+                event_service.emit_session_write_events(&finalized);
+                event_service.emit_prompt_outcome(&outcome);
+                return Ok(outcome);
+            }
             let mut outcome = manual_compaction_success_outcome(
                 operation_id.clone(),
                 turn_id.clone(),

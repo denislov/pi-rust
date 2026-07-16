@@ -4,9 +4,10 @@ use std::pin::Pin;
 
 use pi_agent_core::api::agent::AgentMessage;
 use pi_agent_core::api::compaction::summarize_with_provider_streamer;
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
+use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock};
 use pi_ai::api::stream::StreamOptions;
+use tokio_util::sync::CancellationToken;
 
 use crate::operations::prompt::context::{
     PromptTurnOutcome, PromptTurnTransaction, RuntimeSnapshot,
@@ -238,6 +239,7 @@ pub(crate) struct BranchSummaryContext {
     stream_options: Option<StreamOptions>,
     outcome: Option<BranchSummaryOutcome>,
     failure_error: Option<CodingSessionError>,
+    cancellation: Option<CancellationToken>,
 }
 
 impl BranchSummaryContext {
@@ -263,6 +265,7 @@ impl BranchSummaryContext {
             stream_options: None,
             outcome: None,
             failure_error: None,
+            cancellation: None,
         }
     }
 
@@ -293,6 +296,10 @@ impl BranchSummaryContext {
 
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
         self.failure_error.take()
+    }
+
+    pub(crate) fn set_cancellation(&mut self, cancellation: CancellationToken) {
+        self.cancellation = Some(cancellation);
     }
 
     pub(crate) fn finish_success(&self) -> Result<BranchSummaryOutcome, CodingSessionError> {
@@ -427,20 +434,30 @@ impl BranchSummaryContext {
                 runtime.profile_id(),
             )?;
             let instructions = branch_summary_instructions(self.options.custom_instructions());
+            let cancellation = self.cancellation.clone();
             let summary = summarize_with_provider_streamer(
                 runtime.model(),
                 &self.summary_messages,
                 Some(instructions.as_str()),
                 self.stream_options.clone(),
-                None,
+                cancellation.clone(),
                 Some(scoped_provider_streamer_for_runtime(
                     runtime,
                     model_capability,
                 )?),
             )
             .await
-            .map_err(|error| CodingSessionError::Provider {
-                message: error.to_string(),
+            .map_err(|error| {
+                if cancellation
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+                {
+                    CodingSessionError::Cancelled
+                } else {
+                    CodingSessionError::Provider {
+                        message: error.to_string(),
+                    }
+                }
             })?;
             format!("{BRANCH_SUMMARY_PREAMBLE}\n{}", summary.trim())
         } else {
@@ -511,6 +528,29 @@ impl BranchSummaryFlow {
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
     }
+
+    pub(crate) async fn run_with_cancellation(
+        &self,
+        ctx: &mut BranchSummaryContext,
+        cancellation: CancellationToken,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        ctx.set_cancellation(cancellation.clone());
+        let result = self
+            .flow
+            .run_with_options(
+                ctx,
+                FlowRunOptions {
+                    cancel: Some(cancellation),
+                    ..FlowRunOptions::default()
+                },
+            )
+            .await
+            .map_err(flow_error);
+        if let Err(error @ CodingSessionError::Cancelled) = &result {
+            ctx.fail(error.clone());
+        }
+        result
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -557,8 +597,11 @@ fn default_action() -> Result<Action, String> {
 }
 
 fn flow_error(error: FlowError) -> CodingSessionError {
-    CodingSessionError::Flow {
-        message: error.to_string(),
+    match error {
+        FlowError::Cancelled => CodingSessionError::Cancelled,
+        error => CodingSessionError::Flow {
+            message: error.to_string(),
+        },
     }
 }
 
@@ -916,6 +959,44 @@ mod tests {
                 && source_leaf_id == "leaf_branch"
                 && target_leaf_id == "leaf_root"
         ));
+        assert!(service.replay().unwrap().transcript.is_empty());
+    }
+
+    #[tokio::test]
+    async fn branch_summary_cancellation_before_work_does_not_stage_session_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let service = SessionService::create(
+            &CodingAgentSessionOptions::new()
+                .with_session_id("sess_branch_summary_cancelled")
+                .with_session_log_root(temp.path()),
+        )
+        .unwrap();
+        let transaction = service.begin_branch_summary_transaction();
+        let mut context = BranchSummaryContext::new(
+            BranchSummaryOptions::new()
+                .with_source_leaf_id("leaf_branch")
+                .with_target_leaf_id("leaf_root"),
+            branch_replay("sess_branch_summary_cancelled"),
+            transaction,
+            OperationCapabilitySnapshot::permissive("op_test"),
+        );
+        let flow = BranchSummaryFlow::new().unwrap();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = flow
+            .run_with_cancellation(&mut context, cancellation)
+            .await
+            .expect_err("pre-cancelled branch summary must not start");
+
+        assert_eq!(error, CodingSessionError::Cancelled);
+        assert!(
+            context
+                .pending_session_events()
+                .iter()
+                .all(|event| !matches!(event.data, SessionEventData::BranchSummaryCreated { .. }))
+        );
+        assert!(context.outcome().is_none());
         assert!(service.replay().unwrap().transcript.is_empty());
     }
 

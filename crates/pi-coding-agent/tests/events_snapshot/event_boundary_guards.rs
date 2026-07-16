@@ -46,8 +46,8 @@ fn typed_public_event_boundary_is_fail_closed() {
             .lines()
             .filter(|line| line.starts_with("| `"))
             .count(),
-        47,
-        "the authoritative product-event inventory must contain 47 rows"
+        48,
+        "the authoritative product-event inventory must contain 48 rows"
     );
     for forbidden in ["format!(\"{:?}\"", "format!(\"{:#?}\""] {
         assert!(
@@ -111,15 +111,15 @@ fn full_event_inventory_is_source_fixture_and_document_complete() {
 
     assert_eq!(
         source.len(),
-        47,
-        "owner event types must contain 47 normalized variants"
+        48,
+        "owner event types must contain 48 normalized variants"
     );
-    assert_eq!(fixture.len(), 47, "fixture must construct 47 variants");
-    assert_eq!(expected.len(), 47, "test inventory must contain 47 rows");
+    assert_eq!(fixture.len(), 48, "fixture must construct 48 variants");
+    assert_eq!(expected.len(), 48, "test inventory must contain 48 rows");
     assert_eq!(
         documented.len(),
-        47,
-        "document inventory must contain 47 rows"
+        48,
+        "document inventory must contain 48 rows"
     );
     assert_eq!(source, fixture, "fixture drifted from owner event types");
     assert_eq!(

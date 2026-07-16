@@ -131,12 +131,58 @@ display_name = "Coder"
     assert_eq!(output.exit_code, 0);
     assert!(output.terminal_restored);
     assert!(output.contains("/agent:coder please wait"), "{output:?}");
-    assert!(
-        output.contains("agent invocation aborted: user cancelled"),
-        "{output:?}"
-    );
+    assert!(output.contains("Error: cancelled"), "{output:?}");
     assert!(
         !output.contains("interactive agent invocation abort is not implemented yet"),
+        "{output:?}"
+    );
+    assert!(output.contains("status: idle"), "{output:?}");
+    assert!(cancelled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn ctrl_c_cancels_running_agent_team_through_operation_control() {
+    let _guard = ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+    std::fs::create_dir_all(dir.path().join("teams")).unwrap();
+    std::fs::write(
+        dir.path().join("agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("teams/implementation.toml"),
+        r#"
+schema_version = 1
+id = "implementation"
+display_name = "Implementation Team"
+supervisor = "deterministic"
+strategy = "plan_execute_review"
+members = ["coder"]
+"#,
+    )
+    .unwrap();
+    let env = EnvGuard::new(&["PI_RUST_DIR"]);
+    env.set_pi_rust_dir(dir.path());
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let provider = Arc::new(AbortAwareProvider::new(Arc::clone(&cancelled)));
+    let output = run_abort_harness_with_timeout(
+        provider,
+        vec!["/team:implementation please wait\r", "\x03", "\x03"],
+        "aborting an agent team member prompt",
+    )
+    .await;
+
+    assert_eq!(output.exit_code, 0);
+    assert!(output.terminal_restored);
+    assert!(
+        output.contains("/team:implementation please wait"),
         "{output:?}"
     );
     assert!(output.contains("status: idle"), "{output:?}");

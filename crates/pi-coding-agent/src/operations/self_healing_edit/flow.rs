@@ -9,11 +9,12 @@ use futures::{
 };
 #[cfg(test)]
 use pi_agent_core::api::execution::{ExecOptions, ExecutionEnv, FileError};
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
+use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
 use pi_ai::api::stream::{AssistantMessageEvent, StreamOptions};
 use serde::Deserialize;
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 use crate::tools::filesystem::edit::{
     EditOperations, RealEditOperations, edit_execute_with_operations,
@@ -21,6 +22,7 @@ use crate::tools::filesystem::edit::{
 
 use crate::operations::prompt::context::{PromptTurnOptions, RuntimeSnapshot};
 use crate::runtime::capability::{FilesystemCapability, ModelCapability};
+use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::runtime::stream_model_for_scoped_runtime;
 
@@ -392,6 +394,7 @@ pub(crate) struct SelfHealingEditContext {
     check_output: Option<SelfHealingEditCheckOutput>,
     check_failed: bool,
     failure_error: Option<CodingSessionError>,
+    cancellation_handle: Option<OperationCancellationHandle>,
 }
 
 impl SelfHealingEditContext {
@@ -409,6 +412,7 @@ impl SelfHealingEditContext {
             check_output: None,
             check_failed: false,
             failure_error: None,
+            cancellation_handle: None,
         }
     }
 
@@ -423,6 +427,13 @@ impl SelfHealingEditContext {
 
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
         self.failure_error.take()
+    }
+
+    pub(crate) fn set_cancellation_handle(
+        &mut self,
+        cancellation_handle: OperationCancellationHandle,
+    ) {
+        self.cancellation_handle = Some(cancellation_handle);
     }
 
     pub(crate) fn finish_success(&self) -> Result<SelfHealingEditOutcome, CodingSessionError> {
@@ -502,6 +513,9 @@ impl SelfHealingEditContext {
     }
 
     async fn apply_patch(&mut self) -> Result<(), CodingSessionError> {
+        if let Some(cancellation_handle) = &self.cancellation_handle {
+            cancellation_handle.close()?;
+        }
         self.attempts += 1;
         let args = serde_json::json!({
             "path": self.options.path,
@@ -767,6 +781,28 @@ impl SelfHealingEditFlow {
         ctx: &mut SelfHealingEditContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
+    }
+
+    pub(crate) async fn run_with_cancellation(
+        &self,
+        ctx: &mut SelfHealingEditContext,
+        cancellation: CancellationToken,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        let result = self
+            .flow
+            .run_with_options(
+                ctx,
+                FlowRunOptions {
+                    cancel: Some(cancellation),
+                    ..FlowRunOptions::default()
+                },
+            )
+            .await
+            .map_err(flow_error);
+        if let Err(error @ CodingSessionError::Cancelled) = &result {
+            ctx.fail(error.clone());
+        }
+        result
     }
 }
 
@@ -1087,8 +1123,11 @@ fn session_error(message: impl Into<String>) -> CodingSessionError {
 }
 
 fn flow_error(error: FlowError) -> CodingSessionError {
-    CodingSessionError::Flow {
-        message: error.to_string(),
+    match error {
+        FlowError::Cancelled => CodingSessionError::Cancelled,
+        error => CodingSessionError::Flow {
+            message: error.to_string(),
+        },
     }
 }
 

@@ -254,6 +254,12 @@ impl CodingAgentCapabilities {
                 reason: "no prompt is running".into(),
             },
         };
+        let abort_capability = match activity.primary() {
+            Some(_) => CapabilityStatus::Available,
+            None => CapabilityStatus::Disabled {
+                reason: "no cancellable operation is running".into(),
+            },
+        };
         let runtime_write_capability = match activity.runtime_write_blocker() {
             Some(operation) => CapabilityStatus::Busy {
                 operation: operation.as_str().into(),
@@ -276,7 +282,7 @@ impl CodingAgentCapabilities {
 
         Self {
             prompt: session_write_capability,
-            abort: prompt_control_capability.clone(),
+            abort: abort_capability,
             steer: prompt_control_capability.clone(),
             follow_up: prompt_control_capability,
             compact: persistent_session_write_capability.clone(),

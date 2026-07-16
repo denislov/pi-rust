@@ -1766,7 +1766,7 @@ async fn coding_session_public_api_symbols_are_importable() {
         CodingAgentCapabilities {
             prompt: CapabilityStatus::Available,
             abort: CapabilityStatus::Disabled {
-                reason: "no prompt is running".into(),
+                reason: "no cancellable operation is running".into(),
             },
             steer: CapabilityStatus::Disabled {
                 reason: "no prompt is running".into(),

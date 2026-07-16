@@ -203,13 +203,14 @@ impl CodingAgentSession {
         }
         let snapshot = operation_permit.capability_snapshot().clone();
         let operation_cancellation = operation_permit.cancellation_token();
+        let operation_cancellation_handle = operation_permit.cancellation_handle();
         if let (Some(submission), Some(cancellation)) =
-            (submission.as_ref(), operation_cancellation.as_ref())
+            (submission.as_ref(), operation_cancellation_handle.clone())
         {
             self.snapshot_coordinator.bind_operation_cancellation(
                 submission.handle.clone(),
                 snapshot.operation_id.clone(),
-                cancellation.clone(),
+                cancellation,
             );
         }
 
@@ -271,7 +272,7 @@ impl CodingAgentSession {
                     Operation::ManualCompaction(options) => {
                         let mut options =
                             ManualCompactionOptions::from_prompt_turn_options(&options)?;
-                        if let Some(cancellation) = operation_cancellation {
+                        if let Some(cancellation) = operation_cancellation.clone() {
                             options = options.with_cancellation(cancellation);
                         }
                         let SessionPersistence::Persistent(session_service) = &mut self.persistence
@@ -286,6 +287,7 @@ impl CodingAgentSession {
                             &self.event_service,
                             options,
                             &snapshot,
+                            operation_cancellation_handle.clone(),
                         )
                         .await
                         .map(OperationOutcome::ManualCompaction)
@@ -297,6 +299,8 @@ impl CodingAgentSession {
                             &self.event_service,
                             options,
                             &snapshot,
+                            operation_cancellation.clone(),
+                            operation_cancellation_handle.clone(),
                         )
                         .await?;
                         if let Some(plugin_service) = execution.loaded_plugin_service {
@@ -345,6 +349,8 @@ impl CodingAgentSession {
                             target_leaf_id,
                             custom_instructions,
                             &snapshot,
+                            operation_cancellation.clone(),
+                            operation_cancellation_handle.clone(),
                         )
                         .await
                         .map(OperationOutcome::BranchSummary)
@@ -388,6 +394,8 @@ impl CodingAgentSession {
                             repair_attempts,
                             model_repair_policy,
                             &snapshot,
+                            operation_cancellation.clone(),
+                            operation_cancellation_handle.clone(),
                         )
                         .await?;
                         self.event_service
@@ -408,6 +416,7 @@ impl CodingAgentSession {
                             &self.flow_service,
                             &self.operation_control,
                             snapshot.clone(),
+                            operation_cancellation.clone(),
                         )
                         .await;
                         result.map(OperationOutcome::AgentInvocation)
@@ -421,6 +430,7 @@ impl CodingAgentSession {
                         &self.flow_service,
                         &self.operation_control,
                         snapshot.clone(),
+                        operation_cancellation.clone(),
                     )
                     .await
                     .map(OperationOutcome::AgentTeam),

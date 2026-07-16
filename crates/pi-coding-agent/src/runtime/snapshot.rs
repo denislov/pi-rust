@@ -1,5 +1,5 @@
 use super::capability::CapabilityGeneration;
-use super::control::{OperationKind, PromptControlHandle};
+use super::control::{OperationCancellationHandle, OperationKind, PromptControlHandle};
 use crate::events::{ProductEvent, ProductEventSequence, ProductEventTerminalStatus};
 use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
 use crate::runtime::client::state::{
@@ -12,7 +12,6 @@ use crate::runtime::outcome::OperationDescriptor;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
-use tokio_util::sync::CancellationToken;
 
 pub(crate) const MAX_CLIENTS: usize = 64;
 pub(crate) const MAX_DRAFTS: usize = 64;
@@ -186,7 +185,7 @@ pub(crate) struct OperationEventContext {
 pub(crate) struct SnapshotCoordinator {
     pub(crate) state: Mutex<SnapshotState>,
     prompt_control: Mutex<Option<PromptControlBinding>>,
-    operation_cancellation: Mutex<Option<OperationCancellationBinding>>,
+    operation_cancellations: Mutex<HashMap<String, OperationCancellationBinding>>,
     lifecycle_sender: watch::Sender<u64>,
     #[cfg(test)]
     submission_transition_probe: Mutex<Option<SubmissionTransitionProbe>>,
@@ -203,8 +202,7 @@ struct PromptControlBinding {
 #[derive(Debug, Clone)]
 struct OperationCancellationBinding {
     owner: ClientHandle,
-    operation_id: String,
-    cancellation: CancellationToken,
+    cancellation: OperationCancellationHandle,
 }
 
 #[cfg(test)]
@@ -220,7 +218,7 @@ impl Default for SnapshotCoordinator {
         Self {
             state: Mutex::new(SnapshotState::default()),
             prompt_control: Mutex::new(None),
-            operation_cancellation: Mutex::new(None),
+            operation_cancellations: Mutex::new(HashMap::new()),
             lifecycle_sender,
             #[cfg(test)]
             submission_transition_probe: Mutex::new(None),
@@ -542,8 +540,16 @@ impl SnapshotCoordinator {
                 crate::runtime::client::projection::CodingAgentControlRejectionReason::TargetNotRunning,
             );
         }
-        let cancellation_binding = self.operation_cancellation.lock().unwrap();
-        let Some(active) = cancellation_binding.as_ref() else {
+        let cancellation_bindings = self.operation_cancellations.lock().unwrap();
+        let Some(active) = cancellation_bindings.get(operation_id) else {
+            if cancellation_bindings
+                .values()
+                .any(|active| active.owner.id == handle.id)
+            {
+                return Err(
+                    crate::runtime::client::projection::CodingAgentControlRejectionReason::TargetMismatch,
+                );
+            }
             return Err(
                 crate::runtime::client::projection::CodingAgentControlRejectionReason::TargetNotRunning,
             );
@@ -553,13 +559,14 @@ impl SnapshotCoordinator {
                 crate::runtime::client::projection::CodingAgentControlRejectionReason::NotOwner,
             );
         }
-        if active.operation_id != operation_id {
-            return Err(
-                crate::runtime::client::projection::CodingAgentControlRejectionReason::TargetMismatch,
-            );
-        }
-        active.cancellation.cancel();
-        Ok(())
+        active.cancellation.request().map(|_| ()).map_err(|rejection| {
+            match rejection {
+                super::control::OperationIdentityRejection::CancellationClosed { .. } => {
+                    crate::runtime::client::projection::CodingAgentControlRejectionReason::NoLongerCancellable
+                }
+                _ => crate::runtime::client::projection::CodingAgentControlRejectionReason::TargetNotRunning,
+            }
+        })
     }
 
     pub(crate) fn bind_prompt_control(
@@ -594,23 +601,22 @@ impl SnapshotCoordinator {
         &self,
         owner: ClientHandle,
         operation_id: String,
-        cancellation: CancellationToken,
+        cancellation: OperationCancellationHandle,
     ) {
-        *self.operation_cancellation.lock().unwrap() = Some(OperationCancellationBinding {
-            owner,
-            operation_id,
-            cancellation,
-        });
+        self.operation_cancellations.lock().unwrap().insert(
+            operation_id.clone(),
+            OperationCancellationBinding {
+                owner,
+                cancellation,
+            },
+        );
     }
 
     pub(crate) fn clear_operation_cancellation_if(&self, operation_id: &str) {
-        let mut binding = self.operation_cancellation.lock().unwrap();
-        if binding
-            .as_ref()
-            .is_some_and(|active| active.operation_id == operation_id)
-        {
-            *binding = None;
-        }
+        self.operation_cancellations
+            .lock()
+            .unwrap()
+            .remove(operation_id);
     }
 
     pub(crate) fn new() -> Arc<Self> {
@@ -741,11 +747,11 @@ impl SnapshotCoordinator {
             active.owner.generation = handle.generation;
         }
         drop(binding);
-        let mut cancellation = self.operation_cancellation.lock().unwrap();
-        if let Some(active) = cancellation.as_mut()
-            && active.owner.id == handle.id
-        {
-            active.owner.generation = handle.generation;
+        let mut cancellations = self.operation_cancellations.lock().unwrap();
+        for active in cancellations.values_mut() {
+            if active.owner.id == handle.id {
+                active.owner.generation = handle.generation;
+            }
         }
     }
 
@@ -1845,11 +1851,20 @@ mod tests {
         let coordinator = SnapshotCoordinator::new();
         let id = ClientConnectionId::new("compact-control-client");
         let first = coordinator.connect_or_takeover(id.clone()).unwrap();
-        let cancellation = CancellationToken::new();
+        let control =
+            super::super::control::OperationControl::with_snapshot_coordinator(coordinator.clone());
+        let operation = control
+            .begin_root(
+                crate::runtime::operation::OperationClass::SessionWriteRoot,
+                OperationKind::Compact,
+                "op-compact".into(),
+            )
+            .unwrap();
+        let cancellation = operation.cancellation_token().unwrap();
         coordinator.bind_operation_cancellation(
             first.clone(),
             "op-compact".into(),
-            cancellation.clone(),
+            operation.cancellation_handle(),
         );
 
         coordinator.detach(&first).unwrap();
@@ -1893,6 +1908,91 @@ mod tests {
         assert_eq!(
             completed.reason,
             crate::runtime::client::projection::CodingAgentControlRejectionReason::TargetNotRunning
+        );
+    }
+
+    #[test]
+    fn operation_cancellation_routes_concurrent_roots_by_operation_id() {
+        let coordinator = SnapshotCoordinator::new();
+        let owner = coordinator
+            .connect_or_takeover(ClientConnectionId::new("parallel-control-client"))
+            .unwrap();
+        let control =
+            super::super::control::OperationControl::with_snapshot_coordinator(coordinator.clone());
+        let first = control
+            .begin_root(
+                crate::runtime::operation::OperationClass::NonSessionRoot,
+                OperationKind::AgentInvocation,
+                "op-first".into(),
+            )
+            .unwrap();
+        let second = control
+            .begin_root(
+                crate::runtime::operation::OperationClass::NonSessionRoot,
+                OperationKind::AgentTeam,
+                "op-second".into(),
+            )
+            .unwrap();
+        coordinator.bind_operation_cancellation(
+            owner.clone(),
+            "op-first".into(),
+            first.cancellation_handle(),
+        );
+        coordinator.bind_operation_cancellation(
+            owner.clone(),
+            "op-second".into(),
+            second.cancellation_handle(),
+        );
+
+        coordinator
+            .enqueue_control(
+                &owner,
+                "op-second",
+                crate::runtime::client::projection::CodingAgentControlId("abort-second".into()),
+                crate::runtime::client::projection::CodingAgentControlKind::Abort,
+                "stop second".into(),
+            )
+            .unwrap();
+
+        assert!(!first.cancellation_token().unwrap().is_cancelled());
+        assert!(second.cancellation_token().unwrap().is_cancelled());
+    }
+
+    #[test]
+    fn operation_cancellation_reports_commit_gate_closure() {
+        let coordinator = SnapshotCoordinator::new();
+        let owner = coordinator
+            .connect_or_takeover(ClientConnectionId::new("commit-gate-client"))
+            .unwrap();
+        let control =
+            super::super::control::OperationControl::with_snapshot_coordinator(coordinator.clone());
+        let operation = control
+            .begin_root(
+                crate::runtime::operation::OperationClass::RuntimeWrite,
+                OperationKind::PluginLoad,
+                "op-plugin-load".into(),
+            )
+            .unwrap();
+        let cancellation = operation.cancellation_handle();
+        cancellation.close().unwrap();
+        coordinator.bind_operation_cancellation(
+            owner.clone(),
+            "op-plugin-load".into(),
+            cancellation,
+        );
+
+        let rejection = coordinator
+            .enqueue_control(
+                &owner,
+                "op-plugin-load",
+                crate::runtime::client::projection::CodingAgentControlId("abort-late".into()),
+                crate::runtime::client::projection::CodingAgentControlKind::Abort,
+                "too late".into(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            rejection.reason,
+            crate::runtime::client::projection::CodingAgentControlRejectionReason::NoLongerCancellable
         );
     }
 

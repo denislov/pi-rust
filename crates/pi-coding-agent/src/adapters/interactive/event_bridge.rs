@@ -420,6 +420,11 @@ impl CodingEventBridge {
                 text: format!("Self-healing edit failed for {}: {}", path, error.message),
             }],
             CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditAborted { path, reason, .. },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!("Self-healing edit cancelled for {path}: {reason}"),
+            }],
+            CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::OperationRecovered {
                     operation_id,
                     reason,

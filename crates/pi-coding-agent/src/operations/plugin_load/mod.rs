@@ -1,10 +1,12 @@
 use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapability};
+use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
 use crate::services::flow::FlowService;
 use crate::services::plugin::{PluginDiagnostic, PluginService};
 use crate::session::event::PersistedPluginDiagnostic;
 use crate::session::service::{SessionPersistence, SessionService};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) mod flow;
 
@@ -21,6 +23,8 @@ pub(crate) async fn run(
     event_service: &EventService,
     options: PluginLoadOptions,
     snapshot: &OperationCapabilitySnapshot,
+    cancellation: Option<CancellationToken>,
+    cancellation_handle: Option<OperationCancellationHandle>,
 ) -> Result<PluginLoadExecution, CodingSessionError> {
     SessionWriteCapability::require(snapshot.session_write.as_ref())?;
     let mut transaction = match persistence {
@@ -34,7 +38,14 @@ pub(crate) async fn run(
         .map(|transaction| transaction.operation_id().to_owned())
         .unwrap_or_else(|| "plugin_load".to_owned());
     let mut context = PluginLoadContext::new(options);
-    let outcome = match flow_service.run_plugin_load(&mut context).await {
+    let outcome = match match cancellation.as_ref() {
+        Some(cancellation) => {
+            flow_service
+                .run_plugin_load_with_cancellation(&mut context, cancellation.clone())
+                .await
+        }
+        None => flow_service.run_plugin_load(&mut context).await,
+    } {
         Ok(outcome) => outcome,
         Err(error) => {
             if let Some(transaction) = transaction.take()
@@ -51,6 +62,27 @@ pub(crate) async fn run(
             return Err(error);
         }
     };
+    if let Some(cancellation_handle) = cancellation_handle
+        && let Err(error) = cancellation_handle.close()
+    {
+        if let Some(transaction) = transaction.take()
+            && let SessionPersistence::Persistent(session_service) = persistence
+        {
+            let finalized = session_service.fail_plugin_load_transaction(
+                Some(transaction),
+                operation_id,
+                error.code(),
+                error.to_string(),
+            )?;
+            event_service.emit_session_write_events(&finalized);
+        }
+        return Err(error);
+    } else if cancellation
+        .as_ref()
+        .is_some_and(CancellationToken::is_cancelled)
+    {
+        return Err(CodingSessionError::Cancelled);
+    }
     if let Some(transaction) = transaction.as_mut() {
         SessionService::record_plugin_load_completed(
             transaction,

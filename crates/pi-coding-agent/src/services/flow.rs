@@ -1,4 +1,5 @@
 use pi_agent_core::api::flow::{Flow, FlowOutcome, FlowRunOptions};
+use tokio_util::sync::CancellationToken;
 
 use crate::operations::agent_invocation::flow::{
     AgentInvocationContext, AgentInvocationFlow, AgentInvocationOutcome,
@@ -108,6 +109,21 @@ impl FlowService {
         }
     }
 
+    pub(crate) async fn run_self_healing_edit_with_cancellation(
+        &self,
+        ctx: &mut SelfHealingEditContext,
+        cancellation: CancellationToken,
+    ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
+        match self
+            .self_healing_edit_flow()?
+            .run_with_cancellation(ctx, cancellation)
+            .await
+        {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
+    }
+
     pub(crate) async fn run_agent_invocation_graph(
         &self,
         ctx: &mut AgentInvocationContext,
@@ -125,6 +141,21 @@ impl FlowService {
         }
     }
 
+    pub(crate) async fn run_agent_invocation_with_cancellation(
+        &self,
+        ctx: &mut AgentInvocationContext,
+        cancellation: CancellationToken,
+    ) -> Result<AgentInvocationOutcome, CodingSessionError> {
+        match self
+            .agent_invocation_flow()?
+            .run_with_cancellation(ctx, cancellation)
+            .await
+        {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
+    }
+
     pub(crate) async fn run_agent_team_graph(
         &self,
         ctx: &mut AgentTeamContext,
@@ -137,6 +168,21 @@ impl FlowService {
         ctx: &mut AgentTeamContext,
     ) -> Result<AgentTeamOutcome, CodingSessionError> {
         match self.run_agent_team_graph(ctx).await {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
+    }
+
+    pub(crate) async fn run_agent_team_with_cancellation(
+        &self,
+        ctx: &mut AgentTeamContext,
+        cancellation: CancellationToken,
+    ) -> Result<AgentTeamOutcome, CodingSessionError> {
+        match self
+            .agent_team_flow()?
+            .run_with_cancellation(ctx, cancellation)
+            .await
+        {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -173,6 +219,21 @@ impl FlowService {
         }
     }
 
+    pub(crate) async fn run_plugin_load_with_cancellation(
+        &self,
+        ctx: &mut PluginLoadContext,
+        cancellation: CancellationToken,
+    ) -> Result<PluginLoadOutcome, CodingSessionError> {
+        match self
+            .plugin_load_flow()?
+            .run_with_cancellation(ctx, cancellation)
+            .await
+        {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
+    }
+
     pub(crate) async fn run_branch_summary_graph(
         &self,
         ctx: &mut BranchSummaryContext,
@@ -185,6 +246,21 @@ impl FlowService {
         ctx: &mut BranchSummaryContext,
     ) -> Result<BranchSummaryOutcome, CodingSessionError> {
         match self.run_branch_summary_graph(ctx).await {
+            Ok(_) => ctx.finish_success(),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
+    }
+
+    pub(crate) async fn run_branch_summary_with_cancellation(
+        &self,
+        ctx: &mut BranchSummaryContext,
+        cancellation: CancellationToken,
+    ) -> Result<BranchSummaryOutcome, CodingSessionError> {
+        match self
+            .branch_summary_flow()?
+            .run_with_cancellation(ctx, cancellation)
+            .await
+        {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -554,6 +630,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn self_healing_edit_cancellation_before_work_does_not_write() {
+        let service = FlowService::new();
+        let env = InMemoryExecutionEnv::new("/workspace");
+        env.write_file("src/app.txt", b"one\ntwo\n").await.unwrap();
+        let options = SelfHealingEditOptions::new(
+            env.cwd(),
+            "src/app.txt",
+            vec![SelfHealingEditReplacement::new("two", "deux")],
+        )
+        .with_execution_env(env.clone());
+        let mut context = SelfHealingEditContext::new(options);
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = service
+            .run_self_healing_edit_with_cancellation(&mut context, cancellation)
+            .await
+            .expect_err("pre-cancelled edit must not start");
+
+        assert_eq!(error, CodingSessionError::Cancelled);
+        assert_eq!(
+            env.read_text_file("src/app.txt").await.unwrap(),
+            "one\ntwo\n"
+        );
+    }
+
+    #[tokio::test]
     async fn self_healing_edit_flow_runs_successful_check_command() {
         let service = FlowService::new();
         let env = InMemoryExecutionEnv::new("/workspace");
@@ -860,6 +963,34 @@ mod tests {
         let loaded_service = context.loaded_plugin_service().unwrap();
         assert_eq!(loaded_service.collect_tools()[0].name, "plugin_echo");
         assert_eq!(loaded_service.collect_commands()[0].id, "plugin.command");
+    }
+
+    #[tokio::test]
+    async fn plugin_load_cancellation_before_work_does_not_install_registry() {
+        let service = FlowService::new();
+        let mut registry = PluginRegistry::new();
+        registry.register_tool_provider(Arc::new(PluginLoadToolProvider));
+        let options = PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
+            PluginLoadManifest::new(
+                "cancelled-plugin",
+                "Cancelled Plugin",
+                "1.0.0",
+                PluginSource::FirstParty,
+            ),
+            registry,
+        ));
+        let mut context = PluginLoadContext::new(options);
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = service
+            .run_plugin_load_with_cancellation(&mut context, cancellation)
+            .await
+            .expect_err("pre-cancelled plugin load must not start");
+
+        assert_eq!(error, CodingSessionError::Cancelled);
+        assert!(context.loaded_plugin_service().is_none());
+        assert!(context.outcome().is_none());
     }
 
     #[tokio::test]

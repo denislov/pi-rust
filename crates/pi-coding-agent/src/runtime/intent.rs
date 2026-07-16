@@ -1,6 +1,7 @@
 use super::capability::OperationCapabilitySnapshot;
 use super::control::{
-    ChildOperationGuard, OperationControl, OperationGuard, OperationKind, PromptControlHandle,
+    ChildOperationGuard, OperationCancellationHandle, OperationControl, OperationGuard,
+    OperationKind, PromptControlHandle,
 };
 #[cfg(test)]
 use super::operation::Operation;
@@ -43,6 +44,7 @@ pub(crate) struct OperationPermit {
     _child_guard: Option<ChildOperationGuard>,
     capability_snapshot: OperationCapabilitySnapshot,
     cancellation: Option<CancellationToken>,
+    cancellation_handle: Option<OperationCancellationHandle>,
     #[cfg(test)]
     kind: OperationKind,
     #[cfg(test)]
@@ -78,6 +80,7 @@ impl OperationPermit {
     ) -> Self {
         guard.bind_capability_generation(capability_snapshot.generation);
         let cancellation = guard.cancellation_token();
+        let cancellation_handle = Some(guard.cancellation_handle());
         #[cfg(not(test))]
         let _ = (kind, class);
 
@@ -86,6 +89,7 @@ impl OperationPermit {
             _child_guard: None,
             capability_snapshot,
             cancellation,
+            cancellation_handle,
             #[cfg(test)]
             kind,
             #[cfg(test)]
@@ -106,6 +110,7 @@ impl OperationPermit {
             _child_guard: None,
             capability_snapshot,
             cancellation: None,
+            cancellation_handle: None,
             #[cfg(test)]
             kind,
             #[cfg(test)]
@@ -120,6 +125,7 @@ impl OperationPermit {
     ) -> Self {
         guard.bind_capability_generation(capability_snapshot.generation);
         let cancellation = Some(guard.cancellation_token());
+        let cancellation_handle = Some(guard.cancellation_handle());
         #[cfg(not(test))]
         let _ = kind;
 
@@ -128,6 +134,7 @@ impl OperationPermit {
             _child_guard: Some(guard),
             capability_snapshot,
             cancellation,
+            cancellation_handle,
             #[cfg(test)]
             kind,
             #[cfg(test)]
@@ -142,6 +149,10 @@ impl OperationPermit {
 
     pub(crate) fn cancellation_token(&self) -> Option<CancellationToken> {
         self.cancellation.clone()
+    }
+
+    pub(crate) fn cancellation_handle(&self) -> Option<OperationCancellationHandle> {
+        self.cancellation_handle.clone()
     }
 
     #[cfg(test)]

@@ -127,6 +127,13 @@ pub enum ProtocolEvent {
         path: String,
         error: String,
     },
+    #[serde(rename = "self_healing_edit_abort")]
+    SelfHealingEditAbort {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        path: String,
+        reason: String,
+    },
     #[serde(rename = "delegation_requested")]
     DelegationRequested {
         #[serde(rename = "operationId")]
@@ -588,7 +595,11 @@ pub enum RpcCommand {
         images: Option<Vec<ContentBlock>>,
     },
     #[serde(rename = "abort")]
-    Abort { id: Option<String> },
+    Abort {
+        id: Option<String>,
+        #[serde(rename = "operationId", default)]
+        operation_id: Option<String>,
+    },
     #[serde(rename = "new_session")]
     NewSession {
         id: Option<String>,

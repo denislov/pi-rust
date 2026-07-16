@@ -38,6 +38,11 @@ pub(crate) enum SelfHealingEditEvent {
         path: String,
         error: CodingSessionError,
     },
+    Aborted {
+        operation_id: String,
+        path: String,
+        reason: String,
+    },
 }
 
 impl SelfHealingEditEvent {
@@ -45,6 +50,7 @@ impl SelfHealingEditEvent {
         match self {
             Self::Completed { .. } => Some(OperationRootTerminalEvidence::SelfHealingEditCompleted),
             Self::Failed { .. } => Some(OperationRootTerminalEvidence::SelfHealingEditFailed),
+            Self::Aborted { .. } => Some(OperationRootTerminalEvidence::SelfHealingEditAborted),
             Self::Started { .. } | Self::RepairAttempted { .. } => None,
         }
     }
@@ -126,6 +132,19 @@ impl SelfHealingEditEvent {
                 },
                 operation_id,
                 Some(CodingAgentProductEventTerminalStatus::Failed),
+            ),
+            Self::Aborted {
+                operation_id,
+                path,
+                reason,
+            } => (
+                CodingAgentWorkflowProductEvent::SelfHealingEditAborted {
+                    operation_id: operation_id.clone(),
+                    path,
+                    reason,
+                },
+                operation_id,
+                Some(CodingAgentProductEventTerminalStatus::Aborted),
             ),
         };
         ProductEventDraft {

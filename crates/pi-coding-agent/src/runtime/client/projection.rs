@@ -231,6 +231,7 @@ pub enum CodingAgentControlRejectionReason {
     NotOwner,
     TargetMismatch,
     TargetNotRunning,
+    NoLongerCancellable,
     ControlChannelClosed,
     InvalidInput,
     QueueCapacityExceeded,
@@ -478,6 +479,15 @@ impl CodingAgentClientConnection {
             operation_id: operation_id.into(),
             coordinator: self.coordinator.clone(),
         }
+    }
+
+    pub(crate) fn bind_operation_cancellation(
+        &self,
+        operation_id: String,
+        cancellation: crate::runtime::control::OperationCancellationHandle,
+    ) {
+        self.coordinator
+            .bind_operation_cancellation(self.handle(), operation_id, cancellation);
     }
 
     pub fn acknowledge(&self, sequence: u64) -> Result<u64, CodingSessionError> {

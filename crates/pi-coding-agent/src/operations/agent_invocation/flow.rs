@@ -1,8 +1,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
+use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::AssistantMessage;
+use tokio_util::sync::CancellationToken;
 
 use crate::app::bootstrap::PromptInvocation;
 use crate::operations::delegation::{
@@ -168,6 +169,28 @@ impl AgentInvocationFlow {
         ctx: &mut AgentInvocationContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
+    }
+
+    pub(crate) async fn run_with_cancellation(
+        &self,
+        ctx: &mut AgentInvocationContext,
+        cancellation: CancellationToken,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        let result = self
+            .flow
+            .run_with_options(
+                ctx,
+                FlowRunOptions {
+                    cancel: Some(cancellation),
+                    ..FlowRunOptions::default()
+                },
+            )
+            .await
+            .map_err(flow_error);
+        if let Err(error @ CodingSessionError::Cancelled) = &result {
+            ctx.fail(error.clone());
+        }
+        result
     }
 }
 
@@ -617,9 +640,7 @@ impl AgentInvocationContext {
                 Ok(())
             }
             PromptTurnOutcome::Aborted { reason, .. } => {
-                let error = CodingSessionError::Session {
-                    message: format!("agent invocation aborted: {reason}"),
-                };
+                let error = CodingSessionError::Cancelled;
                 self.failure_error = Some(error.clone());
                 self.event_service
                     .emit_prompt_aborted(self.child_operation_id.clone(), reason.clone());
@@ -650,12 +671,21 @@ impl AgentInvocationContext {
         self.child_admission.take();
         if self.failure_error.is_none() {
             self.failure_error = Some(error.clone());
-            self.event_service.emit_agent_invocation_failed(
-                self.operation_id.clone(),
-                self.child_operation_id.clone(),
-                self.options.profile_id.clone(),
-                error.clone(),
-            );
+            if error == CodingSessionError::Cancelled {
+                self.event_service.emit_agent_invocation_aborted(
+                    self.operation_id.clone(),
+                    self.child_operation_id.clone(),
+                    self.options.profile_id.clone(),
+                    error.to_string(),
+                );
+            } else {
+                self.event_service.emit_agent_invocation_failed(
+                    self.operation_id.clone(),
+                    self.child_operation_id.clone(),
+                    self.options.profile_id.clone(),
+                    error.clone(),
+                );
+            }
         }
         error.to_string()
     }
@@ -666,7 +696,10 @@ fn default_action() -> Result<Action, String> {
 }
 
 fn flow_error(error: FlowError) -> CodingSessionError {
-    CodingSessionError::Flow {
-        message: error.to_string(),
+    match error {
+        FlowError::Cancelled => CodingSessionError::Cancelled,
+        error => CodingSessionError::Flow {
+            message: error.to_string(),
+        },
     }
 }

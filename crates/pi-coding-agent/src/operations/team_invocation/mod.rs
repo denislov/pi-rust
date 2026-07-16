@@ -8,6 +8,7 @@ use crate::services::event::EventService;
 use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use flow::{AgentTeamContext, AgentTeamOptions, AgentTeamOutcome};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) async fn run(
     options: AgentTeamOptions,
@@ -18,6 +19,7 @@ pub(crate) async fn run(
     flow_service: &FlowService,
     operation_control: &OperationControl,
     parent_capability_snapshot: OperationCapabilitySnapshot,
+    cancellation: Option<CancellationToken>,
 ) -> Result<AgentTeamOutcome, CodingSessionError> {
     let mut context = AgentTeamContext::new(
         options,
@@ -28,5 +30,12 @@ pub(crate) async fn run(
     )
     .with_parent_capability_snapshot(parent_capability_snapshot)
     .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
-    flow_service.run_agent_team(&mut context).await
+    match cancellation {
+        Some(cancellation) => {
+            flow_service
+                .run_agent_team_with_cancellation(&mut context, cancellation)
+                .await
+        }
+        None => flow_service.run_agent_team(&mut context).await,
+    }
 }

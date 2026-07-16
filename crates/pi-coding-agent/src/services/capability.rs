@@ -75,11 +75,13 @@ mod tests {
         let capabilities =
             CapabilityService::new().capabilities(&idle(), &plugin_capabilities, true);
 
-        for capability in [
+        assert_eq!(
             capabilities.abort,
-            capabilities.steer,
-            capabilities.follow_up,
-        ] {
+            CapabilityStatus::Disabled {
+                reason: "no cancellable operation is running".into(),
+            }
+        );
+        for capability in [capabilities.steer, capabilities.follow_up] {
             assert_eq!(
                 capability,
                 CapabilityStatus::Disabled {
@@ -108,8 +110,8 @@ mod tests {
             true,
         );
 
+        assert_eq!(plugin_load_capabilities.abort, CapabilityStatus::Available);
         for capability in [
-            plugin_load_capabilities.abort,
             plugin_load_capabilities.steer,
             plugin_load_capabilities.follow_up,
         ] {

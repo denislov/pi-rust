@@ -321,27 +321,30 @@ impl RpcState {
                 write_rpc_response(writer, RpcResponse::success(id, "follow_up", None)).await?;
                 self.emit_queue_update(writer).await
             }
-            RpcCommand::Abort { id } => {
-                let cancelled = if let Some(foreground) = self.foreground.as_ref() {
-                    if foreground.operation_kind != OperationKind::Prompt {
-                        write_rpc_response(
-                            writer,
-                            RpcResponse::error(
-                                id,
-                                "abort",
-                                format!(
-                                    "cannot abort while {} is running",
-                                    foreground.operation_kind.as_str()
-                                ),
-                            ),
-                        )
-                        .await?;
-                        return Ok(());
+            RpcCommand::Abort { id, operation_id } => {
+                let target_operation_id = match operation_id {
+                    Some(operation_id) => {
+                        if !self.background_operations.contains_key(&operation_id)
+                            && self.active_foreground_operation_id()?.as_deref()
+                                != Some(operation_id.as_str())
+                        {
+                            write_rpc_response(
+                                writer,
+                                RpcResponse::error(id, "abort", "operation is not running"),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                        Some(operation_id)
                     }
-                    let Some(control) = self.active_prompt_control()? else {
+                    None if self.foreground.is_some() => self.active_foreground_operation_id()?,
+                    None => None,
+                };
+                let cancelled = if let Some(operation_id) = target_operation_id {
+                    let Some(control) = self.operation_control(&operation_id) else {
                         write_rpc_response(
                             writer,
-                            RpcResponse::error(id, "abort", "agent is not streaming"),
+                            RpcResponse::error(id, "abort", "operation has no control owner"),
                         )
                         .await?;
                         return Ok(());

@@ -338,7 +338,7 @@ impl RpcState {
         .with_mode(PromptTurnMode::Rpc);
         let invocation_options =
             AgentInvocationOptions::new(profile_id.clone(), task.clone(), prompt_options);
-        self.ensure_client_connection(&session)?;
+        let connection = self.ensure_client_connection(&session)?;
         self.ensure_session_event_pump(&session);
         let event_flush = self
             .session_event_flush
@@ -359,6 +359,7 @@ impl RpcState {
             }
         };
         let operation_id = invocation.operation_id().to_owned();
+        invocation.bind_control_owner(&connection);
 
         write_rpc_response(
             writer,
@@ -523,7 +524,7 @@ impl RpcState {
         })
         .with_mode(PromptTurnMode::Rpc);
         let team_options = AgentTeamOptions::new(team_id.clone(), task.clone(), prompt_options);
-        self.ensure_client_connection(&session)?;
+        let connection = self.ensure_client_connection(&session)?;
         self.ensure_session_event_pump(&session);
         let event_flush = self
             .session_event_flush
@@ -543,6 +544,7 @@ impl RpcState {
             }
         };
         let operation_id = invocation.operation_id().to_owned();
+        invocation.bind_control_owner(&connection);
 
         write_rpc_response(
             writer,
@@ -933,7 +935,10 @@ impl RpcState {
         self.steering.clear();
         self.follow_up.clear();
         self.finish_pending_shutdown_if_idle(writer).await?;
-        outcome
+        match outcome {
+            Err(CliError::SessionFailure(message)) if message == "cancelled" => Ok(()),
+            outcome => outcome,
+        }
     }
 
     pub(super) async fn finish_background_operation<W>(
@@ -971,7 +976,10 @@ impl RpcState {
         };
 
         self.finish_pending_shutdown_if_idle(writer).await?;
-        outcome
+        match outcome {
+            Err(CliError::SessionFailure(message)) if message == "cancelled" => Ok(()),
+            outcome => outcome,
+        }
     }
 
     pub(super) async fn drain_session_product_events<W>(

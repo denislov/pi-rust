@@ -6,12 +6,14 @@ use crate::operations::prompt::context::{PromptTurnOptions, PromptTurnOutcome, R
 use crate::runtime::capability::{
     OperationCapabilitySnapshot, SessionReadCapability, SessionWriteCapability,
 };
+use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
 use crate::services::flow::FlowService;
 use crate::services::session::apply_finalized_session_write;
 use crate::session::id::{IdGenerator, SystemIdGenerator};
 use crate::session::service::{SessionPersistence, SessionService};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) mod flow;
 
@@ -54,6 +56,8 @@ pub(crate) async fn run(
     target_leaf_id: String,
     custom_instructions: Option<String>,
     snapshot: &OperationCapabilitySnapshot,
+    cancellation: Option<CancellationToken>,
+    cancellation_handle: Option<OperationCancellationHandle>,
 ) -> Result<PromptTurnOutcome, CodingSessionError> {
     SessionReadCapability::require(snapshot.session_read.as_ref())?;
     SessionWriteCapability::require(snapshot.session_write.as_ref())?;
@@ -72,8 +76,43 @@ pub(crate) async fn run(
     let operation_id = context.operation_id().to_owned();
     let turn_id = context.turn_id().to_owned();
 
-    match flow_service.run_branch_summary(&mut context).await {
+    let result = match cancellation.as_ref() {
+        Some(cancellation) => {
+            flow_service
+                .run_branch_summary_with_cancellation(&mut context, cancellation.clone())
+                .await
+        }
+        None => flow_service.run_branch_summary(&mut context).await,
+    };
+    match result {
         Ok(branch_summary) => {
+            let commit_gate = match cancellation_handle {
+                Some(cancellation_handle) => cancellation_handle.close(),
+                None if cancellation
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled) =>
+                {
+                    Err(CodingSessionError::Cancelled)
+                }
+                None => Ok(()),
+            };
+            if let Err(error) = commit_gate {
+                let reason = error.to_string();
+                let mut outcome = PromptTurnOutcome::Aborted {
+                    operation_id: operation_id.clone(),
+                    turn_id: Some(turn_id),
+                    reason: reason.clone(),
+                    session_id: Some(session_service.session_id().to_owned()),
+                };
+                let finalized = session_service.abort_prompt_transaction(
+                    context.take_transaction(),
+                    operation_id,
+                    reason,
+                )?;
+                apply_finalized_session_write(&mut outcome, &finalized);
+                event_service.emit_session_write_events(&finalized);
+                return Ok(outcome);
+            }
             let final_text = branch_summary_outcome_text(&branch_summary);
             let mut outcome = branch_summary_success_outcome(
                 operation_id.clone(),
@@ -90,6 +129,23 @@ pub(crate) async fn run(
             Ok(outcome)
         }
         Err(error) => {
+            if error == CodingSessionError::Cancelled {
+                let reason = "branch summary cancelled".to_owned();
+                let mut outcome = PromptTurnOutcome::Aborted {
+                    operation_id: operation_id.clone(),
+                    turn_id: Some(turn_id),
+                    reason: reason.clone(),
+                    session_id: Some(session_service.session_id().to_owned()),
+                };
+                let finalized = session_service.abort_prompt_transaction(
+                    context.take_transaction(),
+                    operation_id,
+                    reason,
+                )?;
+                apply_finalized_session_write(&mut outcome, &finalized);
+                event_service.emit_session_write_events(&finalized);
+                return Ok(outcome);
+            }
             let mut outcome =
                 branch_summary_failed_outcome(operation_id.clone(), turn_id, error.clone());
             let finalized = session_service.fail_prompt_transaction(

@@ -126,6 +126,7 @@ The second and third columns are the stable typed public family and kind identit
 | `SelfHealingEditRepairAttempted` | `workflow` | `self_healing_edit_repair_attempted` |
 | `SelfHealingEditCompleted` | `workflow` | `self_healing_edit_completed` |
 | `SelfHealingEditFailed` | `workflow` | `self_healing_edit_failed` |
+| `SelfHealingEditAborted` | `workflow` | `self_healing_edit_aborted` |
 | `PromptStarted` | `workflow` | `prompt_started` |
 | `PromptCompleted` | `workflow` | `prompt_completed` |
 | `PromptFailed` | `workflow` | `prompt_failed` |

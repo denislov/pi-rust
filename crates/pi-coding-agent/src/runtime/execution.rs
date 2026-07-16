@@ -1,5 +1,7 @@
 use tokio::task::JoinHandle;
 
+use super::client::projection::CodingAgentClientConnection;
+use super::control::OperationCancellationHandle;
 use super::facade::{CodingAgentSession, CodingSessionError};
 use super::operation::{Operation, OperationClass, OperationDispatchMode, OperationOutcome};
 use super::outcome::{CodingAgentOperation, CodingAgentOperationOutcome};
@@ -11,6 +13,7 @@ use crate::services::flow::FlowService;
 #[must_use = "dropping the handle detaches the runtime-owned operation task"]
 pub struct CodingAgentOperationTask {
     operation_id: String,
+    cancellation: OperationCancellationHandle,
     task: JoinHandle<Result<CodingAgentOperationOutcome, CodingSessionError>>,
 }
 
@@ -25,6 +28,11 @@ impl CodingAgentOperationTask {
             .map_err(|error| CodingSessionError::Session {
                 message: format!("runtime-owned operation task failed: {error}"),
             })?
+    }
+
+    pub(crate) fn bind_control_owner(&self, connection: &CodingAgentClientConnection) {
+        connection
+            .bind_operation_cancellation(self.operation_id.clone(), self.cancellation.clone());
     }
 }
 
@@ -77,6 +85,20 @@ impl CodingAgentSession {
 
         let snapshot = operation_permit.capability_snapshot().clone();
         let operation_id = snapshot.operation_id.clone();
+        let operation_cancellation = operation_permit.cancellation_token();
+        let cancellation_handle = operation_permit
+            .cancellation_handle()
+            .expect("runtime-owned roots must have cancellation authority");
+        let execution_cancellation_handle = cancellation_handle.clone();
+        if let (Some(submission), Some(cancellation)) =
+            (submission.as_ref(), Some(cancellation_handle.clone()))
+        {
+            self.snapshot_coordinator.bind_operation_cancellation(
+                submission.handle.clone(),
+                operation_id.clone(),
+                cancellation,
+            );
+        }
         let prompt_control_receiver = if matches!(operation, Operation::AgentInvocation(_)) {
             let receiver = self.operation_control.take_prompt_control_receiver();
             self.operation_control.clear_prompt_control_receiver();
@@ -91,9 +113,27 @@ impl CodingAgentSession {
 
         let task = runtime.spawn(async move {
             let result = match operation {
-                Operation::PluginCommand { command_id, args } => plugin_service
-                    .run_command_with_capabilities(&command_id, args, &snapshot.plugin)
-                    .map(OperationOutcome::PluginCommand),
+                Operation::PluginCommand { command_id, args } => {
+                    if operation_cancellation
+                        .as_ref()
+                        .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+                    {
+                        Err(CodingSessionError::Cancelled)
+                    } else {
+                        execution_cancellation_handle.close()?;
+                        let result = plugin_service
+                            .run_command_with_capabilities(&command_id, args, &snapshot.plugin)
+                            .map(OperationOutcome::PluginCommand);
+                        if operation_cancellation
+                            .as_ref()
+                            .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+                        {
+                            Err(CodingSessionError::Cancelled)
+                        } else {
+                            result
+                        }
+                    }
+                }
                 Operation::AgentInvocation(options) => {
                     let result = crate::operations::agent_invocation::run(
                         options,
@@ -105,6 +145,7 @@ impl CodingAgentSession {
                         &FlowService::new(),
                         &operation_control,
                         snapshot.clone(),
+                        operation_cancellation.clone(),
                     )
                     .await;
                     result.map(OperationOutcome::AgentInvocation)
@@ -118,6 +159,7 @@ impl CodingAgentSession {
                     &FlowService::new(),
                     &operation_control,
                     snapshot.clone(),
+                    operation_cancellation.clone(),
                 )
                 .await
                 .map(OperationOutcome::AgentTeam),
@@ -130,6 +172,10 @@ impl CodingAgentSession {
             result.map(CodingAgentOperationOutcome::from_internal)
         });
 
-        Ok(CodingAgentOperationTask { operation_id, task })
+        Ok(CodingAgentOperationTask {
+            operation_id,
+            cancellation: cancellation_handle,
+            task,
+        })
     }
 }

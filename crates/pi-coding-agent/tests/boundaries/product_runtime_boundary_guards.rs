@@ -1892,11 +1892,11 @@ fn lifecycle_and_operation_control_authority_remain_narrow_and_identity_scoped()
     for required in [
         "struct OperationCancellationBinding",
         "owner: ClientHandle",
-        "operation_id: String",
-        "cancellation: CancellationToken",
+        "operation_cancellations: Mutex<HashMap<String, OperationCancellationBinding>>",
+        "cancellation: OperationCancellationHandle",
+        "cancellation_bindings.get(operation_id)",
         "active.owner.id != handle.id",
-        "active.operation_id != operation_id",
-        "active.cancellation.cancel();",
+        "active.cancellation.request()",
         "clear_operation_cancellation_if",
     ] {
         assert!(
@@ -1904,6 +1904,10 @@ fn lifecycle_and_operation_control_authority_remain_narrow_and_identity_scoped()
             "operation cancellation omitted `{required}`"
         );
     }
+    assert!(
+        !snapshot.contains("cancellation: CancellationToken"),
+        "snapshot coordinator must route through owner-side cancellation authority"
+    );
 
     let intent_router = sanitize_rust_source(
         &fs::read_to_string(scan.crate_root.join("src/runtime/intent.rs"))
@@ -1946,6 +1950,11 @@ const ADAPTER_CLASSIFICATIONS: &[AdapterClassification] = &[
         path: "crates/pi-coding-agent/src/runtime/client/projection.rs",
         ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
         rationale: "stable state/replay/control contract implementation",
+    },
+    AdapterClassification {
+        path: "crates/pi-coding-agent/src/runtime/execution.rs",
+        ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
+        rationale: "runtime-owned operation task and scoped control-owner binding",
     },
     AdapterClassification {
         path: "crates/pi-coding-agent/src/adapters/interactive/app.rs",

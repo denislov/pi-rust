@@ -85,7 +85,14 @@ pub(crate) async fn execute_agent(
     };
     context = context.with_parent_capability_snapshot(child_snapshot);
     event_service.emit_delegation_started(request, child_operation_id.clone());
-    let result = flow_service.run_agent_invocation(&mut context).await;
+    let result = match child_admission.cancellation_token() {
+        Some(cancellation) => {
+            flow_service
+                .run_agent_invocation_with_cancellation(&mut context, cancellation)
+                .await
+        }
+        None => flow_service.run_agent_invocation(&mut context).await,
+    };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {
         Ok(outcome) => outcome,
@@ -167,7 +174,14 @@ pub(crate) async fn execute_team(
     };
     context = context.with_parent_capability_snapshot(child_snapshot);
     event_service.emit_delegation_started(request, child_operation_id.clone());
-    let result = flow_service.run_agent_team(&mut context).await;
+    let result = match child_admission.cancellation_token() {
+        Some(cancellation) => {
+            flow_service
+                .run_agent_team_with_cancellation(&mut context, cancellation)
+                .await
+        }
+        None => flow_service.run_agent_team(&mut context).await,
+    };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {
         Ok(outcome) => outcome,

@@ -8,6 +8,7 @@ use crate::services::event::EventService;
 use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use flow::{AgentInvocationContext, AgentInvocationOptions, AgentInvocationOutcome};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) async fn run(
     options: AgentInvocationOptions,
@@ -19,6 +20,7 @@ pub(crate) async fn run(
     flow_service: &FlowService,
     operation_control: &OperationControl,
     parent_capability_snapshot: OperationCapabilitySnapshot,
+    cancellation: Option<CancellationToken>,
 ) -> Result<AgentInvocationOutcome, CodingSessionError> {
     let mut context = AgentInvocationContext::new(
         options,
@@ -32,5 +34,12 @@ pub(crate) async fn run(
     if let Some(receiver) = prompt_control_receiver {
         context.set_prompt_control_receiver(receiver);
     }
-    flow_service.run_agent_invocation(&mut context).await
+    match cancellation {
+        Some(cancellation) => {
+            flow_service
+                .run_agent_invocation_with_cancellation(&mut context, cancellation)
+                .await
+        }
+        None => flow_service.run_agent_invocation(&mut context).await,
+    }
 }

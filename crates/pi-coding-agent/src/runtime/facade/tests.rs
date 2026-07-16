@@ -2460,6 +2460,73 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn runtime_owned_agent_invocation_abort_cancels_by_operation_identity() {
+        let api = "coding-session-runtime-owned-cancellation";
+        let contexts = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(BlockingTwoTurnProvider::new(
+                contexts, started_tx, release_rx,
+            )),
+        );
+        let mut session = CodingAgentSession::non_persistent(
+            CodingAgentSessionOptions::new().with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
+        let connection = session
+            .connect(public_projection::CodingAgentClientId::new(
+                "runtime-owned-cancellation-client",
+            ))
+            .unwrap();
+        let operation = CodingAgentOperation::InvokeAgent(AgentInvocationOptions::new(
+            "default",
+            "cancel detached task",
+            prompt_options(api, "cancel detached task"),
+        ));
+        let lease = connection
+            .prepare_submission(
+                &mut session,
+                public_projection::CodingAgentDraftId("unused-for-cancel".into()),
+                &operation,
+            )
+            .unwrap();
+        let task = session.submit(operation).unwrap();
+        let operation_id = task.operation_id().to_owned();
+
+        started_rx.await.unwrap();
+        connection
+            .operation_control(operation_id.clone())
+            .abort(
+                public_projection::CodingAgentControlId("abort-runtime-owned".into()),
+                "stop detached invocation",
+            )
+            .unwrap();
+        release_tx.send(()).unwrap();
+
+        assert_eq!(
+            task.join().await.unwrap_err(),
+            CodingSessionError::Cancelled
+        );
+        let terminal = connection
+            .state()
+            .unwrap()
+            .submitted_operation
+            .expect("cancelled runtime task should be terminal");
+        assert_eq!(terminal.operation_id, operation_id);
+        assert!(matches!(
+            terminal.status,
+            public_projection::CodingAgentSubmittedOperationStatus::Terminal {
+                status: public_event::CodingAgentProductEventTerminalStatus::Aborted,
+                ..
+            }
+        ));
+        drop(lease);
+    }
+
+    #[tokio::test]
     async fn runtime_submit_executes_agent_team_inside_the_owned_task() {
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
@@ -5525,6 +5592,9 @@ runtime = "lua"
                 }
                 CodingAgentWorkflowProductEvent::SelfHealingEditFailed { .. } => {
                     "self_healing_edit_failed"
+                }
+                CodingAgentWorkflowProductEvent::SelfHealingEditAborted { .. } => {
+                    "self_healing_edit_aborted"
                 }
                 CodingAgentWorkflowProductEvent::PromptStarted { .. } => "prompt_started",
                 CodingAgentWorkflowProductEvent::PromptCompleted { .. } => "prompt_completed",

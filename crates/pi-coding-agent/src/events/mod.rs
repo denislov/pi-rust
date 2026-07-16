@@ -487,6 +487,11 @@ pub enum CodingAgentWorkflowProductEvent {
         path: String,
         error: CodingAgentProductEventError,
     },
+    SelfHealingEditAborted {
+        operation_id: String,
+        path: String,
+        reason: String,
+    },
     PromptStarted {
         operation_id: String,
         turn_id: String,
@@ -631,6 +636,9 @@ impl CodingAgentProductEventKind {
             }) => "self_healing_edit_completed",
             Self::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditFailed { .. }) => {
                 "self_healing_edit_failed"
+            }
+            Self::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditAborted { .. }) => {
+                "self_healing_edit_aborted"
             }
             Self::Workflow(CodingAgentWorkflowProductEvent::PromptStarted { .. }) => {
                 "prompt_started"
@@ -793,7 +801,7 @@ mod tests {
     use pi_ai::api::conversation::{Cost, Usage};
 
     // product-event-inventory:start
-    const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 47] = [
+    const EXPECTED_PUBLIC_EVENT_INVENTORY: [(&str, CodingAgentProductEventFamily, &str); 48] = [
         (
             "SessionOpened",
             CodingAgentProductEventFamily::Session,
@@ -1025,6 +1033,11 @@ mod tests {
             "changed",
         ),
         (
+            "SelfHealingEditAborted",
+            CodingAgentProductEventFamily::Workflow,
+            "self_healing_edit_aborted",
+        ),
+        (
             "SessionWriteFailed",
             CodingAgentProductEventFamily::Session,
             "write_failed",
@@ -1179,6 +1192,12 @@ mod tests {
                 recovery_id: "recovery".into(),
                 reason: "restart".into(),
                 session_id: "session".into(),
+            }
+            .into_product_draft(),
+            crate::events::workflow::SelfHealingEditEvent::Aborted {
+                operation_id: "op-aborted".into(),
+                path: "cancelled.rs".into(),
+                reason: "cancelled".into(),
             }
             .into_product_draft(),
         ];
@@ -1652,7 +1671,7 @@ mod tests {
     fn exhaustive_inventory_covers_all_current_variants() {
         let projected = exhaustive_inventory_fixture();
         assert_eq!(projected.len(), EXPECTED_PUBLIC_EVENT_INVENTORY.len());
-        assert_eq!(projected.len(), 47);
+        assert_eq!(projected.len(), 48);
         for (index, (event, (_, family, kind))) in projected
             .iter()
             .zip(EXPECTED_PUBLIC_EVENT_INVENTORY.iter())
@@ -1663,7 +1682,7 @@ mod tests {
             assert_eq!(event.kind_name(), *kind, "inventory row {index}");
             assert_public_inventory_payload(index, event);
         }
-        let expected_counts = [6, 1, 6, 6, 4, 4, 2, 7, 9, 1, 1];
+        let expected_counts = [6, 1, 6, 6, 4, 4, 2, 7, 10, 1, 1];
         let families = [
             CodingAgentProductEventFamily::Session,
             CodingAgentProductEventFamily::Profile,
@@ -1717,7 +1736,7 @@ mod tests {
                 .iter()
                 .map(CodingAgentProductEvent::sequence)
                 .collect::<Vec<_>>(),
-            (1..=47).collect::<Vec<_>>()
+            (1..=48).collect::<Vec<_>>()
         );
     }
 
@@ -1951,6 +1970,14 @@ mod tests {
             }
             (
                 46,
+                K::Workflow(CodingAgentWorkflowProductEvent::SelfHealingEditAborted {
+                    path,
+                    reason,
+                    ..
+                }),
+            ) => path == "cancelled.rs" && reason == "cancelled",
+            (
+                47,
                 K::Session(CodingAgentSessionProductEvent::WriteFailed { reason, status, .. }),
             ) => {
                 reason == "write failed"

@@ -8,8 +8,8 @@ use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTO
 use crate::runtime::facade::{
     AgentInvocationOutcome, AgentTeamOutcome, CodingAgentClientConnection, CodingAgentClientId,
     CodingAgentDetachOutcome, CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind,
-    CodingAgentPromptControl, CodingAgentSession, CodingSessionError, OperationIdempotencyKey,
-    OperationKind, ProductEventSequence, PromptTurnOutcome,
+    CodingAgentOperationControl, CodingAgentPromptControl, CodingAgentSession, CodingSessionError,
+    OperationIdempotencyKey, OperationKind, ProductEventSequence, PromptTurnOutcome,
 };
 use pi_agent_core::api::agent::{QueueMode, ThinkingLevel};
 use pi_agent_core::api::transcript::StoredAgentMessage;
@@ -284,6 +284,27 @@ impl RpcState {
             .state()?
             .submitted_operation
             .map(|submitted| connection.prompt_control(submitted.operation_id)))
+    }
+
+    pub(super) fn operation_control(
+        &self,
+        operation_id: &str,
+    ) -> Option<CodingAgentOperationControl> {
+        self.client_connection
+            .as_ref()
+            .map(|connection| connection.operation_control(operation_id.to_owned()))
+    }
+
+    pub(super) fn active_foreground_operation_id(
+        &self,
+    ) -> Result<Option<String>, CodingSessionError> {
+        let Some(connection) = self.client_connection.as_ref() else {
+            return Ok(None);
+        };
+        Ok(connection
+            .state()?
+            .submitted_operation
+            .map(|submitted| submitted.operation_id))
     }
 
     pub(super) fn parse_idempotency_key(

@@ -148,6 +148,7 @@ pub(crate) enum OperationRootTerminalEvidence {
     CompactPromptFailed,
     SelfHealingEditCompleted,
     SelfHealingEditFailed,
+    SelfHealingEditAborted,
     AgentInvocationCompleted,
     AgentInvocationFailed,
     AgentInvocationAborted,
@@ -196,6 +197,7 @@ const COMPACT_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
 const SELF_HEALING_EDIT_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
     OperationRootTerminalEvidence::SelfHealingEditCompleted,
     OperationRootTerminalEvidence::SelfHealingEditFailed,
+    OperationRootTerminalEvidence::SelfHealingEditAborted,
 ];
 const AGENT_INVOCATION_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
     OperationRootTerminalEvidence::AgentInvocationCompleted,
@@ -684,6 +686,7 @@ mod tests {
                 expected_root_evidence: &[
                     OperationRootTerminalEvidence::SelfHealingEditCompleted,
                     OperationRootTerminalEvidence::SelfHealingEditFailed,
+                    OperationRootTerminalEvidence::SelfHealingEditAborted,
                 ],
             },
             OperationContractCase {
@@ -1235,6 +1238,7 @@ mod tests {
             OperationRootTerminalEvidence::CompactPromptFailed,
             OperationRootTerminalEvidence::SelfHealingEditCompleted,
             OperationRootTerminalEvidence::SelfHealingEditFailed,
+            OperationRootTerminalEvidence::SelfHealingEditAborted,
             OperationRootTerminalEvidence::AgentInvocationCompleted,
             OperationRootTerminalEvidence::AgentInvocationFailed,
             OperationRootTerminalEvidence::AgentInvocationAborted,

@@ -551,7 +551,12 @@ async fn rpc_state_reports_capabilities_when_idle() {
     let lines = parse_lines(&output);
     let capabilities = &lines[0]["data"]["capabilities"];
     assert_eq!(capabilities["prompt"]["status"], "available");
-    for capability in ["abort", "steer", "followUp"] {
+    assert_eq!(capabilities["abort"]["status"], "disabled");
+    assert_eq!(
+        capabilities["abort"]["reason"],
+        "no cancellable operation is running"
+    );
+    for capability in ["steer", "followUp"] {
         assert_eq!(capabilities[capability]["status"], "disabled");
         assert_eq!(capabilities[capability]["reason"], "no prompt is running");
     }
@@ -1160,13 +1165,32 @@ display_name = "Coder"
     assert!(prompt_output.to_string().contains("second"));
     assert_eq!(contexts.lock().unwrap().len(), 2);
 
+    let targeted_abort = serde_json::json!({
+        "id": "x2",
+        "type": "abort",
+        "operationId": agent_operation_id.clone(),
+    });
+    input_writer
+        .write_all(format!("{targeted_abort}\n").as_bytes())
+        .await
+        .unwrap();
+    let targeted_abort_response =
+        read_rpc_json_matching(&mut lines, "targeted background abort response", |value| {
+            value["type"] == "response" && value["id"] == "x2"
+        })
+        .await;
+    assert_eq!(
+        targeted_abort_response["data"]["cancelled"], true,
+        "{targeted_abort_response}"
+    );
     release_agent_tx.send(()).unwrap();
     drop(input_writer);
-    let invocation_end = read_rpc_json_matching(&mut lines, "background invocation end", |value| {
-        value["type"] == "agent_invocation_end"
-    })
-    .await;
-    assert_eq!(invocation_end["operationId"], agent_operation_id);
+    let invocation_abort =
+        read_rpc_json_matching(&mut lines, "background invocation abort", |value| {
+            value["type"] == "agent_invocation_abort"
+        })
+        .await;
+    assert_eq!(invocation_abort["operationId"], agent_operation_id);
     drop(lines);
     tokio::time::timeout(RPC_TASK_SHUTDOWN_TIMEOUT, task)
         .await

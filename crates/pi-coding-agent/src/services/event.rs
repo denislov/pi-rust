@@ -1017,6 +1017,19 @@ impl EventService {
         });
     }
 
+    pub(crate) fn emit_self_healing_edit_aborted(
+        &self,
+        operation_id: impl Into<String>,
+        path: impl Into<String>,
+        reason: impl Into<String>,
+    ) {
+        self.publish_self_healing_edit_event(SelfHealingEditEvent::Aborted {
+            operation_id: operation_id.into(),
+            path: path.into(),
+            reason: reason.into(),
+        });
+    }
+
     pub(crate) fn emit_operation_recovered(
         &self,
         operation_id: impl Into<String>,
@@ -2791,6 +2804,7 @@ mod tests {
         service.emit_self_healing_edit_repair_attempted("op_1", "src/lib.rs", &repair);
         service.emit_self_healing_edit_completed("op_1", &outcome);
         service.emit_self_healing_edit_failed("op_1", "src/lib.rs", &error);
+        service.emit_self_healing_edit_aborted("op_2", "src/main.rs", "cancelled");
 
         assert_owner_draft_eq(
             receiver.try_recv().unwrap(),
@@ -2832,6 +2846,15 @@ mod tests {
                 operation_id: "op_1".into(),
                 path: "src/lib.rs".into(),
                 error,
+            }
+            .into_product_draft(),
+        );
+        assert_owner_draft_eq(
+            receiver.try_recv().unwrap(),
+            SelfHealingEditEvent::Aborted {
+                operation_id: "op_2".into(),
+                path: "src/main.rs".into(),
+                reason: "cancelled".into(),
             }
             .into_product_draft(),
         );

@@ -315,6 +315,17 @@ impl CodingProtocolEventAdapter {
                 path: path.clone(),
                 error: error.message.clone(),
             }],
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::SelfHealingEditAborted {
+                    operation_id,
+                    path,
+                    reason,
+                },
+            ) => vec![ProtocolEvent::SelfHealingEditAbort {
+                operation_id: operation_id.clone(),
+                path: path.clone(),
+                reason: reason.clone(),
+            }],
             CodingAgentProductEventKind::Delegation(
                 CodingAgentDelegationProductEvent::Requested {
                     context:

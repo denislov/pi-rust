@@ -1,8 +1,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
+use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::AssistantMessage;
+use tokio_util::sync::CancellationToken;
 
 use crate::app::bootstrap::PromptInvocation;
 use crate::operations::delegation::{
@@ -187,6 +188,28 @@ impl AgentTeamFlow {
         ctx: &mut AgentTeamContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
+    }
+
+    pub(crate) async fn run_with_cancellation(
+        &self,
+        ctx: &mut AgentTeamContext,
+        cancellation: CancellationToken,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        let result = self
+            .flow
+            .run_with_options(
+                ctx,
+                FlowRunOptions {
+                    cancel: Some(cancellation),
+                    ..FlowRunOptions::default()
+                },
+            )
+            .await
+            .map_err(flow_error);
+        if let Err(error @ CodingSessionError::Cancelled) = &result {
+            ctx.fail(error.clone());
+        }
+        result
     }
 }
 
@@ -569,9 +592,7 @@ impl AgentTeamContext {
                 self.event_service
                     .emit_prompt_aborted(child_operation_id, reason.clone());
                 drop(child_admission);
-                Err(CodingSessionError::Session {
-                    message: format!("agent team child aborted: {reason}"),
-                })
+                Err(CodingSessionError::Cancelled)
             }
             PromptTurnOutcome::Failed { error, .. } => {
                 self.event_service
@@ -756,8 +777,11 @@ fn default_action() -> Result<Action, String> {
 }
 
 fn flow_error(error: FlowError) -> CodingSessionError {
-    CodingSessionError::Flow {
-        message: error.to_string(),
+    match error {
+        FlowError::Cancelled => CodingSessionError::Cancelled,
+        error => CodingSessionError::Flow {
+            message: error.to_string(),
+        },
     }
 }
 

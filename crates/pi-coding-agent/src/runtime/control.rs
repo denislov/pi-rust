@@ -5,10 +5,15 @@ use tokio_util::sync::CancellationToken;
 
 use super::capability::CapabilityGeneration;
 use super::snapshot::SnapshotCoordinator;
+use crate::runtime::facade::CodingAgentSession;
 use crate::runtime::facade::CodingSessionError;
 use crate::runtime::operation::OperationClass;
 
 const DEFAULT_RUNTIME_ROOT_LIMIT: usize = 4;
+
+pub(crate) fn operation_control_for_adapter(session: &CodingAgentSession) -> OperationControl {
+    session.operation_control.clone()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationKind {
@@ -235,6 +240,122 @@ pub(crate) struct OperationState {
     snapshot_coordinator: Arc<SnapshotCoordinator>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct OperationCancellationHandle {
+    shared: Arc<Mutex<OperationStateInner>>,
+    operation_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationCancellationOutcome {
+    Requested { kind: OperationKind },
+    AlreadyRequested { kind: OperationKind },
+}
+
+impl OperationCancellationHandle {
+    pub(crate) fn request(
+        &self,
+    ) -> Result<OperationCancellationOutcome, OperationIdentityRejection> {
+        let shared = self.shared.lock().expect("operation state lock poisoned");
+        let root = shared
+            .root_identities()
+            .find(|active| active.operation_id == self.operation_id);
+        let child = shared
+            .children
+            .iter()
+            .find(|active| active.operation_id == self.operation_id);
+        let (kind, cancellation, cancellation_open, owner_released) = match (root, child) {
+            (Some(active), _) => (
+                active.kind,
+                active.cancellation.clone(),
+                active.cancellation_open,
+                active.owner_released,
+            ),
+            (None, Some(active)) => (
+                active.kind,
+                active.cancellation.clone(),
+                active.cancellation_open,
+                active.owner_released,
+            ),
+            (None, None) => {
+                return Err(OperationIdentityRejection::NoActiveOperation {
+                    expected_kind: OperationKind::Prompt,
+                    expected_operation_id: self.operation_id.clone(),
+                });
+            }
+        };
+        if owner_released {
+            return Err(OperationIdentityRejection::NoActiveOperation {
+                expected_kind: kind,
+                expected_operation_id: self.operation_id.clone(),
+            });
+        }
+        if !cancellation_open {
+            return Err(OperationIdentityRejection::CancellationClosed {
+                kind,
+                operation_id: self.operation_id.clone(),
+            });
+        }
+        if cancellation.is_cancelled() {
+            return Ok(OperationCancellationOutcome::AlreadyRequested { kind });
+        }
+        cancellation.cancel();
+        shared.cancel_descendants(&self.operation_id);
+        Ok(OperationCancellationOutcome::Requested { kind })
+    }
+
+    pub(crate) fn close(&self) -> Result<(), CodingSessionError> {
+        let mut shared = self.shared.lock().expect("operation state lock poisoned");
+        if let Some(active) = shared
+            .session_write
+            .as_mut()
+            .filter(|active| active.operation_id == self.operation_id && !active.owner_released)
+        {
+            if active.cancellation.is_cancelled() {
+                return Err(CodingSessionError::Cancelled);
+            }
+            active.cancellation_open = false;
+            return Ok(());
+        }
+        if let Some(active) = shared
+            .non_session_roots
+            .iter_mut()
+            .find(|active| active.operation_id == self.operation_id && !active.owner_released)
+        {
+            if active.cancellation.is_cancelled() {
+                return Err(CodingSessionError::Cancelled);
+            }
+            active.cancellation_open = false;
+            return Ok(());
+        }
+        if let Some(active) = shared
+            .runtime_write
+            .as_mut()
+            .filter(|active| active.operation_id == self.operation_id && !active.owner_released)
+        {
+            if active.cancellation.is_cancelled() {
+                return Err(CodingSessionError::Cancelled);
+            }
+            active.cancellation_open = false;
+            return Ok(());
+        }
+        if let Some(active) = shared
+            .children
+            .iter_mut()
+            .find(|active| active.operation_id == self.operation_id && !active.owner_released)
+        {
+            if active.cancellation.is_cancelled() {
+                return Err(CodingSessionError::Cancelled);
+            }
+            active.cancellation_open = false;
+            return Ok(());
+        }
+        Err(CodingSessionError::UnsupportedCapability {
+            capability: format!("operation {} is not running", self.operation_id),
+        })
+    }
+}
+
 #[derive(Debug)]
 struct OperationStateInner {
     session_write: Option<ActiveOperationIdentity>,
@@ -252,6 +373,7 @@ struct ActiveOperationIdentity {
     generation: u64,
     capability_generation: Option<CapabilityGeneration>,
     cancellation: CancellationToken,
+    cancellation_open: bool,
     owner_released: bool,
 }
 
@@ -263,6 +385,7 @@ struct ActiveChildOperation {
     generation: u64,
     capability_generation: Option<CapabilityGeneration>,
     cancellation: CancellationToken,
+    cancellation_open: bool,
     owner_released: bool,
 }
 
@@ -537,6 +660,10 @@ pub(crate) enum OperationIdentityRejection {
         expected_operation_id: String,
         active_operation_id: String,
     },
+    CancellationClosed {
+        kind: OperationKind,
+        operation_id: String,
+    },
 }
 
 impl OperationIdentityRejection {
@@ -570,6 +697,11 @@ impl OperationIdentityRejection {
                     kind.as_str(),
                     expected_operation_id,
                     active_operation_id
+                ),
+                Self::CancellationClosed { kind, operation_id } => format!(
+                    "{} control target {} is no longer cancellable",
+                    kind.as_str(),
+                    operation_id
                 ),
             },
         }
@@ -673,6 +805,23 @@ impl OperationState {
         Ok(())
     }
 
+    fn active_cancellation_handle(
+        &self,
+        kind: OperationKind,
+    ) -> Result<OperationCancellationHandle, CodingSessionError> {
+        let shared = self.shared.lock().expect("operation state lock poisoned");
+        let active = shared
+            .root_identities()
+            .find(|active| active.kind == kind && !active.owner_released)
+            .ok_or_else(|| CodingSessionError::UnsupportedCapability {
+                capability: format!("{} control target is not running", kind.as_str()),
+            })?;
+        Ok(OperationCancellationHandle {
+            shared: Arc::clone(&self.shared),
+            operation_id: active.operation_id.clone(),
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn begin_root(
         &self,
@@ -744,6 +893,7 @@ impl OperationState {
             generation,
             capability_generation,
             cancellation: cancellation.clone(),
+            cancellation_open: true,
             owner_released: false,
         };
         match class {
@@ -848,6 +998,7 @@ impl OperationState {
             generation,
             capability_generation,
             cancellation: cancellation.clone(),
+            cancellation_open: true,
             owner_released: false,
         });
         if let Some(capability_generation) = capability_generation {
@@ -936,6 +1087,28 @@ impl OperationControl {
 
     pub(crate) fn activity(&self) -> OperationActivity {
         self.state.activity()
+    }
+
+    pub(crate) fn cancel_active(
+        &self,
+        kind: OperationKind,
+    ) -> Result<OperationCancellationOutcome, CodingSessionError> {
+        self.state
+            .active_cancellation_handle(kind)?
+            .request()
+            .map_err(OperationIdentityRejection::into_error)
+    }
+
+    pub(crate) fn cancel_operation(
+        &self,
+        operation_id: impl Into<String>,
+    ) -> Result<OperationCancellationOutcome, CodingSessionError> {
+        OperationCancellationHandle {
+            shared: Arc::clone(&self.state.shared),
+            operation_id: operation_id.into(),
+        }
+        .request()
+        .map_err(OperationIdentityRejection::into_error)
     }
 
     #[cfg(test)]
@@ -1078,6 +1251,13 @@ impl OperationGuard {
         self.cancellation.clone()
     }
 
+    pub(crate) fn cancellation_handle(&self) -> OperationCancellationHandle {
+        OperationCancellationHandle {
+            shared: Arc::clone(&self.shared),
+            operation_id: self.operation_id.clone(),
+        }
+    }
+
     pub(crate) fn bind_capability_generation(&mut self, generation: CapabilityGeneration) {
         let mut shared = self.shared.lock().expect("operation state lock poisoned");
         let matches = |active: &ActiveOperationIdentity| {
@@ -1207,6 +1387,13 @@ pub(crate) struct ChildOperationGuard {
 impl ChildOperationGuard {
     pub(crate) fn cancellation_token(&self) -> CancellationToken {
         self.cancellation.clone()
+    }
+
+    pub(crate) fn cancellation_handle(&self) -> OperationCancellationHandle {
+        OperationCancellationHandle {
+            shared: Arc::clone(&self.shared),
+            operation_id: self.operation_id.clone(),
+        }
     }
 
     pub(crate) fn bind_capability_generation(&mut self, generation: CapabilityGeneration) {
@@ -1752,6 +1939,74 @@ mod tests {
         assert!(old_root.cancellation_token().unwrap().is_cancelled());
         assert!(old_child.cancellation_token().is_cancelled());
         assert!(!current_root.cancellation_token().unwrap().is_cancelled());
+    }
+
+    #[test]
+    fn operation_cancellation_is_idempotent_and_cascades_to_descendants() {
+        let control = OperationControl::new();
+        let root = control
+            .begin_root(
+                OperationClass::NonSessionRoot,
+                OperationKind::AgentInvocation,
+                "op-root".into(),
+            )
+            .unwrap();
+        let child = control
+            .begin_child(OperationKind::Prompt, "op-child".into(), "op-root".into())
+            .unwrap();
+        let handle = root.cancellation_handle();
+
+        assert_eq!(
+            handle.request().unwrap(),
+            OperationCancellationOutcome::Requested {
+                kind: OperationKind::AgentInvocation,
+            }
+        );
+        assert!(root.cancellation_token().unwrap().is_cancelled());
+        assert!(child.cancellation_token().is_cancelled());
+        assert_eq!(
+            handle.request().unwrap(),
+            OperationCancellationOutcome::AlreadyRequested {
+                kind: OperationKind::AgentInvocation,
+            }
+        );
+    }
+
+    #[test]
+    fn cancellation_gate_arbitrates_commit_against_abort() {
+        let control = OperationControl::new();
+        let committed = control
+            .begin_root(
+                OperationClass::RuntimeWrite,
+                OperationKind::PluginLoad,
+                "op-committed".into(),
+            )
+            .unwrap();
+        let committed_handle = committed.cancellation_handle();
+        committed_handle.close().unwrap();
+        assert_eq!(
+            committed_handle.request().unwrap_err(),
+            OperationIdentityRejection::CancellationClosed {
+                kind: OperationKind::PluginLoad,
+                operation_id: "op-committed".into(),
+            }
+        );
+        assert!(!committed.cancellation_token().unwrap().is_cancelled());
+        drop(committed);
+
+        let cancelled = control
+            .begin_root(
+                OperationClass::RuntimeWrite,
+                OperationKind::PluginLoad,
+                "op-cancelled".into(),
+            )
+            .unwrap();
+        let cancelled_handle = cancelled.cancellation_handle();
+        cancelled_handle.request().unwrap();
+        assert_eq!(
+            cancelled_handle.close().unwrap_err(),
+            CodingSessionError::Cancelled
+        );
     }
 
     #[test]

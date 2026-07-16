@@ -9,10 +9,11 @@ use crate::api::operation::{
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::{ResolvedSessionTarget, open_interactive_session};
+use crate::runtime::control::{OperationControl, OperationKind, operation_control_for_adapter};
 use crate::runtime::facade::{
     AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentOperationTask,
-    CodingAgentSession, ProductEvent, ProfileId, PromptTurnOptions, PromptTurnOutcome,
-    SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
+    CodingAgentSession, CodingSessionError, ProductEvent, ProfileId, PromptTurnOptions,
+    PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -268,14 +269,33 @@ impl PromptTask {
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (done_tx, done_rx) = oneshot::channel();
+        let (abort_tx, mut abort_rx) = oneshot::channel();
         send_ui_snapshot(&event_tx, session);
         let plugin_commands = plugin_slash_commands(session);
         let plugin_ui_actions = plugin_ui_actions(session);
         let plugin_keybindings = plugin_keybindings(session);
         let plugin_ui_dialogs = plugin_ui_dialogs(session);
+        let operation_control = operation_control_for_adapter(session);
+        let operation_id = task.operation_id().to_owned();
 
         tokio::spawn(async move {
-            let completion = match task.join().await.map_err(CliError::from) {
+            let mut join = Box::pin(task.join());
+            let mut abort_requested = false;
+            let result = loop {
+                tokio::select! {
+                    _ = &mut abort_rx, if !abort_requested => {
+                        abort_requested = true;
+                        if let Err(error) = request_interactive_operation_abort(
+                            &operation_control,
+                            operation_id.clone(),
+                        ) {
+                            break Err(error);
+                        }
+                    }
+                    result = &mut join => break result.map_err(CliError::from),
+                }
+            };
+            let completion = match result {
                 Ok(CodingAgentOperationOutcome::PluginCommand(output)) => {
                     PromptTaskCompletion::Completed(PromptTaskResult::PluginCommand(
                         PluginCommandTaskResult {
@@ -298,7 +318,7 @@ impl PromptTask {
         });
 
         Self {
-            control: PromptTaskControlHandle::AbortOnly(None),
+            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
             events: event_rx,
             done: done_rx,
             abort_requested: false,
@@ -828,6 +848,34 @@ fn complete_owned_task<T>(
     }
 }
 
+fn request_interactive_abort(
+    control: &OperationControl,
+    kind: OperationKind,
+) -> Result<(), CliError> {
+    normalize_interactive_abort_result(control.cancel_active(kind))
+}
+
+fn request_interactive_operation_abort(
+    control: &OperationControl,
+    operation_id: impl Into<String>,
+) -> Result<(), CliError> {
+    normalize_interactive_abort_result(control.cancel_operation(operation_id))
+}
+
+fn normalize_interactive_abort_result(
+    result: Result<crate::runtime::control::OperationCancellationOutcome, CodingSessionError>,
+) -> Result<(), CliError> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(CodingSessionError::UnsupportedCapability { capability })
+            if capability.contains("no longer cancellable") =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(CliError::from(error)),
+    }
+}
+
 fn product_event_has_visible_ui(bridge: &mut CodingEventBridge, event: &ProductEvent) -> bool {
     !bridge.push_product_event(event).is_empty()
 }
@@ -1034,6 +1082,7 @@ async fn run_coding_agent_team_task(
     };
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
         let team_options = AgentTeamOptions::new(
             team_id,
@@ -1044,12 +1093,12 @@ async fn run_coding_agent_team_task(
         let outcome = {
             let mut invocation =
                 Box::pin(session.run(CodingAgentOperation::InvokeTeam(team_options)));
+            let mut abort_requested = false;
             loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive agent team abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_abort(&operation_control, OperationKind::AgentTeam)?;
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1090,18 +1139,22 @@ async fn run_coding_delegation_approval_task(
 ) -> PromptTaskCompletion {
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
 
         let mut approval = Box::pin(session.run(CodingAgentOperation::ApproveDelegation {
             operation_id,
             tool_call_id,
         }));
+        let mut abort_requested = false;
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive delegation approval abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_abort(
+                        &operation_control,
+                        OperationKind::DelegationConfirmation,
+                    )?;
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1147,9 +1200,7 @@ async fn run_coding_set_default_agent_profile_task(
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive default profile mutation abort is not implemented yet".into(),
-                    ));
+                    break Err(CliError::from(CodingSessionError::Cancelled));
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1205,9 +1256,7 @@ async fn run_coding_delegation_rejection_task(
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive delegation rejection abort is not implemented yet".into(),
-                    ));
+                    break Err(CliError::from(CodingSessionError::Cancelled));
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1273,17 +1322,18 @@ async fn run_coding_compact_task(
     };
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
         let compact_options = PromptTurnOptions::from_prompt_run_options(options);
 
         let outcome = {
         let mut compact = Box::pin(session.run(CodingAgentOperation::Compact(compact_options)));
+        let mut abort_requested = false;
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive manual compaction abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_abort(&operation_control, OperationKind::Compact)?;
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1346,16 +1396,20 @@ async fn run_coding_self_healing_edit_task(
     };
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
 
         let outcome = {
         let mut edit = Box::pin(session.run(CodingAgentOperation::SelfHealingEdit(request)));
+        let mut abort_requested = false;
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive self-healing edit abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_abort(
+                        &operation_control,
+                        OperationKind::SelfHealingEdit,
+                    )?;
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1411,16 +1465,17 @@ async fn run_coding_plugin_reload_task(
     };
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
 
         let outcome = {
         let mut reload = Box::pin(session.run(CodingAgentOperation::PluginLoad));
+        let mut abort_requested = false;
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive plugin reload abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_abort(&operation_control, OperationKind::PluginLoad)?;
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1490,16 +1545,20 @@ async fn run_coding_plugin_command_task(
     };
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
 
+        let mut abort_requested = false;
         if should_load_plugins {
             let mut reload = Box::pin(session.run(CodingAgentOperation::PluginLoad));
             loop {
                 tokio::select! {
-                    _ = &mut abort_rx => {
-                        return Err(CliError::UnsupportedMode(
-                            "interactive plugin command abort is not implemented yet".into(),
-                        ));
+                    _ = &mut abort_rx, if !abort_requested => {
+                        abort_requested = true;
+                        request_interactive_abort(
+                            &operation_control,
+                            OperationKind::PluginLoad,
+                        )?;
                     }
                     event = receiver.recv() => {
                         if let Ok(event) = event {
@@ -1518,21 +1577,29 @@ async fn run_coding_plugin_command_task(
                 }
             }
         } else if abort_rx.try_recv().is_ok() {
-            return Err(CliError::UnsupportedMode(
-                "interactive plugin command abort is not implemented yet".into(),
-            ));
+            return Err(CliError::from(CodingSessionError::Cancelled));
         }
 
-        let output = session
+        let task = session
             .submit(CodingAgentOperation::PluginCommand {
                 command_id: command_id.clone(),
                 args,
             })
-            .map_err(CliError::from)
-            ?
-            .join()
-            .await
-            .map_err(CliError::from)
+            .map_err(CliError::from)?;
+        let operation_id = task.operation_id().to_owned();
+        let mut join = Box::pin(task.join());
+        let output = loop {
+            tokio::select! {
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_operation_abort(
+                        &operation_control,
+                        operation_id.clone(),
+                    )?;
+                }
+                result = &mut join => break result.map_err(CliError::from),
+            }
+        }
             .map(|operation_outcome| match operation_outcome {
                 CodingAgentOperationOutcome::PluginCommand(output) => output,
                 _ => unreachable!("plugin command operation returned a different public outcome"),
@@ -1658,8 +1725,10 @@ async fn run_coding_branch_summary_task(
     };
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
         let branch_options = PromptTurnOptions::from_prompt_run_options(options);
+        let mut abort_requested = false;
 
         let outcome = {
         let mut branch_summary = Box::pin(session.run(CodingAgentOperation::BranchSummary {
@@ -1671,10 +1740,12 @@ async fn run_coding_branch_summary_task(
         }));
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive branch summary abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_abort(
+                        &operation_control,
+                        OperationKind::BranchSummary,
+                    )?;
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1738,8 +1809,10 @@ async fn run_coding_branch_summary_navigation_task(
     };
     let result = async {
         let mut receiver = session.subscribe_product_events();
+        let operation_control = operation_control_for_adapter(&session);
         send_ui_snapshot(&event_tx, &session);
         let branch_options = PromptTurnOptions::from_prompt_run_options(options);
+        let mut abort_requested = false;
 
         let outcome = {
         let mut branch_summary = Box::pin(session.run(CodingAgentOperation::BranchSummary {
@@ -1751,10 +1824,12 @@ async fn run_coding_branch_summary_navigation_task(
         }));
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive branch summary navigation abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    abort_requested = true;
+                    request_interactive_abort(
+                        &operation_control,
+                        OperationKind::BranchSummary,
+                    )?;
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1777,16 +1852,18 @@ async fn run_coding_branch_summary_navigation_task(
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
     }
 
+        if !branch_summary_allows_navigation(&outcome) {
+            return Ok((outcome, false));
+        }
+
         {
         let mut fork = Box::pin(session.run(CodingAgentOperation::ForkSession {
             target_leaf_id: Some(target_leaf_id),
         }));
         loop {
             tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive navigation fork abort is not implemented yet".into(),
-                    ));
+                _ = &mut abort_rx, if !abort_requested => {
+                    break Err(CliError::from(CodingSessionError::Cancelled));
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1809,20 +1886,24 @@ async fn run_coding_branch_summary_navigation_task(
         let _ = event_tx.send(PromptTaskEvent::Coding(event));
     }
 
-        Ok(outcome)
+        Ok((outcome, true))
     }
     .await;
 
-    complete_owned_task(session, result, |session, outcome| {
-        let session_target = active_session_target(&session);
+    complete_owned_task(session, result, |session, (outcome, navigated)| {
+        let session_target = navigated.then(|| active_session_target(&session));
         PromptTaskResult::Coding(CodingPromptTaskResult {
             session,
             outcome,
-            session_target: Some(session_target),
-            completion_notice: Some("Navigated to selected point".to_string()),
-            hydrate_transcript: true,
+            session_target,
+            completion_notice: navigated.then(|| "Navigated to selected point".to_string()),
+            hydrate_transcript: navigated,
         })
     })
+}
+
+fn branch_summary_allows_navigation(outcome: &PromptTurnOutcome) -> bool {
+    matches!(outcome, PromptTurnOutcome::Success { .. })
 }
 
 async fn run_coding_fork_session_task(
@@ -1857,9 +1938,7 @@ async fn run_coding_fork_session_task(
         loop {
             tokio::select! {
                 _ = &mut abort_rx => {
-                    break Err(CliError::UnsupportedMode(
-                        "interactive fork abort is not implemented yet".into(),
-                    ));
+                    break Err(CliError::from(CodingSessionError::Cancelled));
                 }
                 event = receiver.recv() => {
                     if let Ok(event) = event {
@@ -1998,5 +2077,24 @@ mod tests {
         }
         assert!(!source.contains(&compatibility_subscription));
         assert!(source.contains("Coding(ProductEvent)"));
+    }
+
+    #[test]
+    fn cancelled_or_failed_branch_summary_does_not_continue_to_fork() {
+        let aborted = PromptTurnOutcome::Aborted {
+            operation_id: "op_branch".into(),
+            turn_id: None,
+            reason: "cancelled".into(),
+            session_id: Some("session".into()),
+        };
+        let failed = PromptTurnOutcome::Failed {
+            operation_id: "op_branch".into(),
+            turn_id: None,
+            error: CodingSessionError::Cancelled,
+            diagnostics: Vec::new(),
+        };
+
+        assert!(!branch_summary_allows_navigation(&aborted));
+        assert!(!branch_summary_allows_navigation(&failed));
     }
 }

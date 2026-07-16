@@ -413,20 +413,30 @@ impl ManualCompactionContext {
             self.capability_snapshot.model.as_ref(),
             self.options.runtime().profile_id(),
         )?;
+        let cancellation = self.options.cancellation();
         let summary = summarize_with_provider_streamer(
             self.options.runtime().model(),
             &self.summary_messages,
             self.options.custom_instructions(),
             self.stream_options.clone(),
-            None,
+            cancellation.clone(),
             Some(scoped_provider_streamer_for_runtime(
                 self.options.runtime(),
                 model_capability,
             )?),
         )
         .await
-        .map_err(|error| CodingSessionError::Provider {
-            message: error.to_string(),
+        .map_err(|error| {
+            if cancellation
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+            {
+                CodingSessionError::Cancelled
+            } else {
+                CodingSessionError::Provider {
+                    message: error.to_string(),
+                }
+            }
         })?;
         self.summary = Some(summary.clone());
         self.final_message = Some(compaction_final_message(self.options.runtime(), &summary));

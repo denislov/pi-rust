@@ -5,9 +5,10 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use mlua::{Function, Lua, LuaSerdeExt, Table, Value, Variadic};
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
+use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_agent_core::api::tool::AgentTool;
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 use crate::plugins::{
     CommandDefinition, CommandProvider, CommandRegistrationHost, HookDiagnostic, HookFailurePolicy,
@@ -428,6 +429,28 @@ impl PluginLoadFlow {
         ctx: &mut PluginLoadContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
+    }
+
+    pub(crate) async fn run_with_cancellation(
+        &self,
+        ctx: &mut PluginLoadContext,
+        cancellation: CancellationToken,
+    ) -> Result<FlowOutcome, CodingSessionError> {
+        let result = self
+            .flow
+            .run_with_options(
+                ctx,
+                FlowRunOptions {
+                    cancel: Some(cancellation),
+                    ..FlowRunOptions::default()
+                },
+            )
+            .await
+            .map_err(flow_error);
+        if let Err(error @ CodingSessionError::Cancelled) = &result {
+            ctx.fail(error.clone());
+        }
+        result
     }
 }
 
@@ -1844,7 +1867,10 @@ fn default_action() -> Result<Action, String> {
 }
 
 fn flow_error(error: FlowError) -> CodingSessionError {
-    CodingSessionError::Flow {
-        message: error.to_string(),
+    match error {
+        FlowError::Cancelled => CodingSessionError::Cancelled,
+        error => CodingSessionError::Flow {
+            message: error.to_string(),
+        },
     }
 }
