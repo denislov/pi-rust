@@ -3781,7 +3781,7 @@ display_name = "Coder"
     }
 
     #[test]
-    fn plugin_keybinding_sets_pending_plugin_ui_action() {
+    fn plugin_keybinding_with_unavailable_target_reports_failure_without_success_action() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
             "faux-model".to_string(),
@@ -3805,13 +3805,12 @@ display_name = "Coder"
 
         root.handle_input(&key_event("\x07"));
 
-        assert_eq!(root.take_action(), InteractiveAction::PluginUiAction);
-        let action = root
-            .take_pending_plugin_ui_action()
-            .expect("plugin UI action should be queued");
-        assert_eq!(action.action_id, "lua.open_panel");
-        assert_eq!(action.label, "Open panel");
-        assert_eq!(action.description, "opens a Lua panel");
+        assert_eq!(root.take_action(), InteractiveAction::None);
+        assert!(root.transcript.items().iter().any(|item| matches!(
+            item,
+            TranscriptItem::System { text }
+                if text == "Plugin UI action ui.open_panel has unavailable target lua.open_panel"
+        )));
         assert_eq!(root.editor.text(), "");
     }
 
@@ -3850,7 +3849,39 @@ display_name = "Coder"
             .expect("plugin command runner should be queued");
         assert_eq!(request.command_id, "lua.open_panel");
         assert_eq!(request.args, serde_json::json!({}));
-        assert!(root.take_pending_plugin_ui_action().is_none());
+        assert_eq!(root.editor.text(), "");
+    }
+
+    #[test]
+    fn registered_plugin_ui_action_can_activate_command_without_keybinding_transport() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "no-session".to_string(),
+        );
+        root.set_plugin_commands(vec![PluginSlashCommand::new(
+            "lua.open_panel",
+            "opens a Lua panel",
+        )]);
+        root.set_plugin_ui_extensions(
+            vec![PluginUiAction::new(
+                "ui.open_panel",
+                "Open panel",
+                "opens a Lua panel",
+                "lua.open_panel",
+            )],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert!(root.activate_plugin_ui_action("ui.open_panel"));
+
+        assert_eq!(root.take_action(), InteractiveAction::PluginCommand);
+        let request = root
+            .take_pending_plugin_command_request()
+            .expect("plugin UI action should queue its command target");
+        assert_eq!(request.command_id, "lua.open_panel");
+        assert_eq!(request.args, serde_json::json!({}));
         assert_eq!(root.editor.text(), "");
     }
 
@@ -3892,7 +3923,6 @@ display_name = "Coder"
         assert_eq!(dialog.title, "Lua panel");
         assert_eq!(dialog.description, "Panel registered by Lua");
         assert_eq!(dialog.action_id, "lua.submit_panel");
-        assert!(root.take_pending_plugin_ui_action().is_none());
         assert_eq!(root.editor.text(), "");
     }
 

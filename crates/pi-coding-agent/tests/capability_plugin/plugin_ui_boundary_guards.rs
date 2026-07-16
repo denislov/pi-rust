@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const INTERACTIVE_INPUT: &str = include_str!("../../src/adapters/interactive/input.rs");
 const INTERACTIVE_COMMANDS: &str = include_str!("../../src/adapters/interactive/commands.rs");
+const INTERACTIVE_LOOP: &str = include_str!("../../src/adapters/interactive/loop.rs");
 const INTERACTIVE_ROOT: &str = include_str!("../../src/adapters/interactive/root.rs");
 const PROMPT_TASK: &str = include_str!("../../src/adapters/interactive/prompt_task.rs");
 
@@ -38,7 +39,6 @@ fn plugin_ui_routes_through_interactive_adapter_state() {
 
     for required in [
         "pending_plugin_command_request",
-        "pending_plugin_ui_action",
         "pending_plugin_ui_dialog",
         "active_plugin_ui_dialog",
         "plugin_ui_actions",
@@ -50,6 +50,18 @@ fn plugin_ui_routes_through_interactive_adapter_state() {
             "InteractiveRoot must own plugin UI adapter state `{required}`"
         );
     }
+
+    for retired in ["pending_plugin_ui_action", "dispatch_plugin_ui_action"] {
+        assert!(
+            !INTERACTIVE_ROOT.contains(retired) && !INTERACTIVE_LOOP.contains(retired),
+            "notice-only plugin UI action path `{retired}` must stay retired"
+        );
+    }
+    assert!(
+        !INTERACTIVE_ROOT.contains("set_text(format!(\"/plugin-command")
+            && !INTERACTIVE_LOOP.contains("plugin_dialog_command_text"),
+        "plugin dialogs must submit typed command requests directly instead of manufacturing editor text"
+    );
 }
 
 #[test]

@@ -1241,6 +1241,13 @@ entry = "plugin.lua"
             plugin_dir.join("plugin.lua"),
             r#"
 function register(host)
+  host:command({
+    id = "lua.open_panel",
+    description = "opens a Lua panel",
+    run = function(_input)
+      return { content = "opened" }
+    end
+  })
   host:ui_action({
     id = "ui.open_panel",
     label = "Open panel",
@@ -1294,6 +1301,13 @@ entry = "plugin.lua"
             plugin_dir.join("plugin.lua"),
             r#"
 function register(host)
+  host:command({
+    id = "lua.submit_panel",
+    description = "submits the Lua panel",
+    run = function(input)
+      return { content = "submitted " .. input.name }
+    end
+  })
   host:dialog({
     id = "dialog.open_panel",
     title = "Lua panel",
@@ -1375,6 +1389,19 @@ entry = "plugin.lua"
             plugin_dir.join("plugin.lua"),
             r#"
 function register(host)
+  host:command({
+    id = "lua.open_panel",
+    description = "opens the Lua panel",
+    run = function(_input)
+      return { content = "opened" }
+    end
+  })
+  host:ui_action({
+    id = "ui.open_panel",
+    label = "Open panel",
+    description = "opens the Lua panel",
+    action_id = "lua.open_panel"
+  })
   host:keybind({
     id = "keybind.open_panel",
     key = "ctrl+shift+p",
@@ -1405,6 +1432,69 @@ end
         assert_eq!(keybindings[0].key, "ctrl+shift+p");
         assert_eq!(keybindings[0].description, "opens the Lua panel");
         assert_eq!(keybindings[0].action_id, "lua.open_panel");
+    }
+
+    #[tokio::test]
+    async fn plugin_load_flow_rejects_unresolved_ui_reference_graph() {
+        let service = FlowService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("project/.pi-rust/plugins/lua-invalid-ui");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "lua-invalid-ui"
+name = "Lua Invalid UI"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:ui_action({
+    id = "ui.missing",
+    label = "Missing",
+    description = "targets a missing command",
+    action_id = "lua.missing_command"
+  })
+  host:dialog({
+    id = "dialog.missing",
+    title = "Missing",
+    description = "submits to a missing command",
+    action_id = "lua.missing_submit"
+  })
+  host:keybind({
+    id = "keybind.missing",
+    key = "ctrl+shift+m",
+    description = "targets no UI action",
+    action_id = "lua.missing_keybind_target"
+  })
+end
+"#,
+        )
+        .unwrap();
+        let options = PluginLoadOptions::new().with_discovery_root(
+            temp.path().join("project/.pi-rust/plugins"),
+            PluginSource::Project,
+        );
+        let mut context = PluginLoadContext::new(options);
+
+        let error = service.run_plugin_load(&mut context).await.unwrap_err();
+
+        assert_eq!(error.code(), "plugin");
+        let message = error.to_string();
+        assert!(
+            message.contains("invalid plugin UI references"),
+            "{message}"
+        );
+        assert!(message.contains("ui.missing"), "{message}");
+        assert!(message.contains("dialog.missing"), "{message}");
+        assert!(message.contains("keybind.missing"), "{message}");
+        assert!(context.loaded_plugin_service().is_none());
     }
 
     #[tokio::test]

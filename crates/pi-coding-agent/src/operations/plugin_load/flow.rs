@@ -372,12 +372,30 @@ impl PluginLoadContext {
             return Ok(());
         }
         let mut registry = PluginRegistry::new();
+        let mut loaded_plugin_ids = Vec::new();
         for candidate in self.validated.iter().cloned() {
-            self.loaded_plugin_ids
-                .push(candidate.manifest.id().to_owned());
+            loaded_plugin_ids.push(candidate.manifest.id().to_owned());
             registry.extend(candidate.registry);
         }
-        self.loaded_plugin_service = Some(PluginService::with_registry(registry));
+        let service = PluginService::with_registry(registry);
+        if let Err(diagnostics) = service.validate_ui_references() {
+            let message = diagnostics
+                .iter()
+                .map(|diagnostic| match diagnostic.plugin_id.as_deref() {
+                    Some(plugin_id) => format!("{plugin_id}: {}", diagnostic.message),
+                    None => diagnostic.message.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            self.diagnostics.extend(service.diagnostics());
+            self.diagnostics.extend(diagnostics);
+            return Err(CodingSessionError::Plugin {
+                message: format!("invalid plugin UI references: {message}"),
+            });
+        }
+        self.diagnostics.extend(service.diagnostics());
+        self.loaded_plugin_ids = loaded_plugin_ids;
+        self.loaded_plugin_service = Some(service);
         Ok(())
     }
 
@@ -396,7 +414,7 @@ impl PluginLoadContext {
                     message: "plugin load cannot finalize before registering capabilities".into(),
                 })?;
         let mut capabilities = service.capabilities();
-        capabilities.diagnostics += self.diagnostics.len();
+        capabilities.diagnostics = self.diagnostics.len();
         self.outcome = Some(PluginLoadOutcome {
             loaded_plugin_ids: self.loaded_plugin_ids.clone(),
             diagnostics: self.diagnostics.clone(),

@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
@@ -162,6 +163,111 @@ impl PluginService {
             }
         }
         keybindings
+    }
+
+    pub(crate) fn validate_ui_references(&self) -> Result<(), Vec<PluginDiagnostic>> {
+        let command_host = CommandRegistrationHost::new(PluginCapabilitySet::default());
+        let mut command_ids = BTreeSet::new();
+        for provider in self.registry.command_providers() {
+            match collect_provider_commands(provider.as_ref(), &command_host) {
+                Ok(commands) => {
+                    command_ids.extend(commands.into_iter().map(|command| command.id));
+                }
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+
+        let ui_host = UiRegistrationHost::new(PluginCapabilitySet::default());
+        let mut actions = Vec::new();
+        let mut dialogs = Vec::new();
+        for provider in self.registry.ui_providers() {
+            let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+            match collect_provider_ui_actions(provider.as_ref(), &ui_host) {
+                Ok(provided) => actions.extend(
+                    provided
+                        .into_iter()
+                        .map(|action| (plugin_id.clone(), action)),
+                ),
+                Err(error) => self.record_plugin_error(error),
+            }
+            match collect_provider_ui_dialogs(provider.as_ref(), &ui_host) {
+                Ok(provided) => dialogs.extend(
+                    provided
+                        .into_iter()
+                        .map(|dialog| (plugin_id.clone(), dialog)),
+                ),
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+
+        let keybind_host = KeybindRegistrationHost::new(PluginCapabilitySet::default());
+        let mut keybindings = Vec::new();
+        for provider in self.registry.keybind_providers() {
+            let plugin_id = provider_plugin_id(|| provider.metadata().id.as_str().to_owned());
+            match collect_provider_keybindings(provider.as_ref(), &keybind_host) {
+                Ok(provided) => keybindings.extend(
+                    provided
+                        .into_iter()
+                        .map(|keybinding| (plugin_id.clone(), keybinding)),
+                ),
+                Err(error) => self.record_plugin_error(error),
+            }
+        }
+
+        let dialog_ids: BTreeSet<_> = dialogs
+            .iter()
+            .map(|(_, dialog)| dialog.id.clone())
+            .collect();
+        let action_target_ids: BTreeSet<_> = actions
+            .iter()
+            .map(|(_, action)| action.action_id.clone())
+            .collect();
+        let target_exists =
+            |target_id: &str| command_ids.contains(target_id) || dialog_ids.contains(target_id);
+        let mut diagnostics = Vec::new();
+        for (plugin_id, dialog) in dialogs {
+            if !command_ids.contains(&dialog.action_id) {
+                diagnostics.push(PluginDiagnostic {
+                    plugin_id: Some(plugin_id),
+                    message: format!(
+                        "plugin dialog `{}` submits to unknown command `{}`",
+                        dialog.id, dialog.action_id
+                    ),
+                });
+            }
+        }
+        for (plugin_id, action) in actions {
+            if !target_exists(&action.action_id) {
+                diagnostics.push(PluginDiagnostic {
+                    plugin_id: Some(plugin_id),
+                    message: format!(
+                        "plugin UI action `{}` targets unknown command or dialog `{}`",
+                        action.id, action.action_id
+                    ),
+                });
+            }
+        }
+        for (plugin_id, keybinding) in keybindings {
+            if !action_target_ids.contains(&keybinding.action_id) {
+                diagnostics.push(PluginDiagnostic {
+                    plugin_id: Some(plugin_id),
+                    message: format!(
+                        "plugin keybinding `{}` targets unknown UI action target `{}`",
+                        keybinding.id, keybinding.action_id
+                    ),
+                });
+            }
+        }
+        diagnostics.sort_by(|left, right| {
+            left.plugin_id
+                .cmp(&right.plugin_id)
+                .then_with(|| left.message.cmp(&right.message))
+        });
+        if diagnostics.is_empty() {
+            Ok(())
+        } else {
+            Err(diagnostics)
+        }
     }
 
     #[cfg(test)]
@@ -532,6 +638,37 @@ mod tests {
         }
     }
 
+    struct UiTargetCommandProvider;
+
+    impl CommandProvider for UiTargetCommandProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("ui-target-commands"),
+                "ui-target-commands",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn commands(
+            &self,
+            _host: &CommandRegistrationHost,
+        ) -> Result<Vec<CommandDefinition>, PluginError> {
+            Ok(vec![
+                CommandDefinition::new("plugin.open_panel", "Open the plugin panel"),
+                CommandDefinition::new("plugin.submit_panel", "Submit the plugin panel"),
+            ])
+        }
+
+        fn run_command(
+            &self,
+            command_id: &str,
+            _args: serde_json::Value,
+        ) -> Result<String, PluginError> {
+            Ok(format!("ran {command_id}"))
+        }
+    }
+
     struct FailingCommandProvider;
 
     impl CommandProvider for FailingCommandProvider {
@@ -597,6 +734,37 @@ mod tests {
                 plugin_id: "failing-command-exec-plugin".into(),
                 message: "command execution failed".into(),
             })
+        }
+    }
+
+    struct PanickingCommandExecutionProvider;
+
+    impl CommandProvider for PanickingCommandExecutionProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("panicking-command-plugin"),
+                "panicking-command-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn commands(
+            &self,
+            _host: &CommandRegistrationHost,
+        ) -> Result<Vec<CommandDefinition>, PluginError> {
+            Ok(vec![CommandDefinition::new(
+                "plugin.panic",
+                "Panics during command execution",
+            )])
+        }
+
+        fn run_command(
+            &self,
+            _command_id: &str,
+            _args: serde_json::Value,
+        ) -> Result<String, PluginError> {
+            panic!("command execution panicked")
         }
     }
 
@@ -680,6 +848,26 @@ mod tests {
                 plugin_id: "failing-ui-plugin".into(),
                 message: "ui registration failed".into(),
             })
+        }
+    }
+
+    struct PanickingUiProvider;
+
+    impl UiProvider for PanickingUiProvider {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(
+                PluginId::new("panicking-ui-plugin"),
+                "panicking-ui-plugin",
+                "0.1.0",
+                PluginSource::FirstParty,
+            )
+        }
+
+        fn ui_actions(
+            &self,
+            _host: &UiRegistrationHost,
+        ) -> Result<Vec<UiActionDefinition>, PluginError> {
+            panic!("UI provider panicked")
         }
     }
 
@@ -860,6 +1048,79 @@ mod tests {
     }
 
     #[test]
+    fn validate_ui_references_accepts_command_dialog_action_and_keybinding_graph() {
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(UiTargetCommandProvider));
+        registry.register_ui_provider(Arc::new(StaticUiProvider));
+        registry.register_keybind_provider(Arc::new(StaticKeybindProvider));
+        let service = PluginService::with_registry(registry);
+
+        service.validate_ui_references().unwrap();
+
+        assert!(service.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn validate_ui_references_reports_each_unresolved_contribution_with_owner() {
+        let mut registry = PluginRegistry::new();
+        registry.register_ui_provider(Arc::new(StaticUiProvider));
+        let service = PluginService::with_registry(registry);
+
+        let diagnostics = service.validate_ui_references().unwrap_err();
+
+        assert_eq!(diagnostics.len(), 2);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| { diagnostic.plugin_id.as_deref() == Some("ui-plugin") })
+        );
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "plugin UI action `ui.open_panel` targets unknown command or dialog `plugin.open_panel`"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "plugin dialog `dialog.open_panel` submits to unknown command `plugin.submit_panel`"
+        }));
+    }
+
+    #[test]
+    fn validate_ui_references_rejects_keybinding_outside_ui_action_inventory() {
+        let mut registry = PluginRegistry::new();
+        registry.register_keybind_provider(Arc::new(StaticKeybindProvider));
+        let service = PluginService::with_registry(registry);
+
+        let diagnostics = service.validate_ui_references().unwrap_err();
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0],
+            PluginDiagnostic {
+                plugin_id: Some("keybind-plugin".into()),
+                message: "plugin keybinding `keybind.open_panel` targets unknown UI action target `plugin.open_panel`".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn validate_ui_references_isolates_ui_provider_panics_as_diagnostics() {
+        let mut registry = PluginRegistry::new();
+        registry.register_ui_provider(Arc::new(PanickingUiProvider));
+        registry.register_command_provider(Arc::new(UiTargetCommandProvider));
+        let service = PluginService::with_registry(registry);
+
+        service.validate_ui_references().unwrap();
+
+        let diagnostics = service.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].plugin_id.as_deref(),
+            Some("panicking-ui-plugin")
+        );
+        assert!(diagnostics[0].message.contains("UI provider panicked"));
+    }
+
+    #[test]
     fn run_command_executes_registered_command_provider() {
         let mut registry = PluginRegistry::new();
         registry.register_command_provider(Arc::new(StaticCommandProvider));
@@ -892,6 +1153,27 @@ mod tests {
             Some("failing-command-exec-plugin")
         );
         assert!(diagnostics[0].message.contains("command execution failed"));
+    }
+
+    #[test]
+    fn run_command_isolates_provider_execution_panic_as_typed_plugin_error() {
+        let mut registry = PluginRegistry::new();
+        registry.register_command_provider(Arc::new(PanickingCommandExecutionProvider));
+        let service = PluginService::with_registry(registry);
+
+        let error = service
+            .run_command("plugin.panic", serde_json::json!({}))
+            .unwrap_err();
+
+        assert_eq!(error.code(), "plugin");
+        assert!(error.to_string().contains("command execution panicked"));
+        let diagnostics = service.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].plugin_id.as_deref(),
+            Some("panicking-command-plugin")
+        );
+        assert!(diagnostics[0].message.contains("plugin panic"));
     }
 
     #[test]

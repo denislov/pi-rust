@@ -566,6 +566,71 @@ end
 }
 
 #[tokio::test]
+async fn interactive_plugin_keybinding_executes_loaded_lua_command_action() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_plugin = temp.path().join(".pi-rust/plugins/lua-command-action");
+    std::fs::create_dir_all(&project_plugin).unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.toml"),
+        r#"
+id = "lua-command-action"
+name = "Lua Command Action"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_plugin.join("plugin.lua"),
+        r#"
+function register(host)
+  host:command({
+    id = "lua.run_action",
+    description = "runs the UI action",
+    run = function(_input)
+      return { content = "action executed" }
+    end
+  })
+  host:ui_action({
+    id = "ui.run_action",
+    label = "Run action",
+    description = "runs a Lua command",
+    action_id = "lua.run_action"
+  })
+  host:keybind({
+    id = "keybind.run_action",
+    key = "ctrl+g",
+    description = "runs the Lua action",
+    action_id = "lua.run_action"
+  })
+end
+"#,
+    )
+    .unwrap();
+
+    let provider = FauxProvider::new(Vec::new());
+    let result = run_scripted_interactive_with_session_dir_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("/reload\r", "plugin.load.completed"),
+            ("\u{7}", "plugin.load.completed"),
+        ],
+    )
+    .await
+    .unwrap();
+    let frame = result.rendered_lines.join("\n");
+
+    assert!(frame.contains("Plugin command lua.run_action"), "{frame}");
+    assert!(frame.contains("action executed"), "{frame}");
+    assert!(
+        !frame.contains("Plugin UI action lua.run_action"),
+        "{frame}"
+    );
+}
+
+#[tokio::test]
 async fn interactive_plugin_keybinding_opens_loaded_lua_dialog() {
     let temp = tempfile::tempdir().unwrap();
     let project_plugin = temp.path().join(".pi-rust/plugins/lua-dialog");
@@ -585,6 +650,13 @@ entry = "plugin.lua"
         project_plugin.join("plugin.lua"),
         r#"
 function register(host)
+  host:command({
+    id = "lua.submit_panel",
+    description = "submits the Lua panel",
+    run = function(input)
+      return { content = "submitted " .. input.name }
+    end
+  })
   host:ui_action({
     id = "ui.open_panel",
     label = "Open panel",
@@ -638,7 +710,7 @@ end
     assert!(frame.contains("Panel registered by Lua"), "{frame}");
     assert!(frame.contains("Name: Target name"), "{frame}");
     assert!(
-        frame.contains("/plugin-command lua.submit_panel {\"name\":\"pi\"}"),
+        !frame.contains("/plugin-command lua.submit_panel"),
         "{frame}"
     );
 }

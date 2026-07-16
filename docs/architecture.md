@@ -1686,6 +1686,17 @@ and dialogs. They must not receive raw session repositories, provider clients,
 runtime services, arbitrary Flow registration, or unrestricted adapter state.
 Every contribution executes through a declared capability boundary.
 
+Plugin UI contributions use a reference-only execution contract. Commands are
+the executable leaves; a dialog submits to a registered command, and every UI
+action references either a registered command or dialog. A keybinding must
+reference the target exposed by a registered UI action. Plugin load validates
+the complete contribution graph and rejects unresolved references before
+installing the plugin service. Adapters may render actions and dialogs and
+collect typed dialog arguments, but command execution still enters through the
+canonical capability-aware `PluginCommand` operation. A transcript notice or
+editor text that resembles a plugin command is not execution and must not be
+used as an internal dispatch transport.
+
 ## 8. Adapter And Multi-Client Contracts
 
 ### 8.1 Adapter Rule

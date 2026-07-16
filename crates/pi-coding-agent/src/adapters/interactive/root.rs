@@ -66,7 +66,6 @@ pub(super) enum InteractiveAction {
     BranchSummary,
     SelfHealingEdit,
     PluginCommand,
-    PluginUiAction,
     PluginUiDialog,
     DelegationConfirmation,
     AgentProfileUse,
@@ -171,13 +170,6 @@ pub(super) enum PendingDelegationConfirmationCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingDelegationRejectionReason {
     selection: PendingDelegationConfirmationSelection,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PendingPluginUiAction {
-    pub(super) action_id: String,
-    pub(super) label: String,
-    pub(super) description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -574,7 +566,6 @@ pub(super) struct InteractiveRoot {
         Option<PendingDelegationConfirmationCommand>,
     delegation_confirmation_menu: Option<DelegationConfirmationMenuState>,
     pending_delegation_rejection_reason: Option<PendingDelegationRejectionReason>,
-    pub(super) pending_plugin_ui_action: Option<PendingPluginUiAction>,
     pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
     pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
     profile_menu: Option<ProfileMenuState>,
@@ -760,7 +751,6 @@ impl InteractiveRoot {
             pending_delegation_confirmation_command: None,
             delegation_confirmation_menu: None,
             pending_delegation_rejection_reason: None,
-            pending_plugin_ui_action: None,
             pending_plugin_ui_dialog: None,
             active_plugin_ui_dialog: None,
             profile_menu: None,
@@ -948,10 +938,6 @@ impl InteractiveRoot {
         self.pending_delegation_confirmation_command.take()
     }
 
-    pub(super) fn take_pending_plugin_ui_action(&mut self) -> Option<PendingPluginUiAction> {
-        self.pending_plugin_ui_action.take()
-    }
-
     pub(super) fn take_pending_plugin_ui_dialog(&mut self) -> Option<PendingPluginUiDialog> {
         self.pending_plugin_ui_dialog.take()
     }
@@ -1101,8 +1087,6 @@ impl InteractiveRoot {
         let action_id = active_dialog.dialog.action_id.clone();
         let args = active_dialog.args_json();
         let raw_args = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
-        self.editor
-            .set_text(format!("/plugin-command {action_id} {raw_args}"));
         commands::queue_plugin_command(self, &action_id, &raw_args);
     }
 
@@ -1529,10 +1513,26 @@ impl InteractiveRoot {
             .plugin_ui_actions
             .iter()
             .find(|action| action.action_id == keybinding.action_id)
+            .cloned()
         else {
             self.transcript.push(TranscriptItem::system(format!(
                 "Plugin keybinding {} has no registered UI action",
                 keybinding.id
+            )));
+            return true;
+        };
+        self.activate_plugin_ui_action(&action.id)
+    }
+
+    pub(super) fn activate_plugin_ui_action(&mut self, action_id: &str) -> bool {
+        let Some(action) = self
+            .plugin_ui_actions
+            .iter()
+            .find(|action| action.id == action_id)
+            .cloned()
+        else {
+            self.transcript.push(TranscriptItem::system(format!(
+                "Plugin UI action not found: {action_id}"
             )));
             return true;
         };
@@ -1559,12 +1559,10 @@ impl InteractiveRoot {
             self.action = InteractiveAction::PluginUiDialog;
             return true;
         }
-        self.pending_plugin_ui_action = Some(PendingPluginUiAction {
-            action_id: action.action_id.clone(),
-            label: action.label.clone(),
-            description: action.description.clone(),
-        });
-        self.action = InteractiveAction::PluginUiAction;
+        self.transcript.push(TranscriptItem::system(format!(
+            "Plugin UI action {} has unavailable target {}",
+            action.id, action.action_id
+        )));
         true
     }
 

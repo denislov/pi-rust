@@ -18,7 +18,7 @@ use crate::adapters::interactive::root::{
     ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
     PendingAgentInvocationRequest, PendingAgentTeamRequest, PendingBranchSummaryRequest,
     PendingDelegationConfirmationCommand, PendingDelegationConfirmationSelection,
-    PendingForkRequest, PendingPluginCommandRequest, PendingPluginUiAction, PendingPluginUiDialog,
+    PendingForkRequest, PendingPluginCommandRequest, PendingPluginUiDialog,
     PendingSelfHealingEditRequest, PluginUiDialogField,
 };
 use crate::adapters::interactive::session_actions::{
@@ -766,7 +766,6 @@ fn handle_input_event<T: Terminal>(
         delegation_confirmation_command,
         self_healing_edit_request,
         plugin_command_request,
-        plugin_ui_action,
         plugin_ui_dialog,
         fork_request,
         render_request,
@@ -826,11 +825,6 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
-        let plugin_ui_action = if action == InteractiveAction::PluginUiAction {
-            root.take_pending_plugin_ui_action()
-        } else {
-            None
-        };
         let plugin_ui_dialog = if action == InteractiveAction::PluginUiDialog {
             root.take_pending_plugin_ui_dialog()
         } else {
@@ -859,7 +853,6 @@ fn handle_input_event<T: Terminal>(
             delegation_confirmation_command,
             self_healing_edit_request,
             plugin_command_request,
-            plugin_ui_action,
             plugin_ui_dialog,
             fork_request,
             RenderRequest::changed(before != after),
@@ -1246,13 +1239,6 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
-        InteractiveAction::PluginUiAction => {
-            let Some(action) = plugin_ui_action else {
-                return Ok(LoopControl::Continue(render_request));
-            };
-            dispatch_plugin_ui_action(tui, root_id, action)?;
-            Ok(LoopControl::Continue(RenderRequest::FORCE))
-        }
         InteractiveAction::PluginUiDialog => {
             let Some(dialog) = plugin_ui_dialog else {
                 return Ok(LoopControl::Continue(render_request));
@@ -1280,19 +1266,6 @@ fn handle_input_event<T: Terminal>(
     }
 }
 
-fn dispatch_plugin_ui_action<T: Terminal>(
-    tui: &mut Tui<T>,
-    root_id: usize,
-    action: PendingPluginUiAction,
-) -> Result<(), CliError> {
-    let root = root_mut(tui, root_id)?;
-    root.transcript.push(TranscriptItem::system(format!(
-        "Plugin UI action {}: {}",
-        action.action_id, action.label
-    )));
-    Ok(())
-}
-
 fn dispatch_plugin_ui_dialog<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
@@ -1313,10 +1286,6 @@ fn dispatch_plugin_ui_dialog<T: Terminal>(
         root.transcript
             .push(TranscriptItem::system(plugin_dialog_field_line(field)));
     }
-    root.editor.set_text(plugin_dialog_command_text(
-        &dialog.action_id,
-        &dialog.fields,
-    ));
     Ok(())
 }
 
@@ -1582,19 +1551,6 @@ fn plugin_dialog_field_line(field: &PluginUiDialogField) -> String {
     } else {
         format!("{}: {}", field.label, field.description)
     }
-}
-
-fn plugin_dialog_command_text(action_id: &str, fields: &[PluginUiDialogField]) -> String {
-    if fields.is_empty() {
-        return format!("/plugin-command {action_id} ");
-    }
-    let mut args = serde_json::Map::new();
-    for field in fields {
-        args.insert(field.id.clone(), field.default_value.clone());
-    }
-    let args =
-        serde_json::to_string(&serde_json::Value::Object(args)).unwrap_or_else(|_| "{}".into());
-    format!("/plugin-command {action_id} {args}")
 }
 
 fn start_prompt_task<T: Terminal>(
