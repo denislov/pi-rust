@@ -132,6 +132,12 @@ impl CodingAgentSession {
             cwd: operation_runtime
                 .and_then(|runtime| runtime.cwd().map(PathBuf::from))
                 .or_else(|| self.cwd()),
+            shell_path: operation_runtime
+                .and_then(|runtime| runtime.settings())
+                .and_then(|settings| settings.shell_path.clone()),
+            shell_command_prefix: operation_runtime
+                .and_then(|runtime| runtime.settings())
+                .and_then(|settings| settings.shell_command_prefix.clone()),
             runtime_tools,
             profile_tools,
         }

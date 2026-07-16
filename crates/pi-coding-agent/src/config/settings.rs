@@ -133,11 +133,6 @@ pub struct RetrySettings {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct WarningsSettings {
-    pub anthropic_extra_usage: bool,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct TerminalSettings {
     pub show_images: bool,
     pub show_progress: bool,
@@ -152,7 +147,6 @@ pub struct Settings {
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
     pub default_thinking_level: Option<String>,
-    pub transport: String,
     pub steering_mode: String,
     pub follow_up_mode: String,
     pub session_dir: Option<String>,
@@ -162,19 +156,14 @@ pub struct Settings {
     pub theme: Option<String>,
     pub no_context_files: bool,
     pub hide_thinking_block: bool,
-    pub collapse_changelog: bool,
     pub quiet_startup: bool,
     pub enable_skill_commands: bool,
     pub double_escape_action: String,
     pub tree_filter_mode: String,
     pub shell_path: Option<String>,
     pub shell_command_prefix: Option<String>,
-    pub npm_command: Vec<String>,
-    pub http_proxy: Option<String>,
     pub http_idle_timeout_ms: u64,
-    pub websocket_connect_timeout_ms: u64,
     pub enabled_models: Vec<String>,
-    pub warnings: WarningsSettings,
     pub terminal: TerminalSettings,
     pub compaction: CompactionSettings,
     pub retry: RetrySettings,
@@ -289,7 +278,6 @@ impl PartialSettings {
             default_provider: self.default_provider,
             default_model: self.default_model,
             default_thinking_level: self.default_thinking_level,
-            transport: self.transport.unwrap_or_else(|| "auto".to_string()),
             steering_mode: self
                 .steering_mode
                 .unwrap_or_else(|| "one-at-a-time".to_string()),
@@ -303,7 +291,6 @@ impl PartialSettings {
             theme: self.theme,
             no_context_files: self.no_context_files.unwrap_or(false),
             hide_thinking_block: self.hide_thinking_block.unwrap_or(false),
-            collapse_changelog: self.collapse_changelog.unwrap_or(false),
             quiet_startup: self.quiet_startup.unwrap_or(false),
             enable_skill_commands: self.enable_skill_commands.unwrap_or(true),
             double_escape_action: self
@@ -314,17 +301,8 @@ impl PartialSettings {
                 .unwrap_or_else(|| "default".to_string()),
             shell_path: self.shell_path,
             shell_command_prefix: self.shell_command_prefix,
-            npm_command: self.npm_command.unwrap_or_else(|| vec!["npm".to_string()]),
-            http_proxy: self.http_proxy,
             http_idle_timeout_ms: self.http_idle_timeout_ms.unwrap_or(300000),
-            websocket_connect_timeout_ms: self.websocket_connect_timeout_ms.unwrap_or(30000),
             enabled_models: self.enabled_models.unwrap_or_default(),
-            warnings: {
-                let w = self.warnings.unwrap_or_default();
-                WarningsSettings {
-                    anthropic_extra_usage: w.anthropic_extra_usage.unwrap_or(true),
-                }
-            },
             terminal: TerminalSettings {
                 show_images: t.show_images.unwrap_or(true),
                 show_progress: t.show_progress.unwrap_or(false),
@@ -478,7 +456,10 @@ pub fn load_partial(path: &Path, diags: &mut Vec<ConfigDiagnostic>) -> PartialSe
         }
     };
     match toml::from_str::<PartialSettings>(&text) {
-        Ok(parsed) => parsed,
+        Ok(parsed) => {
+            diagnose_unsupported_settings(&parsed, path, diags);
+            parsed
+        }
         Err(err) => {
             diags.push(ConfigDiagnostic::warn(
                 format!("failed to parse settings: {err}"),
@@ -486,6 +467,41 @@ pub fn load_partial(path: &Path, diags: &mut Vec<ConfigDiagnostic>) -> PartialSe
             ));
             PartialSettings::default()
         }
+    }
+}
+
+fn diagnose_unsupported_settings(
+    settings: &PartialSettings,
+    path: &Path,
+    diags: &mut Vec<ConfigDiagnostic>,
+) {
+    let mut warn = |key: &str| {
+        diags.push(ConfigDiagnostic::warn(
+            format!("settings key `{key}` is recognized but not supported by the Rust runtime"),
+            Some(path.to_path_buf()),
+        ));
+    };
+    if settings.collapse_changelog.is_some() {
+        warn("collapse_changelog");
+    }
+    if settings.transport.is_some() {
+        warn("transport");
+    }
+    if settings.npm_command.is_some() {
+        warn("npm_command");
+    }
+    if settings.http_proxy.is_some() {
+        warn("http_proxy");
+    }
+    if settings.websocket_connect_timeout_ms.is_some() {
+        warn("websocket_connect_timeout_ms");
+    }
+    if settings
+        .warnings
+        .as_ref()
+        .is_some_and(|warnings| warnings.anthropic_extra_usage.is_some())
+    {
+        warn("warnings.anthropic_extra_usage");
     }
 }
 
@@ -502,7 +518,6 @@ mod tests {
     #[test]
     fn defaults_applied_on_empty() {
         let s = PartialSettings::default().resolve();
-        assert_eq!(s.transport, "auto");
         assert_eq!(s.steering_mode, "one-at-a-time");
         assert!(s.compaction.enabled);
         assert_eq!(s.compaction.reserve_tokens, 16384);
@@ -511,7 +526,6 @@ mod tests {
         assert_eq!(s.retry.base_delay_ms, 2000);
         assert!(s.default_model.is_none());
         assert!(!s.hide_thinking_block);
-        assert!(!s.collapse_changelog);
         assert!(!s.quiet_startup);
         assert!(s.enable_skill_commands);
         assert_eq!(s.double_escape_action, "tree");
@@ -522,19 +536,15 @@ mod tests {
         assert_eq!(s.terminal.image_width_cells, 60);
         assert!(s.shell_path.is_none());
         assert!(s.shell_command_prefix.is_none());
-        assert_eq!(s.npm_command, vec!["npm"]);
-        assert!(s.http_proxy.is_none());
         assert_eq!(s.http_idle_timeout_ms, 300000);
-        assert_eq!(s.websocket_connect_timeout_ms, 30000);
         assert!(s.enabled_models.is_empty());
-        assert!(s.warnings.anthropic_extra_usage);
     }
 
     #[test]
     fn project_overrides_global_scalars() {
         let global = PartialSettings {
             default_model: Some("a".into()),
-            transport: Some("sse".into()),
+            default_thinking_level: Some("high".into()),
             ..Default::default()
         };
         let project = PartialSettings {
@@ -543,7 +553,7 @@ mod tests {
         };
         let s = global.merge(project).resolve();
         assert_eq!(s.default_model.as_deref(), Some("b")); // project wins
-        assert_eq!(s.transport, "sse"); // global survives where project is silent
+        assert_eq!(s.default_thinking_level.as_deref(), Some("high"));
     }
 
     #[test]
@@ -638,7 +648,6 @@ mod tests {
         };
         let s = global.merge(project).resolve();
         assert!(!s.hide_thinking_block); // project overrides
-        assert!(s.collapse_changelog); // project adds
         assert!(s.quiet_startup); // global survives
         assert!(s.enable_skill_commands); // default
         assert_eq!(s.double_escape_action, "fork"); // global survives
@@ -657,43 +666,6 @@ mod tests {
         };
         let s = global.merge(project).resolve();
         assert_eq!(s.enabled_models, vec!["claude-*", "gpt-4*"]);
-    }
-
-    #[test]
-    fn warnings_merge() {
-        let project = PartialSettings {
-            warnings: Some(PartialWarnings {
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        // global's value should survive where project is silent
-        let s = PartialSettings {
-            warnings: Some(PartialWarnings {
-                anthropic_extra_usage: Some(false),
-            }),
-            ..Default::default()
-        }
-        .merge(project)
-        .resolve();
-        assert!(!s.warnings.anthropic_extra_usage);
-
-        // project overrides global
-        let project = PartialSettings {
-            warnings: Some(PartialWarnings {
-                anthropic_extra_usage: Some(true),
-            }),
-            ..Default::default()
-        };
-        let s = PartialSettings {
-            warnings: Some(PartialWarnings {
-                anthropic_extra_usage: Some(false),
-            }),
-            ..Default::default()
-        }
-        .merge(project)
-        .resolve();
-        assert!(s.warnings.anthropic_extra_usage);
     }
 
     #[test]
@@ -755,8 +727,8 @@ mod tests {
         let mut diags = Vec::new();
         let s = load_settings(&paths, &mut diags);
         assert_eq!(s.default_model.as_deref(), Some("p"));
-        assert_eq!(s.transport, "sse");
-        assert!(diags.is_empty());
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("`transport`"));
     }
 
     #[test]
@@ -911,5 +883,45 @@ mod tests {
         let parsed: PartialSettings =
             toml::from_str(&toml_str).expect("deserialize should succeed");
         assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn unsupported_settings_emit_key_only_diagnostics() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(
+            &path,
+            r#"
+collapse_changelog = true
+transport = "websocket"
+npm_command = ["pnpm"]
+http_proxy = "http://user:secret@example.invalid:8080"
+websocket_connect_timeout_ms = 1234
+
+[warnings]
+anthropic_extra_usage = false
+"#,
+        )
+        .unwrap();
+
+        let mut diagnostics = Vec::new();
+        let parsed = load_partial(&path, &mut diagnostics);
+
+        assert_eq!(parsed.npm_command, Some(vec!["pnpm".into()]));
+        assert_eq!(diagnostics.len(), 6);
+        let rendered = crate::config::drain_diagnostics(&diagnostics);
+        for key in [
+            "collapse_changelog",
+            "transport",
+            "npm_command",
+            "http_proxy",
+            "websocket_connect_timeout_ms",
+            "warnings.anthropic_extra_usage",
+        ] {
+            assert!(rendered.contains(key), "missing diagnostic for {key}");
+        }
+        assert!(!rendered.contains("user"));
+        assert!(!rendered.contains("secret"));
+        assert!(!rendered.contains("example.invalid"));
     }
 }

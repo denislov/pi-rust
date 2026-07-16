@@ -558,7 +558,11 @@ pub fn bash_tool_with_operations(
         let ops = ops.clone();
         let cancel_token = context.cancel_token().clone();
         Box::pin(async move {
-            let options = BashOptions::default();
+            let options = BashOptions {
+                shell_path: shell.shell_path.clone(),
+                command_prefix: shell.command_prefix.clone(),
+                spawn_hook: None,
+            };
             tokio::select! {
                 _ = cancel_token.cancelled() => Err("tool execution cancelled".to_owned()),
                 result = bash_execute_with_operations(
@@ -584,9 +588,41 @@ pub fn bash_tool_with_operations(
 mod tests {
     use super::*;
     use pi_agent_core::api::tool::ToolExecutionContext;
+    use std::sync::Mutex;
     use tokio_util::sync::CancellationToken;
 
     struct PendingBashOperations;
+
+    type RecordedShellOptions = (PathBuf, Option<String>, Option<String>);
+
+    struct RecordingBashOperations {
+        seen: Arc<Mutex<Option<RecordedShellOptions>>>,
+    }
+
+    impl BashOperations for RecordingBashOperations {
+        fn execute<'a>(
+            &'a self,
+            cwd: &'a Path,
+            _args: serde_json::Value,
+            options: &'a BashOptions,
+            _on_update: Option<ToolUpdateCallback>,
+        ) -> BoxFuture<'a, Result<Vec<ContentBlock>, String>> {
+            let seen = self.seen.clone();
+            let recorded = (
+                cwd.to_path_buf(),
+                options.shell_path.clone(),
+                options.command_prefix.clone(),
+            );
+            async move {
+                *seen.lock().unwrap() = Some(recorded);
+                Ok(vec![ContentBlock::Text {
+                    text: "ok".into(),
+                    text_signature: None,
+                }])
+            }
+            .boxed()
+        }
+    }
 
     impl BashOperations for PendingBashOperations {
         fn execute<'a>(
@@ -621,5 +657,36 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, "tool execution cancelled");
+    }
+
+    #[tokio::test]
+    async fn bash_tool_uses_shell_configuration_frozen_in_capability() {
+        let seen = Arc::new(Mutex::new(None));
+        let shell = ShellCapability::with_configuration(
+            PathBuf::from("/workspace"),
+            Some("/custom/bash".into()),
+            Some("source ./env.sh".into()),
+        );
+        let tool = bash_tool_with_operations(
+            shell,
+            Arc::new(RecordingBashOperations { seen: seen.clone() }),
+        );
+
+        (tool.execute)(
+            ToolExecutionContext::standalone("bash"),
+            serde_json::json!({"command": "pwd"}),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some((
+                PathBuf::from("/workspace"),
+                Some("/custom/bash".into()),
+                Some("source ./env.sh".into()),
+            ))
+        );
     }
 }

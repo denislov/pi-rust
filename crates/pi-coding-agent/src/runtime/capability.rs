@@ -96,6 +96,8 @@ pub struct FilesystemCapability {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellCapability {
     pub(crate) cwd: PathBuf,
+    pub(crate) shell_path: Option<String>,
+    pub(crate) command_prefix: Option<String>,
 }
 
 fn lexically_normalize(path: &Path) -> PathBuf {
@@ -156,7 +158,23 @@ impl FilesystemCapability {
 
 impl ShellCapability {
     pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd }
+        Self {
+            cwd,
+            shell_path: None,
+            command_prefix: None,
+        }
+    }
+
+    pub(crate) fn with_configuration(
+        cwd: PathBuf,
+        shell_path: Option<String>,
+        command_prefix: Option<String>,
+    ) -> Self {
+        Self {
+            cwd,
+            shell_path,
+            command_prefix,
+        }
     }
 }
 
@@ -284,6 +302,8 @@ impl OperationCapabilitySnapshot {
             }),
             shell: Some(ShellCapability {
                 cwd: std::path::PathBuf::from("."),
+                shell_path: None,
+                command_prefix: None,
             }),
             session_read: Some(SessionReadCapability { persistent: true }),
             session_write: Some(SessionWriteCapability { persistent: true }),
@@ -335,6 +355,8 @@ pub(crate) struct CapabilitySnapshotInput {
     pub(crate) plugin_capabilities: PluginCapabilities,
     pub(crate) persistent_session: bool,
     pub(crate) cwd: Option<PathBuf>,
+    pub(crate) shell_path: Option<String>,
+    pub(crate) shell_command_prefix: Option<String>,
     pub(crate) runtime_tools: Vec<String>,
     pub(crate) profile_tools: Vec<String>,
 }
@@ -404,7 +426,13 @@ impl CapabilitySnapshotService {
         let shell = cwd
             .as_ref()
             .filter(|_| allowed_tools.iter().any(|name| name == "bash"))
-            .map(|cwd| ShellCapability { cwd: cwd.clone() });
+            .map(|cwd| {
+                ShellCapability::with_configuration(
+                    cwd.clone(),
+                    input.shell_path,
+                    input.shell_command_prefix,
+                )
+            });
         OperationCapabilitySnapshot {
             generation: self.current_generation(),
             operation_id: input.operation_id,
@@ -485,6 +513,8 @@ mod tests {
             },
             persistent_session: true,
             cwd: Some(std::path::PathBuf::from("/workspace")),
+            shell_path: None,
+            shell_command_prefix: None,
             runtime_tools: vec!["read".into(), "bash".into(), "edit".into()],
             profile_tools: vec!["read".into(), "edit".into()],
         }
@@ -514,6 +544,21 @@ mod tests {
         assert!(snapshot.session_write.is_some());
         assert!(snapshot.plugin.allows_tool_provider("tools-plugin"));
         assert!(!snapshot.plugin.allows_tool_provider("other-plugin"));
+    }
+
+    #[test]
+    fn shell_snapshot_freezes_execution_configuration() {
+        let mut input = input(OperationKind::Prompt);
+        input.profile_tools.push("bash".into());
+        input.shell_path = Some("/custom/bash".into());
+        input.shell_command_prefix = Some("source ./env.sh".into());
+
+        let snapshot = CapabilitySnapshotService::new().snapshot(input);
+        let shell = snapshot.shell.expect("bash capability should be granted");
+
+        assert_eq!(shell.cwd, PathBuf::from("/workspace"));
+        assert_eq!(shell.shell_path.as_deref(), Some("/custom/bash"));
+        assert_eq!(shell.command_prefix.as_deref(), Some("source ./env.sh"));
     }
 
     #[test]

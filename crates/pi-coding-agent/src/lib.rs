@@ -150,7 +150,7 @@ pub mod api {
             pub use crate::config::settings::{
                 CompactionSettings, PartialCompaction, PartialRetry, PartialSettings,
                 PartialTerminal, PartialWarnings, RetrySettings, Settings, SettingsScope,
-                TerminalSettings, WarningsSettings, merge_and_save_settings,
+                TerminalSettings, merge_and_save_settings,
             };
             pub use crate::config::{
                 AuthStore, Config, ConfigDiagnostic, ConfigPaths, DiagnosticSeverity,

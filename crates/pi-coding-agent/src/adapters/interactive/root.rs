@@ -2098,10 +2098,6 @@ impl InteractiveRoot {
                     .get_or_insert_with(crate::config::settings::PartialCompaction::default)
                     .enabled = Some(value == "on");
             }
-            "transport" => {
-                self.settings.transport = value.to_string();
-                self.settings_delta.transport = Some(value.to_string());
-            }
             "steering_mode" => {
                 self.settings.steering_mode = value.to_string();
                 self.settings_delta.steering_mode = Some(value.to_string());
@@ -2110,28 +2106,12 @@ impl InteractiveRoot {
                 self.settings.follow_up_mode = value.to_string();
                 self.settings_delta.follow_up_mode = Some(value.to_string());
             }
-            "show_images" => {
-                self.settings.terminal.show_images = value == "on";
-                self.settings_delta
-                    .terminal
-                    .get_or_insert_with(crate::config::settings::PartialTerminal::default)
-                    .show_images = Some(value == "on");
-            }
             "show_progress" => {
                 self.settings.terminal.show_progress = value == "on";
                 self.settings_delta
                     .terminal
                     .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .show_progress = Some(value == "on");
-            }
-            "image_width_cells" => {
-                if let Ok(width) = value.parse::<u32>() {
-                    self.settings.terminal.image_width_cells = width;
-                    self.settings_delta
-                        .terminal
-                        .get_or_insert_with(crate::config::settings::PartialTerminal::default)
-                        .image_width_cells = Some(width);
-                }
             }
             "auto_resize_images" => {
                 self.settings.terminal.auto_resize_images = value == "on";
@@ -2155,10 +2135,6 @@ impl InteractiveRoot {
                 self.settings.hide_thinking_block = value == "on";
                 self.settings_delta.hide_thinking_block = Some(value == "on");
             }
-            "collapse_changelog" => {
-                self.settings.collapse_changelog = value == "on";
-                self.settings_delta.collapse_changelog = Some(value == "on");
-            }
             "quiet_startup" => {
                 self.settings.quiet_startup = value == "on";
                 self.settings_delta.quiet_startup = Some(value == "on");
@@ -2177,13 +2153,6 @@ impl InteractiveRoot {
             "tree_filter_mode" => {
                 self.settings.tree_filter_mode = value.to_string();
                 self.settings_delta.tree_filter_mode = Some(value.to_string());
-            }
-            "warnings_anthropic_extra_usage" => {
-                self.settings.warnings.anthropic_extra_usage = value == "on";
-                self.settings_delta
-                    .warnings
-                    .get_or_insert_with(crate::config::settings::PartialWarnings::default)
-                    .anthropic_extra_usage = Some(value == "on");
             }
             "default_thinking_level" => {
                 self.settings.default_thinking_level = Some(value.to_string());
@@ -2563,9 +2532,6 @@ fn build_settings_list(
             )
             .values(["on", "off"])
             .description("Automatically compact context before it exceeds the model window"),
-            SettingItem::new("transport", "Transport", &settings.transport)
-                .values(["sse", "websocket", "websocket-cached", "auto"])
-                .description("Preferred transport for provider connections"),
             SettingItem::new(
                 "steering_mode",
                 "Steering mode",
@@ -2580,24 +2546,6 @@ fn build_settings_list(
             )
             .values(["one-at-a-time", "all"])
             .description("Queue follow-up messages until agent stops"),
-            SettingItem::new(
-                "show_images",
-                "Show images",
-                if settings.terminal.show_images {
-                    "on"
-                } else {
-                    "off"
-                },
-            )
-            .values(["on", "off"])
-            .description("Render images inline in terminal"),
-            SettingItem::new(
-                "image_width_cells",
-                "Image width",
-                settings.terminal.image_width_cells.to_string(),
-            )
-            .values(["60", "80", "120"])
-            .description("Preferred inline image width in terminal cells"),
             SettingItem::new(
                 "show_progress",
                 "Terminal progress",
@@ -2654,17 +2602,6 @@ fn build_settings_list(
             .values(["on", "off"])
             .description("Hide thinking blocks in assistant responses"),
             SettingItem::new(
-                "collapse_changelog",
-                "Collapse changelog",
-                if settings.collapse_changelog {
-                    "on"
-                } else {
-                    "off"
-                },
-            )
-            .values(["on", "off"])
-            .description("Show condensed changelog after updates"),
-            SettingItem::new(
                 "quiet_startup",
                 "Quiet startup",
                 if settings.quiet_startup {
@@ -2693,17 +2630,6 @@ fn build_settings_list(
             )
             .values(["tree", "fork", "none"])
             .description("Action when pressing Escape twice with empty editor"),
-            SettingItem::new(
-                "warnings_anthropic_extra_usage",
-                "Warn: Anthropic extra usage",
-                if settings.warnings.anthropic_extra_usage {
-                    "on"
-                } else {
-                    "off"
-                },
-            )
-            .values(["on", "off"])
-            .description("Warn when Anthropic subscription auth may use paid extra usage"),
             SettingItem::new(
                 "default_thinking_level",
                 "Thinking level",

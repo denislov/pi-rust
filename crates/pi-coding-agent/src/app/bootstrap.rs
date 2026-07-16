@@ -216,10 +216,6 @@ pub(crate) fn build_agent_config_with_auth_diagnostics(
         opts.max_retries = Some(settings.retry.max_retries);
         opts.max_retry_delay_ms = Some(settings.retry.base_delay_ms);
     }
-    if let Some(settings) = settings {
-        let opts = stream_options.get_or_insert_with(StreamOptions::default);
-        opts.transport = Some(settings.transport.clone());
-    }
     if let Some(settings) = settings
         && settings.http_idle_timeout_ms > 0
     {

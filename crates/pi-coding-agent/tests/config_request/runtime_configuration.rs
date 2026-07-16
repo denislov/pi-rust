@@ -4,7 +4,7 @@ use pi_agent_core::api::resources::AgentResources;
 use pi_coding_agent::api::cli::command::{CliError, parse_args};
 use pi_coding_agent::api::cli::configuration::{
     CompactionSettings, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, RetrySettings, Settings,
-    TerminalSettings, WarningsSettings, build_agent_config, select_model,
+    TerminalSettings, build_agent_config, select_model,
 };
 
 fn runtime_settings() -> Settings {
@@ -12,7 +12,6 @@ fn runtime_settings() -> Settings {
         default_provider: None,
         default_model: None,
         default_thinking_level: None,
-        transport: "auto".into(),
         steering_mode: "one-at-a-time".into(),
         follow_up_mode: "one-at-a-time".into(),
         session_dir: None,
@@ -22,21 +21,14 @@ fn runtime_settings() -> Settings {
         theme: None,
         no_context_files: false,
         hide_thinking_block: false,
-        collapse_changelog: false,
         quiet_startup: false,
         enable_skill_commands: true,
         double_escape_action: "tree".into(),
         tree_filter_mode: "default".into(),
         shell_path: None,
         shell_command_prefix: None,
-        npm_command: vec!["npm".into()],
-        http_proxy: None,
         http_idle_timeout_ms: 300000,
-        websocket_connect_timeout_ms: 30000,
         enabled_models: Vec::new(),
-        warnings: WarningsSettings {
-            anthropic_extra_usage: true,
-        },
         terminal: TerminalSettings {
             show_images: true,
             show_progress: true,
@@ -211,7 +203,7 @@ fn build_agent_config_applies_settings_retry_and_compaction() {
     );
 
     let stream = config.stream_options.unwrap();
-    assert_eq!(stream.transport.as_deref(), Some("auto"));
+    assert!(stream.transport.is_none());
     assert_eq!(stream.timeout_ms, Some(300000));
     assert_eq!(stream.max_retries, Some(7));
     assert_eq!(stream.max_retry_delay_ms, Some(4444));
@@ -242,40 +234,8 @@ fn build_agent_config_honors_disabled_settings_retry_and_compaction() {
         Some(&settings),
     );
 
-    let stream = config.stream_options.unwrap();
-    assert_eq!(stream.transport.as_deref(), Some("auto"));
-    assert!(stream.timeout_ms.is_none());
-    assert!(stream.max_retries.is_none());
-    assert!(stream.max_retry_delay_ms.is_none());
+    assert!(config.stream_options.is_none());
     assert!(config.compaction.is_none());
-}
-
-#[test]
-fn build_agent_config_applies_transport_from_settings() {
-    let args = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
-    let model = select_model(&args, None, None, None).unwrap();
-    let mut settings = runtime_settings();
-    settings.transport = "sse".into();
-    settings.retry.enabled = false;
-    settings.compaction.enabled = false;
-    settings.http_idle_timeout_ms = 0;
-
-    let config = build_agent_config(
-        model,
-        args.system_prompt.clone(),
-        args.max_turns,
-        None,
-        None,
-        None,
-        AgentResources::default(),
-        Some(&settings),
-    );
-
-    let stream = config.stream_options.unwrap();
-    assert_eq!(stream.transport.as_deref(), Some("sse"));
-    assert!(stream.timeout_ms.is_none());
-    assert!(stream.max_retries.is_none());
-    assert!(stream.max_retry_delay_ms.is_none());
 }
 
 #[test]
@@ -298,7 +258,7 @@ fn build_agent_config_applies_http_idle_timeout_when_retry_is_disabled() {
     );
 
     let stream = config.stream_options.unwrap();
-    assert_eq!(stream.transport.as_deref(), Some("auto"));
+    assert!(stream.transport.is_none());
     assert_eq!(stream.timeout_ms, Some(12_345));
     assert!(stream.max_retries.is_none());
     assert!(stream.max_retry_delay_ms.is_none());

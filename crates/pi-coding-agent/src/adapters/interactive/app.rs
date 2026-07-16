@@ -1268,6 +1268,10 @@ mod tests {
         assert!(rendered.contains("Theme"), "{rendered}");
         assert!(rendered.contains("Auto compact"), "{rendered}");
         assert!(rendered.contains("Enter/Space to change"), "{rendered}");
+        assert!(!rendered.contains("Show images"), "{rendered}");
+        assert!(!rendered.contains("Image width"), "{rendered}");
+        assert!(!rendered.contains("Collapse changelog"), "{rendered}");
+        assert!(!rendered.contains("Anthropic extra usage"), "{rendered}");
     }
 
     #[test]
@@ -1297,32 +1301,6 @@ mod tests {
     }
 
     #[test]
-    fn settings_menu_transport_cycles_and_reports_update() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        assert_eq!(root.settings.transport, "auto");
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "settings".to_string(),
-            args: String::new(),
-            original: "/settings".to_string(),
-        });
-        // Navigate from theme (item 0) down to transport (item 2)
-        root.handle_input(&key_event("\x1b[B"));
-        root.handle_input(&key_event("\x1b[B"));
-        root.handle_input(&key_event("\r"));
-
-        assert_eq!(root.settings.transport, "sse");
-        let updated = root
-            .take_settings_update()
-            .expect("transport toggle should emit settings update");
-        assert_eq!(updated.transport, "sse");
-    }
-
-    #[test]
     fn settings_menu_steering_mode_cycles_and_reports_update() {
         let mut root = InteractiveRoot::new(
             PathBuf::from("."),
@@ -1336,8 +1314,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        // Navigate from theme (0) down to steering_mode (3)
-        root.handle_input(&key_event("\x1b[B"));
+        // Navigate from theme (0) down to steering_mode (2)
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\r"));
@@ -1363,8 +1340,8 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        // Navigate from theme (0) down to follow_up_mode (4)
-        for _ in 0..4 {
+        // Navigate from theme (0) down to follow_up_mode (3)
+        for _ in 0..3 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1374,67 +1351,6 @@ mod tests {
             .take_settings_update()
             .expect("follow-up mode toggle should emit settings update");
         assert_eq!(updated.follow_up_mode, "all");
-    }
-
-    #[test]
-    fn settings_menu_show_images_toggles_and_reports_update() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        assert!(root.settings.terminal.show_images);
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "settings".to_string(),
-            args: String::new(),
-            original: "/settings".to_string(),
-        });
-        // Navigate from theme (0) down to show_images (5)
-        for _ in 0..5 {
-            root.handle_input(&key_event("\x1b[B"));
-        }
-        root.handle_input(&key_event("\r"));
-
-        assert!(!root.settings.terminal.show_images);
-        let updated = root
-            .take_settings_update()
-            .expect("show images toggle should emit settings update");
-        assert!(!updated.terminal.show_images);
-    }
-
-    #[test]
-    fn settings_menu_image_width_cycles_and_reports_update() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        assert_eq!(root.settings.terminal.image_width_cells, 60);
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "settings".to_string(),
-            args: String::new(),
-            original: "/settings".to_string(),
-        });
-        // Navigate from theme (0) down to image_width_cells (6)
-        for _ in 0..6 {
-            root.handle_input(&key_event("\x1b[B"));
-        }
-        root.handle_input(&key_event("\r"));
-
-        assert_eq!(root.settings.terminal.image_width_cells, 80);
-        let updated = root
-            .take_settings_update()
-            .expect("image width toggle should emit settings update");
-        assert_eq!(updated.terminal.image_width_cells, 80);
-        assert_eq!(
-            root.settings_delta()
-                .terminal
-                .as_ref()
-                .and_then(|terminal| terminal.image_width_cells),
-            Some(80)
-        );
     }
 
     #[test]
@@ -1451,8 +1367,8 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        // Navigate from theme (0) down to show_progress (7)
-        for _ in 0..7 {
+        // Navigate from theme (0) down to show_progress (4)
+        for _ in 0..4 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1478,7 +1394,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..8 {
+        for _ in 0..5 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1504,7 +1420,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..9 {
+        for _ in 0..6 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1530,7 +1446,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..10 {
+        for _ in 0..7 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1556,7 +1472,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..11 {
+        for _ in 0..8 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1566,32 +1482,6 @@ mod tests {
             .take_settings_update()
             .expect("hide thinking toggle should emit settings update");
         assert!(updated.hide_thinking_block);
-    }
-
-    #[test]
-    fn settings_menu_collapse_changelog_toggles_and_reports_update() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        assert!(!root.settings.collapse_changelog);
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "settings".to_string(),
-            args: String::new(),
-            original: "/settings".to_string(),
-        });
-        for _ in 0..12 {
-            root.handle_input(&key_event("\x1b[B"));
-        }
-        root.handle_input(&key_event("\r"));
-
-        assert!(root.settings.collapse_changelog);
-        let updated = root
-            .take_settings_update()
-            .expect("collapse changelog toggle should emit settings update");
-        assert!(updated.collapse_changelog);
     }
 
     #[test]
@@ -1608,7 +1498,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..13 {
+        for _ in 0..9 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1634,7 +1524,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..14 {
+        for _ in 0..10 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1660,7 +1550,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..15 {
+        for _ in 0..11 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1670,32 +1560,6 @@ mod tests {
             .take_settings_update()
             .expect("double escape toggle should emit settings update");
         assert_eq!(updated.double_escape_action, "fork");
-    }
-
-    #[test]
-    fn settings_menu_warnings_toggles_and_reports_update() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        assert!(root.settings.warnings.anthropic_extra_usage);
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "settings".to_string(),
-            args: String::new(),
-            original: "/settings".to_string(),
-        });
-        for _ in 0..16 {
-            root.handle_input(&key_event("\x1b[B"));
-        }
-        root.handle_input(&key_event("\r"));
-
-        assert!(!root.settings.warnings.anthropic_extra_usage);
-        let updated = root
-            .take_settings_update()
-            .expect("warnings toggle should emit settings update");
-        assert!(!updated.warnings.anthropic_extra_usage);
     }
 
     #[test]
@@ -1716,7 +1580,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..17 {
+        for _ in 0..12 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
@@ -1753,7 +1617,7 @@ mod tests {
             args: String::new(),
             original: "/settings".to_string(),
         });
-        for _ in 0..18 {
+        for _ in 0..13 {
             root.handle_input(&key_event("\x1b[B"));
         }
         root.handle_input(&key_event("\r"));
