@@ -12,12 +12,15 @@ use pi_ai::api::provider::ApiProvider;
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::{FauxProvider, FauxResponse};
 use pi_coding_agent::adapters::interactive::test_harness::{
-    ScriptedInputDriver, ScriptedInteractiveOutput, run_scripted_idle_interactive,
+    ScriptedInputDriver, ScriptedInteractiveOutput,
+    run_scripted_fullscreen_with_session_dir_size_and_waits,
+    run_scripted_idle_fullscreen_with_size, run_scripted_idle_interactive,
     run_scripted_idle_interactive_with_ai_client, run_scripted_idle_interactive_with_delays,
     run_scripted_idle_interactive_with_size, run_scripted_interactive,
     run_scripted_interactive_with_observed_provider_driver,
     run_scripted_interactive_with_session_dir_size_and_waits,
 };
+use pi_tui::api::terminal::TerminalMode;
 use pi_tui::api::testing::TerminalOp;
 use tokio::sync::Notify;
 
@@ -59,6 +62,16 @@ fn text_response(text: &str) -> FauxResponse {
 
 fn six_line_markdown() -> &'static str {
     "- one\n- two\n- three\n- four\n- five\n- six"
+}
+
+fn assert_fullscreen_lifecycle(output: &ScriptedInteractiveOutput) {
+    assert_eq!(
+        output.ops.first(),
+        Some(&TerminalOp::Start(TerminalMode::Fullscreen))
+    );
+    assert!(output.ops.contains(&TerminalOp::ClearScreen));
+    assert!(output.terminal_restored);
+    assert!(output.ops.contains(&TerminalOp::Stop));
 }
 
 struct PausingTwoTurnProvider {
@@ -896,7 +909,7 @@ async fn scripted_interactive_initial_render_uses_content_height() {
 
     assert!(
         output.rendered_lines.len() <= 9,
-        "initial render should not pad to the full terminal height: {output:?}"
+        "initial inline render should use content height: {output:?}"
     );
     assert!(
         frame.contains(env!("CARGO_PKG_VERSION")),
@@ -934,7 +947,7 @@ async fn scripted_interactive_keeps_full_transcript_in_terminal_output() {
     assert!(frame.contains("status: idle"));
     assert!(
         output.rendered_lines.len() > 6,
-        "transcript should grow beyond terminal height instead of acting as a fixed viewport: {output:?}"
+        "inline transcript should grow beyond terminal height: {output:?}"
     );
 }
 
@@ -1003,6 +1016,86 @@ async fn scripted_interactive_new_output_remains_in_terminal_transcript_after_pa
     assert!(frame.contains("brand new bottom"), "{frame}");
     assert!(!frame.contains("new output below"), "{frame}");
     assert!(frame.contains("> "), "{frame}");
+    assert!(frame.contains("status: idle"), "{frame}");
+}
+
+#[tokio::test]
+async fn scripted_fullscreen_initial_render_owns_terminal_height() {
+    let output = run_scripted_idle_fullscreen_with_size("", 80, 24)
+        .await
+        .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert_eq!(output.rendered_lines.len(), 24, "{output:?}");
+    assert!(output.rendered_lines.first().is_some_and(String::is_empty));
+    assert!(frame.contains(env!("CARGO_PKG_VERSION")), "{frame}");
+    assert!(frame.contains("/help"), "{frame}");
+    assert!(frame.contains("─"), "{frame}");
+    assert_fullscreen_lifecycle(&output);
+}
+
+#[tokio::test]
+async fn scripted_fullscreen_page_up_and_down_window_the_transcript() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response(six_line_markdown())]);
+    let page_up = run_scripted_fullscreen_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![("prompt\r", "six"), ("\x1b[5~", "six")],
+        40,
+        12,
+    )
+    .await
+    .unwrap();
+    let frame = page_up.rendered_lines.join("\n");
+    assert_eq!(page_up.rendered_lines.len(), 12, "{page_up:?}");
+    assert!(frame.contains("pi-rust"), "{frame}");
+    assert!(!frame.contains("six"), "{frame}");
+    assert_fullscreen_lifecycle(&page_up);
+
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::new(vec![text_response(six_line_markdown())]);
+    let page_down = run_scripted_fullscreen_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![("prompt\r", "six"), ("\x1b[5~\x1b[6~", "six")],
+        40,
+        12,
+    )
+    .await
+    .unwrap();
+    let frame = page_down.rendered_lines.join("\n");
+    assert_eq!(page_down.rendered_lines.len(), 12, "{page_down:?}");
+    assert!(frame.contains("one"), "{frame}");
+    assert!(frame.contains("six"), "{frame}");
+    assert!(!frame.contains("pi-rust"), "{frame}");
+}
+
+#[tokio::test]
+async fn scripted_fullscreen_new_output_preserves_scrolled_view() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = FauxProvider::with_call_queue(vec![
+        FauxProvider::text_call(six_line_markdown(), StopReason::Stop),
+        FauxProvider::text_call("brand new bottom", StopReason::Stop),
+    ]);
+    let output = run_scripted_fullscreen_with_session_dir_size_and_waits(
+        provider,
+        temp.path(),
+        vec![
+            ("first\r", "six"),
+            ("\x1b[5~", "six"),
+            ("second\r", "brand new bottom"),
+        ],
+        40,
+        12,
+    )
+    .await
+    .unwrap();
+    let frame = output.rendered_lines.join("\n");
+
+    assert!(frame.contains("pi-rust"), "{frame}");
+    assert!(!frame.contains("brand new bottom"), "{frame}");
+    assert!(frame.contains("new output below"), "{frame}");
     assert!(frame.contains("status: idle"), "{frame}");
 }
 

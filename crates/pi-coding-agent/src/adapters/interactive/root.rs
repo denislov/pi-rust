@@ -584,6 +584,7 @@ pub(super) struct InteractiveRoot {
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
     pub(super) viewport_height: usize,
+    fullscreen_viewport: bool,
     pub(super) cwd: PathBuf,
     pub(super) model_id: String,
     pub(super) session_label: String,
@@ -774,6 +775,7 @@ impl InteractiveRoot {
             status: InteractiveStatus::Idle,
             viewport_width: 80,
             viewport_height: 24,
+            fullscreen_viewport: false,
             git_branch: GitBranchProvider::new(&cwd),
             cwd,
             model_id,
@@ -2014,10 +2016,11 @@ impl InteractiveRoot {
             InteractiveStatus::Idle => ("idle".to_string(), STATUS_IDLE),
             InteractiveStatus::Running => (running_status_text(self.spinner_frame), STATUS_RUNNING),
         };
-        let status_line = fit_line(
-            &paint_with(&format!("status: {status_str}"), &status_style, color),
-            width,
-        );
+        let mut status_text = format!("status: {status_str}");
+        if self.fullscreen_viewport && self.transcript.has_new_output_below() {
+            status_text.push_str(" | new output below");
+        }
+        let status_line = fit_line(&paint_with(&status_text, &status_style, color), width);
 
         // Line 2: pwd line — `cwd (branch) • session-name`, dimmed. Mirrors the
         // TypeScript footer's first render line.
@@ -2532,6 +2535,10 @@ impl InteractiveRoot {
         self.render_cache.render_lines(&self.transcript, &opts)
     }
 
+    pub(super) fn set_fullscreen_viewport(&mut self, enabled: bool) {
+        self.fullscreen_viewport = enabled;
+    }
+
     fn transcript_row_snapshot(&mut self, max_tool_result_lines: usize) -> TranscriptRowSnapshot {
         let opts = self.transcript_render_options(max_tool_result_lines);
         self.render_cache.row_snapshot(&self.transcript, &opts)
@@ -2686,32 +2693,42 @@ impl Component for InteractiveRoot {
         } else {
             MAX_TOOL_RESULT_LINES
         };
-        let mut lines = self.transcript_lines(max_tool_result_lines);
-        lines.extend(self.render_editor_box(width));
-        lines.extend(self.render_pending_delegation_rejection_reason(width));
-        lines.extend(self.render_pending_profile_task(width));
+        let transcript_lines = self.transcript_lines(max_tool_result_lines);
+        let mut trailing_lines = self.render_editor_box(width);
+        trailing_lines.extend(self.render_pending_delegation_rejection_reason(width));
+        trailing_lines.extend(self.render_pending_profile_task(width));
         if self.selecting_tree {
             if let Some(ref selector) = self.tree_selector {
-                lines.extend(selector.render(width));
+                trailing_lines.extend(selector.render(width));
             }
         } else if !self.tool_authorizations.is_empty() {
-            lines.extend(self.render_tool_authorization(width));
+            trailing_lines.extend(self.render_tool_authorization(width));
         } else if self.active_plugin_ui_dialog.is_some() {
-            lines.extend(self.render_plugin_dialog_form(width));
+            trailing_lines.extend(self.render_plugin_dialog_form(width));
         } else if self.delegation_confirmation_menu.is_some() {
-            lines.extend(self.render_delegation_confirmation_menu(width));
+            trailing_lines.extend(self.render_delegation_confirmation_menu(width));
         } else if self.profile_menu.is_some() {
-            lines.extend(self.render_profile_menu(width));
+            trailing_lines.extend(self.render_profile_menu(width));
         } else if self.selecting_model {
-            lines.extend(self.render_model_selector(width));
+            trailing_lines.extend(self.render_model_selector(width));
         } else if self.selecting_session {
-            lines.extend(self.render_session_selector(width));
+            trailing_lines.extend(self.render_session_selector(width));
         } else if self.selecting_settings {
-            lines.extend(self.render_settings_menu(width));
+            trailing_lines.extend(self.render_settings_menu(width));
         } else {
-            lines.extend(self.render_slash_suggestions(width));
+            trailing_lines.extend(self.render_slash_suggestions(width));
         }
-        lines.extend(self.footer(width));
+        trailing_lines.extend(self.footer(width));
+        let mut lines = if self.fullscreen_viewport {
+            transcript_viewport(
+                &transcript_lines,
+                self.viewport_height.saturating_sub(trailing_lines.len()),
+                self.transcript.scroll_offset(),
+            )
+        } else {
+            transcript_lines
+        };
+        lines.extend(trailing_lines);
         lines
     }
 
@@ -2731,6 +2748,17 @@ impl Component for InteractiveRoot {
     fn focused(&self) -> bool {
         self.editor.focused()
     }
+}
+
+fn transcript_viewport(lines: &[String], height: usize, scroll_offset: usize) -> Vec<String> {
+    if height == 0 || lines.is_empty() {
+        return Vec::new();
+    }
+    let max_offset = lines.len().saturating_sub(height);
+    let offset = scroll_offset.min(max_offset);
+    let end = lines.len().saturating_sub(offset);
+    let start = end.saturating_sub(height);
+    lines[start..end].to_vec()
 }
 
 fn build_settings_list(
@@ -2894,4 +2922,33 @@ fn format_http_idle_timeout_ms(timeout_ms: u64) -> String {
         .find(|(_, value)| *value == timeout_ms)
         .map(|(label, _)| (*label).to_string())
         .unwrap_or_else(|| format!("{} sec", timeout_ms as f64 / 1000.0))
+}
+
+#[cfg(test)]
+mod transcript_viewport_tests {
+    use super::transcript_viewport;
+
+    fn lines() -> Vec<String> {
+        (1..=6).map(|line| line.to_string()).collect()
+    }
+
+    #[test]
+    fn follows_the_bottom_when_not_scrolled() {
+        assert_eq!(transcript_viewport(&lines(), 3, 0), ["4", "5", "6"]);
+    }
+
+    #[test]
+    fn preserves_an_offset_from_the_bottom() {
+        assert_eq!(transcript_viewport(&lines(), 3, 2), ["2", "3", "4"]);
+    }
+
+    #[test]
+    fn clamps_offsets_and_empty_viewports() {
+        assert_eq!(
+            transcript_viewport(&lines(), 3, usize::MAX),
+            ["1", "2", "3"]
+        );
+        assert!(transcript_viewport(&lines(), 0, 0).is_empty());
+        assert!(transcript_viewport(&[], 3, 0).is_empty());
+    }
 }

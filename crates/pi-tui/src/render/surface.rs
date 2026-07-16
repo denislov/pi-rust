@@ -6,8 +6,8 @@ use crate::input::{InputEvent, Key, is_key_release};
 use crate::render::{OverlayAnchor, SizeValue};
 use crate::render::{OverlayEntry, OverlayHandle, OverlayOptions};
 use crate::render::{truncate_to_width, visible_width};
-use crate::terminal::Terminal;
 use crate::terminal::delete_kitty_image;
+use crate::terminal::{Terminal, TerminalMode};
 use crate::terminal::{
     TerminalColorScheme, is_color_scheme_report, is_osc11_background_color_response,
     parse_color_scheme_report, parse_osc11_background_color, query_background_color,
@@ -34,13 +34,6 @@ pub enum RenderStrategy {
 pub struct RenderOutcome {
     pub strategy: RenderStrategy,
     pub line_count: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RenderSurface {
-    #[default]
-    Inline,
-    Clearing,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -82,7 +75,8 @@ pub struct Tui<T: Terminal> {
     cursor_row: usize,
     owned_rows: usize,
     rendered_once: bool,
-    render_surface: RenderSurface,
+    terminal_mode: TerminalMode,
+    terminal_active: bool,
     hardware_cursor_row: usize,
     hardware_cursor_col: usize,
     hardware_cursor_visible: bool,
@@ -119,7 +113,8 @@ impl<T: Terminal> Tui<T> {
             cursor_row: 0,
             owned_rows: 0,
             rendered_once: false,
-            render_surface: RenderSurface::Inline,
+            terminal_mode: TerminalMode::Inline,
+            terminal_active: false,
             hardware_cursor_row: 0,
             hardware_cursor_col: 0,
             hardware_cursor_visible: false,
@@ -133,10 +128,34 @@ impl<T: Terminal> Tui<T> {
         }
     }
 
-    pub fn with_surface(terminal: T, surface: RenderSurface) -> Self {
+    fn with_mode(terminal: T, mode: TerminalMode) -> Self {
         let mut tui = Self::new(terminal);
-        tui.render_surface = surface;
+        tui.terminal_mode = mode;
         tui
+    }
+
+    pub fn start(mut terminal: T, mode: TerminalMode) -> Result<Self, TuiError> {
+        if let Err(error) = terminal.start_mode(mode) {
+            let _ = terminal.stop();
+            return Err(error.into());
+        }
+        let mut tui = Self::with_mode(terminal, mode);
+        tui.terminal_active = true;
+        Ok(tui)
+    }
+
+    pub fn stop(&mut self) -> Result<(), TuiError> {
+        if !self.terminal_active {
+            return Ok(());
+        }
+        let image_cleanup = self.delete_previous_kitty_images();
+        let stop_result = self.terminal.stop();
+        if stop_result.is_ok() {
+            self.terminal_active = false;
+        }
+        image_cleanup?;
+        stop_result?;
+        Ok(())
     }
 
     pub fn terminal(&self) -> &T {
@@ -459,8 +478,8 @@ impl<T: Terminal> Tui<T> {
         self.clear_on_shrink
     }
 
-    pub fn set_render_surface(&mut self, surface: RenderSurface) {
-        self.render_surface = surface;
+    pub fn terminal_mode(&self) -> TerminalMode {
+        self.terminal_mode
     }
 
     // ── Render ─────────────────────────────────────────────────────────
@@ -470,6 +489,9 @@ impl<T: Terminal> Tui<T> {
         let width = size.columns;
         let height = size.rows;
         let mut lines = self.render_lines(width, height);
+        if self.terminal_mode == TerminalMode::Fullscreen {
+            lines = fullscreen_frame(lines, height);
+        }
         let cursor = extract_cursor_marker(&mut lines, height);
         validate_lines(&lines, width)?;
 
@@ -619,13 +641,13 @@ impl<T: Terminal> Tui<T> {
 
     fn render_full(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
         self.full_redraws += 1;
-        match self.render_surface {
-            RenderSurface::Inline => self.render_full_inline(lines, height),
-            RenderSurface::Clearing => self.render_full_clearing(lines, height),
+        match self.terminal_mode {
+            TerminalMode::Inline => self.render_full_inline(lines, height),
+            TerminalMode::Fullscreen => self.render_full_fullscreen(lines, height),
         }
     }
 
-    fn render_full_clearing(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
+    fn render_full_fullscreen(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
         self.terminal.write(SYNC_START)?;
         self.terminal.hide_cursor()?;
         self.hardware_cursor_visible = false;
@@ -679,20 +701,20 @@ impl<T: Terminal> Tui<T> {
         last_changed_line: usize,
         height: usize,
     ) -> Result<(), TuiError> {
-        match self.render_surface {
-            RenderSurface::Inline => self.render_differential_inline(
+        match self.terminal_mode {
+            TerminalMode::Inline => self.render_differential_inline(
                 lines,
                 first_changed_line,
                 last_changed_line,
                 height,
             ),
-            RenderSurface::Clearing => {
-                self.render_differential_clearing(lines, first_changed_line, last_changed_line)
+            TerminalMode::Fullscreen => {
+                self.render_differential_fullscreen(lines, first_changed_line, last_changed_line)
             }
         }
     }
 
-    fn render_differential_clearing(
+    fn render_differential_fullscreen(
         &mut self,
         lines: &[String],
         first_changed_line: usize,
@@ -869,6 +891,17 @@ impl<T: Terminal> Tui<T> {
     }
 }
 
+impl<T: Terminal> Drop for Tui<T> {
+    fn drop(&mut self) {
+        if !self.terminal_active {
+            return;
+        }
+        let _ = self.delete_previous_kitty_images();
+        let _ = self.terminal.stop();
+        self.terminal_active = false;
+    }
+}
+
 // ── Kitty image helpers ────────────────────────────────────────────────
 
 /// Extract unique Kitty image IDs from a set of lines.
@@ -939,6 +972,19 @@ fn validate_lines(lines: &[String], max_width: usize) -> Result<(), TuiError> {
 
 fn viewport_top(line_count: usize, height: usize) -> usize {
     line_count.saturating_sub(height)
+}
+
+fn fullscreen_frame(mut lines: Vec<String>, height: usize) -> Vec<String> {
+    if height == 0 {
+        return Vec::new();
+    }
+    if lines.len() > height {
+        lines.drain(..lines.len() - height);
+        return lines;
+    }
+    let mut frame = vec![String::new(); height - lines.len()];
+    frame.append(&mut lines);
+    frame
 }
 
 fn last_line_width(lines: &[String]) -> usize {

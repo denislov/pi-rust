@@ -69,6 +69,13 @@ pub struct TerminalSize {
     pub rows: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TerminalMode {
+    #[default]
+    Inline,
+    Fullscreen,
+}
+
 pub trait Terminal {
     fn size(&self) -> TerminalSize;
     fn write(&mut self, data: &str) -> std::io::Result<()>;
@@ -83,6 +90,10 @@ pub trait Terminal {
 
     fn start(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+
+    fn start_mode(&mut self, _mode: TerminalMode) -> std::io::Result<()> {
+        self.start()
     }
 
     fn stop(&mut self) -> std::io::Result<()> {
@@ -125,6 +136,7 @@ pub struct ProcessTerminal {
     kitty_protocol_active: bool,
     modify_other_keys_active: bool,
     keyboard_protocol_pushed: bool,
+    alternate_screen_active: bool,
     negotiation_buffer: String,
     negotiation_done: bool,
     negotiation_flush_deadline: Option<std::time::Instant>,
@@ -142,6 +154,7 @@ impl ProcessTerminal {
             kitty_protocol_active: false,
             modify_other_keys_active: false,
             keyboard_protocol_pushed: false,
+            alternate_screen_active: false,
             negotiation_buffer: String::new(),
             negotiation_done: false,
             negotiation_flush_deadline: None,
@@ -447,6 +460,10 @@ impl Terminal for ProcessTerminal {
     }
 
     fn start(&mut self) -> std::io::Result<()> {
+        self.start_mode(TerminalMode::Inline)
+    }
+
+    fn start_mode(&mut self, mode: TerminalMode) -> std::io::Result<()> {
         #[cfg(windows)]
         self.save_windows_stdin_mode();
 
@@ -458,6 +475,10 @@ impl Terminal for ProcessTerminal {
         // Enable ENABLE_VIRTUAL_TERMINAL_INPUT on Windows (run AFTER
         // enable_raw_mode since that resets console mode flags).
         self.enable_windows_vt_input();
+        if mode == TerminalMode::Fullscreen {
+            self.write("\x1b[?1049h")?;
+            self.alternate_screen_active = true;
+        }
         // Enable bracketed paste
         self.write("\x1b[?2004h")?;
         // Query Kitty keyboard protocol (flags 7: disambiguate + event types + alternate keys)
@@ -489,6 +510,10 @@ impl Terminal for ProcessTerminal {
         }
         self.disable_modify_other_keys();
         let _ = self.show_cursor();
+        if self.alternate_screen_active {
+            let _ = self.write("\x1b[?1049l");
+            self.alternate_screen_active = false;
+        }
         let _ = self.flush();
         let restored_windows_mode = self.restore_windows_stdin_mode()?;
         if self.raw_mode_enabled_by_us && !restored_windows_mode {
@@ -662,11 +687,13 @@ mod tests {
         term.keyboard_protocol_pushed = true;
         term.kitty_protocol_active = true;
         term.modify_other_keys_active = true;
+        term.alternate_screen_active = true;
         // stop() writes to stdout — just verify state is cleared
         term.stop().unwrap();
         assert!(!term.kitty_protocol_active);
         assert!(!term.modify_other_keys_active);
         assert!(!term.keyboard_protocol_pushed);
+        assert!(!term.alternate_screen_active);
     }
 
     #[test]

@@ -9,13 +9,13 @@ pub mod terminal {
     pub use crate::terminal::{
         CellDimensions, ImageCellSize, ImageDimensions, ImageProtocol, ImageRenderOptions,
         NegotiationResult, ProcessTerminal, RenderedImage, RgbColor, Terminal,
-        TerminalCapabilities, TerminalColorScheme, TerminalSize, calculate_image_cell_size,
-        delete_all_kitty_images, delete_kitty_image, detect_terminal_capabilities_from_env,
-        encode_iterm2, encode_kitty, hyperlink, image_dimensions_from_base64,
-        image_dimensions_from_bytes, is_apple_terminal_session, is_color_scheme_report,
-        is_image_line, is_osc11_background_color_response, normalize_apple_terminal_input,
-        parse_color_scheme_report, parse_osc11_background_color, query_background_color,
-        query_color_scheme, render_image, set_color_scheme_notifications,
+        TerminalCapabilities, TerminalColorScheme, TerminalMode, TerminalSize,
+        calculate_image_cell_size, delete_all_kitty_images, delete_kitty_image,
+        detect_terminal_capabilities_from_env, encode_iterm2, encode_kitty, hyperlink,
+        image_dimensions_from_base64, image_dimensions_from_bytes, is_apple_terminal_session,
+        is_color_scheme_report, is_image_line, is_osc11_background_color_response,
+        normalize_apple_terminal_input, parse_color_scheme_report, parse_osc11_background_color,
+        query_background_color, query_color_scheme, render_image, set_color_scheme_notifications,
     };
 }
 
@@ -54,10 +54,10 @@ pub mod component {
 pub mod render {
     pub use crate::render::{
         Color, ColorLevel, ERROR, InputListenerResult, PATH, RenderOutcome, RenderScheduler,
-        RenderStrategy, RenderSurface, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR,
-        TOOL_NAME, Tui, TuiError, USER, color_enabled, color_level, detect_color_level_from_env,
-        paint, paint_with, paint_with_level, truncate_to_width, truncate_to_width_with_ellipsis,
-        visible_width, wrap_text_with_ansi,
+        RenderStrategy, STATUS_IDLE, STATUS_RUNNING, SYSTEM, Style, TOOL_ERROR, TOOL_NAME, Tui,
+        TuiError, USER, color_enabled, color_level, detect_color_level_from_env, paint, paint_with,
+        paint_with_level, truncate_to_width, truncate_to_width_with_ellipsis, visible_width,
+        wrap_text_with_ansi,
     };
 }
 

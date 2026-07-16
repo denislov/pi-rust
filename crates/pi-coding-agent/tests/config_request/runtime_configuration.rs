@@ -4,7 +4,7 @@ use pi_agent_core::api::resources::AgentResources;
 use pi_coding_agent::api::cli::command::{CliError, parse_args};
 use pi_coding_agent::api::cli::configuration::{
     CompactionSettings, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, RetrySettings, Settings,
-    TerminalSettings, build_agent_config, select_model,
+    TerminalSettings, TuiMode, build_agent_config, select_model,
 };
 
 fn runtime_settings() -> Settings {
@@ -30,6 +30,7 @@ fn runtime_settings() -> Settings {
         http_idle_timeout_ms: 300000,
         enabled_models: Vec::new(),
         terminal: TerminalSettings {
+            mode: TuiMode::Inline,
             show_images: true,
             show_progress: true,
             clear_on_shrink: false,

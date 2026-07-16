@@ -6,7 +6,7 @@ use pi_agent_core::api::transcript::create_session_id;
 use pi_tui::api::component::Component;
 use pi_tui::api::input::{InputEvent, StdinBuffer, is_key_release};
 use pi_tui::api::render::{RenderScheduler, Tui, TuiError};
-use pi_tui::api::terminal::Terminal;
+use pi_tui::api::terminal::{Terminal, TerminalMode, TerminalSize};
 
 use crate::adapters::interactive::app::{PromptContext, build_prompt_context, session_label};
 use crate::adapters::interactive::event_bridge::UiProjection;
@@ -42,6 +42,7 @@ use crate::runtime::facade::{
 
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
+const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_DRAIN_MAX: Duration = Duration::from_millis(1000);
 const SHUTDOWN_DRAIN_IDLE: Duration = Duration::from_millis(50);
 
@@ -224,7 +225,7 @@ pub(super) async fn run_interactive_loop<T: Terminal>(
 pub(super) async fn run_interactive_loop_with_clock<T, C>(
     parsed: CliArgs,
     options: CliRunOptions,
-    mut terminal: T,
+    terminal: T,
     input: &mut InputPump,
     clock: &C,
 ) -> Result<LoopResult<T>, CliError>
@@ -236,8 +237,12 @@ where
 
     print_startup_banner(&prompt_context);
 
-    terminal.start().map_err(to_cli_error)?;
-    let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
+    let terminal_mode: TerminalMode = parsed
+        .tui_mode
+        .unwrap_or(prompt_context.settings.terminal.mode)
+        .into();
+    let mut tui = Tui::start(terminal, terminal_mode).map_err(tui_error)?;
+    let root_id = initialize_started_tui(&mut tui, &prompt_context)?;
 
     let loop_result = run_started_interactive_loop(
         &mut tui,
@@ -253,7 +258,7 @@ where
     let _ = tui
         .terminal_mut()
         .drain_input(SHUTDOWN_DRAIN_MAX, SHUTDOWN_DRAIN_IDLE);
-    let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
+    let stop_result = tui.stop().map_err(tui_error);
 
     // Print resume hint after terminal cleanup.
     if let Ok(root) = root_ref(&tui, root_id) {
@@ -274,7 +279,7 @@ where
 pub(super) async fn run_interactive_loop_with_input<T, F>(
     parsed: CliArgs,
     options: CliRunOptions,
-    mut terminal: T,
+    terminal: T,
     make_input: F,
 ) -> Result<LoopResult<T>, CliError>
 where
@@ -285,9 +290,13 @@ where
 
     print_startup_banner(&prompt_context);
 
-    terminal.start().map_err(to_cli_error)?;
+    let terminal_mode: TerminalMode = parsed
+        .tui_mode
+        .unwrap_or(prompt_context.settings.terminal.mode)
+        .into();
+    let mut tui = Tui::start(terminal, terminal_mode).map_err(tui_error)?;
     let mut input = make_input();
-    let (mut tui, root_id) = initialize_started_tui(terminal, &prompt_context)?;
+    let root_id = initialize_started_tui(&mut tui, &prompt_context)?;
 
     let clock = SystemInteractiveClock;
     let loop_result = run_started_interactive_loop(
@@ -304,7 +313,7 @@ where
     let _ = tui
         .terminal_mut()
         .drain_input(SHUTDOWN_DRAIN_MAX, SHUTDOWN_DRAIN_IDLE);
-    let stop_result = tui.terminal_mut().stop().map_err(to_cli_error);
+    let stop_result = tui.stop().map_err(tui_error);
 
     // Print resume hint after terminal cleanup.
     if let Ok(root) = root_ref(&tui, root_id) {
@@ -323,16 +332,16 @@ where
 }
 
 fn initialize_started_tui<T: Terminal>(
-    terminal: T,
+    tui: &mut Tui<T>,
     prompt_context: &PromptContext,
-) -> Result<(Tui<T>, usize), CliError> {
+) -> Result<usize, CliError> {
     let cwd = prompt_context
         .session
         .as_ref()
         .map(|session| session.cwd.clone())
         .unwrap_or_else(|| PathBuf::from("."));
     let session_label = session_label(&prompt_context.session);
-    let mut tui = Tui::new(terminal);
+    let fullscreen_viewport = tui.terminal_mode() == TerminalMode::Fullscreen;
     let root_id = tui.add_child_with_id(Box::new(
         InteractiveRoot::new_with_theme_models_and_settings(
             cwd,
@@ -346,7 +355,8 @@ fn initialize_started_tui<T: Terminal>(
         .with_resolved_theme(prompt_context.resolved_theme.clone()),
     ));
     {
-        let root = root_mut(&mut tui, root_id)?;
+        let root = root_mut(tui, root_id)?;
+        root.set_fullscreen_viewport(fullscreen_viewport);
         root.model_rotation = prompt_context.model_rotation.clone();
         root.session_choices = prompt_context.session_choices.clone();
         root.model = Some(prompt_context.model.clone());
@@ -362,7 +372,7 @@ fn initialize_started_tui<T: Terminal>(
     }
     tui.set_clear_on_shrink(prompt_context.settings.terminal.clear_on_shrink);
     tui.set_focus(Some(root_id));
-    Ok((tui, root_id))
+    Ok(root_id)
 }
 
 async fn run_started_interactive_loop<T, C>(
@@ -384,6 +394,7 @@ where
     let mut client_connection = None;
     let mut ui_projection = UiProjection::new();
     let mut input_open = true;
+    let mut terminal_size = tui.terminal().size();
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
     render_scheduler.request(true);
     flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
@@ -433,6 +444,11 @@ where
                             }
                         }
                     }
+                }
+                _ = tokio::time::sleep(RESIZE_POLL_INTERVAL) => {
+                    schedule_resize_render(tui, &mut terminal_size, &mut render_scheduler);
+                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+                    running = Some(task);
                 }
                 chunk = input.recv(), if input_open => {
                     match chunk {
@@ -577,6 +593,10 @@ where
                         }
                     }
                 }
+                _ = tokio::time::sleep(RESIZE_POLL_INTERVAL) => {
+                    schedule_resize_render(tui, &mut terminal_size, &mut render_scheduler);
+                    flush_render_if_ready(tui, &mut render_scheduler, clock.now())?;
+                }
                 chunk = input.recv() => {
                     let Some(chunk) = chunk else {
                         input_open = false;
@@ -686,6 +706,18 @@ fn process_input_events<T: Terminal>(
 fn schedule_render(render_scheduler: &mut RenderScheduler, request: RenderRequest) {
     if request.requested {
         render_scheduler.request(request.force);
+    }
+}
+
+fn schedule_resize_render<T: Terminal>(
+    tui: &Tui<T>,
+    previous_size: &mut TerminalSize,
+    render_scheduler: &mut RenderScheduler,
+) {
+    let current_size = tui.terminal().size();
+    if current_size != *previous_size {
+        *previous_size = current_size;
+        render_scheduler.request(true);
     }
 }
 

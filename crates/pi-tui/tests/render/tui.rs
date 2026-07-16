@@ -1,7 +1,10 @@
 //! TUI rendering strategies and terminal operation behavior.
 
+use std::sync::{Arc, Mutex};
+
 use pi_tui::api::component::{CURSOR_MARKER, Component, Text};
 use pi_tui::api::render::{RenderStrategy, Tui, TuiError};
+use pi_tui::api::terminal::{Terminal, TerminalMode, TerminalSize};
 use pi_tui::api::testing::{TerminalOp, VirtualTerminal};
 
 struct RawComponent {
@@ -19,6 +22,70 @@ impl RawComponent {
 impl Component for RawComponent {
     fn render(&mut self, _width: usize) -> Vec<String> {
         self.lines.clone()
+    }
+}
+
+struct LifecycleTerminal {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    fail_start: bool,
+}
+
+impl Terminal for LifecycleTerminal {
+    fn size(&self) -> TerminalSize {
+        TerminalSize {
+            columns: 20,
+            rows: 5,
+        }
+    }
+
+    fn write(&mut self, _data: &str) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn move_by(&mut self, _rows: i16) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn move_to_column(&mut self, _column: usize) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn show_cursor(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn clear_line(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn clear_from_cursor(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn clear_screen(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn start_mode(&mut self, mode: TerminalMode) -> std::io::Result<()> {
+        assert_eq!(mode, TerminalMode::Fullscreen);
+        self.events.lock().unwrap().push("start");
+        if self.fail_start {
+            return Err(std::io::Error::other("injected start failure"));
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self) -> std::io::Result<()> {
+        self.events.lock().unwrap().push("stop");
+        Ok(())
     }
 }
 
@@ -51,6 +118,105 @@ fn first_render_appends_inline_without_clearing_or_homing() {
             .contains("hello\x1b[0m\x1b]8;;\x07")
     );
     assert!(tui.terminal().written_output().contains("\x1b[?2026l"));
+}
+
+#[test]
+fn fullscreen_render_owns_exact_frame_and_bottom_aligns_existing_layout() {
+    let terminal = VirtualTerminal::new(20, 5);
+    let mut tui = Tui::start(terminal, TerminalMode::Fullscreen).unwrap();
+    tui.add_child(Box::new(RawComponent::new(&["one", "two"])));
+
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(outcome.strategy, RenderStrategy::FullRedraw);
+    assert_eq!(outcome.line_count, 5);
+    assert_eq!(tui.rendered_lines(), &["", "", "", "one", "two"]);
+    assert_eq!(tui.terminal_mode(), TerminalMode::Fullscreen);
+    assert!(
+        tui.terminal()
+            .ops()
+            .contains(&TerminalOp::Start(TerminalMode::Fullscreen))
+    );
+    assert!(tui.terminal().ops().contains(&TerminalOp::ClearScreen));
+
+    tui.stop().unwrap();
+    assert!(tui.terminal().ops().contains(&TerminalOp::Stop));
+}
+
+#[test]
+fn fullscreen_resize_rebuilds_bounded_frame_without_scrolling() {
+    let terminal = VirtualTerminal::new(20, 5);
+    let mut tui = Tui::start(terminal, TerminalMode::Fullscreen).unwrap();
+    tui.add_child(Box::new(RawComponent::new(&[
+        "one", "two", "three", "four", "five", "six",
+    ])));
+    tui.render_once().unwrap();
+    assert_eq!(
+        tui.rendered_lines(),
+        &["two", "three", "four", "five", "six"]
+    );
+    tui.terminal_mut().clear_ops();
+    tui.terminal_mut().resize(20, 3);
+
+    let outcome = tui.render_once().unwrap();
+
+    assert_eq!(outcome.strategy, RenderStrategy::FullRedraw);
+    assert_eq!(outcome.line_count, 3);
+    assert_eq!(tui.rendered_lines(), &["four", "five", "six"]);
+    assert!(tui.terminal().ops().contains(&TerminalOp::ClearScreen));
+    assert_eq!(tui.terminal().written_output().matches("\r\n").count(), 2);
+}
+
+#[test]
+fn tui_start_failure_stops_partially_started_terminal() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let terminal = LifecycleTerminal {
+        events: Arc::clone(&events),
+        fail_start: true,
+    };
+
+    let result = Tui::start(terminal, TerminalMode::Fullscreen);
+
+    assert!(matches!(result, Err(TuiError::Io(_))));
+    assert_eq!(&*events.lock().unwrap(), &["start", "stop"]);
+}
+
+#[test]
+fn tui_drop_restores_terminal_during_panic_unwind() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let terminal = LifecycleTerminal {
+        events: Arc::clone(&events),
+        fail_start: false,
+    };
+
+    let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _tui = Tui::start(terminal, TerminalMode::Fullscreen).unwrap();
+        panic!("injected panic");
+    }));
+
+    assert!(unwind.is_err());
+    assert_eq!(&*events.lock().unwrap(), &["start", "stop"]);
+}
+
+#[test]
+fn tui_drop_restores_terminal_after_runtime_render_error() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let terminal = LifecycleTerminal {
+        events: Arc::clone(&events),
+        fail_start: false,
+    };
+    let mut tui = Tui::start(terminal, TerminalMode::Fullscreen).unwrap();
+    tui.add_child(Box::new(RawComponent::new(&[
+        "this line exceeds the terminal width",
+    ])));
+
+    assert!(matches!(
+        tui.render_once(),
+        Err(TuiError::LineTooWide { .. })
+    ));
+    drop(tui);
+
+    assert_eq!(&*events.lock().unwrap(), &["start", "stop"]);
 }
 
 #[test]

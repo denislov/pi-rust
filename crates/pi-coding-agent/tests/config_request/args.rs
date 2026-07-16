@@ -3,6 +3,7 @@
 use pi_agent_core::api::agent::ThinkingLevel;
 use pi_agent_core::api::tool::ToolExecutionMode;
 use pi_coding_agent::api::cli::command::{CliArgs, CliError, parse_args};
+use pi_coding_agent::api::cli::configuration::TuiMode;
 
 fn parse(values: &[&str]) -> Result<CliArgs, CliError> {
     parse_args(values.iter().map(|value| value.to_string()))
@@ -80,6 +81,22 @@ fn parses_help_and_version() {
     let version = parse(&["-v"]).unwrap();
     assert!(help.help);
     assert!(version.version);
+}
+
+#[test]
+fn parses_typed_tui_mode() {
+    assert_eq!(
+        parse(&["--tui-mode", "fullscreen"]).unwrap().tui_mode,
+        Some(TuiMode::Fullscreen)
+    );
+    assert_eq!(
+        parse(&["--tui-mode", "inline"]).unwrap().tui_mode,
+        Some(TuiMode::Inline)
+    );
+    assert!(matches!(
+        parse(&["--tui-mode", "windowed"]),
+        Err(CliError::InvalidInput(_))
+    ));
 }
 
 #[test]
@@ -261,6 +278,7 @@ fn help_lists_agent_runtime_feature_flags() {
         "--skill",
         "--prompt-template",
         "--template-arg",
+        "--tui-mode",
     ] {
         assert!(text.contains(flag), "help must list {flag}");
     }

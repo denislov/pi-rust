@@ -1,6 +1,6 @@
 //! Terminal start/stop and capability lifecycle behavior.
 
-use pi_tui::api::terminal::Terminal;
+use pi_tui::api::terminal::{Terminal, TerminalMode};
 use pi_tui::api::testing::{TerminalOp, VirtualTerminal};
 
 #[test]
@@ -15,7 +15,7 @@ fn virtual_terminal_records_lifecycle_operations() {
     assert_eq!(
         terminal.ops(),
         &[
-            TerminalOp::Start,
+            TerminalOp::Start(TerminalMode::Inline),
             TerminalOp::SetTitle("pi".to_string()),
             TerminalOp::SetProgress(true),
             TerminalOp::SetProgress(false),

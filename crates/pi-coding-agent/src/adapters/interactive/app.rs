@@ -4275,13 +4275,24 @@ display_name = "Coder"
                 self.events.lock().unwrap().push("start");
                 Ok(())
             }
+
+            fn start_mode(
+                &mut self,
+                mode: pi_tui::api::terminal::TerminalMode,
+            ) -> std::io::Result<()> {
+                assert_eq!(mode, pi_tui::api::terminal::TerminalMode::Fullscreen);
+                self.start()
+            }
         }
 
         let events = Arc::new(Mutex::new(Vec::new()));
         let terminal = OrderingTerminal {
             events: Arc::clone(&events),
         };
-        let parsed = CliArgs::default();
+        let parsed = CliArgs {
+            tui_mode: Some(crate::config::TuiMode::Fullscreen),
+            ..CliArgs::default()
+        };
         let options = CliRunOptions {
             register_builtins: false,
             ..CliRunOptions::default()
@@ -4588,6 +4599,25 @@ pub mod test_harness {
             input_steps,
             columns,
             rows,
+            None,
+        )
+        .await
+    }
+
+    pub async fn run_scripted_fullscreen_with_session_dir_size_and_waits(
+        provider: FauxProvider,
+        session_dir: &Path,
+        input_steps: Vec<(&str, &str)>,
+        columns: usize,
+        rows: usize,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_with_provider_and_waits(
+            Arc::new(provider),
+            session_dir,
+            input_steps,
+            columns,
+            rows,
+            Some(crate::config::TuiMode::Fullscreen),
         )
         .await
     }
@@ -4665,8 +4695,34 @@ pub mod test_harness {
         columns: usize,
         rows: usize,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_idle_interactive_with_mode_and_size(input, columns, rows, None).await
+    }
+
+    pub async fn run_scripted_idle_fullscreen_with_size(
+        input: &str,
+        columns: usize,
+        rows: usize,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
+        run_scripted_idle_interactive_with_mode_and_size(
+            input,
+            columns,
+            rows,
+            Some(crate::config::TuiMode::Fullscreen),
+        )
+        .await
+    }
+
+    async fn run_scripted_idle_interactive_with_mode_and_size(
+        input: &str,
+        columns: usize,
+        rows: usize,
+        tui_mode: Option<crate::config::TuiMode>,
+    ) -> Result<ScriptedInteractiveOutput, CliError> {
         let mut input = InputPump::from_chunks(vec![input.to_string()]);
-        let parsed = CliArgs::default();
+        let parsed = CliArgs {
+            tui_mode,
+            ..CliArgs::default()
+        };
         let options = CliRunOptions {
             model_override: Some(faux_model("interactive-idle-harness")),
             register_builtins: false,
@@ -4820,6 +4876,7 @@ pub mod test_harness {
         input_steps: Vec<(&str, &str)>,
         columns: usize,
         rows: usize,
+        tui_mode: Option<crate::config::TuiMode>,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
         let api = format!(
             "interactive-harness-{}",
@@ -4829,7 +4886,10 @@ pub mod test_harness {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut input = InputPump::from_receiver(rx);
-        let parsed = CliArgs::default();
+        let parsed = CliArgs {
+            tui_mode,
+            ..CliArgs::default()
+        };
         let session = SessionRunOptions {
             mode: SessionMode::Enabled,
             cwd: session_dir.to_path_buf(),

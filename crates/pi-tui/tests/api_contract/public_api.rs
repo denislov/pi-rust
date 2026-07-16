@@ -46,7 +46,7 @@ use pi_tui::api::terminal::{
     NegotiationResult as ApiNegotiationResult, ProcessTerminal as ApiProcessTerminal,
     RgbColor as ApiRgbColor, Terminal as ApiTerminal,
     TerminalCapabilities as ApiTerminalCapabilities, TerminalColorScheme as ApiTerminalColorScheme,
-    calculate_image_cell_size as api_calculate_image_cell_size,
+    TerminalMode as ApiTerminalMode, calculate_image_cell_size as api_calculate_image_cell_size,
     delete_all_kitty_images as api_delete_all_kitty_images,
     delete_kitty_image as api_delete_kitty_image,
     is_apple_terminal_session as api_is_apple_terminal_session,
@@ -84,6 +84,7 @@ fn generic_tui_symbols_are_importable_from_api_facade() {
         _markdown: Option<ApiMarkdown>,
         _overlay: Option<ApiOverlayOptions>,
         _process_terminal: Option<ApiProcessTerminal>,
+        _terminal_mode: Option<ApiTerminalMode>,
         _render_scheduler: Option<ApiRenderScheduler>,
         _render_strategy: Option<ApiRenderStrategy>,
         _text: Option<ApiText>,
@@ -93,7 +94,7 @@ fn generic_tui_symbols_are_importable_from_api_facade() {
     }
 
     accepts_types(
-        None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
     );
 
     let image_dimensions = ApiImageDimensions {
@@ -132,6 +133,7 @@ fn generic_tui_symbols_are_importable_from_api_facade() {
         hyperlinks: true,
     };
     assert_eq!(image_capabilities.images, Some(ApiImageProtocol::Kitty));
+    assert_eq!(ApiTerminalMode::default(), ApiTerminalMode::Inline);
 
     fn accepts_component<T: ApiComponent>() {}
     fn accepts_terminal<T: ApiTerminal>() {}

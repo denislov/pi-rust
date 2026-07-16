@@ -16,9 +16,7 @@ pub use style::{
     TOOL_NAME, USER, color_enabled, color_level, detect_color_level_from_env, paint, paint_with,
     paint_with_level,
 };
-pub use surface::{
-    InputListenerResult, RenderOutcome, RenderStrategy, RenderSurface, Tui, TuiError,
-};
+pub use surface::{InputListenerResult, RenderOutcome, RenderStrategy, Tui, TuiError};
 pub use width::{
     truncate_to_width, truncate_to_width_with_ellipsis, visible_width, wrap_text_with_ansi,
 };

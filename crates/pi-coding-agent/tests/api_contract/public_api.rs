@@ -15,7 +15,7 @@ use pi_coding_agent::api::cli::command::{
     render_diagnostics,
 };
 use pi_coding_agent::api::cli::configuration::{
-    ModelRotation, ModelRotationEntry, parse_model_rotation,
+    ModelRotation, ModelRotationEntry, TuiMode, parse_model_rotation,
 };
 use pi_coding_agent::api::cli::print::PrintModeOptions;
 use pi_coding_agent::api::cli::resources::{
@@ -445,6 +445,7 @@ fn model(api: &str) -> Model {
 fn public_api_symbols_are_importable() {
     let args = CliArgs::default();
     assert_eq!(args.max_turns, None);
+    assert_eq!(TuiMode::default(), TuiMode::Inline);
 
     let parsed = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
     assert!(parsed.print);

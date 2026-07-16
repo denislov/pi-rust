@@ -365,7 +365,15 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
                 "wrap_text_with_ansi",
             ],
         ),
-        ("terminal", &["ProcessTerminal", "Terminal", "TerminalSize"]),
+        (
+            "terminal",
+            &[
+                "ProcessTerminal",
+                "Terminal",
+                "TerminalMode",
+                "TerminalSize",
+            ],
+        ),
         ("testing", &["TerminalOp", "VirtualTerminal"]),
         (
             "theme",

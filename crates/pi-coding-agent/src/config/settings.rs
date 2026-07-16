@@ -1,6 +1,36 @@
 use crate::config::{ConfigDiagnostic, ConfigPaths};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::str::FromStr;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TuiMode {
+    #[default]
+    Inline,
+    Fullscreen,
+}
+
+impl FromStr for TuiMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "inline" => Ok(Self::Inline),
+            "fullscreen" => Ok(Self::Fullscreen),
+            other => Err(format!("unknown TUI mode: {other}")),
+        }
+    }
+}
+
+impl From<TuiMode> for pi_tui::api::terminal::TerminalMode {
+    fn from(value: TuiMode) -> Self {
+        match value {
+            TuiMode::Inline => Self::Inline,
+            TuiMode::Fullscreen => Self::Fullscreen,
+        }
+    }
+}
 
 /// Which settings file to target when saving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +71,8 @@ pub struct PartialWarnings {
 #[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PartialTerminal {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<TuiMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_images: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,6 +166,7 @@ pub struct RetrySettings {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalSettings {
+    pub mode: TuiMode,
     pub show_images: bool,
     pub show_progress: bool,
     pub clear_on_shrink: bool,
@@ -201,6 +234,7 @@ fn merge_terminal(
     match (base, over) {
         (None, x) | (x, None) => x,
         (Some(b), Some(o)) => Some(PartialTerminal {
+            mode: o.mode.or(b.mode),
             show_images: o.show_images.or(b.show_images),
             show_progress: o.show_progress.or(b.show_progress),
             clear_on_shrink: o.clear_on_shrink.or(b.clear_on_shrink),
@@ -304,6 +338,7 @@ impl PartialSettings {
             http_idle_timeout_ms: self.http_idle_timeout_ms.unwrap_or(300000),
             enabled_models: self.enabled_models.unwrap_or_default(),
             terminal: TerminalSettings {
+                mode: t.mode.unwrap_or_default(),
                 show_images: t.show_images.unwrap_or(true),
                 show_progress: t.show_progress.unwrap_or(false),
                 clear_on_shrink: t.clear_on_shrink.unwrap_or(false),
@@ -530,6 +565,7 @@ mod tests {
         assert!(s.enable_skill_commands);
         assert_eq!(s.double_escape_action, "tree");
         assert_eq!(s.tree_filter_mode, "default");
+        assert_eq!(s.terminal.mode, TuiMode::Inline);
         assert!(!s.terminal.clear_on_shrink);
         assert!(s.terminal.auto_resize_images);
         assert!(!s.terminal.block_images);
@@ -538,6 +574,20 @@ mod tests {
         assert!(s.shell_command_prefix.is_none());
         assert_eq!(s.http_idle_timeout_ms, 300000);
         assert!(s.enabled_models.is_empty());
+    }
+
+    #[test]
+    fn terminal_mode_is_typed_and_project_overridable() {
+        let global: PartialSettings = toml::from_str("[terminal]\nmode = \"fullscreen\"\n")
+            .expect("fullscreen terminal mode should parse");
+        let project: PartialSettings = toml::from_str("[terminal]\nmode = \"inline\"\n")
+            .expect("inline terminal mode should parse");
+
+        assert_eq!(
+            global.merge(project).resolve().terminal.mode,
+            TuiMode::Inline
+        );
+        assert!(toml::from_str::<PartialSettings>("[terminal]\nmode = \"windowed\"\n").is_err());
     }
 
     #[test]
