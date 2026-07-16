@@ -448,6 +448,192 @@ async fn rpc_manual_compaction_rejects_while_an_operation_is_running() {
 }
 
 #[tokio::test]
+async fn rpc_new_session_parent_forks_durable_history_and_remains_usable() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-parent-session";
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxProvider::text_call("parent response", StopReason::Stop),
+            FauxProvider::text_call("child response", StopReason::Stop),
+        ])),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(32 * 1024);
+    let mut session = SessionRunOptions::enabled(cwd);
+    session.session_dir = Some(sessions.clone());
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session,
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"parent-prompt\",\"type\":\"prompt\",\"message\":\"parent message\"}\n",
+        )
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "parent prompt completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    input_writer
+        .write_all(b"{\"id\":\"parent-state\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let parent_state = read_rpc_json_matching(&mut lines, "parent state", |value| {
+        value["id"] == "parent-state"
+    })
+    .await;
+    let parent_id = parent_state["data"]["sessionId"]
+        .as_str()
+        .expect("persistent parent exposes session ID")
+        .to_owned();
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"invalid-before-fork\",\"type\":\"new_session\",\"parentSession\":\"../escape\"}\n",
+        )
+        .await
+        .unwrap();
+    let invalid = read_rpc_json_matching(&mut lines, "invalid parent rejection", |value| {
+        value["id"] == "invalid-before-fork"
+    })
+    .await;
+    assert_eq!(invalid["success"], false);
+    input_writer
+        .write_all(b"{\"id\":\"state-after-invalid\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let unchanged = read_rpc_json_matching(&mut lines, "state after invalid parent", |value| {
+        value["id"] == "state-after-invalid"
+    })
+    .await;
+    assert_eq!(unchanged["data"]["sessionId"], parent_id);
+
+    let new_session = serde_json::json!({
+        "id": "fork-session",
+        "type": "new_session",
+        "parentSession": parent_id,
+    });
+    input_writer
+        .write_all(format!("{new_session}\n").as_bytes())
+        .await
+        .unwrap();
+    let forked = read_rpc_json_matching(&mut lines, "forked session response", |value| {
+        value["id"] == "fork-session"
+    })
+    .await;
+    assert_eq!(forked["success"], true, "{forked}");
+    assert_eq!(forked["data"]["parentSession"], parent_id);
+    let child_id = forked["data"]["sessionId"]
+        .as_str()
+        .expect("fork response exposes child session ID")
+        .to_owned();
+    assert_ne!(child_id, parent_id);
+
+    input_writer
+        .write_all(b"{\"id\":\"fork-stats\",\"type\":\"get_session_stats\"}\n")
+        .await
+        .unwrap();
+    let inherited = read_rpc_json_matching(&mut lines, "forked session stats", |value| {
+        value["id"] == "fork-stats"
+    })
+    .await;
+    assert_eq!(inherited["data"]["sessionId"], child_id);
+    assert_eq!(inherited["data"]["userMessages"], 1);
+    assert_eq!(inherited["data"]["assistantMessages"], 1);
+
+    input_writer
+        .write_all(b"{\"id\":\"child-prompt\",\"type\":\"prompt\",\"message\":\"child message\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "child prompt completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    input_writer
+        .write_all(b"{\"id\":\"child-stats\",\"type\":\"get_session_stats\"}\n")
+        .await
+        .unwrap();
+    let child_stats = read_rpc_json_matching(&mut lines, "child session stats", |value| {
+        value["id"] == "child-stats"
+    })
+    .await;
+    assert_eq!(child_stats["data"]["sessionId"], child_id);
+    assert_eq!(child_stats["data"]["userMessages"], 2);
+    assert_eq!(child_stats["data"]["assistantMessages"], 2);
+
+    drop(input_writer);
+    task.await.unwrap();
+
+    let events = std::fs::read_to_string(sessions.join(&child_id).join("events.jsonl")).unwrap();
+    let provenance = events
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|event| event["kind"] == "session.forked")
+        .expect("forked session persists provenance");
+    assert_eq!(provenance["data"]["source_session_id"], parent_id);
+    assert!(provenance["data"]["source_leaf_id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn rpc_new_session_parent_rejects_missing_and_invalid_session_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-parent-session-errors";
+    let provider_guard =
+        ProviderGuard::register(api, Arc::new(FauxProvider::simple_text("unused")));
+    let input = b"{\"id\":\"missing-parent\",\"type\":\"new_session\",\"parentSession\":\"sess_missing\"}\n\
+                  {\"id\":\"invalid-parent\",\"type\":\"new_session\",\"parentSession\":\"../escape\"}\n\
+                  {\"id\":\"blank-parent\",\"type\":\"new_session\",\"parentSession\":\" \"}\n";
+    let mut output = Vec::new();
+    let mut session = SessionRunOptions::enabled(cwd);
+    session.session_dir = Some(sessions);
+
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ai_client: Some(provider_guard.ai_client()),
+            session,
+        },
+    )
+    .await
+    .unwrap();
+
+    let responses = parse_lines(&output);
+    assert_eq!(responses.len(), 3);
+    for response in &responses {
+        assert_eq!(response["success"], false, "{response}");
+    }
+    assert_eq!(responses[0]["data"]["code"], "session");
+    assert_eq!(responses[1]["data"]["code"], "session");
+    assert_eq!(responses[2]["data"]["code"], "input");
+}
+
+#[tokio::test]
 async fn rpc_lists_and_approves_pending_tool_authorization_before_execution() {
     let api = "pi-coding-rpc-tool-authorization";
     let provider_guard = ProviderGuard::register(

@@ -126,6 +126,29 @@ pub(crate) async fn open_new_runtime_session(
     }
 }
 
+pub(crate) async fn open_forked_runtime_session(
+    options: &SessionRunOptions,
+    parent_session_id: &str,
+) -> Result<CodingAgentSession, CodingSessionError> {
+    if !matches!(options.mode, SessionMode::Enabled) {
+        return Err(CodingSessionError::UnsupportedCapability {
+            capability: "parentSession requires persistent Rust-native sessions".into(),
+        });
+    }
+    let session_root = headless_session_root(options)?;
+    let base_options = CodingAgentSessionOptions::new()
+        .with_cwd(options.cwd.clone())
+        .with_session_log_root(session_root)
+        .with_tool_authorization_mode(ToolAuthorizationMode::Interactive);
+    let forked = CodingAgentSession::fork_session(
+        base_options
+            .clone()
+            .with_session_id(parent_session_id.to_owned()),
+        None,
+    )?;
+    CodingAgentSession::open(base_options.with_session_id(forked.summary.session_id)).await
+}
+
 pub(crate) async fn open_interactive_session(
     session_options: Option<&SessionRunOptions>,
     target: Option<&ResolvedSessionTarget>,

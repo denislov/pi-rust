@@ -7,7 +7,7 @@ use crate::api::operation::{
 use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
-use crate::app::session::open_new_runtime_session;
+use crate::app::session::{open_forked_runtime_session, open_new_runtime_session};
 use crate::authorization::ToolAuthorizationDecision;
 use crate::protocol::types::{
     RpcCommand, RpcDetachLifecycleEvent, RpcDetachResponse, RpcDetachStatus, RpcHelloResponse,
@@ -21,8 +21,8 @@ use crate::protocol::version::{
 use crate::runtime::facade::{
     AgentProfile, CodingAgentControlId, CodingAgentSession, CodingAgentShutdownOutcome,
     CodingSessionError, DelegationConfirmationMode, DelegationPolicy, OperationKind,
-    PendingDelegationConfirmation, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource,
-    PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
+    PendingDelegationConfirmation, ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind,
+    ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
     SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
     SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
     TeamStrategy, TeamSupervisor,
@@ -378,36 +378,8 @@ impl RpcState {
                 )
                 .await
             }
-            RpcCommand::NewSession { id, .. } => {
-                if self.has_active_operations() {
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::error(
-                            id,
-                            "new_session",
-                            "cannot start new session while agent is streaming",
-                        ),
-                    )
-                    .await?;
-                    return Ok(());
-                }
-                self.messages.clear();
-                self.steering.clear();
-                self.follow_up.clear();
-                let _ = self.detach_client().await;
-                self.session_name = None;
-                self.active_session_path = None;
-                self.active_leaf_id = None;
-                self.coding_session = None;
-                write_rpc_response(
-                    writer,
-                    RpcResponse::success(
-                        id,
-                        "new_session",
-                        Some(serde_json::json!({"cancelled": false})),
-                    ),
-                )
-                .await
+            RpcCommand::NewSession { id, parent_session } => {
+                self.handle_new_session(id, parent_session, writer).await
             }
             RpcCommand::GetState { id } => {
                 write_rpc_response(
@@ -625,6 +597,135 @@ impl RpcState {
                 .await
             }
         }
+    }
+
+    async fn handle_new_session<W>(
+        &mut self,
+        id: Option<String>,
+        parent_session: Option<String>,
+        writer: &mut W,
+    ) -> Result<(), CliError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        if self.has_active_operations() {
+            write_rpc_response(
+                writer,
+                RpcResponse::error(
+                    id,
+                    "new_session",
+                    "cannot start new session while agent is streaming",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let parent_session = match parent_session {
+            Some(parent) if parent.is_empty() || parent.trim() != parent => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error_with_data(
+                        id,
+                        "new_session",
+                        "parentSession must be a non-empty session ID without surrounding whitespace",
+                        serde_json::json!({ "code": "input" }),
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+            parent => parent,
+        };
+
+        let forked = if let Some(parent) = parent_session.as_deref() {
+            match open_forked_runtime_session(&self.options.session, parent).await {
+                Ok(session) => Some(session),
+                Err(error) => {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error_with_data(
+                            id,
+                            "new_session",
+                            error.to_string(),
+                            serde_json::json!({ "code": error.code() }),
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        } else {
+            None
+        };
+        let forked_state = match forked.as_ref().map(CodingAgentSession::hydrate_current) {
+            Some(Ok(Some(hydration))) => Some((
+                hydration.summary.session_id,
+                hydration.summary.session_dir,
+                hydration.summary.active_leaf_id,
+            )),
+            Some(Ok(None)) => unreachable!("forked runtime sessions are persistent"),
+            Some(Err(error)) => {
+                write_rpc_response(
+                    writer,
+                    RpcResponse::error_with_data(
+                        id,
+                        "new_session",
+                        error.to_string(),
+                        serde_json::json!({ "code": error.code() }),
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+            None => None,
+        };
+
+        if let Err(error) = self.detach_client().await {
+            write_rpc_response(
+                writer,
+                RpcResponse::error_with_data(
+                    id,
+                    "new_session",
+                    error.to_string(),
+                    serde_json::json!({ "code": error.code() }),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+        self.messages.clear();
+        self.steering.clear();
+        self.follow_up.clear();
+        self.session_name = None;
+        self.session_event_stream_id = None;
+        self.session_events = None;
+        self.session_event_flush = None;
+        self.session_events_closed = false;
+        self.adapter_applied_sequence = ProductEventSequence::default();
+        self.active_shutdown_handle = None;
+
+        let response_data = if let Some((session_id, session_dir, active_leaf_id)) = forked_state {
+            self.active_session_path = Some(session_dir);
+            self.active_leaf_id = active_leaf_id;
+            self.coding_session = forked;
+            serde_json::json!({
+                "cancelled": false,
+                "sessionId": session_id,
+                "parentSession": parent_session,
+            })
+        } else {
+            self.active_session_path = None;
+            self.active_leaf_id = None;
+            self.coding_session = None;
+            serde_json::json!({"cancelled": false})
+        };
+
+        write_rpc_response(
+            writer,
+            RpcResponse::success(id, "new_session", Some(response_data)),
+        )
+        .await
     }
 
     fn self_healing_model_repair_options(
